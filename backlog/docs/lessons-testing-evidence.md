@@ -2630,3 +2630,32 @@ the resolver result or an intermediate request object. If a lower adapter can re
 make the capability-bearing request pin the checked endpoint (without changing unrelated
 callers), and mutation-test the unsupported route so fallback labeling cannot silently
 become an unsupported capability claim.
+
+## A race a live replay cannot trigger is often a STATE you can construct deterministically (TASK-14903, 2026-08-10)
+
+**Incident.** A live click killed the whole app once — `AttributeError:
+'NoneType' object has no attribute 'region'` inside Textual's
+`Screen._forward_event` text-selection begin, ~1s after a terminal resize.
+THREE live replay attempts (same screen, same resize, same click) never
+triggered it again, and the originating task shipped with the crash merely
+noted. Task-14903 reproduced it 100% deterministically on the first attempt —
+not by replaying the timing, but by reading the framework source to name the
+intermediate state the race passes through (widget pruned from the DOM, parent
+already `None`, compositor's cached map not yet reflowed) and then
+constructing that state directly at the seam: `await widget.remove()` with no
+subsequent pause (prune complete, reflow pending), then the MouseDown driven
+through `App.on_event`, the exact call the live crash traversed. The
+"irreproducible" race was a two-line setup once expressed as a state instead
+of a schedule.
+
+**What to do.** When a race defies replay, stop replaying. Read the code that
+crashed until you can name the exact intermediate state the timing window
+produces (here: three facts — `parent is None`, stale compositor map, event
+dispatched between them), then build THAT state through the narrowest public
+seams available and drive the same entry point the production path uses. A
+reproduction that constructs the state is strictly better than one that races
+the clock: it is deterministic, it documents the mechanism in its
+preconditions (each setup line asserts one fact of the attribution), and it
+pins the upstream behavior — if a dependency bump fixes the bug, the
+state-construction test fails loudly and tells you the workaround can be
+retired, which no timing-based replay could ever do.
