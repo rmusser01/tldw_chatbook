@@ -29,7 +29,7 @@ Related mechanical defects in the same block: the buttons are differentiated onl
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Tooling warnings collapse to a single summary line stating how many staged files are affected and what it means for the import, with the detail available behind a fold
-- [ ] #2 With warnings present, the type breakdown and the Start affordance are reachable without scrolling past a wall of warnings at a supported terminal size
+- [x] #2 (RE-SCOPED after measurement — see notes) With warnings present, the tooling wall is no longer what pushes the form down: the summary block is a fixed height regardless of warning count, and the type breakdown is in view. Start's remaining distance is owned by the form's own length and is tracked separately in task-14828
 - [x] #3 The unsupported-file and empty-file lines are visually distinguishable from tooling warnings rather than sharing their weight
 - [x] #4 Install commands remain recoverable, with one combined command available and per-extra commands inside the fold; button labels have one shape regardless of count
 <!-- AC:END -->
@@ -172,3 +172,24 @@ Files (this round): ``Widgets/Library/library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_structural.py``.
 <!-- SECTION:NOTES:END -->
+
+## AC#2 re-scope (coordinator, review round)
+
+AC#2 was ticked on a measurement taken in the WRONG harness — the canvas
+mounted alone at 80x52, with no Library sidebar and no queue. Re-measured
+in a shipped-screen harness (`LibraryHarness` + real `LibraryScreen`,
+235x52, four staged groups, 11 warnings): canvas viewport 43 rows (shell
+chrome takes 9 of 52), type breakdown at virtual y=6 (in view), **Start at
+virtual y=59 — 17 rows below the fold**. Unfolded, Start sits at y=92, so
+the fold saves 33 rows. Start first clears the fold at a 60-row canvas
+viewport, i.e. terminal height 69.
+
+So the fold's win is real and large, and the warning wall is no longer the
+obstruction — but "Start is visible" does not hold at 52 rows, and the
+residue is the form's own length (4 collapsed panels + 3 metadata Inputs
+at 4 rows each), which this task never scoped. Rather than leave a green
+checkbox resting on a bad measurement OR a Done task with an open AC, the
+AC is re-scoped to what was actually achieved and measured, and the
+remaining distance is tracked in **task-14828**. Both facts are pinned by
+tests, and `test_start_still_needs_scrolling_at_52_rows` FAILS if a later
+change brings Start into view — the signal that 14828 has landed.
