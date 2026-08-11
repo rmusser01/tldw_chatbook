@@ -213,10 +213,14 @@ class TTSCloneReferenceMaterializer:
             and self._active.get(handle._token) is handle
         )
 
+    def seal(self) -> None:
+        """Reject new materializations without beginning destructive cleanup."""
+        self._closed = True
+
     async def close(self) -> None:
         """Seal creation and retain cleanup until all owned work terminates."""
         if self._close_task is None:
-            self._closed = True
+            self.seal()
             self._close_task = asyncio.create_task(self._complete_close())
         cancelled, _, failure = await _await_retained_result(self._close_task)
         if cancelled is not None:

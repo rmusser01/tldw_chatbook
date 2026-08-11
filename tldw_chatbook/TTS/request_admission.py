@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
+from uuid import UUID
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
@@ -32,6 +34,7 @@ from tldw_chatbook.TTS.effective_settings import (
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 if TYPE_CHECKING:
@@ -45,6 +48,19 @@ if TYPE_CHECKING:
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ResolvedTTSCloneExecution:
+    """Exact profile/reference authority frozen with effective selection."""
+
+    profile_id: UUID
+    repository_generation: int
+    profile_revision: int
+    reference: TTSCloneReference
+
+    def __repr__(self) -> str:
+        return "_ResolvedTTSCloneExecution(<private>)"
 
 
 class _WriterPreferredGate:
@@ -260,6 +276,13 @@ class TTSRequestAdmissionCoordinator:
                         projected_provider,
                         deliberate=True,
                     ):
+                        clone_candidate = self._profile_clone_candidate(
+                            explicit=explicit,
+                            character_profile=character_profile,
+                            default_profile=default_profile,
+                        )
+                        if projected_provider == "audio_cpp" and clone_candidate:
+                            await self._service._preflight_audio_cpp_clone_source()
                         preferences = self._preferences
                         if preferences is None and higher_scope_provider is None:
                             raise TTSProviderUnavailableError(
@@ -354,12 +377,18 @@ class TTSRequestAdmissionCoordinator:
                                 )
                             )
                         request = self._build_request(selection, text=text)
+                        clone_execution = self._resolve_clone_execution(
+                            selection,
+                            character_profile=character_profile,
+                            default_profile=default_profile,
+                        )
                         operation = await self._service._admit_reserved(
                             request,
                             reservation,
                             expected_configuration_revision=(
                                 selection.revisions.provider_configuration
                             ),
+                            clone_execution=clone_execution,
                         )
                         operation.claim()
                     break
@@ -379,6 +408,58 @@ class TTSRequestAdmissionCoordinator:
         assert operation is not None
         response = await operation.synthesize(progress_sink)
         return response, selection
+
+    @staticmethod
+    def _profile_clone_candidate(
+        *,
+        explicit: TTSSelectionOverrides | None,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+    ) -> bool:
+        """Return whether profile precedence can select a clone reference."""
+        if explicit is not None and (
+            explicit.provider_id is not None or explicit.model_id is not None
+        ):
+            return False
+        if character_profile is not None:
+            return character_profile.reference is not None
+        return default_profile is not None and default_profile.reference is not None
+
+    @staticmethod
+    def _resolve_clone_execution(
+        selection: TTSEffectiveSelectionSnapshot,
+        *,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+    ) -> _ResolvedTTSCloneExecution | None:
+        """Select a reference only when one profile owns provider and model."""
+        if selection.provider_id != "audio_cpp":
+            return None
+        source_pair = (
+            selection.sources["provider_id"],
+            selection.sources["model_id"],
+        )
+        profile: TTSCharacterProfileSelection | TTSDefaultProfileSelection | None
+        if source_pair == (
+            TTSSelectionSource.CHARACTER_PROFILE,
+            TTSSelectionSource.CHARACTER_PROFILE,
+        ):
+            profile = character_profile
+        elif source_pair == (
+            TTSSelectionSource.DEFAULT_PROFILE,
+            TTSSelectionSource.DEFAULT_PROFILE,
+        ):
+            profile = default_profile
+        else:
+            profile = None
+        if profile is None or profile.reference is None:
+            return None
+        return _ResolvedTTSCloneExecution(
+            profile_id=profile.profile_id,
+            repository_generation=profile.repository_generation,
+            profile_revision=profile.profile_revision,
+            reference=profile.reference,
+        )
 
     async def synthesize_default(
         self,

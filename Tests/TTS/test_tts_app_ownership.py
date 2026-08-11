@@ -755,6 +755,16 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
             del character_ref, expected_generation, expected_profile_id
             raise AssertionError("not used")
 
+        async def get_reference(
+            self,
+            profile_id: UUID,
+            *,
+            expected_revision: int,
+            expected_generation: int,
+        ) -> Any:
+            del profile_id, expected_revision, expected_generation
+            raise AssertionError("not used")
+
     class FocusedTTSService:
         def configuration_revision(self, provider_id: str) -> int:
             raise AssertionError(provider_id)

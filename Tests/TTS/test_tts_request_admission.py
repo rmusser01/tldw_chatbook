@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 from uuid import UUID
+from datetime import UTC, datetime
 
 import pytest
 
@@ -17,6 +19,7 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    AudioCppCloneCapabilityAdmission,
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
@@ -31,6 +34,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
     TTSRequest,
     TTSVoiceDiscoveryResult,
+    _AdmittedAudioCppCloneRequest,
+    _new_audio_cpp_clone_capability,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.effective_settings import (
@@ -46,6 +51,13 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterializer,
+)
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneReference,
+    TTSCloneReferenceSummary,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
@@ -384,6 +396,106 @@ class _CapturingAdapter(FakeAdapter):
         if self.synthesis_error is not None:
             raise self.synthesis_error
         return await super().synthesize(request, progress_sink)
+
+
+class _CloneCapturingAdapter(_CapturingAdapter):
+    def __init__(self) -> None:
+        super().__init__("audio_cpp", models=(_model("clone-model"),))
+        self._identity = object()
+        self._capability: AudioCppCloneCapabilityAdmission | None = None
+        self.clone_requests: list[_AdmittedAudioCppCloneRequest] = []
+        self.events: list[str] = []
+
+    def preflight_clone_source(self) -> None:
+        self.events.append("preflight")
+
+    def admit_clone_capability(self, request: TTSRequest) -> AudioCppCloneCapabilityAdmission:
+        self.events.append("capability")
+        capability = _new_audio_cpp_clone_capability(
+            adapter_identity=self._identity,
+            capability_token=object(),
+            model_id=request.model_id,
+            recipe_id="pocket_tts",
+            recipe_revision=1,
+            process_generation=7,
+        )
+        self._capability = capability
+        return capability
+
+    def release_clone_capability(self, capability: AudioCppCloneCapabilityAdmission) -> None:
+        if self._capability is capability:
+            self.events.append("capability_released")
+            self._capability = None
+
+    async def synthesize_clone(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        self.events.append("clone_synthesize")
+        self.clone_requests.append(request)
+        response = await super().synthesize(request.request, progress_sink)
+
+        async def observe_adapter_cleanup() -> None:
+            assert request.materialization.voice_ref.exists()
+            self.events.append("adapter_cleanup")
+
+        response.add_cleanup(observe_adapter_cleanup)
+        return response
+
+
+class _BlockingCloneCapturingAdapter(_CloneCapturingAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ensure_started = asyncio.Event()
+        self.allow_ensure = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.allow_cleanup = asyncio.Event()
+
+    async def ensure_ready(self) -> None:
+        await super().ensure_ready()
+        self.ensure_started.set()
+        await self.allow_ensure.wait()
+
+    async def synthesize_clone(
+        self,
+        request: _AdmittedAudioCppCloneRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        response = await super().synthesize_clone(request, progress_sink)
+
+        async def block_adapter_cleanup() -> None:
+            self.cleanup_started.set()
+            await self.allow_cleanup.wait()
+
+        response.add_cleanup(block_adapter_cleanup)
+        return response
+
+
+class _RejectedCloneSourceAdapter(_CloneCapturingAdapter):
+    def preflight_clone_source(self) -> None:
+        self.events.append("preflight_rejected")
+        raise RuntimeError("rejected clone source")
+
+
+def _clone_reference() -> TTSCloneReference:
+    wav = b"private-clone-reference"
+    now = datetime(2026, 8, 10, tzinfo=UTC)
+    return TTSCloneReference(
+        summary=TTSCloneReferenceSummary(
+            reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            byte_length=len(wav),
+            duration_ms=250,
+            sample_rate_hz=24_000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=now,
+            updated_at=now,
+        ),
+        reference_text="Private reference transcript",
+        sha256=hashlib.sha256(wav).hexdigest(),
+        wav_bytes=wav,
+    )
 
 
 def _model(model_id: str) -> TTSModelInfo:
@@ -787,6 +899,279 @@ async def test_effective_admission_retains_character_profile_sources_and_revisio
 
 
 @pytest.mark.asyncio
+async def test_character_clone_materialization_lives_through_response_cleanup(
+    tmp_path: Any,
+) -> None:
+    adapter = _CloneCapturingAdapter()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={"mode": "managed"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    materializer = TTSCloneReferenceMaterializer(tmp_path / "clone-runtime")
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        native_capability_reader=_accepted_native_capability_reader(registry),
+        clone_materializer=materializer,
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=13,
+        profile_revision=8,
+        profile_id=UUID("11111111-1111-4111-8111-111111111111"),
+        reference=_clone_reference(),
+    )
+    response: TTSAudioResponse | None = None
+    try:
+        response, _selection = await service.synthesize_effective(
+            text="Character-authored response.",
+            character_profile=character,
+        )
+        assert len(adapter.clone_requests) == 1
+        clone_request = adapter.clone_requests[0]
+        assert clone_request.provider_revision == 1
+        assert clone_request.applied_provider_generation == 0
+        assert clone_request.materialization.voice_ref.exists()
+        assert registry._total_leases() == 1
+
+        await response.aclose()
+        response = None
+
+        assert adapter.events.index("adapter_cleanup") < len(adapter.events)
+        assert not clone_request.materialization.voice_ref.exists()
+        assert registry._total_leases() == 0
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_public_service_rejects_forged_internal_clone_request_before_admission() -> None:
+    adapter = _CloneCapturingAdapter()
+    service, registry = _native_service(adapter, _snapshot(model_id="clone-model"))
+    forged = object.__new__(_AdmittedAudioCppCloneRequest)
+    try:
+        with pytest.raises(TypeError, match="TTS request is invalid"):
+            await service.synthesize(forged)  # type: ignore[arg-type]
+        assert registry._total_leases() == 0
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.events == []
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_staged_generation_does_not_change_admitted_clone_generation(
+    tmp_path: Any,
+) -> None:
+    adapter = _BlockingCloneCapturingAdapter()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                factory=lambda _config: adapter,
+                initial_config={"version": "applied"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        native_capability_reader=_accepted_native_capability_reader(registry),
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "runtime"),
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=3,
+        profile_revision=2,
+        profile_id=UUID("22222222-2222-4222-8222-222222222222"),
+        reference=_clone_reference(),
+    )
+    task = asyncio.create_task(
+        service.synthesize_effective(text="hello", character_profile=character)
+    )
+    response: TTSAudioResponse | None = None
+    try:
+        await _wait_bounded(adapter.ensure_started.wait())
+        result = await registry.stage_provider_configuration(
+            "audio_cpp", {"version": "saved"}, generation=5
+        )
+        assert result is ReconfigureResult.CHANGED
+        adapter.allow_ensure.set()
+        response, _selection = await _wait_bounded(task)
+        assert adapter.clone_requests[0].provider_revision == 1
+        assert adapter.clone_requests[0].applied_provider_generation == 0
+        snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+        assert snapshot.staged_generation == 5
+        assert snapshot.applied_generation == 0
+    finally:
+        adapter.allow_ensure.set()
+        adapter.allow_cleanup.set()
+        if response is not None:
+            await response.aclose()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_clone_direct_resource_release_cannot_bypass_response_cleanup(
+    tmp_path: Any,
+) -> None:
+    adapter = _BlockingCloneCapturingAdapter()
+    adapter.allow_ensure.set()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                factory=lambda _config: adapter,
+                initial_config={},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        native_capability_reader=_accepted_native_capability_reader(registry),
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "runtime"),
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=3,
+        profile_revision=2,
+        profile_id=UUID("33333333-3333-4333-8333-333333333333"),
+        reference=_clone_reference(),
+    )
+    response: Any = None
+    release_task: asyncio.Task[None] | None = None
+    try:
+        response, _selection = await service.synthesize_effective(
+            text="hello", character_profile=character
+        )
+        path = adapter.clone_requests[0].materialization.voice_ref
+        release_task = response.start_resource_release()
+        await _wait_bounded(adapter.cleanup_started.wait())
+        assert path.exists()
+        assert registry._total_leases() == 1
+        assert not release_task.done()
+
+        adapter.allow_cleanup.set()
+        await _wait_bounded(release_task)
+        assert not path.exists()
+        assert registry._total_leases() == 0
+        response = None
+    finally:
+        adapter.allow_cleanup.set()
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_clone_source_rejection_precedes_readiness_and_catalog_evidence(
+    tmp_path: Any,
+) -> None:
+    adapter = _RejectedCloneSourceAdapter()
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("audio_cpp", "audio.cpp", True),
+                factory=lambda _config: adapter,
+                initial_config={},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    native_reads = 0
+
+    async def native_reader(*_args: Any) -> TTSNativeCapabilitySnapshot:
+        nonlocal native_reads
+        native_reads += 1
+        return await _accepted_native_capability_reader(registry)(*_args)
+
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="clone-model"),
+        native_capability_reader=native_reader,
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "runtime"),
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=1,
+        profile_revision=1,
+        profile_id=UUID("44444444-4444-4444-8444-444444444444"),
+        reference=_clone_reference(),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="rejected clone source"):
+            await service.synthesize_effective(
+                text="hello", character_profile=character
+            )
+        assert native_reads == 0
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert not (tmp_path / "runtime").exists()
+        assert registry._total_leases() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_effective_admission_marks_unsaved_studio_preview() -> None:
     adapter = _CapturingAdapter("audio_cpp")
     saved = StudioTTSPreferencesSnapshot()
@@ -922,12 +1307,14 @@ class _PauseOnceService(TTSService):
         reservation: Any,
         *,
         expected_configuration_revision: int | None = None,
+        **kwargs: Any,
     ) -> Any:
         await self._pause_admission(request)
         return await super()._admit_reserved(
             request,
             reservation,
             expected_configuration_revision=expected_configuration_revision,
+            **kwargs,
         )
 
 
@@ -1321,11 +1708,13 @@ class _GateExitPauseService(TTSService):
         reservation: Any,
         *,
         expected_configuration_revision: int | None = None,
+        **kwargs: Any,
     ) -> Any:
         operation = await super()._admit_reserved(
             request,
             reservation,
             expected_configuration_revision=expected_configuration_revision,
+            **kwargs,
         )
         return await self._pause_admit_return(operation)
 

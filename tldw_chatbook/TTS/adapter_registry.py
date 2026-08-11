@@ -113,10 +113,14 @@ class TTSAdapterLease:
         self,
         provider_id: str,
         adapter: TTSAdapter,
+        configuration_revision: int,
+        applied_generation: int,
         release_callback: Callable[[], Awaitable[None]],
     ) -> None:
         self.provider_id = provider_id
         self.adapter = adapter
+        self.configuration_revision = configuration_revision
+        self.applied_generation = applied_generation
         self._release_callback = release_callback
         self._release_task: asyncio.Future[None] | None = None
 
@@ -343,11 +347,19 @@ class TTSAdapterRegistry:
                 )
             record = slot.active
             record.leases += 1
+            configuration_revision = slot.revision
+            applied_generation = slot.applied_generation
 
         async def release() -> None:
             await self._release(slot, record)
 
-        return TTSAdapterLease(canonical_id, record.adapter, release)
+        return TTSAdapterLease(
+            canonical_id,
+            record.adapter,
+            configuration_revision,
+            applied_generation,
+            release,
+        )
 
     async def get_catalog(
         self, provider_id: str, refresh: bool = False

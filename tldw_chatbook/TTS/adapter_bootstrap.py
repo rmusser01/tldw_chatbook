@@ -27,8 +27,12 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_reference_materialization import (
+    TTSCloneReferenceMaterializer,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferenceStore
 from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.config import get_user_data_dir
 
 
 def _create_audio_cpp_adapter(
@@ -107,6 +111,9 @@ def build_default_tts_service(
         aliases={},
     )
     studio_preferences = StudioTTSPreferenceStore()
+    clone_materializer = TTSCloneReferenceMaterializer(
+        get_user_data_dir() / "tts_clone_materializations"
+    )
     return TTSService(
         registry,
         max_concurrent_operations=4,
@@ -115,4 +122,5 @@ def build_default_tts_service(
             studio_preferences.load(migrate=False).snapshot
         ),
         audio_cpp_supervisor=supervisor,
+        clone_materializer=clone_materializer,
     )
