@@ -43,7 +43,10 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    resolve_effective_state,
+)
 
 
 def fence(name, args):
@@ -90,6 +93,7 @@ def make_service(
     extra_specs=(),
     specs=None,
     todo_store: SessionTodoStore | None = None,
+    resolve_state=None,
 ):
     """Assemble the run exactly as the bridge does: registry with builtins +
     the local provider, the build_local_review_hook batch hook, and the
@@ -108,8 +112,12 @@ def make_service(
     provider = LocalToolProvider(
         workspace_root=workspace,
         specs=base + list(extra_specs),
-        resolve_state=lambda hub: (
-            state or EffectiveToolState(state="ask", origin="global_default")
+        resolve_state=(
+            resolve_state
+            if resolve_state is not None
+            else lambda hub: (
+                state or EffectiveToolState(state="ask", origin="global_default")
+            )
         ),
     )
 
@@ -623,6 +631,105 @@ def test_todo_create_mutates_session_store_after_approve_once(db, workspace):
     assert pending.llm_name == "todo_create"
     assert pending.arguments == create_args
     assert pending.reason == "risk_floored"
+
+
+def test_find_load_path_todo_get_reads_created_task_without_mutation_floor(
+    db, workspace
+):
+    """A read follows a gated create through the same real provider/store.
+
+    The inherited server allow is deliberately resolved by the production
+    permission function. It floors ``todo_create`` because that HubTool carries
+    ``mutates``, while the empty-tag ``todo_get`` remains allowed and therefore
+    adds no second approval round trip.
+    """
+    todo_store = SessionTodoStore()
+    permission_payload = {
+        "profiles": {
+            "default": {
+                "global_default": "ask",
+                "servers": {LOCAL_SERVER_KEY: {"default": "allow"}},
+            }
+        }
+    }
+    resolved = {}
+
+    def resolve_state(hub):
+        effective = resolve_effective_state(permission_payload, hub)
+        resolved[hub.name] = (hub.tags, effective)
+        return effective
+
+    create_args = {
+        "content": "Write the report",
+        "activeForm": "Writing the report",
+    }
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [
+            fence("find_tools", {"query": "todo"}),
+            fence(
+                "load_tools",
+                {"ids": ["local:todo_create", "local:todo_get"]},
+            ),
+            fence("todo_create", create_args),
+            fence("todo_get", {"id": "1"}),
+            "Task created and read back.",
+        ],
+        {"todo_create": "approve_once"},
+        approval_calls,
+        todo_store=todo_store,
+        resolve_state=resolve_state,
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("todo_create", "todo_get"),
+        budget=RunBudget(max_steps=20, max_model_turns=10),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "track and reread this task"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "Task created and read back."
+    called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
+    assert called == ["find_tools", "load_tools", "todo_create", "todo_get"]
+
+    created = {
+        "id": "1",
+        "version": 1,
+        "content": "Write the report",
+        "status": "pending",
+        "activeForm": "Writing the report",
+    }
+    compact_created = json.dumps(
+        created, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+    tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
+    assert [s.tool_name for s in tool_results] == called
+    assert tool_results[-2].result == compact_created
+    assert tool_results[-1].result == compact_created
+    assert todo_store.get("1") == created
+    assert compact_created in str(chat.calls[-1]["messages_payload"])
+
+    assert len(approval_calls) == 1
+    assert [pending.llm_name for pending in approval_calls[0]] == ["todo_create"]
+    create_tags, create_state = resolved["todo_create"]
+    assert create_tags == ("mutates",)
+    assert create_state.state == "ask"
+    assert create_state.risk_floored is True
+    get_tags, get_state = resolved["todo_get"]
+    assert get_tags == ()
+    assert get_state.state == "allow"
+    assert get_state.origin == "server_default"
+    assert get_state.risk_floored is False
 
 
 # --- Phase 3b-ii: git tool reachable over the find/load path -----------------

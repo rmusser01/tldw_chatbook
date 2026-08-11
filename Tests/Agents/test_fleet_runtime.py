@@ -21,6 +21,7 @@ was written here and moved next to ``ScriptedChat`` in Task 6.5, when
 flipping the default made nine other suites need it too.
 """
 
+import json
 import threading
 import time
 from collections import Counter
@@ -51,7 +52,12 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.Agents.local_tool_provider import (
+    LocalToolProvider,
+    _default_specs,
+)
 from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Agents.tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     WAIT_AGENTS_SCHEMA,
@@ -60,6 +66,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from Tests.Agents.conftest import (
     join_fleet_children,
@@ -115,6 +122,57 @@ class RunIdProbeProvider:
         return ToolResult(ok=True, content=run_id or "<none>")
 
 
+class _FleetTodoBarrierStore(SessionTodoStore):
+    """Pause two real provider calls at the shared store method boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._barrier: threading.Barrier | None = None
+        self._barrier_operation: str | None = None
+        self._arrival_lock = threading.Lock()
+        self._arrivals: list[tuple[str, str]] = []
+
+    def arm(self, operation: str) -> None:
+        self._barrier_operation = operation
+        self._barrier = threading.Barrier(2, timeout=_JOIN_TIMEOUT)
+
+    def arrivals(self, operation: str) -> set[str]:
+        with self._arrival_lock:
+            return {run_id for name, run_id in self._arrivals if name == operation}
+
+    def _meet(self, operation: str) -> None:
+        if self._barrier_operation != operation or self._barrier is None:
+            return
+        run_id = current_run_id()
+        with self._arrival_lock:
+            self._arrivals.append((operation, run_id))
+        self._barrier.wait()
+
+    def create(self, **kwargs):
+        self._meet("create")
+        return super().create(**kwargs)
+
+    def update(self, **kwargs):
+        self._meet("update")
+        return super().update(**kwargs)
+
+
+def _todo_provider(workspace, store: SessionTodoStore) -> LocalToolProvider:
+    """Build one real provider whose four task handlers close over ``store``."""
+    todo_specs = [
+        spec
+        for spec in _default_specs(workspace, todo_store=store)
+        if spec.name in {"todo_create", "todo_update", "todo_get", "todo_list"}
+    ]
+    return LocalToolProvider(
+        workspace_root=workspace,
+        specs=todo_specs,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="allow", origin="tool_override"
+        ),
+    )
+
+
 @pytest.fixture()
 def db(tmp_path):
     return AgentRunsDB(tmp_path / "runs.db", client_id="test")
@@ -146,9 +204,7 @@ def make_fleet_service(
     registry.register_provider(BuiltinToolProvider())
     for provider in providers:
         registry.register_provider(provider)
-    chat = FleetChat(
-        parent_replies, child_replies, allow_unconsumed=allow_unconsumed
-    )
+    chat = FleetChat(parent_replies, child_replies, allow_unconsumed=allow_unconsumed)
     coordinator = FleetCoordinator(max_live=max_live, clock=time.monotonic)
     service = AgentService(
         db=db,
@@ -366,6 +422,144 @@ def test_two_children_run_concurrently_and_wait_collects_both(db):
     assert "answer one" in final_payload and "answer two" in final_payload
     assert coordinator.all_finished()
     assert [h.status for h in coordinator.snapshot()] == [RUN_DONE, RUN_DONE]
+
+
+def test_parent_and_fleet_child_share_todo_store_for_concurrent_creates(db, tmp_path):
+    """Parent and child enter one store concurrently and retain both creates."""
+    store = _FleetTodoBarrierStore()
+    store.arm("create")
+    provider = _todo_provider(tmp_path, store)
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("todo_create", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=2),
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "create child task"}),
+            fence("todo_create", {"content": "Parent task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "both tasks created",
+        ],
+        {
+            "create child task": [
+                fence("todo_create", {"content": "Child task"}),
+                "child created its task",
+            ]
+        },
+        providers=(provider,),
+    )
+
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "create both tasks"}],
+        config=config,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "both tasks created"
+    child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
+    assert child["status"] == RUN_DONE
+    assert child["id"] != run_id
+    assert store.arrivals("create") == {run_id, child["id"]}
+
+    parent_results = _tool_results(db.get_run(run_id), "todo_create")
+    child_results = _tool_results(child, "todo_create")
+    assert len(parent_results) == len(child_results) == 1
+    created = [json.loads(parent_results[0]), json.loads(child_results[0])]
+    assert {record["id"] for record in created} == {"1", "2"}
+    assert {record["content"] for record in created} == {
+        "Parent task",
+        "Child task",
+    }
+    assert {record["status"] for record in created} == {"pending"}
+    assert {record["version"] for record in created} == {1}
+    assert {(record["id"], record["content"]) for record in store.list_after(None)} == {
+        (record["id"], record["content"]) for record in created
+    }
+    assert coordinator.all_finished()
+
+
+def test_parent_and_fleet_child_preserve_updates_to_distinct_tasks(db, tmp_path):
+    """Concurrent version-1 updates to separate IDs both survive at version 2."""
+    store = _FleetTodoBarrierStore()
+    first = store.create(content="Parent-owned task")
+    second = store.create(content="Child-owned task")
+    store.arm("update")
+    provider = _todo_provider(tmp_path, store)
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("todo_update", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=2),
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "update child task"}),
+            fence(
+                "todo_update",
+                {
+                    "id": first["id"],
+                    "expected_version": 1,
+                    "status": "completed",
+                },
+            ),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "both tasks updated",
+        ],
+        {
+            "update child task": [
+                fence(
+                    "todo_update",
+                    {
+                        "id": second["id"],
+                        "expected_version": 1,
+                        "status": "in_progress",
+                    },
+                ),
+                "child updated its task",
+            ]
+        },
+        providers=(provider,),
+    )
+
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "update both tasks"}],
+        config=config,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
+    assert child["status"] == RUN_DONE
+    assert child["id"] != run_id
+    assert store.arrivals("update") == {run_id, child["id"]}
+
+    parent_results = _tool_results(db.get_run(run_id), "todo_update")
+    child_results = _tool_results(child, "todo_update")
+    assert len(parent_results) == len(child_results) == 1
+    parent_record = json.loads(parent_results[0])
+    child_record = json.loads(child_results[0])
+    assert parent_record == {
+        "id": first["id"],
+        "version": 2,
+        "content": "Parent-owned task",
+        "status": "completed",
+    }
+    assert child_record == {
+        "id": second["id"],
+        "version": 2,
+        "content": "Child-owned task",
+        "status": "in_progress",
+    }
+    assert store.get(first["id"]) == parent_record
+    assert store.get(second["id"]) == child_record
+    assert coordinator.all_finished()
 
 
 def test_spawn_returns_handle_without_blocking(db):
@@ -1163,9 +1357,7 @@ def test_fleet_tools_are_primary_only(db):
     parent_prompt = chat.calls[0]["messages_payload"][0]["content"]
     assert WAIT_AGENTS_TOOL_NAME in parent_prompt
     assert CHECK_AGENTS_TOOL_NAME in parent_prompt
-    child_prompt = chat.child_calls["child task"][0]["messages_payload"][0][
-        "content"
-    ]
+    child_prompt = chat.child_calls["child task"][0]["messages_payload"][0]["content"]
     assert WAIT_AGENTS_TOOL_NAME not in child_prompt
     assert CHECK_AGENTS_TOOL_NAME not in child_prompt
     # The child's hallucinated call falls through to the ordinary
@@ -2104,9 +2296,7 @@ def test_wait_agents_refetches_one_child_at_the_full_per_child_cap(db):
     def refetch_first():
         # The handle ids only exist once both children have been started,
         # so the id to re-fetch is read at call time from the coordinator.
-        handle = next(
-            h for h in coordinator.snapshot() if h.task == "task one"
-        )
+        handle = next(h for h in coordinator.snapshot() if h.task == "task one")
         captured["handle_id"] = handle.handle_id
         return fence(WAIT_AGENTS_TOOL_NAME, {"ids": [handle.handle_id]})
 
@@ -2201,11 +2391,7 @@ def test_wait_agents_cancellation_stops_children_and_ends_the_run(db):
     service, _chat, coordinator = make_fleet_service(
         db,
         [fence(SPAWN_TOOL_NAME, {"task": "busy"}), cancel_then_wait],
-        {
-            "busy": [
-                fence("calculator", {"expression": f"1+{n}"}) for n in range(60)
-            ]
-        },
+        {"busy": [fence("calculator", {"expression": f"1+{n}"}) for n in range(60)]},
         # The child is CANCELLED mid-flight: its remaining scripted turns
         # are meant to go unused -- that is the point of the test.
         allow_unconsumed=True,
@@ -2566,9 +2752,7 @@ def test_child_thread_exception_finishes_the_handle_as_error(db):
     assert "child thread blew up" in handle.error
 
 
-def test_setup_phase_exception_still_persists_a_terminal_db_status(
-    db, monkeypatch
-):
+def test_setup_phase_exception_still_persists_a_terminal_db_status(db, monkeypatch):
     """A setup-phase exception must not leave the child's DB row `running`.
 
     `_run_one`'s own `except Exception` (which calls `_persist`) wraps
@@ -2892,9 +3076,7 @@ def test_failed_child_is_reported_in_wait_result(db):
         model="test-model",
         system_prompt="You are helpful.",
         allowed_tools=("calculator", SPAWN_TOOL_NAME),
-        budget=RunBudget(
-            max_steps=40, max_model_turns=40, max_subagents=3
-        ),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=3),
     )
     run_id, outcome = service.run_turn(
         conversation_id="c",
