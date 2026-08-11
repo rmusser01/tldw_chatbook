@@ -53,4 +53,13 @@ Gated the one selection the gate let through, and enforced it at the submit seam
 Verified end-to-end: `Tests/integration/test_library_ingest_flow.py::test_empty_folder_creates_no_job_at_all` stages a real empty directory, runs the real pre-flight, and asserts the registry holds NO job after a submit. Mutating the guard to a no-op puts the manufactured job straight back.
 
 Modified: `Library/library_ingest_state.py`, `UI/Screens/library_screen.py`, `Tests/Library/test_library_ingest_state.py`, `Tests/integration/test_library_ingest_flow.py`, `Docs/User_Guide/library/import-and-export.md`.
+**xhigh review round (2026-08-10)** — the gate was right; one of its two sentences was not, and this task's own hard block is what made that expensive.
+
+`INGEST_EMPTY_SELECTION_COPY` ("This folder is empty…") fired for ANY folder the pre-flight measured at `total_files == 0` — including every folder whose entries `_collect_files` deliberately passes over: symlinks, dot-entries, unreadable subfolders. A folder of symlinked media was therefore told it was empty AND, since this task added the submit-side gate, refused outright: a wrong diagnosis turned into a dead end with no way forward stated.
+
+The pre-flight is the only layer that can tell the two apart, so `_collect_files` now returns how many entries it skipped and `PreflightResult` carries `skipped_entries`. `total_files == 0 and skipped_entries` gets its own sentence and its own recovery — "Nothing in this folder could be scanned — N entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." — while a genuinely empty folder keeps AC#2's original wording.
+
+The BLOCK itself is correct and stays: `submit_library_ingest_job` expands a folder with `collect_directory_files`, the public seam over the very same `_collect_files`, so the pipeline would collect nothing and manufacture exactly the "✗ failed · <folder>" receipt this task exists to prevent. The test asserts that equivalence directly (it calls `collect_directory_files` on the fixture and asserts it returns no files) rather than assuming it — the gate is only allowed to refuse what the pipeline genuinely cannot process.
+
+Mutation-checked: forcing the empty sentence back for all zero-file folders turns the new test red. Modified: `Library/ingest_preflight.py`, `Library/ingest_types.py`, `Library/library_ingest_state.py`, `Tests/Library/test_ingest_preflight.py`, `Tests/Library/test_library_ingest_state.py`, `Docs/User_Guide/library/import-and-export.md`.
 <!-- SECTION:NOTES:END -->

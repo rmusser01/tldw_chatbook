@@ -65,10 +65,11 @@ def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path
         A tuple of ``(files, truncated)``; ``truncated`` is ``True`` when
         files beyond ``scan_limit`` were left uncollected.
     """
-    return _collect_files(directory, scan_limit)
+    files, truncated, _skipped = _collect_files(directory, scan_limit)
+    return files, truncated
 
 
-def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
+def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool, int]:
     """Recursively collect files under ``p`` up to ``scan_limit``.
 
     Symlinks and hidden entries (names starting with ``.``) are skipped to avoid
@@ -80,19 +81,33 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
         scan_limit: Maximum number of files to collect.
 
     Returns:
-        A tuple of ``(files, truncated)``. ``truncated`` is ``True`` when there
-        were additional files beyond ``scan_limit`` that could not be collected.
+        A tuple of ``(files, truncated, skipped)``. ``truncated`` is ``True``
+        when there were additional files beyond ``scan_limit`` that could not
+        be collected. ``skipped`` counts the entries the scan passed over
+        without collecting anything from them -- symlinks, dot-entries, and
+        unreadable folders (xhigh review of task-14823: ``total_files == 0``
+        alone cannot tell an EMPTY folder from one whose every entry was
+        skipped, and the ingest gate asserted "This folder is empty" about
+        both). Entries left uncollected because the limit was reached are
+        ``truncated``, not ``skipped``.
     """
     files: list[Path] = []
     truncated = False
+    skipped = 0
 
     try:
         entries = list(p.iterdir())
     except OSError:
-        return files, truncated
+        # The directory itself could not be read. It yielded nothing, but it
+        # is emphatically not EMPTY -- report it as one skipped entry so the
+        # caller never diagnoses "this folder is empty" from a permission
+        # problem (the parent adds this to its own tally when the
+        # unreadable directory is a child).
+        return files, truncated, 1
 
     for entry in entries:
         if entry.is_symlink() or entry.name.startswith("."):
+            skipped += 1
             continue
 
         try:
@@ -101,13 +116,16 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
                 if remaining <= 0:
                     # The limit is already reached; only mark truncated if this
                     # directory actually contains files we cannot collect.
-                    sub_files, _ = _collect_files(entry, 1)
+                    sub_files, _, _ = _collect_files(entry, 1)
                     if sub_files:
                         truncated = True
                         break
                     continue
-                sub_files, sub_truncated = _collect_files(entry, remaining)
+                sub_files, sub_truncated, sub_skipped = _collect_files(
+                    entry, remaining
+                )
                 files.extend(sub_files)
+                skipped += sub_skipped
                 if sub_truncated:
                     truncated = True
                     break
@@ -116,10 +134,16 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
                     truncated = True
                     break
                 files.append(entry)
+            else:
+                # Neither a file nor a directory (a socket, a FIFO, a
+                # vanished entry): nothing to collect, and the user should
+                # not be told the folder was empty because of it.
+                skipped += 1
         except PermissionError:
+            skipped += 1
             continue
 
-    return files, truncated
+    return files, truncated, skipped
 
 
 #: HTTP statuses that mean "this resource is not there", as distinct from "the
@@ -252,6 +276,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     empty_files: list[str] = []
     truncated = False
     total_files = 0
+    skipped_entries = 0
     path_invalid = False
     source_is_url = is_http_url(path_or_url)
 
@@ -294,7 +319,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
                 type_groups.setdefault(group, []).append(str(p))
                 warnings.extend(get_tooling_warnings(group))
         elif p.is_dir():
-            files, truncated = _collect_files(p, scan_limit)
+            files, truncated, skipped_entries = _collect_files(p, scan_limit)
             total_files = len(files)
             for file_path in files:
                 size = _statted_size(file_path)
@@ -325,4 +350,5 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
         path_invalid=path_invalid,
         empty_files=tuple(empty_files),
         source_is_url=source_is_url,
+        skipped_entries=skipped_entries,
     )

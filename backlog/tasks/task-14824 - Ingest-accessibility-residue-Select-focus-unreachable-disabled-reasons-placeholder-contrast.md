@@ -107,4 +107,36 @@ Files: ``css/components/_agentic_terminal.tcss``, ``css/core/_variables.tcss``
 (+ rebuilt bundle), ``Widgets/Library/library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_structural.py``,
 ``Docs/User_Guide/library/import-and-export.md``.
+
+**xhigh review round: (2) labelled healthy panels broken.** The blocked
+clause this task put on the collapsible title counted EVERY disabled
+field, so an ordinary closed within-form gate -- a field greyed because a
+sibling toggle is off -- read as a broken panel. Measured on the shipped
+schemas with every package installed: ``Web pages — 2 options unavailable
+— single-page fetch selected`` (the DEFAULT panel), ``PDF documents — 3
+options unavailable — needs Enable OCR on``, ``Audio & video — 3 options
+unavailable — needs the parakeet-onnx provider``. Three fully working
+panels leading their receipt with a failure.
+
+The clause was for PACKAGING gates -- work the user must do outside the
+app, and the reasons a keyboard user cannot reach at all because Textual
+drops a disabled widget from the tab order. ``build_type_group_title``
+now counts only those (``_is_packaging_gate``: a ``depends_on`` feature
+that is not installed, the same first branch ``field_disabled_state``
+evaluates and in the same order). Disabled fields still contribute no
+value pairs, whatever gate closed them (task-14825 #7 is unchanged);
+what changes is only what counts as "unavailable". The gated cases are
+untouched: nothing installed still reads ``PDF documents — 3 options
+unavailable — needs PDF processing installed`` (was 4: ``ocr_backend`` is
+sibling-gated, not packaged) and ``Audio & video — 13 options unavailable
+— needs Audio processing installed``. ``_preferred_blocked_reason`` is
+gone with it: the preference it applied over a mixed list is now
+structural, because the list only ever holds packaging reasons.
+
+Pinned by ``test_a_healthy_panel_does_not_lead_with_options_unavailable``
+and ``test_a_packaging_gate_still_leads_the_panel_receipt``
+(``Tests/UI/test_library_ingest_canvas.py``); forcing
+``_is_packaging_gate`` true fails both plus
+``test_option_panel_title_reads_as_plain_language``. AC#2 still holds --
+a genuinely blocked group still states its reason on a tab stop.
 <!-- SECTION:NOTES:END -->

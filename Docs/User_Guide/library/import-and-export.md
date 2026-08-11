@@ -70,7 +70,17 @@ In server mode the **Export** rail row is disabled, with the tooltip
   so you can tell which part of the number an install would change. The
   line stays on screen while a gate blocks Start (a bad option value, a
   selection with nothing importable), so the numbers you were reasoning
-  about don't vanish at the moment you need them.
+  about don't vanish at the moment you need them — it goes quiet only
+  when this runtime has no import path at all (no job queue, no media
+  database), where a count would promise something nothing can deliver.
+  Two hedges are carried rather than rounded off: when the duplicate
+  check hit its candidate cap the match count is a floor and the import
+  count is therefore a ceiling, so the line reads "at most 5 will
+  import · at least 20 will match"; and when the import is aimed at a
+  **server**, the local tooling inventory says nothing about it, so the
+  line reads "5 will be sent to the server · server tooling isn't
+  checked from here" rather than pretending to know what the server has
+  installed.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
   exist ("This queue: 1 parsing · 2 queued · 1 done" — task-2859: the
   "This queue:" prefix replaced a trailing "— in queue" suffix that
@@ -120,10 +130,10 @@ the rest of the session.
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for an empty folder, "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Neither case leaves a failed row behind: the import never starts. |
+| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. None of these leaves a failed row behind: the import never starts. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
-| "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. |
+| "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
@@ -462,6 +472,25 @@ missing-tooling failure, and an unclassifiable cause says nothing at
 all; and a selection with nothing importable (an empty folder, or one
 whose files are all unsupported) gates Start with its own stated reason
 instead of manufacturing a permanent "✗ failed · <folder>" receipt.*
+
+*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (xhigh
+review of tasks 14820/14821/14823): the forecast now knows WHICH backend
+it is forecasting. Local tooling gaps are local facts, so a server import
+is no longer condemned by this machine's inventory — five recordings with
+no local audio extra read "0 will import · 5 will fail (need tooling)"
+for a batch the server would have transcribed in full, and now read "5
+will be sent to the server · server tooling isn't checked from here",
+which is the most this app can honestly claim about a machine it cannot
+inspect. A capped duplicate check now hedges the import count as well as
+the match count. The forecast goes quiet when the runtime has no import
+path at all, rather than promising imports beside a permanently dead
+Start. A folder whose entries were all skipped (symlinks, hidden files,
+unreadable subfolders) is no longer told it is empty — it gets its own
+sentence and its own recovery. And the retry advice stopped claiming
+tooling was "named above" when nothing named any: a transient executor
+teardown is no longer sentenced to "retrying now will fail the same
+way", and the generic "no text could be extracted" refusal states the
+determinism without pointing at a remedy that was never given.*
 
 *Verified against feat/media-ingest-forecast-truth — 2026-08-10 (tasks
 14822/14824/14825/14826): missing optional tooling no longer prints a

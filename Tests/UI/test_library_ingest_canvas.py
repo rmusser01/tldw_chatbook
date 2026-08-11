@@ -43,6 +43,9 @@ class _MessageRecordingHost(App):
         self._state = state
         self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
         self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
+        self.tooling_detail_toggles: list[
+            LibraryIngestCanvas.ToolingDetailToggled
+        ] = []
         self.parakeet_install_requests = 0
         self.transcribe_cpp_gguf_requests = 0
 
@@ -56,6 +59,12 @@ class _MessageRecordingHost(App):
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def _record_panel_toggle(self, event: LibraryIngestCanvas.OptionPanelToggled) -> None:
         self.panel_toggles.append(event)
+
+    @on(LibraryIngestCanvas.ToolingDetailToggled)
+    def _record_tooling_detail_toggle(
+        self, event: LibraryIngestCanvas.ToolingDetailToggled
+    ) -> None:
+        self.tooling_detail_toggles.append(event)
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
     def _record_parakeet_install_request(
@@ -119,7 +128,16 @@ async def test_preflight_warnings_render_with_prefix():
         form=_default_form(),
         preflight=PreflightResult(
             type_groups={},
-            warnings=[{"label": "PDF processing", "hint": "PyMuPDF is not installed."}],
+            warnings=[
+                {
+                    # Production tooling warnings ALWAYS carry ``feature``
+                    # (get_tooling_warnings); a featureless warning is an
+                    # advisory and renders elsewhere by design.
+                    "feature": "pdf_processing",
+                    "label": "PDF processing",
+                    "hint": "PyMuPDF is not installed.",
+                }
+            ],
             errors=[],
             total_size=0,
             truncated=False,
@@ -268,8 +286,16 @@ async def test_multiple_errors_and_warnings_are_enumerated():
         preflight=PreflightResult(
             type_groups={},
             warnings=[
-                {"label": "PDF processing", "hint": "PyMuPDF is not installed."},
-                {"label": "Audio", "hint": "ffmpeg not found."},
+                {
+                    "feature": "pdf_processing",
+                    "label": "PDF processing",
+                    "hint": "PyMuPDF is not installed.",
+                },
+                {
+                    "feature": "audio_processing",
+                    "label": "Audio",
+                    "hint": "ffmpeg not found.",
+                },
             ],
             errors=["Path not found", "URL unreachable"],
             total_size=0,
@@ -303,7 +329,9 @@ async def test_error_and_warning_markup_is_escaped():
         form=_default_form(),
         preflight=PreflightResult(
             type_groups={},
-            warnings=[{"label": "Hint", "hint": "[/bracket]"}],
+            warnings=[
+                {"feature": "pdf_processing", "label": "Hint", "hint": "[/bracket]"}
+            ],
             errors=["[bold]not bold[/bold]"],
             total_size=0,
             truncated=False,
@@ -1174,10 +1202,15 @@ async def test_option_panel_title_reads_as_plain_language():
     assert "pymupdf4llm" not in title
     # (task-14825 #7) "Enable OCR" is gated by the chosen PDF engine, so the
     # control reads "— needs the docext engine". Advertising its value in
-    # the title told the user they had a setting they cannot change; the
-    # title states the blocked count instead.
+    # the title told the user they had a setting they cannot change, so it
+    # is dropped from the receipt.
     assert "Enable OCR: off" not in title, title
-    assert "unavailable" in title, title
+    # (xhigh review round, G4) ...but a closed WITHIN-FORM gate is the form
+    # working as designed, not a broken panel: with every package installed
+    # this title used to lead "3 options unavailable — needs Enable OCR on".
+    # The packaging-gated case is asserted in
+    # ``test_a_packaging_gate_still_leads_the_panel_receipt``.
+    assert "unavailable" not in title, title
 
 
 def test_warning_line_does_not_repeat_itself():
@@ -2239,10 +2272,24 @@ async def test_tooling_warnings_collapse_to_one_summary_line():
 
 
 class _StubForecast:
-    """The only two forecast reads the fold makes (task-14820's object)."""
+    """The forecast reads the fold makes (task-14820's object).
 
-    def __init__(self, consent_affected: int, staged_total: int = 0) -> None:
-        self.consent_affected = consent_affected
+    (xhigh review round, G1) Carries the doomed/degraded SPLIT as well as
+    the affected total, because the fold's verb follows it: a stub with
+    only ``consent_affected`` would exercise nothing but the defensive
+    branch, which is how "may fail" survived over 21 certain failures.
+    """
+
+    def __init__(
+        self,
+        *,
+        doomed: int = 0,
+        degraded: int = 0,
+        staged_total: int = 0,
+    ) -> None:
+        self.will_fail_tooling = doomed
+        self.at_risk = degraded
+        self.consent_affected = doomed + degraded
         if staged_total:
             self.staged_total = staged_total
 
@@ -2264,22 +2311,32 @@ def test_tooling_summary_line_names_affected_files_from_the_one_forecast():
     )
 
     with_total = ingest_tooling_summary_line(
-        _StubWarnedState(11, _StubForecast(3, staged_total=21))
+        _StubWarnedState(11, _StubForecast(degraded=3, staged_total=21))
     )
     assert with_total == (
         "⚠ 3 of 21 files need optional tooling — those imports may fail."
     ), with_total
 
     without_total = ingest_tooling_summary_line(
-        _StubWarnedState(11, _StubForecast(1))
+        _StubWarnedState(11, _StubForecast(degraded=1))
     )
     assert without_total == (
         "⚠ 1 file needs optional tooling — that import may fail."
     ), without_total
 
+    # The same shape when the missing feature is REQUIRED: certain, not
+    # possible (xhigh review round, G1).
+    doomed = ingest_tooling_summary_line(
+        _StubWarnedState(11, _StubForecast(doomed=21, staged_total=21))
+    )
+    assert doomed == (
+        "⚠ 21 of 21 files need tooling that isn't installed — "
+        "those imports will fail."
+    ), doomed
+
     # A forecast that puts NO staged file at risk still explains the block.
     none_affected = ingest_tooling_summary_line(
-        _StubWarnedState(4, _StubForecast(0))
+        _StubWarnedState(4, _StubForecast())
     )
     assert none_affected == (
         "⚠ 4 optional components aren't installed — "
@@ -2348,8 +2405,15 @@ async def test_one_combined_install_command_is_offered_outside_the_fold():
 @pytest.mark.asyncio
 async def test_per_extra_copy_labels_have_one_shape_at_any_count():
     """AC#4: the ``(extra)`` suffix used to VANISH at exactly one command,
-    so the same control had two label shapes."""
-    for count in (1, 4):
+    so the same control had two label shapes.
+
+    (xhigh review round, G5) The per-extra family now only exists where it
+    disambiguates -- at two or more commands. At exactly one, the combined
+    button above the fold IS that command and the pair rendered it twice;
+    ``test_a_single_install_command_yields_a_single_copy_control`` pins
+    that case.
+    """
+    for count in (2, 4):
         app = _CanvasHost(_warned_state(count))
         async with app.run_test() as pilot:
             labels = [
@@ -2498,3 +2562,422 @@ async def test_opening_the_tooling_fold_is_not_reported_as_an_option_panel():
     assert app.panel_toggles == [], (
         f"the fold leaked an option-panel toggle: {app.panel_toggles}"
     )
+
+
+# --- xhigh review round: the fold must not contradict its own forecast -------
+#
+# G1, the arc's own headline defect re-created inside the fold it added: the
+# summary hard-coded "optional tooling" and "may fail" while
+# ``consent_affected`` sums DOOMED (required-missing) and DEGRADED
+# (optional-missing) files. Live: 21 PDFs without the pdf extra rendered
+# "⚠ 21 of 21 files need optional tooling — those imports may fail." beside a
+# commit line reading "0 will import · 21 will fail (need tooling)" and a
+# consent line reading "21 files will fail without more tooling".
+
+
+def _pdf_warning() -> dict[str, str]:
+    """The pdf group's REQUIRED feature -- a doomed selection."""
+    return {
+        "feature": "pdf_processing",
+        "label": "PDF processing",
+        "hint": "PDF ingestion",
+        "command": 'pip install -e ".[pdf]"',
+    }
+
+
+def _pdf_optional_warning() -> dict[str, str]:
+    """An OPTIONAL pdf feature -- degraded, not doomed."""
+    return {
+        "feature": "docling",
+        "label": "Docling",
+        "hint": "layout-aware PDF extraction",
+        "command": 'pip install -e ".[docling]"',
+    }
+
+
+def _ebook_optional_warning() -> dict[str, str]:
+    return {
+        "feature": "html2text",
+        "label": "html2text",
+        "hint": "ebook HTML conversion",
+        "command": 'pip install -e ".[ebook]"',
+    }
+
+
+def _forecast_state(type_groups, warnings):
+    total = sum(len(files) for files in type_groups.values())
+    return build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups=type_groups,
+            warnings=warnings,
+            errors=[],
+            total_size=1024,
+            truncated=False,
+            total_files=total,
+        ),
+    )
+
+
+def _doomed_state(file_count: int = 21):
+    return _forecast_state(
+        {"pdf": [f"/tmp/pdfs/{i}.pdf" for i in range(file_count)]},
+        [_pdf_warning()],
+    )
+
+
+def _degraded_state(file_count: int = 3):
+    return _forecast_state(
+        {"pdf": [f"/tmp/pdfs/{i}.pdf" for i in range(file_count)]},
+        [_pdf_optional_warning()],
+    )
+
+
+def _mixed_forecast_state():
+    return _forecast_state(
+        {
+            "pdf": [f"/tmp/mixed/{i}.pdf" for i in range(5)],
+            "ebook": [f"/tmp/mixed/{i}.epub" for i in range(3)],
+        },
+        [_pdf_warning(), _ebook_optional_warning()],
+    )
+
+
+def test_the_fold_line_says_will_fail_for_a_doomed_selection():
+    """G1: 21 PDFs with the REQUIRED pdf feature missing are certain
+    failures. The fold said "need optional tooling — those imports may
+    fail." while the commit line beside it said "21 will fail (need
+    tooling)" -- two forecasts for one selection, which is the exact
+    defect this arc exists to remove."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        forecast_consent_line,
+        forecast_summary_line,
+    )
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    state = _doomed_state(21)
+    forecast = state.forecast
+    assert forecast is not None
+    assert (forecast.will_fail_tooling, forecast.at_risk) == (21, 0), (
+        f"precondition: the forecast must call these doomed: {forecast}"
+    )
+
+    line = ingest_tooling_summary_line(state)
+    assert "will fail" in line, (
+        f"the fold still softens a certain failure: {line!r} beside "
+        f"{forecast_summary_line(forecast)!r}"
+    )
+    assert "may fail" not in line, line
+    assert "optional" not in line, (
+        f"required tooling described as optional: {line!r}"
+    )
+    assert "21 of 21 files" in line, line
+    # And it must not disagree with the two lines derived from the same
+    # object at the commit point.
+    assert "will fail" in forecast_summary_line(forecast)
+    assert "will fail without more tooling" in forecast_consent_line(forecast)
+
+
+def test_the_fold_line_keeps_may_fail_for_a_degraded_selection():
+    """G1's other half: an OPTIONAL feature only degrades the import, and
+    the softer wording is correct there."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    state = _degraded_state(3)
+    forecast = state.forecast
+    assert (forecast.will_fail_tooling, forecast.at_risk) == (0, 3), forecast
+    line = ingest_tooling_summary_line(state)
+    assert "may fail" in line and "will fail" not in line, line
+    assert "optional tooling" in line, line
+    assert "3 of 3 files" in line, line
+
+
+def test_the_fold_line_states_both_halves_of_a_mixed_selection():
+    """G1: a selection with both doomed and degraded files must say so --
+    collapsing them into one verb is what made the fold lie."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    state = _mixed_forecast_state()
+    forecast = state.forecast
+    assert (forecast.will_fail_tooling, forecast.at_risk) == (5, 3), forecast
+    line = ingest_tooling_summary_line(state)
+    assert "5 will fail" in line, line
+    assert "3 may fail" in line, line
+    assert "8 of 8 files" in line, line
+
+
+@pytest.mark.asyncio
+async def test_the_rendered_fold_line_agrees_with_the_commit_line():
+    """The mounted surface, not just the function: the fold, the commit
+    line and the consent line must never state different fates for one
+    selection."""
+    from tldw_chatbook.Library.library_ingest_state import forecast_summary_line
+
+    state = _doomed_state(21)
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        fold_line = pilot.app.query_one(
+            "#ingest-preflight-tooling-summary", Static
+        ).visual.plain
+    commit_line = forecast_summary_line(state.forecast)
+    assert "will fail" in commit_line and "will fail" in fold_line, (
+        f"fold={fold_line!r} commit={commit_line!r}"
+    )
+    assert "may fail" not in fold_line, fold_line
+
+
+# --- G2: a note that names no component is not a missing component ----------
+
+
+_URL_NOTE = (
+    "The site answered 403 to our check, so it could not be confirmed "
+    "ahead of time. The import will still be attempted."
+)
+
+
+def _state_with_advisory_note(tooling_warnings: int = 2):
+    """A state carrying both tooling warnings and a featureless note.
+
+    ``advisory_lines`` is the seam the state builder fills for warnings
+    with no ``feature`` key (the URL probe's note is the shipped one). It
+    is set here directly because the canvas is the half under test.
+    """
+    state = _warned_state(tooling_warnings)
+    object.__setattr__(
+        state, "warning_lines", list(state.warning_lines) + [_URL_NOTE]
+    )
+    object.__setattr__(state, "advisory_lines", (_URL_NOTE,))
+    return state
+
+
+def test_a_featureless_note_is_not_counted_as_a_missing_component():
+    """G2: the URL probe's "Could not check the link" note has no
+    ``feature`` -- counting it into "N optional components aren't
+    installed" describes a note as a package."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        ingest_tooling_summary_line,
+    )
+
+    state = _state_with_advisory_note(2)
+    object.__setattr__(state, "forecast", None)
+    line = ingest_tooling_summary_line(state)
+    assert line.startswith("⚠ 2 optional components"), (
+        f"a featureless note was counted as a component: {line!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_featureless_note_renders_outside_the_fold():
+    """G2: the note is the only thing on screen that says the link could
+    not be checked -- folding it away behind "What's missing" hides the
+    real message and mislabels it as missing tooling."""
+    app = _CanvasHost(_state_with_advisory_note(2))
+    async with app.run_test() as pilot:
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        note = pilot.app.query_one("#ingest-preflight-note-0", Static)
+        assert _URL_NOTE in note.visual.plain, note.visual.plain
+        assert fold not in note.ancestors, (
+            "the advisory note is hidden inside the tooling fold"
+        )
+        # And it is not repeated inside the fold as a tooling warning.
+        folded_text = " ".join(
+            widget.visual.plain for widget in fold.query(Static)
+        )
+        assert _URL_NOTE not in folded_text, folded_text
+
+
+@pytest.mark.asyncio
+async def test_a_note_alone_renders_no_missing_tooling_summary():
+    """G2: with no feature-bearing warning there is no tooling to
+    summarise -- a "⚠ 1 optional component isn't installed" line over a
+    403 note is a fabricated diagnosis."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"web": ["https://example.com/a"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    object.__setattr__(state, "warning_lines", [_URL_NOTE])
+    object.__setattr__(state, "advisory_lines", (_URL_NOTE,))
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#ingest-preflight-note-0", Static)
+        assert _URL_NOTE in note.visual.plain
+        assert not pilot.app.query("#ingest-preflight-tooling-summary"), (
+            "a note-only pre-flight still claims components are missing"
+        )
+        assert not pilot.app.query("#ingest-preflight-tooling-detail"), (
+            "an empty fold was rendered for a note-only pre-flight"
+        )
+
+
+# --- G3: the fold must survive the recompose that runs on every job tick ----
+
+
+@pytest.mark.asyncio
+async def test_an_expanded_fold_survives_a_dynamic_region_recompose():
+    """G3: ``_update_library_ingest_dynamic_regions`` assigns
+    ``summary.state`` and calls ``refresh(recompose=True)`` on every
+    registry tick, so an open fold snapped shut under the user mid-read
+    during an active import. Same convention as the option panels'
+    ``expanded_type_groups``: the expansion is state, not a widget
+    accident."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        LibraryIngestPreflightSummary,
+    )
+
+    app = _CanvasHost(_warned_state(4))
+    async with app.run_test() as pilot:
+        summary = pilot.app.query_one(LibraryIngestPreflightSummary)
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        fold.collapsed = False
+        await pilot.pause()
+
+        # Exactly what the screen's in-place update does per tick.
+        summary.state = summary.state
+        summary.refresh(recompose=True)
+        await pilot.pause()
+
+        reborn = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert reborn.collapsed is False, (
+            "the fold snapped shut under the user on a registry tick"
+        )
+
+
+@pytest.mark.asyncio
+async def test_toggling_the_fold_is_reported_so_the_screen_can_persist_it():
+    """G3: the canvas is render-only, so the durable half of the
+    expansion is a message the screen persists -- the same contract
+    ``OptionPanelToggled`` has for the option panels."""
+    app = _MessageRecordingHost(_warned_state(3))
+    async with app.run_test() as pilot:
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        fold.collapsed = False
+        await pilot.pause()
+        fold.collapsed = True
+        await pilot.pause()
+    assert [event.expanded for event in app.tooling_detail_toggles] == [
+        True,
+        False,
+    ], app.tooling_detail_toggles
+
+
+@pytest.mark.asyncio
+async def test_a_state_carried_expansion_opens_the_fold_on_compose():
+    """G3's durable half: once the screen persists the flag, a FULL
+    recompose (a structural change rebuilds the whole canvas) restores the
+    fold the same way ``expanded_type_groups`` restores an option panel."""
+    state = _warned_state(3)
+    object.__setattr__(state, "tooling_detail_expanded", True)
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        fold = pilot.app.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert fold.collapsed is False, (
+            "a persisted expansion did not survive the rebuild"
+        )
+
+
+# --- G4: only a gate the user must act on OUTSIDE the app is "unavailable" --
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_panel_does_not_lead_with_options_unavailable():
+    """G4: ``blocked_count`` counted ordinary closed WITHIN-FORM gates, so
+    a fully working default Web panel led its receipt with "2 options
+    unavailable — single-page fetch selected". task-14824's intent was to
+    surface PACKAGING gates -- work the user must do outside the app."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        build_type_group_title,
+    )
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    for group in ("web", "pdf", "audio_video"):
+        title = build_type_group_title(
+            get_capabilities(group), {}, is_installed=lambda _feature: True
+        )
+        assert "unavailable" not in title, (
+            f"a healthy {group} panel still reads broken: {title!r}"
+        )
+
+    # The same panel with a sibling toggle turned off is still healthy.
+    title = build_type_group_title(
+        get_capabilities("generic"),
+        {"chunk": False},
+        is_installed=lambda _feature: True,
+    )
+    assert "unavailable" not in title, title
+
+
+@pytest.mark.asyncio
+async def test_a_packaging_gate_still_leads_the_panel_receipt():
+    """G4's counterpart: the gate task-14824 exists for -- a missing
+    package -- must still be stated on the (keyboard-reachable) title."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        build_type_group_title,
+    )
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    title = build_type_group_title(
+        get_capabilities("pdf"), {}, is_installed=lambda _feature: False
+    )
+    assert "3 options unavailable" in title, title
+    assert "needs PDF processing installed" in title, title
+
+    audio = build_type_group_title(
+        get_capabilities("audio_video"), {}, is_installed=lambda _feature: False
+    )
+    assert "13 options unavailable" in audio, audio
+
+
+# --- G5: one install command must yield exactly one copy control ------------
+
+
+@pytest.mark.asyncio
+async def test_a_single_install_command_yields_a_single_copy_control():
+    """G5: at exactly one command the canvas rendered BOTH the combined
+    button and the per-extra button, copying the identical string under
+    two labels -- the one-label-shape rule task-14822 added, defeated."""
+    copied: list[str] = []
+
+    class _ClipboardHost(_CanvasHost):
+        def copy_to_clipboard(self, text: str) -> None:
+            copied.append(text)
+
+    app = _ClipboardHost(_warned_state(1))
+    async with app.run_test() as pilot:
+        buttons = list(
+            pilot.app.query(".ingest-preflight-copy-command")
+        )
+        assert len(buttons) == 1, (
+            "one command, two copy controls: "
+            f"{[(b.id, b.label.plain) for b in buttons]}"
+        )
+        assert buttons[0].id == "ingest-preflight-copy-all-commands", (
+            "the surviving control must be the one outside the fold"
+        )
+        buttons[0].press()
+        await pilot.pause()
+    assert copied == ['pip install -e ".[extra0]"'], copied

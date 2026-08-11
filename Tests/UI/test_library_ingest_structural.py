@@ -577,7 +577,12 @@ async def test_warning_command_paints_unclipped_in_the_summary():
 async def test_summary_offers_copy_command_and_copies_it():
     """MI-17: a compact copy affordance sits AT the warning (consistent
     with the guardrail modal's) -- the modal must no longer be the only
-    place the command can be copied from."""
+    place the command can be copied from.
+
+    (xhigh review round, G5) This selection has exactly ONE missing extra,
+    which is now served by the single always-visible control rather than
+    by that control plus an identical per-extra button inside the fold.
+    """
     copied: list[str] = []
 
     class _ClipboardHost(_CanvasHost):
@@ -586,7 +591,9 @@ async def test_summary_offers_copy_command_and_copies_it():
 
     app = _ClipboardHost(_warning_state())
     async with app.run_test() as pilot:
-        button = pilot.app.query_one("#ingest-preflight-copy-command-0", Button)
+        buttons = list(pilot.app.query(".ingest-preflight-copy-command"))
+        assert len(buttons) == 1, [button.id for button in buttons]
+        button = buttons[0]
         assert "cop" in str(button.label).lower()
         button.press()
         await pilot.pause()
@@ -858,6 +865,178 @@ async def test_blocked_group_states_its_reason_on_a_keyboard_reachable_title():
                 if widget.id and widget.id.startswith("opt-audio_video-")
             ]
             assert fields and not any(widget.focusable for widget in fields)
+
+
+# --- task-14822 AC#2, re-measured in the SHIPPED screen ----------------------
+#
+# The AC was first ticked against the canvas mounted ALONE at 80x52
+# (``test_breakdown_and_start_are_in_view_behind_eleven_warnings`` above).
+# A live pass then found Start ~16 rows below the fold in the real Library
+# screen at 235x52 -- the canvas there sits inside the shell (rail + header
+# chrome), the queue block renders below the form, and a real folder stages
+# FOUR option panels rather than one. This harness measures the shipped
+# geometry, so the number the AC stands on comes from the surface the user
+# actually sees.
+
+
+def _four_group_selection(warning_count: int = 11) -> PreflightResult:
+    """The live shape: a mixed folder spanning four option panels."""
+    type_groups = {
+        "pdf": [f"/tmp/mixed/doc{i}.pdf" for i in range(3)],
+        "audio_video": [f"/tmp/mixed/clip{i}.mp3" for i in range(2)],
+        "ebook": ["/tmp/mixed/book.epub"],
+        "generic": [f"/tmp/mixed/note{i}.txt" for i in range(4)],
+        "unsupported": ["/tmp/mixed/thing.xyz"],
+    }
+    return PreflightResult(
+        type_groups=type_groups,
+        warnings=_many_warnings(warning_count),
+        errors=[],
+        total_size=4096,
+        truncated=False,
+        total_files=sum(len(files) for files in type_groups.values()),
+        empty_files=["/tmp/mixed/empty.txt"],
+    )
+
+
+async def _shipped_ingest_screen(host, pilot, *, warning_count: int = 11):
+    """Drive the real Library screen to a warned, four-group selection."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+    from Tests.UI.test_library_shell import (
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    screen = host.screen_stack[-1]
+    await _wait_for_library_shell(screen, pilot)
+    await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+    await _wait_for_selector(screen, pilot, "#library-ingest-path")
+    await pilot.pause()
+    screen._library_ingest_form.path = "/tmp/mixed"
+    screen._library_ingest_form.preflight = _four_group_selection(warning_count)
+    screen._update_library_ingest_dynamic_regions()
+    await pilot.pause()
+    await pilot.pause()
+    return screen
+
+
+def _rows_below_the_fold(canvas, widget) -> int:
+    """How far ``widget`` starts past the canvas viewport's bottom edge."""
+    fold = canvas.scroll_offset.y + canvas.container_size.height
+    return widget.virtual_region.y - fold + 1
+
+
+@pytest.mark.asyncio
+async def test_the_fold_pays_for_itself_in_the_shipped_screen():
+    """AC#2's first half, re-measured where the canvas actually ships.
+
+    Measured 2026-08-10 at 235x52, four staged groups, 11 warnings: the
+    canvas viewport is 43 rows (the shell's rail/header chrome takes 9 of
+    the 52), the type breakdown lands at virtual y=6 -- in view -- and
+    folding the wall moves Start from virtual y=92 to y=59, a 33-row
+    saving. That saving is the fold's real win and is asserted here; what
+    it does NOT buy is Start clearing the fold at 52 rows (see
+    ``test_start_still_needs_scrolling_at_52_rows`` -- AC#2's second half
+    is un-ticked on that evidence).
+    """
+    host = _screen_harness()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _shipped_ingest_screen(host, pilot)
+        canvas = screen.query_one(LibraryIngestCanvas)
+        breakdown = screen.query_one("#ingest-type-breakdown", Static)
+        viewport = canvas.container_size.height
+        breakdown_y = breakdown.virtual_region.y
+        folded_start = screen.query_one(
+            "#library-ingest-start", Button
+        ).virtual_region.y
+
+        # Unfold the tooling detail in place: the wall's cost, measured on
+        # the same surface, is the difference between these two.
+        screen.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        unfolded_start = screen.query_one(
+            "#library-ingest-start", Button
+        ).virtual_region.y
+
+    assert breakdown_y < viewport, (
+        f"type breakdown below the fold in the shipped screen: "
+        f"y={breakdown_y} viewport={viewport}"
+    )
+    saving = unfolded_start - folded_start
+    assert saving >= 25, (
+        "the fold no longer pays for itself in the shipped screen: "
+        f"folded start y={folded_start}, unfolded y={unfolded_start} "
+        f"(saving {saving} rows; measured 33)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen():
+    """G3 on the path that actually broke it.
+
+    ``_update_library_ingest_dynamic_regions`` runs on EVERY registry tick
+    (each queued/parsing/writing/done transition of every job) and rebuilds
+    the pre-flight summary with ``refresh(recompose=True)``. The fold was
+    composed ``collapsed=True`` unconditionally, so it snapped shut under a
+    user reading it during an active import.
+    """
+    host = _screen_harness()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _shipped_ingest_screen(host, pilot)
+        fold = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
+        fold.collapsed = False
+        await pilot.pause()
+
+        # The tick itself, not a stand-in for it.
+        screen._update_library_ingest_dynamic_regions()
+        await pilot.pause()
+        await pilot.pause()
+
+        reborn = screen.query_one(
+            "#ingest-preflight-tooling-detail", Collapsible
+        )
+        assert reborn.collapsed is False, (
+            "the fold snapped shut on a registry tick in the shipped screen"
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_still_needs_scrolling_at_52_rows():
+    """AC#2's second half does NOT hold, pinned with its numbers.
+
+    The AC was ticked from the canvas mounted alone at 80x52 (Start at
+    y=45 of 52). In the shipped screen at 235x52 the canvas viewport is 43
+    rows and Start sits at virtual y=59 -- 17 rows below the fold, which
+    is what the live pass saw. It first clears the fold at a 60-row canvas
+    viewport (terminal height 69). Both facts are asserted so neither can
+    silently change: if a later layout change brings Start into view at 52
+    rows, THIS test fails and AC#2 can be re-ticked on real evidence.
+    """
+    measured: dict[int, tuple[int, int]] = {}
+    for height in (52, 69):
+        host = _screen_harness()
+        async with host.run_test(size=(235, height)) as pilot:
+            screen = await _shipped_ingest_screen(host, pilot)
+            canvas = screen.query_one(LibraryIngestCanvas)
+            start = screen.query_one("#library-ingest-start", Button)
+            measured[height] = (
+                canvas.container_size.height,
+                start.virtual_region.y,
+            )
+
+    viewport_52, start_52 = measured[52]
+    viewport_69, start_69 = measured[69]
+    assert start_52 >= viewport_52, (
+        "Start now fits at 52 rows in the shipped screen -- re-tick "
+        f"task-14822 AC#2 and delete this test: {measured}"
+    )
+    assert start_69 < viewport_69, (
+        "Start no longer clears the fold even at a 60-row canvas viewport: "
+        f"{measured}"
+    )
 
 
 @pytest.mark.asyncio

@@ -829,7 +829,17 @@ def test_build_warning_lines_empty_dict():
 
 def test_build_warning_lines_includes_the_install_command():
     """The command is the actionable half; it belongs in the line."""
-    warnings = [{"label": "PDF", "hint": "missing", "command": "pip install x"}]
+    warnings = [
+        # ``feature`` is what production always sets; without it this is
+        # an advisory, not a missing component (see the producer guard in
+        # test_ingest_capabilities.py).
+        {
+            "feature": "pdf_processing",
+            "label": "PDF",
+            "hint": "missing",
+            "command": "pip install x",
+        }
+    ]
     assert build_warning_lines(warnings) == [
         "PDF isn't installed — needed for missing. Install it with: pip install x"
     ]
@@ -855,7 +865,9 @@ def test_human_size_pb_boundary():
 def test_canvas_state_preflight_fields_populated_from_parameter():
     preflight = PreflightResult(
         type_groups={"pdf": ["/tmp/a.pdf", "/tmp/b.pdf"]},
-        warnings=[{"label": "PDF", "hint": "missing"}],
+        warnings=[
+            {"feature": "pdf_processing", "label": "PDF", "hint": "missing"}
+        ],
         errors=["Path not found"],
         total_size=2048,
         truncated=False,
@@ -3222,9 +3234,452 @@ def test_real_canvas_state_carries_the_forecast_the_fold_reads():
     assert state.forecast.consent_affected == 2, state.forecast
 
     line = ingest_tooling_summary_line(state)
-    assert line == (
-        "⚠ 2 of 3 files need optional tooling — those imports may fail."
-    ), line
+    # The seam under test is the DATA the fold reads, not its wording (the
+    # canvas owns that and states required/optional gaps differently), so
+    # assert the file scope it can only produce from a real forecast.
+    assert "2 of 3 files" in line, line
     assert "components" not in line, (
         f"the fold fell back to counting components, not files: {line}"
     )
+
+
+# ===========================================================================
+# xhigh review round of the 14820-14826 arc: the regressions the arc shipped
+# ===========================================================================
+
+
+def _audio_preflight(count: int = 5) -> PreflightResult:
+    """A server-shaped selection: N .mp3 with NO local audio tooling.
+
+    ``audio_processing`` is the ``audio_video`` group's REQUIRED feature,
+    so on this install the pre-flight always warns about it.
+    """
+    files = [f"/tmp/talk{index}.mp3" for index in range(count)]
+    return PreflightResult(
+        type_groups={"audio_video": files},
+        warnings=[
+            {
+                "feature": "audio_processing",
+                "label": "Audio processing",
+                "hint": "audio transcription",
+                "command": 'pip install -e ".[audio]"',
+            }
+        ],
+        errors=[],
+        total_size=count * 4096,
+        truncated=False,
+        total_files=count,
+    )
+
+
+def test_local_forecast_still_counts_missing_local_tooling_as_failures():
+    """Guard: the LOCAL forecast is what task-14820 fixed — keep it."""
+    from tldw_chatbook.Library.library_ingest_state import build_ingest_forecast
+
+    forecast = build_ingest_forecast(_audio_preflight())
+    assert forecast is not None
+    assert (forecast.will_import, forecast.will_fail_tooling) == (0, 5)
+    assert forecast.tooling_groups == ("audio_video",)
+
+
+def test_server_forecast_does_not_subtract_local_tooling_gaps():
+    """(xhigh F1) A server import never touches a local parser.
+
+    ``build_ingest_forecast`` subtracted LOCAL tooling gaps unconditionally,
+    so server mode + 5 .mp3 + no local audio extra forecast "0 will import ·
+    5 will fail (need tooling)" for a run the server would transcribe in
+    full. The deleted ``will_import = supported_total - will_match`` was at
+    least backend-agnostic; this regression is worse than the defect it
+    replaced for every server user.
+    """
+    from tldw_chatbook.Library.library_ingest_state import build_ingest_forecast
+
+    forecast = build_ingest_forecast(_audio_preflight(), targets_server=True)
+    assert forecast is not None
+    assert forecast.will_fail_tooling == 0, (
+        "a LOCAL tooling gap was forecast as a certain failure of a SERVER "
+        "run that never loads a local parser"
+    )
+    assert forecast.will_import == 5
+    assert forecast.tooling_groups == ()
+    assert forecast.at_risk == 0
+    assert forecast.consent_affected == 0
+
+
+def test_server_forecast_line_claims_only_what_it_can_know():
+    """(xhigh F1) The server's own capabilities are not knowable from here
+    (task-3309 is open precisely because forwarded extras are unverified),
+    so the line states what WILL happen — the files are sent — and says
+    outright that the server's tooling was not checked."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+
+    line = forecast_summary_line(
+        build_ingest_forecast(_audio_preflight(), targets_server=True)
+    )
+    assert "will fail" not in line, line
+    assert line == (
+        "5 will be sent to the server · server tooling isn't checked "
+        "from here"
+    ), line
+
+
+def _server_state(*, armed: bool = False, count: int = 5):
+    preflight = _audio_preflight(count)
+    return build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/podcasts", preflight=preflight),
+        runtime_source="server",
+        ingest_backend="server",
+        server_ingest_available=True,
+        start_confirm_armed=armed,
+    )
+
+
+def test_server_mode_state_stops_forecasting_certain_local_failures():
+    """(xhigh F1) End to end through the real builder: ``targets_server``
+    is computed there and must reach the forecast."""
+    state = _server_state()
+    assert state.ingest_backend == "server"
+    assert state.forecast is not None
+    assert state.forecast.will_fail_tooling == 0
+    assert "need tooling" not in state.commit_summary_line
+    assert "will fail" not in state.commit_summary_line
+    assert "5 will be sent to the server" in state.commit_summary_line
+
+
+def test_server_mode_never_arms_consent_for_local_only_warnings():
+    """(xhigh F1) The consent line's blast radius is the forecast's. With
+    nothing at stake locally there is nothing to consent to, so the armed
+    flag must not paint a reasonless "import anyway"."""
+    state = _server_state(armed=True)
+    assert state.start_confirm_armed is False
+    assert "Press Start again" not in state.start_quiet_line
+
+
+def test_local_mode_state_keeps_the_tooling_failure_forecast():
+    """Guard for the same builder path in local mode."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/podcasts", preflight=_audio_preflight()
+        ),
+    )
+    assert state.ingest_backend == "local"
+    assert "5 will fail (need tooling)" in state.commit_summary_line
+
+
+# --- F8: a capped duplicate probe makes the import count an upper bound -----
+
+
+def test_capped_duplicate_probe_hedges_the_import_count_too():
+    """(xhigh F8) ``will_import = supported - will_match``: when
+    ``will_match`` is a capped FLOOR the import count is a CEILING, and
+    stating it exactly beside "at least 20 will match" is a contradiction
+    the user can do arithmetic on."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+
+    preflight = PreflightResult(
+        type_groups={"generic": [f"/tmp/n{i}.txt" for i in range(25)]},
+        warnings=[],
+        errors=[],
+        total_size=25 * 100,
+        truncated=False,
+        total_files=25,
+        already_in_library=20,
+        already_in_library_capped=True,
+    )
+    forecast = build_ingest_forecast(preflight)
+    assert (forecast.will_import, forecast.will_match) == (5, 20)
+    assert forecast_summary_line(forecast) == (
+        "at most 5 will import · at least 20 will match"
+    )
+
+
+def test_uncapped_duplicate_probe_still_states_both_counts_exactly():
+    """Guard: the hedge is carried only when the probe was capped."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        build_ingest_forecast,
+        forecast_summary_line,
+    )
+
+    preflight = PreflightResult(
+        type_groups={"generic": [f"/tmp/n{i}.txt" for i in range(25)]},
+        warnings=[],
+        errors=[],
+        total_size=2500,
+        truncated=False,
+        total_files=25,
+        already_in_library=20,
+    )
+    assert forecast_summary_line(build_ingest_forecast(preflight)) == (
+        "5 will import · 20 will match"
+    )
+
+
+# --- F7: the forecast must not promise imports a dead runtime cannot make ---
+
+
+def _one_text_file_preflight(path: str = "/tmp/report.txt") -> PreflightResult:
+    return PreflightResult(
+        type_groups={"generic": [path]},
+        warnings=[],
+        errors=[],
+        total_size=11,
+        truncated=False,
+        total_files=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "seam",
+    [
+        {"registry_available": False},
+        {"media_db_available": False},
+    ],
+    ids=["no-registry", "no-media-db"],
+)
+def test_forecast_is_withheld_when_the_runtime_cannot_import_at_all(seam):
+    """(xhigh F7) Un-gating the commit line (task-14820 AC#4) also un-gated
+    it for the seam-missing case, so "1 will import" rendered beside a
+    Start that can never run. AC#4 is about a BLOCKED user keeping their
+    numbers; a runtime with no import path at all is not that case."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(
+            path="/tmp/report.txt", preflight=_one_text_file_preflight()
+        ),
+        **seam,
+    )
+    assert state.unavailable_line
+    assert state.commit_summary_line == "", (
+        "the forecast promised an import the runtime cannot perform: "
+        f"{state.commit_summary_line!r}"
+    )
+
+
+def test_option_error_gating_keeps_the_forecast_visible_task_14820_ac4():
+    """(task-14820 AC#4, preserved) The selection is still real — only the
+    OPTIONS are wrong — so the blocked user keeps their numbers."""
+    form = LibraryIngestFormState(
+        path="/tmp/report.txt", preflight=_one_text_file_preflight()
+    )
+    form.type_options = {"generic": {"chunk_size": "abc"}}
+    state = build_library_ingest_state((), form=form)
+    assert state.start_enabled is False
+    assert state.option_errors
+    assert "1 will import" in state.commit_summary_line
+
+
+# --- F5: "this folder is empty" must not be said about folders that aren't --
+
+
+def test_a_folder_whose_entries_are_all_skipped_is_not_called_empty(tmp_path):
+    """(xhigh F5) ``_collect_files`` skips symlinks and dot-entries, so a
+    folder full of symlinked media pre-flights as ``total_files == 0`` —
+    which task-14823 words as "This folder is empty" AND (since its new
+    submit gate) hard-blocks. The diagnosis is false and the block turns it
+    into a dead end."""
+    from tldw_chatbook.Library.ingest_preflight import (
+        analyze_path,
+        collect_directory_files,
+    )
+
+    target = tmp_path / "real.txt"
+    target.write_text("hello world")
+    folder = tmp_path / "links"
+    folder.mkdir()
+    (folder / "linked.txt").symlink_to(target)
+    (folder / ".hidden.txt").write_text("hidden")
+
+    result = analyze_path(str(folder))
+    assert result.total_files == 0
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path=str(folder), preflight=result),
+    )
+
+    assert "This folder is empty" not in state.start_quiet_line, (
+        f"a folder holding 2 entries was called empty: "
+        f"{state.start_quiet_line!r}"
+    )
+    assert "2 entries" in state.start_quiet_line, state.start_quiet_line
+    # The gate is honest only because the SUBMIT path walks the folder with
+    # the very same collector -- it would queue nothing either.
+    files, _truncated = collect_directory_files(folder, 1000)
+    assert files == []
+    assert state.selection_has_nothing_importable is True
+
+
+def test_a_genuinely_empty_folder_keeps_the_empty_sentence(tmp_path):
+    """Guard: the empty-folder recovery ("put files in it") is different
+    from the skipped-entries one, so the two sentences stay distinct."""
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+
+    folder = tmp_path / "nothing"
+    folder.mkdir()
+    result = analyze_path(str(folder))
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path=str(folder), preflight=result),
+    )
+    assert "This folder is empty" in state.start_quiet_line
+    assert state.selection_has_nothing_importable is True
+
+
+# --- F2/F3/F9/F10: retry advice that is true of THIS failure -----------------
+
+
+def test_a_transient_pool_teardown_is_not_told_it_will_always_fail():
+    """(xhigh F2) ``_TOOLING_REMEDY_RE``'s ``is (?:not|un)available``
+    alternative matched ``TranscriptionError("The shared local executor is
+    unavailable.")`` — a pool-teardown that clears on the next attempt —
+    and answered it with "Retrying now will fail the same way — install the
+    tooling named above first", naming no tooling anywhere."""
+    message = (
+        "Failed to ingest audio file: The shared local executor is "
+        "unavailable."
+    )
+    lines = _expanded_detail_lines(
+        source_path="/tmp/talk.mp3",
+        category="parse_error",
+        message=message,
+        exception_type="TranscriptionError",
+        error=message,
+    )
+    joined = " ".join(lines)
+    assert "install the tooling named above" not in joined, joined
+    assert "will fail the same way" not in joined, joined
+
+
+def test_the_generic_no_content_advice_names_no_phantom_remedy():
+    """(xhigh F3) The generic extraction refusal names no dependency, yet
+    the deterministic branch told the user to "install the tooling named
+    above" — there is nothing above."""
+    message = (
+        "No text could be extracted from doc.pdf. The pdf content may be "
+        "scanned images, or the tooling for this file type may not be "
+        "installed."
+    )
+    lines = _expanded_detail_lines(
+        source_path="/tmp/doc.pdf",
+        category="no_content",
+        message=message,
+        exception_type="FileIngestionError",
+        error=message,
+    )
+    joined = " ".join(lines)
+    assert "named above" not in joined, joined
+    # ...but the DETERMINISM is still stated: this is not a retry-and-hope.
+    assert "transient" not in joined
+    assert "Retrying" in joined, joined
+
+
+def test_a_remedy_that_names_its_tooling_still_says_install_it():
+    """Guard (task-14821): the OCR refusal DOES name its backends."""
+    lines = _expanded_detail_lines(
+        category="no_content",
+        message=_OCR_MESSAGE,
+        exception_type="FileIngestionError",
+    )
+    assert "install the tooling named above" in " ".join(lines)
+
+
+def test_a_tooling_remedy_carried_only_by_the_chain_is_honoured():
+    """(xhigh F9) A real pdf failure on an install without pdf tooling
+    reports ``'NoneType' object has no attribute 'FileDataError'`` as its
+    MESSAGE and carries the remedy two links down the chain. The advice
+    must read the same text the user reads."""
+    lines = _expanded_detail_lines(
+        source_path="/tmp/scan.png",
+        category="parse_error",
+        message="Failed to ingest image file: image extraction produced nothing.",
+        exception_type="FileIngestionError",
+        chain=[
+            "NoContentExtractedError: No text was found in scan.png. An image "
+            "import stores the text OCR extracts; turn Extract text (OCR) on "
+            "and install an OCR backend (docling, tesseract, easyocr, "
+            "paddleocr, or docext)."
+        ],
+        error="Failed to ingest image file: image extraction produced nothing.",
+    )
+    assert "install the tooling named above" in " ".join(lines), lines
+
+
+def test_missing_dependency_name_does_not_keep_the_sentence_period():
+    """(xhigh F10, live) ``pip install (\\S+)`` swallowed the sentence's
+    full stop, and the template added another: "Missing dependency:
+    tldw_chatbook[pdf]..". Verbatim shape of the real chain captured from
+    ``run_parse_job`` on this install."""
+    message = (
+        "Failed to ingest pdf file: 'NoneType' object has no attribute "
+        "'FileDataError'"
+    )
+    lines = _expanded_detail_lines(
+        source_path="/tmp/doc.pdf",
+        category="parse_error",
+        message=message,
+        exception_type="FileIngestionError",
+        chain=[
+            "AttributeError: 'NoneType' object has no attribute 'FileDataError'",
+            "ImportError: PDF processing libraries not available. Install "
+            "with: pip install tldw_chatbook[pdf]. Error: No module named "
+            "'pymupdf'",
+        ],
+        error=message,
+    )
+    advice = [line for line in lines if line.startswith("Missing dependency")]
+    assert advice == [
+        "Missing dependency: tldw_chatbook[pdf]. Install it, then Retry."
+    ], advice
+
+
+# --- F6: the chain dedup must keep what ADDS to the summary -----------------
+
+
+def test_a_chain_entry_that_adds_the_root_cause_survives_the_dedup():
+    """(xhigh F6) ``_restates_known_text``'s ``text in candidate``
+    direction dropped every chain entry that quotes the row summary AND
+    appends the underlying cause — exactly the entry the chain exists to
+    surface."""
+    summary = "PDF Extraction Error."
+    lines = _expanded_detail_lines(
+        source_path="/tmp/doc.pdf",
+        category="parse_error",
+        message=summary,
+        exception_type="FileIngestionError",
+        chain=[
+            "ImportError: PDF Extraction Error. Caused by: no pdf backend "
+            "could be loaded"
+        ],
+        error=summary,
+    )
+    underlying = [line for line in lines if line.startswith("Underlying:")]
+    assert underlying == [
+        "Underlying: ImportError: PDF Extraction Error. Caused by: no pdf "
+        "backend could be loaded"
+    ], lines
+
+
+def test_a_chain_entry_that_only_restates_the_summary_is_still_dropped():
+    """Guard: the duplicate-banner fix (task-14821 AC#4) stays fixed.
+
+    The real ffmpeg shape: the row message carries a "Failed to ingest
+    <type> file: " wrapper the chain entry lacks, so only containment (not
+    equality) sees that the two say the same thing.
+    """
+    summary = "Failed to ingest pdf file: PDF Extraction Error."
+    lines = _expanded_detail_lines(
+        source_path="/tmp/doc.pdf",
+        category="parse_error",
+        message=summary,
+        exception_type="FileIngestionError",
+        chain=["FileIngestionError: PDF Extraction Error."],
+        error=summary,
+    )
+    assert not [line for line in lines if line.startswith("Underlying:")], lines

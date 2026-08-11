@@ -518,8 +518,12 @@ async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
         assert "1 file will fail without more tooling" in text
         assert quiet.has_class("-ingest-start-confirm")
         # AC#3: the copy-install-command affordance stays reachable at the
-        # inline warnings while the confirm is pending.
-        assert list(screen.query("#ingest-preflight-copy-command-0"))
+        # inline warnings while the confirm is pending. Queried by CLASS,
+        # not by index: which button carries the command (one combined
+        # button, or one per distinct extra) is the canvas's call and has
+        # changed with the warning fold -- that it is REACHABLE is the
+        # contract this test owns.
+        assert list(screen.query(".ingest-preflight-copy-command"))
 
         # The confirm is gate-updater-owned chrome: it must survive the
         # in-place hot path with object identity (task-2042 discipline).

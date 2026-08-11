@@ -1314,3 +1314,31 @@ def test_classify_missing_features_agrees_with_the_warning_wall() -> None:
     warned = {w["feature"] for w in get_tooling_warnings("pdf")}
     required, optional = classify_missing_features("pdf", warned)
     assert set(required) | set(optional) == warned
+
+
+def test_every_real_tooling_warning_names_its_feature():
+    """The canvas splits warnings on the ``feature`` key: feature-bearing
+    ones are missing components (folded, counted, install-commanded),
+    featureless ones are advisories (shown in place, never counted).
+
+    That split is only sound if production tooling warnings ALWAYS carry
+    a feature. Hand-written test fixtures omitted it and so silently
+    became "advisories" -- the fake-matching-the-call-site trap. This
+    asserts the real producer's shape instead of trusting a fixture.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import (
+        get_tooling_warnings,
+        list_type_groups,
+    )
+
+    seen = 0
+    for group in list_type_groups():
+        for warning in get_tooling_warnings(group):
+            seen += 1
+            assert str(warning.get("feature") or "").strip(), (
+                f"{group} emitted a tooling warning with no feature: {warning}"
+            )
+    assert seen, (
+        "no tooling warnings were produced at all -- this venv has every "
+        "optional extra installed, so the guard proved nothing"
+    )

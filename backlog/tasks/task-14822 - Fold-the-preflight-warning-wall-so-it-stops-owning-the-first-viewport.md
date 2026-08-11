@@ -29,7 +29,7 @@ Related mechanical defects in the same block: the buttons are differentiated onl
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Tooling warnings collapse to a single summary line stating how many staged files are affected and what it means for the import, with the detail available behind a fold
-- [x] #2 With warnings present, the type breakdown and the Start affordance are reachable without scrolling past a wall of warnings at a supported terminal size
+- [ ] #2 With warnings present, the type breakdown and the Start affordance are reachable without scrolling past a wall of warnings at a supported terminal size
 - [x] #3 The unsupported-file and empty-file lines are visually distinguishable from tooling warnings rather than sharing their weight
 - [x] #4 Install commands remain recoverable, with one combined command available and per-extra commands inside the fold; button labels have one shape regardless of count
 <!-- AC:END -->
@@ -86,4 +86,89 @@ Files: ``Widgets/Library/library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_canvas.py``,
 ``Tests/UI/test_library_ingest_structural.py``,
 ``Docs/User_Guide/library/import-and-export.md``.
+
+**xhigh review round: the fold contradicted the forecast it reads, and
+AC#2 did not survive the shipped screen.**
+
+**AC#2 is UN-TICKED.** It was ticked from the canvas mounted ALONE at
+80x52 (Start at y=45 of 52). Re-measured in the real Library screen at
+235x52 with four staged groups and 11 warnings: the canvas viewport is
+**43 rows** (the shell's rail/header chrome takes 9 of the 52), the type
+breakdown lands at virtual **y=6 -- in view**, and Start at virtual
+**y=59 -- 17 rows below the fold**, which is what the live pass saw. The
+fold's win is real and is now asserted on that surface: unfolding moves
+Start from y=59 to y=92, so the fold saves **33 rows**. Start first
+clears the fold at a **60-row canvas viewport (terminal height 69)** --
+measured, not estimated (68 -> viewport 59, still out; 69 -> viewport 60,
+in). So AC#2's first half holds and its second half does not: the
+remaining cost is the FORM's own length (four collapsed panels plus three
+metadata Inputs at 4 rows each), not the warning wall, and shortening
+that is a layout change this task never scoped. Both facts are pinned by
+``test_the_fold_pays_for_itself_in_the_shipped_screen`` and
+``test_start_still_needs_scrolling_at_52_rows`` -- the second FAILS if a
+later change brings Start into view at 52 rows, which is the signal to
+re-tick this AC on real evidence. *Lesson: a geometry AC measured on a
+component mounted alone is not measured at all -- the harness must carry
+the shell chrome, the sibling regions and a realistic selection.*
+
+**G1 -- the fold re-created this arc's own headline defect.**
+``ingest_tooling_summary_line`` hard-coded "optional tooling" and "may
+fail" while reading ``consent_affected``, which SUMS doomed
+(``will_fail_tooling``, a missing REQUIRED feature) and degraded
+(``at_risk``, a missing optional one). Live: 21 PDFs without the pdf
+extra rendered ``⚠ 21 of 21 files need optional tooling — those imports
+may fail.`` beside a commit line reading ``0 will import · 21 will fail
+(need tooling)`` and a consent line reading ``21 files will fail without
+more tooling``. The verb now follows the forecast's own split (nothing is
+recomputed -- the object already carries it):
+
+- doomed: ``⚠ 21 of 21 files need tooling that isn't installed — those imports will fail.``
+- degraded: ``⚠ 3 of 21 files need optional tooling — those imports may fail.``
+- mixed: ``⚠ 8 of 8 files need more tooling — 5 will fail, 3 may fail.``
+
+**G2 -- a note is not a missing component.** A pre-flight warning with no
+``feature`` key (the URL probe's "Could not check the link" note, which
+carries only the probe's own sentence) was counted into the "N optional
+components aren't installed" fallback AND buried in the collapsed fold,
+so the only thing the pre-flight had to say about the link was the one
+thing not on screen. The canvas now reads the split from the state
+(``preflight_advisory_lines`` / ``preflight_tooling_lines``): notes
+render as ``#ingest-preflight-note-N`` OUTSIDE the fold, never counted as
+components, and a note-only pre-flight renders no tooling summary and no
+fold at all. **Open handoff:** the state must supply
+``advisory_lines: tuple[str, ...]`` (warnings with no ``feature``,
+composed as their own sentence rather than the "X isn't installed"
+shape) and keep them out of ``warning_lines``; until it does, the canvas
+half is inert and the count still includes the note.
+
+**G3 -- the fold snapped shut under the user.**
+``_update_library_ingest_dynamic_regions`` rebuilds
+``LibraryIngestPreflightSummary`` with ``refresh(recompose=True)`` on
+EVERY registry tick, and the ``Collapsible`` was composed
+``collapsed=True`` unconditionally -- so an open fold closed mid-read on
+each job transition of an active import. Expansion is now state, on the
+option panels' ``expanded_type_groups`` convention: the summary holds
+``tooling_detail_expanded`` (the widget INSTANCE survives that
+recompose), seeds it from ``state.tooling_detail_expanded``, and posts
+``LibraryIngestCanvas.ToolingDetailToggled`` so the screen can persist it
+the way it persists panel toggles. **Open handoff:** without the state
+field + screen handler the durable half is missing, so the FULL recompose
+a structural change forces still reverts the fold.
+
+**G5 -- one command, two buttons.** At exactly one install command the
+canvas rendered both the combined button and the per-extra button,
+copying the identical string under two labels -- the one-label-shape rule
+AC#4 added, defeated one level down. The per-extra family now renders
+only where it disambiguates (2+ commands); at one command the single
+always-visible control IS that command.
+
+Mutation-checked: forcing ``collapsed=True`` fails all three G3 tests;
+disabling the doomed branch fails the doomed + rendered-agreement tests;
+disabling the mixed branch fails the mixed test; ignoring
+``advisory_lines`` fails all three G2 tests; dropping the ``len > 1``
+guard fails both G5 tests.
+
+Files (this round): ``Widgets/Library/library_ingest_canvas.py``,
+``Tests/UI/test_library_ingest_canvas.py``,
+``Tests/UI/test_library_ingest_structural.py``.
 <!-- SECTION:NOTES:END -->

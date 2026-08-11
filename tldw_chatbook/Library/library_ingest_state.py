@@ -87,6 +87,28 @@ INGEST_EMPTY_SELECTION_COPY = (
     "with files, or a single file."
 )
 
+#: (xhigh review of task-14823) The gate reason for a folder that holds
+#: entries the scan passed over -- symlinks, dot-entries, unreadable
+#: subfolders. ``total_files == 0`` covers this case too, and the sentence
+#: above was asserted about it: a folder of symlinked media was told it
+#: was EMPTY, and task-14823's submit gate then refused it outright, so
+#: the wrong diagnosis became a dead end. The recovery is different as
+#: well ("import the file itself" works; "put files in it" is nonsense
+#: for a folder that already has some), so it gets its own sentence.
+INGEST_UNSCANNABLE_SELECTION_COPY = (
+    "Nothing in this folder could be scanned — {count} {noun} skipped: "
+    "folder imports pass over hidden files, links, and folders they "
+    "can't read. Import a file directly, or choose another folder."
+)
+
+
+def ingest_unscannable_selection_copy(skipped_entries: int) -> str:
+    """Render :data:`INGEST_UNSCANNABLE_SELECTION_COPY` for a skip count."""
+    return INGEST_UNSCANNABLE_SELECTION_COPY.format(
+        count=skipped_entries,
+        noun="entry was" if skipped_entries == 1 else "entries were",
+    )
+
 
 # (task-3303 AC5) The local article extractor is single-page: the multi-page
 # scrape methods (sitemap/url_level/recursive) are honored only by the server
@@ -523,6 +545,29 @@ def build_intro_lines() -> tuple[str, ...]:
     )
 
 
+def _advisory_line(warning: Mapping[str, Any] | None) -> str:
+    """Render a pre-flight note that names no missing feature.
+
+    (review round) These are advisories, not tooling gaps -- the URL
+    probe's "Could not check the link" is the live example. They must not
+    borrow :func:`build_warning_lines`' "X isn't installed -- needed for
+    Y" shape, which turned that note into a sentence claiming a component
+    called "Could not check the link" was missing.
+
+    Args:
+        warning: A pre-flight warning mapping carrying no ``feature``.
+
+    Returns:
+        ``"Label — hint"``, either half alone, or ``""`` when neither is
+        present.
+    """
+    label = str((warning or {}).get("label") or "").strip()
+    hint = str((warning or {}).get("hint") or "").strip()
+    if label and hint:
+        return f"{label} — {hint}"
+    return label or hint
+
+
 def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
     """Build human-readable warning lines from pre-flight warning dicts.
 
@@ -686,6 +731,14 @@ class IngestForecast:
             files are also inside ``will_import``'s group counts), so a
             caller summing them would derive a second, wrong total --
             which is the class of defect this object exists to remove.
+        targets_server: Whether this forecast describes a SERVER run. A
+            server import never loads a local parser, so the local tooling
+            gaps that drive ``will_fail_tooling``/``at_risk`` say nothing
+            about it -- both are ``0`` here, and ``will_import`` is the
+            count that will be SENT rather than a promise about what the
+            server can do with them (its capabilities are not knowable
+            from this process; see task-3309 on unverified forwarded
+            extras). The renderers say so in words.
     """
 
     will_import: int = 0
@@ -697,6 +750,7 @@ class IngestForecast:
     at_risk: int = 0
     tooling_groups: tuple[str, ...] = ()
     staged_total: int = 0
+    targets_server: bool = False
 
     @property
     def will_fail(self) -> int:
@@ -713,7 +767,9 @@ class IngestForecast:
         return self.will_fail_tooling + self.at_risk
 
 
-def build_ingest_forecast(preflight: PreflightResult | None) -> IngestForecast | None:
+def build_ingest_forecast(
+    preflight: PreflightResult | None, *, targets_server: bool = False
+) -> IngestForecast | None:
     """Forecast a staged selection's outcomes from ONE computation.
 
     The single source of truth for the commit-point forecast and the
@@ -724,8 +780,21 @@ def build_ingest_forecast(preflight: PreflightResult | None) -> IngestForecast |
     failures), while a group with only an OPTIONAL feature warned about
     still imports, degraded (those files are ``at_risk``).
 
+    Those tooling gaps are LOCAL facts, so they bear only on a LOCAL run.
+    (xhigh review round) Subtracting them unconditionally made server mode
+    worse than the defect this function was written to fix: five .mp3 with
+    no local audio extra forecast "0 will import · 5 will fail (need
+    tooling)" for a batch the server would have transcribed in full --
+    ``_submit_server_ingest_job`` never touches a local parser. Under
+    ``targets_server`` the local gaps are dropped entirely and no claim is
+    made about the server's own tooling, because this process cannot know
+    it (task-3309: forwarded extras are unverified). What IS knowable is
+    what gets sent, and that is what the renderers say.
+
     Args:
         preflight: The active pre-flight result, or ``None``.
+        targets_server: Whether the staged run will be submitted to the
+            server rather than parsed on this machine.
 
     Returns:
         The forecast, or ``None`` when there is no pre-flight result or
@@ -750,6 +819,12 @@ def build_ingest_forecast(preflight: PreflightResult | None) -> IngestForecast |
     tooling_groups: list[str] = []
     for group, files in type_groups.items():
         count = len(files)
+        if targets_server:
+            # The local capability probe describes THIS machine; the run
+            # happens elsewhere. Counting a local gap as a certain failure
+            # of a server run is a claim about a machine we never asked.
+            will_import += count
+            continue
         required_missing, optional_missing = classify_missing_features(
             group, warned
         )
@@ -778,7 +853,18 @@ def build_ingest_forecast(preflight: PreflightResult | None) -> IngestForecast |
         at_risk=at_risk,
         tooling_groups=tuple(tooling_groups),
         staged_total=int(getattr(preflight, "total_files", 0) or 0),
+        targets_server=bool(targets_server),
     )
+
+
+#: (xhigh review round) The server-mode tail. A server import's outcome
+#: turns on tooling installed on the SERVER, which this process cannot
+#: inspect -- task-3309 is open precisely because forwarded extras go
+#: unverified. Saying so is the only honest alternative to asserting
+#: either extreme ("5 will import" promises what we cannot know; "5 will
+#: fail (need tooling)" condemns a run on someone else's machine using
+#: this machine's inventory).
+INGEST_SERVER_TOOLING_UNKNOWN_COPY = "server tooling isn't checked from here"
 
 
 def forecast_summary_line(forecast: IngestForecast | None) -> str:
@@ -793,10 +879,28 @@ def forecast_summary_line(forecast: IngestForecast | None) -> str:
         failure segment names its reasons whenever tooling is one of them
         -- "3 will fail" alone cannot tell a user that installing
         something would change the number.
+
+        Two hedges are carried through rather than rounded off:
+
+        * A SERVER run states what will be *sent* and admits the server's
+          tooling was not checked (:data:`INGEST_SERVER_TOOLING_UNKNOWN_COPY`).
+        * A capped duplicate probe makes ``will_match`` a floor, which
+          makes ``will_import`` (its complement) a CEILING -- stating it
+          exactly beside "at least N will match" was arithmetic the user
+          could catch out (xhigh review round).
     """
     if forecast is None:
         return ""
-    parts: list[str] = [f"{forecast.will_import} will import"]
+    hedged_import = bool(
+        forecast.match_capped and forecast.will_match and forecast.will_import
+    )
+    if forecast.targets_server:
+        lead = f"{forecast.will_import} will be sent to the server"
+    else:
+        lead = f"{forecast.will_import} will import"
+    if hedged_import:
+        lead = f"at most {lead}"
+    parts: list[str] = [lead]
     if forecast.will_match:
         match_text = (
             f"at least {forecast.will_match}"
@@ -816,6 +920,8 @@ def forecast_summary_line(forecast: IngestForecast | None) -> str:
         elif forecast.will_fail_tooling:
             segment += " (need tooling)"
         parts.append(segment)
+    if forecast.targets_server and forecast.will_import:
+        parts.append(INGEST_SERVER_TOOLING_UNKNOWN_COPY)
     return " · ".join(parts)
 
 
@@ -968,6 +1074,11 @@ class LibraryIngestFormState:
     )
     advanced_open: bool = False
     expanded_type_groups: set[str] = field(default_factory=set)
+    #: (review round) Whether the "What's missing" tooling fold is open.
+    #: Lives here, beside ``expanded_type_groups``, because the canvas
+    #: widget is rebuilt by a full recompose and would otherwise reopen
+    #: collapsed -- the same reason panel expansion is persisted.
+    tooling_detail_expanded: bool = False
     type_options: dict[str, dict[str, Any]] = field(default_factory=dict)
     preflight: PreflightResult | None = None
     preflight_checking: bool = False
@@ -1157,6 +1268,17 @@ class LibraryIngestCanvasState:
     unsupported_line: str
     empty_line: str
     warning_lines: list[str]
+    #: (review round) Pre-flight notes that name no missing feature (the
+    #: URL probe's "could not check the link"). Kept apart from
+    #: ``warning_lines`` so they are never counted as missing components
+    #: and never folded away -- an advisory the user cannot act on by
+    #: installing anything belongs in view, not behind "What's missing".
+    advisory_lines: tuple[str, ...]
+    #: (review round) Survives the canvas recompose that a registry tick
+    #: triggers, so an expanded "What's missing" fold does not snap shut
+    #: mid-read; the canvas posts ``ToolingDetailToggled`` and the screen
+    #: stores it here, the same way option-panel expansion persists.
+    tooling_detail_expanded: bool
     preflight_checking: bool
     expanded_type_groups: set[str]
     type_groups: list[str]
@@ -1627,24 +1749,44 @@ def _build_queue_row(
     return row
 
 
+#: (xhigh review round) One ``Failed to <verb> <type> file:`` stage
+#: wrapper, WITHOUT ``_NESTED_FAILURE_PREFIX_RE``'s requirement that
+#: another ``Failed to`` follow it. Stripped for COMPARISON only (never
+#: from rendered text): the wrapper is added by whichever layer re-raised,
+#: so the same failure reads with it in the row message and without it in
+#: the chain entry, and a dedup that cannot see past it either prints the
+#: payload twice or drops a real root cause.
+_STAGE_FAILURE_PREFIX_RE = re.compile(r"^Failed to \w+(?: [\w.+-]+)? file: ")
+
+
 def _normalized_detail_text(text: str) -> str:
-    """Collapse whitespace so wrapped/re-indented restatements compare equal."""
-    return " ".join(unwrap_ingest_error(str(text)).split())
+    """Collapse whitespace and stage wrappers for restatement comparison."""
+    collapsed = " ".join(unwrap_ingest_error(str(text)).split())
+    while True:
+        stripped = _STAGE_FAILURE_PREFIX_RE.sub("", collapsed, count=1)
+        if stripped == collapsed:
+            return collapsed
+        collapsed = stripped
 
 
 def _restates_known_text(candidate: str, known: Sequence[str]) -> bool:
     """Whether ``candidate`` says nothing the already-rendered lines didn't.
 
-    Containment either way: a chain entry is usually the SAME failure text
-    with a wrapper prefix added ("Failed to ingest audio file: …") or
-    removed, so equality misses it and the whole payload -- a 40-line tool
-    banner, in the case that motivated this -- renders twice.
+    Containment in ONE direction: the candidate is a restatement when it
+    is CONTAINED IN something already on screen. A chain entry that
+    contains a known text but adds to it is a strict superset -- it quotes
+    the row summary and appends the underlying cause -- which is precisely
+    the entry the chain exists to surface.
+
+    (xhigh review round) The other direction was tested too, so those
+    supersets were discarded: the fix for the duplicated 40-line ffmpeg
+    banner (task-14821 AC#4) took the root cause down with it. Wrapper
+    drift, the reason equality was not enough there, is handled by
+    :func:`_normalized_detail_text` instead.
     """
     if not candidate:
         return True
-    return any(
-        text and (candidate in text or text in candidate) for text in known
-    )
+    return any(text and candidate in text for text in known)
 
 
 _MISSING_DEPENDENCY_RE = re.compile(
@@ -1677,12 +1819,29 @@ _DETERMINISTIC_FAILURE_CATEGORIES = frozenset({"no_content", "empty_source"})
 #: ``_MISSING_DEPENDENCY_RE`` cannot match "install an OCR backend
 #: (docling, tesseract, easyocr, paddleocr, or docext)", which is exactly
 #: the message that was landing in the optimistic branch.
+#:
+#: (xhigh review round) Every alternative here now has to be a genuine
+#: PACKAGING remedy, because the advisory it unlocks tells the user their
+#: retry is doomed until they install what the text named. Two were not:
+#:
+#: * ``is (?:not|un)available`` matched ``TranscriptionError("The shared
+#:   local executor is unavailable.")`` -- a pool teardown that clears on
+#:   the next attempt -- and answered it with "Retrying now will fail the
+#:   same way". Replaced by the ``requested, but X is unavailable`` shape,
+#:   which only the deliberate-backend refusals raise
+#:   (``Document_Processing_Lib``'s "Docling processing requested, but
+#:   Docling is unavailable").
+#: * ``may not be installed`` matched the GENERIC extraction refusal
+#:   ("...or the tooling for this file type may not be installed"), which
+#:   names no tooling at all -- so the advice pointed at a remedy "named
+#:   above" that was nowhere on screen.
 _TOOLING_REMEDY_RE = re.compile(
     r"install (?:an?|the) [\w\- ]*backend"
-    r"|libraries not available"
-    r"|is (?:not|un)available"
-    r"|may not be installed"
-    r"|Install (?:it )?with:",
+    r"|(?:librar(?:y|ies)|dependenc(?:y|ies)|module|package)s? not "
+    r"(?:available|installed)"
+    r"|requested, but [\w.+-]+ is (?:not |un)available"
+    r"|Install (?:it |them )?with:"
+    r"|pip install ",
     re.IGNORECASE,
 )
 
@@ -1719,6 +1878,14 @@ def ingest_retry_advice(
     -- printed directly under a row that said an OCR backend was missing,
     and turning Retry into a trap for a deterministic failure.
 
+    (xhigh review round) The tooling sentence claims a remedy was "named
+    above". That is only true when the failure text the user is looking at
+    actually named one, so the two conditions are separated: a NAMED
+    remedy gets the install instruction; a deterministic category with no
+    remedy anywhere gets the determinism alone. The generic extraction
+    refusal ("...or the tooling for this file type may not be installed")
+    is the second case and used to get the first.
+
     Args:
         category: The failure's ``error_detail`` category.
         message: The failure's (already unwrapped) message.
@@ -1731,12 +1898,27 @@ def ingest_retry_advice(
     dependency = _missing_dependency_from(message, tuple(chain))
     if dependency:
         return f"Missing dependency: {dependency}. Install it, then Retry."
-    if category in _DETERMINISTIC_FAILURE_CATEGORIES or _TOOLING_REMEDY_RE.search(
-        str(message)
+    # (xhigh review round) The chain is searched too, and for the same
+    # reason ``_missing_dependency_from`` searches it: a real pdf failure
+    # on an install without pdf tooling reports ``'NoneType' object has no
+    # attribute 'FileDataError'`` as its message and carries the remedy
+    # two links down. The chain entries render directly above this line,
+    # so "named above" stays true of them.
+    if any(
+        _TOOLING_REMEDY_RE.search(str(text))
+        for text in (message, *tuple(chain))
     ):
         return (
             "Retrying now will fail the same way — install the tooling "
             "named above first, then Retry."
+        )
+    if category in _DETERMINISTIC_FAILURE_CATEGORIES:
+        # Deterministic, but nothing on screen names a remedy -- so state
+        # the determinism and stop, rather than sending the user looking
+        # for an install instruction that was never given.
+        return (
+            "Retrying now will fail the same way — this file's content, "
+            "or the tooling for it, has to change first."
         )
     if category == "parse_error":
         # (task-2140) No network talk for a local parse failure -- round 5
@@ -1919,11 +2101,20 @@ def build_ingest_queue_groups(
 
 
 def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
-    """Name the missing dependency when the failure text identifies one."""
+    """Name the missing dependency when the failure text identifies one.
+
+    (xhigh review round) ``pip install (\\S+)`` is greedy to the next
+    space, so a remedy that ends a sentence hands back its full stop:
+    the real chain entry ``"...Install with: pip install
+    tldw_chatbook[pdf]. Error: No module named 'pymupdf'"`` yielded
+    ``tldw_chatbook[pdf].`` and the caller's template added a second dot
+    -- ``Missing dependency: tldw_chatbook[pdf]..`` on screen. Sentence
+    punctuation is never part of a package name.
+    """
     for text in (message, *chain):
         match = _MISSING_DEPENDENCY_RE.search(str(text))
         if match:
-            return next(g for g in match.groups() if g)
+            return next(g for g in match.groups() if g).rstrip(".,;:")
     return ""
 
 def build_library_ingest_state(
@@ -2087,8 +2278,33 @@ def build_library_ingest_state(
                     active_preflight.total_size,
                     active_preflight.truncated,
                 )
-        warning_lines = build_warning_lines(active_preflight.warnings)
-        warning_commands = preflight_install_commands(active_preflight.warnings)
+        # (review round) A pre-flight warning WITHOUT a ``feature`` key is not
+        # a missing component -- the URL probe's "Could not check the link"
+        # note is the live case. Feeding it to ``build_warning_lines``
+        # produced the nonsense "Could not check the link isn't installed --
+        # needed for The site answered 403 ...", and the folded summary then
+        # counted it toward "N optional components aren't installed". Split
+        # here, at the one place that still has the warning dicts: a rendered
+        # line cannot be reverse-engineered back into its warning.
+        feature_warnings = [
+            warning
+            for warning in active_preflight.warnings
+            if str((warning or {}).get("feature") or "").strip()
+        ]
+        advisory_warnings = [
+            warning
+            for warning in active_preflight.warnings
+            if not str((warning or {}).get("feature") or "").strip()
+        ]
+        warning_lines = build_warning_lines(feature_warnings)
+        advisory_lines = tuple(
+            line
+            for line in (
+                _advisory_line(warning) for warning in advisory_warnings
+            )
+            if line
+        )
+        warning_commands = preflight_install_commands(feature_warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
         already_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
@@ -2124,6 +2340,7 @@ def build_library_ingest_state(
         estimate_line = ""
         duplicate_line = ""
         warning_lines = []
+        advisory_lines = ()
         warning_commands = ()
         type_groups_list = []
 
@@ -2143,7 +2360,12 @@ def build_library_ingest_state(
     # consent line, and the nothing-importable gate below -- never
     # recomputed per surface. ``None`` under a path error or before any
     # analysis.
-    forecast = build_ingest_forecast(active_preflight)
+    # (xhigh review round) It is told which backend it is forecasting:
+    # ``targets_server`` was computed above and never reached it, so the
+    # LOCAL tooling inventory was being used to condemn SERVER runs.
+    forecast = build_ingest_forecast(
+        active_preflight, targets_server=targets_server
+    )
     # (task-14823) A folder holding NOTHING was the one selection this
     # gate let through: ``total_files > 0`` excluded it, so Start stayed
     # enabled with an EMPTY gate line and the press manufactured
@@ -2155,6 +2377,10 @@ def build_library_ingest_state(
         and not errors
         and active_preflight.total_files == 0
     )
+    # (xhigh review round) Entries the directory scan passed over without
+    # collecting: what tells "this folder is empty" from "this folder's
+    # entries were all skipped". Both reach ``empty_selection``.
+    skipped_entries = int(getattr(active_preflight, "skipped_entries", 0) or 0)
     nothing_importable = (
         active_preflight is not None
         and not errors
@@ -2190,7 +2416,17 @@ def build_library_ingest_state(
         # need different recoveries -- "add files / pick another folder"
         # versus "these formats aren't supported" -- so they get different
         # sentences rather than one shared blocker line.
-        start_quiet_line = INGEST_EMPTY_SELECTION_COPY
+        # (xhigh review round) ...and a folder whose entries were all
+        # SKIPPED is a third case again: it is not empty, and telling its
+        # owner it is -- while refusing the submit -- is a dead end. The
+        # gate itself is still correct there, because the submit path
+        # walks the folder with the very same collector
+        # (``collect_directory_files``) and would queue nothing.
+        start_quiet_line = (
+            ingest_unscannable_selection_copy(skipped_entries)
+            if skipped_entries
+            else INGEST_EMPTY_SELECTION_COPY
+        )
     elif nothing_importable:
         # (task-2160) Name the blockers by KIND: a solo 0-byte file used to
         # read "1 unsupported file" via the total-files fallback.
@@ -2237,7 +2473,15 @@ def build_library_ingest_state(
     # blocked user the numbers they were reasoning about; MI-16's actual
     # defect was a STALE line, and the gate updater syncs both lines in
     # one pass, so they move together now.
-    commit_summary_line = forecast_summary_line(forecast)
+    # (xhigh review round) With ONE exception, which AC#4 never covered:
+    # when the runtime has no import path AT ALL (no registry, no media
+    # DB) the forecast is not a blocked user's arithmetic, it is a promise
+    # nothing can keep -- "1 will import" beside a permanently dead Start.
+    # A blocked-but-real selection (bad option value, armed consent) keeps
+    # its numbers, which is what AC#4 is about.
+    commit_summary_line = (
+        "" if unavailable_line else forecast_summary_line(forecast)
+    )
     if forecast is not None:
         # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
         # ENABLED (the dedup probe is capped best-effort, never a blocker)
@@ -2265,8 +2509,19 @@ def build_library_ingest_state(
     # all imply ``start_enabled`` is False). The armed flag is gated here,
     # not trusted: a stale carrier with no active warnings renders the
     # ordinary gate line and reports ``start_confirm_armed=False``.
+    # (xhigh review round) The trigger is the FORECAST's blast radius, not
+    # the bare presence of warnings: a server run reads the same local
+    # tooling warnings and has nothing at stake in them, so keying off
+    # ``warning_lines`` painted "Press Start again to import anyway"
+    # followed by no reason at all. ``consent_affected`` is the same field
+    # the confirm sentence renders, so the gate and its copy cannot
+    # disagree about whether there is anything to consent to.
     start_confirm_active = bool(
-        start_confirm_armed and start_enabled and warning_lines
+        start_confirm_armed
+        and start_enabled
+        and warning_lines
+        and forecast is not None
+        and forecast.consent_affected
     )
     if start_confirm_active:
         # (task-14820 AC#1) Rendered FROM the same forecast the commit
@@ -2393,6 +2648,10 @@ def build_library_ingest_state(
         unsupported_line=unsupported_line,
         empty_line=empty_line,
         warning_lines=warning_lines,
+        advisory_lines=advisory_lines,
+        tooling_detail_expanded=bool(
+            getattr(form, "tooling_detail_expanded", False)
+        ),
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),
         type_groups=type_groups_list,
