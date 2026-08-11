@@ -5675,8 +5675,18 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         await pilot.pause()
         scope = app.screen.query_one("#console-settings-scope", Static)
         assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
-        assert "session" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "conversation" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "model defaults" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert (
+            str(app.screen.query_one("#console-settings-save-default", Button).label)
+            == "Save model defaults"
+        )
+        response_control = app.screen.query_one("#console-settings-max-tokens", Input)
+        response_label = response_control.parent.query_one(
+            ".console-settings-modal-label",
+            Static,
+        )
+        assert str(response_label.renderable) == "Response max tokens"
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
@@ -73,11 +73,19 @@ class ConsoleModelPopover(
 
     #console-model-popover {
         width: 60;
-        height: auto;
-        max-height: 100%;
+        height: 90%;
+        min-height: 18;
+        max-height: 32;
         border: tall gray;
         background: black;
         padding: 1 2;
+    }
+
+    #console-model-popover-body {
+        height: 1fr;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 
     .console-popover-field-label {
@@ -86,6 +94,21 @@ class ConsoleModelPopover(
     }
 
     .console-popover-context-row {
+        height: 1;
+        color: $text-muted;
+    }
+
+    #console-popover-compaction-help {
+        height: auto;
+        color: $text-muted;
+    }
+
+    #console-popover-footer {
+        height: auto;
+        background: black;
+    }
+
+    #console-popover-fold-hint {
         height: 1;
         color: $text-muted;
     }
@@ -157,78 +180,122 @@ class ConsoleModelPopover(
                 self._settings.provider, self._providers_models, self._settings.model
             )
         ]
-        with VerticalScroll(id="console-model-popover"):
-            yield Static("Model", classes="console-modal-header")
-            yield Select(
-                provider_options,
-                value=self._settings.provider,
-                id="console-popover-provider",
-            )
-            model_select = Select(
-                model_options,
-                value=self._settings.model if self._settings.model else Select.BLANK,
-                id="console-popover-model",
-                allow_blank=True,
-            )
-            model_select.display = False
-            yield model_select
-            yield ModelSearchPicker(
-                id="console-popover-model-search",
-                provider_select_id="#console-popover-provider",
-                current_model=self._settings.model,
-                providers_models=self._providers_models,
-            )
-            yield Static("Temperature", classes="console-popover-field-label")
-            yield Input(
-                value=""
-                if self._settings.temperature is None
-                else str(self._settings.temperature),
-                placeholder="Temperature",
-                id="console-popover-temperature",
-            )
-            yield Button(
-                f"Streaming: {'on' if self._streaming else 'off'}",
-                id="console-popover-streaming",
-                compact=True,
-            )
-            yield Static(
-                f"Request       {self._context_state.request_row}",
-                id="console-popover-request-usage",
-                classes="console-popover-context-row",
-                markup=False,
-            )
-            yield Static(
-                f"Conversation  {self._context_state.conversation_row}",
-                id="console-popover-conversation-usage",
-                classes="console-popover-context-row",
-                markup=False,
-            )
-            yield Static(
-                "Compaction    at "
-                f"{format_context_tokens(self._context_state.compaction_trigger_tokens)} tokens",
-                id="console-popover-compaction-threshold",
-                classes="console-popover-context-row",
-                markup=False,
-            )
-            yield Select(
-                [
-                    ("Ask", ContextCompactionMode.ASK.value),
-                    ("Automatic", ContextCompactionMode.AUTOMATIC.value),
-                    ("Off", ContextCompactionMode.OFF.value),
-                ],
-                value=self._context_state.resolved_policy.policy.compaction_mode.value,
-                id="console-popover-compaction-mode",
-                disabled=self._context_state.busy,
-            )
-            with Horizontal(id="console-popover-actions"):
+        with Vertical(id="console-model-popover"):
+            with VerticalScroll(id="console-model-popover-body"):
+                yield Static("Model", classes="console-modal-header")
+                yield Select(
+                    provider_options,
+                    value=self._settings.provider,
+                    id="console-popover-provider",
+                )
+                model_select = Select(
+                    model_options,
+                    value=(
+                        self._settings.model
+                        if self._settings.model
+                        else Select.BLANK
+                    ),
+                    id="console-popover-model",
+                    allow_blank=True,
+                )
+                model_select.display = False
+                yield model_select
+                yield ModelSearchPicker(
+                    id="console-popover-model-search",
+                    provider_select_id="#console-popover-provider",
+                    current_model=self._settings.model,
+                    providers_models=self._providers_models,
+                )
+                yield Static("Temperature", classes="console-popover-field-label")
+                yield Input(
+                    value=(
+                        ""
+                        if self._settings.temperature is None
+                        else str(self._settings.temperature)
+                    ),
+                    placeholder="Temperature",
+                    id="console-popover-temperature",
+                )
                 yield Button(
-                    "Context & memory…",
-                    id="console-popover-full-settings",
+                    f"Streaming: {'on' if self._streaming else 'off'}",
+                    id="console-popover-streaming",
                     compact=True,
                 )
-                yield Button(
-                    "Apply", id="console-popover-apply", variant="primary", compact=True
+                yield Static(
+                    "Response max  "
+                    f"{format_context_tokens(self._settings.max_tokens)} tokens for the next reply",
+                    id="console-popover-response-max",
+                    classes="console-popover-context-row",
+                    markup=False,
                 )
+                yield Static(
+                    f"Request       {self._context_state.request_row}",
+                    id="console-popover-request-usage",
+                    classes="console-popover-context-row",
+                    markup=False,
+                )
+                yield Static(
+                    f"Conversation  {self._context_state.conversation_row}",
+                    id="console-popover-conversation-usage",
+                    classes="console-popover-context-row",
+                    markup=False,
+                )
+            with Vertical(id="console-popover-footer"):
+                yield Static(
+                    "Compaction    at "
+                    f"{format_context_tokens(self._context_state.compaction_trigger_tokens)} tokens",
+                    id="console-popover-compaction-threshold",
+                    classes="console-popover-context-row",
+                    markup=False,
+                )
+                yield Static(
+                    "Summarizes older turns. Automatic may add one extra model call.",
+                    id="console-popover-compaction-help",
+                    markup=False,
+                )
+                yield Select(
+                    [
+                        ("Ask", ContextCompactionMode.ASK.value),
+                        ("Automatic", ContextCompactionMode.AUTOMATIC.value),
+                        ("Off", ContextCompactionMode.OFF.value),
+                    ],
+                    value=self._context_state.resolved_policy.policy.compaction_mode.value,
+                    id="console-popover-compaction-mode",
+                    disabled=self._context_state.busy,
+                )
+                fold_hint = Static(
+                    "▼ more — scroll for conversation settings",
+                    id="console-popover-fold-hint",
+                    markup=False,
+                )
+                fold_hint.display = False
+                yield fold_hint
+                with Horizontal(id="console-popover-actions"):
+                    yield Button(
+                        "Context & memory…",
+                        id="console-popover-full-settings",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Apply",
+                        id="console-popover-apply",
+                        variant="primary",
+                        compact=True,
+                    )
+
+    def on_mount(self) -> None:
+        """Settle the narrow-height fold affordance after first layout."""
+        self.call_after_refresh(self._sync_fold_hint)
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Recompute the fold affordance when the terminal size changes."""
+        self.call_after_refresh(self._sync_fold_hint)
+
+    def _sync_fold_hint(self) -> None:
+        """Expose hidden quick settings while keeping the actions pinned."""
+        body = self.query_one("#console-model-popover-body", VerticalScroll)
+        hint = self.query_one("#console-popover-fold-hint", Static)
+        hint.display = body.virtual_size.height > body.container_size.height
 
     @on(Select.Changed, "#console-popover-provider")
     def _provider_changed(self, event: Select.Changed) -> None:

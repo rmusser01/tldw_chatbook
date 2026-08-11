@@ -346,7 +346,7 @@ def test_validation_rejects_bool_and_non_integral_float_numeric_fields() -> None
     errors = validate_console_session_settings(settings, app_config={})
 
     assert "Top K must be 0 or greater." in errors
-    assert "Max tokens must be 1 or greater." in errors
+    assert "Response max tokens must be 1 or greater." in errors
 
 
 def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> None:
@@ -737,10 +737,26 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert estimate.used_tokens > 0
     assert estimate.used_tokens > without_staged.used_tokens
     assert estimate.token_limit == 4096
+    assert estimate.token_limit_verified is True
+    assert estimate.token_limit_source == "model catalog"
     assert "tokens" in estimate.label
     assert "2 sources staged" in estimate.label
     assert estimate.staged_source_count == 2
     assert estimate.staged_context_summary == "2 staged sources"
+
+
+def test_unknown_model_uses_8001_unverified_console_fallback() -> None:
+    """Keep an unknown model usable without presenting fallback as verified."""
+    estimate = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello"}],
+        provider="openai",
+        model="unlisted-model",
+    )
+
+    assert estimate.token_limit == 8001
+    assert estimate.token_limit_verified is False
+    assert estimate.token_limit_source == "provider fallback"
+    assert "estimated; model unverified" in estimate.label
 
 
 def test_context_estimate_staged_text_delta_tracks_its_size() -> None:

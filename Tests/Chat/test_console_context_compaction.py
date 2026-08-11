@@ -809,6 +809,10 @@ class _ControllerRepository(_Repository):
 
 
 class _ControllerGateway(_Gateway):
+    def __init__(self, *, context_window_tokens: int | None = 4_000) -> None:
+        super().__init__()
+        self.context_window_tokens = context_window_tokens
+
     async def resolve_for_send(self, _selection):
         return _resolution()
 
@@ -832,7 +836,7 @@ class _ControllerGateway(_Gateway):
             model=resolution.model or "gpt-test",
             provider=resolution.provider,
             capacity=resolve_request_capacity(
-                context_window_tokens=4_000,
+                context_window_tokens=self.context_window_tokens,
                 requested_response_tokens=resolution.max_tokens or 120,
             ),
             count_fn=_count,
@@ -840,14 +844,21 @@ class _ControllerGateway(_Gateway):
         )
 
 
-def _controller_preflight_fixture(mode: ContextCompactionMode):
+def _controller_preflight_fixture(
+    mode: ContextCompactionMode,
+    *,
+    context_window_tokens: int | None = 4_000,
+    overrides: ConsoleContextPolicyOverrides | None = None,
+):
     persistence = _ControllerPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session()
     store.persist_session_if_needed(session.id)
     store.set_session_context_policy_overrides(
         session.id,
-        ConsoleContextPolicyOverrides(
+        overrides
+        if overrides is not None
+        else ConsoleContextPolicyOverrides(
             budget_mode=ContextBudgetMode.CUSTOM,
             custom_budget_tokens=1_800,
             compaction_mode=mode,
@@ -879,7 +890,7 @@ def _controller_preflight_fixture(mode: ContextCompactionMode):
         content="",
         persist=True,
     )
-    gateway = _ControllerGateway()
+    gateway = _ControllerGateway(context_window_tokens=context_window_tokens)
     repository = _ControllerRepository()
     controller = ConsoleChatController(
         store=store,
@@ -891,6 +902,115 @@ def _controller_preflight_fixture(mode: ContextCompactionMode):
         annotate_ids=True,
     )
     return controller, store, session, assistant, gateway, provider_messages
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_automatic_budget_does_not_block_unverified_send() -> None:
+    """Allow an unverified send when an unknown model has no proven overflow."""
+    controller, _store, session, assistant, gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.ASK,
+            context_window_tokens=None,
+            overrides=ConsoleContextPolicyOverrides(),
+        )
+    )
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is None
+    assert gateway.calls == 0
+    assert output
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_uses_bounded_custom_budget_for_compaction() -> None:
+    """Use the user's bounded budget to compact even when capacity is unknown."""
+    controller, _store, session, assistant, gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.AUTOMATIC,
+            context_window_tokens=None,
+        )
+    )
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is None
+    assert gateway.calls == 1
+    assert any("_tldw_context_owner" in row for row in output)
+
+
+@pytest.mark.asyncio
+async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> (
+    None
+):
+    """Allow a fitting bounded send when no older unit remains to compact."""
+    controller, _store, session, assistant, gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.AUTOMATIC,
+            overrides=ConsoleContextPolicyOverrides(
+                budget_mode=ContextBudgetMode.CUSTOM,
+                custom_budget_tokens=1,
+                compaction_mode=ContextCompactionMode.AUTOMATIC,
+                summary_max_tokens=100,
+            ),
+        )
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    repository = controller._context_repository
+    assert isinstance(repository, _ControllerRepository)
+    repository.memories.append(
+        _memory(snapshots, boundary=snapshots[-2].message_id)
+    )
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is None
+    assert gateway.calls == 0
+    assert any("_tldw_context_owner" in row for row in output)
+
+
+@pytest.mark.asyncio
+async def test_known_overflow_still_blocks_when_compaction_is_unavailable() -> None:
+    """Block a proven overflow that cannot be resolved by compacting older turns."""
+    controller, _store, session, assistant, gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.AUTOMATIC,
+            context_window_tokens=635,
+        )
+    )
+
+    _output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is not None
+    assert "cannot fit the selected model" in result.visible_copy
+    assert "Mandatory request material" in result.visible_copy
+    assert "Summarizing older turns cannot make enough room" in result.visible_copy
+    assert gateway.calls == 0
 
 
 @pytest.mark.asyncio

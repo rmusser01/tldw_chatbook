@@ -2360,3 +2360,24 @@ replaced, and make tests wait for model count, mounted count, and list visibilit
 agree before pressing a row action. While a `ListView.clear()`/extend cycle is in
 flight, poll service state with `asyncio.sleep`; `Pilot.pause()` deliberately waits on
 every message pump and can turn transient child teardown into a harness deadlock.
+---
+
+## A compaction threshold is not a send-admission ceiling (TASK-14913, 2026-08-11)
+
+**Incident.** The first Console memory release routed both an unknown automatic
+budget and a threshold crossing with no replaceable units to a single
+"compaction cannot run safely" blocker. The exact prepared request had not
+exceeded a known provider input ceiling, but the default `Ask` policy made every
+send on an unrecognized model fail before dispatch. A user-supplied bounded
+budget could still reach the same false blocker when no older complete unit was
+eligible for replacement. Policy, lifecycle, serialization, and modal tests all
+passed because none asserted the ordinary send outcome for an unavailable
+compaction decision.
+
+**What to do.** Keep the compaction high-water threshold and provider send
+admission as separate decisions. `UNKNOWN_WINDOW` and `NON_COMPACTABLE` mean
+"do not compact now"; they block the message only when the immutable prepared
+request also proves `known_overflow`. Test the complete decision cross-product:
+unknown model with inherited automatic budget, unknown model with a bounded
+custom budget, and known mandatory-material overflow. A settings-only assertion
+does not prove that the next send consumes the saved policy correctly.

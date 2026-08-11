@@ -66,7 +66,7 @@ from rich.markup import escape as escape_markup
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_BODY_MIN_HEIGHT = 0
 MODAL_CONTROL_HEIGHT = 3
-MODAL_LABEL_WIDTH = 16
+MODAL_LABEL_WIDTH = 23
 MODEL_CUSTOM_BUTTON_WIDTH = 18
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
@@ -117,10 +117,15 @@ PROVIDER_CHOICE_INPUTS = (
 )
 STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
-CONSOLE_SETTINGS_SCOPE_COPY = (
-    "Save applies to this session only. "
-    "Save provider defaults also writes provider + streaming defaults to config."
+CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
+    "Save applies to this conversation. Save model defaults also writes the "
+    "provider, model, generation, and streaming defaults used by new conversations."
 )
+CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
+    "Save applies to this conversation. Global context defaults are in "
+    "F9 Settings > Console behavior."
+)
+CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
     "Could not write defaults to the config file; session values still apply."
 )
@@ -257,6 +262,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         min-height: 3;
     }}
 
+    ConsoleSettingsModal #console-settings-fold-hint {{
+        height: 1;
+        min-height: 1;
+        color: $text-muted;
+    }}
+
     ConsoleSettingsModal #console-settings-memory-review {{
         height: auto;
         max-height: 12;
@@ -391,7 +402,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                 markup=False,
             )
             yield Static(
-                CONSOLE_SETTINGS_SCOPE_COPY,
+                self._scope_copy(),
                 id="console-settings-scope",
                 classes="console-settings-modal-row",
                 markup=False,
@@ -567,7 +578,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Max tokens")
+                        yield self._modal_label("Response max tokens")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.max_tokens),
                             id="console-settings-max-tokens",
@@ -697,21 +708,27 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         markup=False,
                     )
 
-                with Vertical(
+                context_view = Vertical(
                     id="console-settings-context-view",
                     classes="console-settings-context-view",
-                ):
+                )
+                # The body scroll owner can only advertise hidden content when
+                # this nested view reports its full intrinsic height. A 1fr
+                # default collapsed the view to the five-row viewport and made
+                # lower sections both clipped and invisible to max_scroll_y.
+                context_view.styles.height = "auto"
+                with context_view:
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static("Model capacity", classes="destination-section")
                         yield Static(
-                            "Model window        "
+                            f"{self._model_window_label():<20}"
                             f"{format_context_tokens(self._context_state.model_window_tokens)} tokens",
                             id="console-context-model-window",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Response max        "
+                            "Response max tokens "
                             f"{format_context_tokens(self._context_state.response_max_tokens)} tokens",
                             id="console-context-response-max",
                             classes="console-settings-modal-row",
@@ -754,7 +771,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Custom tokens")
+                            yield self._modal_label("Conversation max tokens")
                             yield ConsoleSettingsInput(
                                 value=self._format_value(
                                     self._context_state.resolved_policy.policy.custom_budget_tokens
@@ -803,7 +820,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Trigger at %")
+                            yield self._modal_label("Summarize at (%)")
                             yield ConsoleSettingsInput(
                                 value=self._format_percent(
                                     self._context_state.resolved_policy.policy.trigger_ratio
@@ -812,7 +829,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Compact toward %")
+                            yield self._modal_label("Reduce conversation to (%)")
                             yield ConsoleSettingsInput(
                                 value=self._format_percent(
                                     self._context_state.resolved_policy.policy.target_ratio
@@ -821,7 +838,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Summary max")
+                            yield self._modal_label("Summary response max")
                             yield ConsoleSettingsInput(
                                 value=str(
                                     self._context_state.resolved_policy.policy.summary_max_tokens
@@ -830,7 +847,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("On failure")
+                            yield self._modal_label("If summary fails")
                             yield Select(
                                 [
                                     (
@@ -847,7 +864,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                                 classes="console-settings-control",
                             )
                         with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label("Carry forward")
+                            yield self._modal_label("Keep after summary")
                             yield Select(
                                 [
                                     (
@@ -931,19 +948,26 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                             confirm.display = False
                             yield confirm
 
+            fold_hint = Static(
+                "▼ more — scroll for the rest",
+                id="console-settings-fold-hint",
+                markup=False,
+            )
+            fold_hint.display = False
+            yield fold_hint
             with Horizontal(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
                 yield Button("Cancel", id="console-settings-cancel")
                 save_default = Button(
-                    "Save provider defaults",
+                    "Save model defaults",
                     id="console-settings-save-default",
                     disabled=not self._can_save,
                 )
                 save_default.tooltip = (
-                    "Apply to this session and write these values to your config "
-                    "defaults (provider settings + streaming)."
+                    "Apply to this conversation and write provider, model, generation, "
+                    "and streaming defaults for new conversations."
                 )
                 # Match the 1-row Cancel/Save action styling (their sizes come
                 # from id-scoped app CSS this button's id does not inherit).
@@ -963,6 +987,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._show_settings_view(self._active_view)
         if self._focus_model:
             self._focus_model_control()
+        elif self._active_view == "context":
+            self.call_after_refresh(self._focus_context_control)
+        self.call_after_refresh(self._sync_fold_hint)
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Recompute the body fold affordance after viewport changes."""
+        self.call_after_refresh(self._sync_fold_hint)
 
     def _show_settings_view(self, view: str) -> None:
         """Switch between the two stable in-modal destinations."""
@@ -979,6 +1010,33 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self.query_one("#console-settings-view-context", Button).variant = (
             "default" if show_model else "primary"
         )
+        self.query_one("#console-settings-scope", Static).update(self._scope_copy())
+        self.query_one("#console-settings-save-default", Button).display = show_model
+        self.call_after_refresh(self._sync_fold_hint)
+
+    def _scope_copy(self) -> str:
+        """Return save-scope copy for the active modal destination."""
+        if self._active_view == "context":
+            return CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY
+        return CONSOLE_SETTINGS_MODEL_SCOPE_COPY
+
+    def _focus_context_control(self) -> None:
+        """Focus and reveal the first editable current-conversation control."""
+        try:
+            control = self.query_one("#console-context-budget-mode", Select)
+        except NoMatches:
+            return
+        control.focus()
+        control.scroll_visible(animate=False)
+
+    def _sync_fold_hint(self) -> None:
+        """Show a persistent cue whenever the modal body has hidden content."""
+        try:
+            body = self.query_one("#console-settings-body", ScrollableContainer)
+            hint = self.query_one("#console-settings-fold-hint", Static)
+        except NoMatches:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
 
     @on(Button.Pressed, "#console-settings-view-model")
     def _show_model_view(self, event: Button.Pressed) -> None:
@@ -2073,7 +2131,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             "console-context-target-percent", "Compact-toward target"
         )
         summary_max = self._positive_context_int(
-            "console-context-summary-max", "Summary max tokens"
+            "console-context-summary-max", "Summary response max tokens"
         )
         failure_behavior = CompactionFailureBehavior(
             self._select_value_text(
@@ -2164,9 +2222,29 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         messages = (*resolved.validation_errors, *resolved.warnings)
         if messages:
             return " ".join(messages)
-        if resolved.safety_verified:
+        if (
+            resolved.safety_verified
+            and self._context_state.model_window_verified
+        ):
             return "Capacity is verified for the selected model."
-        return "Model limit unknown; automatic safety cannot be verified."
+        if self._context_state.model_window_tokens is not None:
+            return (
+                "Estimated fallback only; model capacity is unverified. "
+                "Set the actual context window in F9 Settings > Providers & Models."
+            )
+        return (
+            "Model limit unknown; automatic safety cannot be verified. "
+            "Set the context window in F9 Settings > Providers & Models."
+        )
+
+    def _model_window_label(self) -> str:
+        """Label fallback model windows as estimates instead of verified facts."""
+        if (
+            self._context_state.model_window_tokens is not None
+            and not self._context_state.model_window_verified
+        ):
+            return "Model window (est.)"
+        return "Model window"
 
     def _memory_metadata_label(self) -> str:
         memory = self._context_state.active_memory

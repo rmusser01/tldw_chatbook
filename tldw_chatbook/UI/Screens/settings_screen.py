@@ -950,19 +950,25 @@ def _build_field_search_index() -> None:
                     "settings-console-context-budget-mode",
                     "Conversation budget strategy",
                 ),
-                ("settings-console-context-budget-tokens", "Conversation token budget"),
-                ("settings-console-context-compaction-mode", "Auto compaction mode"),
+                ("settings-console-context-budget-tokens", "Conversation max tokens"),
+                ("settings-console-context-compaction-mode", "When limit nears"),
                 (
                     "settings-console-context-trigger-percent",
-                    "Compaction trigger percent",
+                    "Summarize at percent",
                 ),
-                ("settings-console-context-target-percent", "Compact toward percent"),
-                ("settings-console-context-summary-max-tokens", "Summary max tokens"),
+                (
+                    "settings-console-context-target-percent",
+                    "Reduce conversation to percent",
+                ),
+                (
+                    "settings-console-context-summary-max-tokens",
+                    "Summary response max tokens",
+                ),
                 (
                     "settings-console-context-failure-behavior",
-                    "Compaction failure behavior",
+                    "If summary fails",
                 ),
-                ("settings-console-context-carry-forward-mode", "Carry forward memory"),
+                ("settings-console-context-carry-forward-mode", "Keep after summary"),
             ),
             SettingsCategoryId.APPEARANCE: (
                 ("settings-appearance-theme", "Theme"),
@@ -6164,7 +6170,9 @@ class SettingsScreen(BaseAppScreen):
         if not text_value:
             return ""
         if not text_value.isdecimal() or int(text_value) < 1:
-            raise ValueError("Max tokens must be a whole number of at least 1.")
+            raise ValueError(
+                "Response max tokens must be a whole number of at least 1."
+            )
         return int(text_value)
 
     @staticmethod
@@ -7687,7 +7695,11 @@ class SettingsScreen(BaseAppScreen):
         return self._normalise_optional_int(value, min_value=0, label="Top K")
 
     def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
-        return self._normalise_optional_int(value, min_value=1, label="Max tokens")
+        return self._normalise_optional_int(
+            value,
+            min_value=1,
+            label="Response max tokens",
+        )
 
     def _normalise_model_context_window(self, value: object) -> int | str:
         return self._normalise_optional_int(
@@ -9549,7 +9561,7 @@ class SettingsScreen(BaseAppScreen):
                 "whole number of at least 0, or blank for inherited default",
             ),
             "settings-model-profile-max-tokens": (
-                "Max tokens",
+                "Response max tokens",
                 "Optional response length ceiling for this provider and model profile.",
                 "max_tokens",
                 "whole number of at least 1, or blank for inherited default",
@@ -10516,7 +10528,7 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Max tokens", classes="settings-input-label")
+                    yield Static("Response max tokens", classes="settings-input-label")
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_max_tokens"]
@@ -10707,6 +10719,18 @@ class SettingsScreen(BaseAppScreen):
         ):
             if compact:
                 yield Static("Console behavior", classes="destination-section")
+            yield Static("Start here", classes="destination-section")
+            yield Button(
+                "Conversation context and memory ↓",
+                id="settings-console-context-memory-jump",
+                tooltip="Jump to global conversation length and compaction defaults.",
+            )
+            yield Static(
+                "Also in this category: rail presentation, paste handling, images, "
+                "agent limits, and generation defaults.",
+                id="settings-console-behavior-section-index",
+                classes="settings-detail-row",
+            )
             yield Static("Rail presentation", classes="destination-section")
             yield Checkbox(
                 "Stack collapsed rail labels",
@@ -10796,7 +10820,11 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
             )
-            yield Static("Conversation memory", classes="destination-section")
+            yield Static(
+                "Conversation context and memory",
+                id="settings-console-context-memory-section",
+                classes="destination-section",
+            )
             yield Static(
                 "Global defaults for new and inherited conversations. Current-conversation "
                 "overrides remain in the Console's Context & memory view.",
@@ -10817,7 +10845,7 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Custom budget", classes="settings-input-label")
+                yield Static("Conversation max tokens", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("conversation_budget_tokens")
@@ -10828,7 +10856,7 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Compaction", classes="settings-input-label")
+                yield Static("When limit nears", classes="settings-input-label")
                 yield Select(
                     [
                         ("Ask", ContextCompactionMode.ASK.value),
@@ -10842,7 +10870,7 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Trigger (%)", classes="settings-input-label")
+                yield Static("Summarize at (%)", classes="settings-input-label")
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_trigger_ratio")
@@ -10852,7 +10880,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="80",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Compact toward (%)", classes="settings-input-label")
+                yield Static("Reduce conversation to (%)", classes="settings-input-label")
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_target_ratio")
@@ -10862,7 +10890,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="55",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Summary max", classes="settings-input-label")
+                yield Static("Summary response max", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("compaction_summary_max_tokens")
@@ -10873,7 +10901,7 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("On failure", classes="settings-input-label")
+                yield Static("If summary fails", classes="settings-input-label")
                 yield Select(
                     [
                         ("Stop and ask", CompactionFailureBehavior.STOP_AND_ASK.value),
@@ -10891,7 +10919,7 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Carry forward", classes="settings-input-label")
+                yield Static("Keep after summary", classes="settings-input-label")
                 yield Select(
                     [
                         (
@@ -10997,7 +11025,7 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Max tokens", classes="settings-input-label")
+                yield Static("Response max tokens", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("max_tokens")
@@ -13502,7 +13530,7 @@ class SettingsScreen(BaseAppScreen):
                 "Probability cutoff fallback; lower values narrow token choices",
             )
             yield self._detail_row(
-                "Max tokens",
+                "Response max tokens",
                 "Optional response cap for new/default Console sends",
             )
             yield self._detail_row(
@@ -15350,6 +15378,25 @@ class SettingsScreen(BaseAppScreen):
         )
         self._stage_console_default_value(key, ratio_from_percent(event.value))
         self._mark_console_behavior_settings_staged()
+
+    @on(Button.Pressed, "#settings-console-context-memory-jump")
+    def handle_console_context_memory_jump(self, event: Button.Pressed) -> None:
+        """Reveal and focus the first global conversation-context control."""
+        event.stop()
+        try:
+            target = self.query_one(
+                "#settings-console-context-memory-section",
+                Static,
+            )
+            control = self.query_one(
+                "#settings-console-context-budget-mode",
+                Select,
+            )
+        except QueryError:
+            return
+        target.scroll_visible(animate=False)
+        control.focus()
+        control.scroll_visible(animate=False)
 
     @on(Button.Pressed, "#settings-console-context-edit-summary-prompt")
     def handle_console_context_edit_summary_prompt(self, event: Button.Pressed) -> None:
