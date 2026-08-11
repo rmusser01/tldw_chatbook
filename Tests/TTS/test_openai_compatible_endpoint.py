@@ -13,6 +13,12 @@ import pytest
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 
+# Network opt-in (task-15111): this module talks to an in-process HTTP
+# server on an ephemeral loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 CUSTOM_URL = "http://127.0.0.1:8123/v1/audio/speech"
 
 

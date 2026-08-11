@@ -2523,3 +2523,85 @@ class _CharacterHandoffStore(ConsoleChatStore):      # real store, persistence=N
 The greeting text then comes from production's own template expansion, so the assertion
 `== ["Hello User, I am Elara."]` is a live end-to-end claim (mutation-checked: passing
 `global_default="Zed"` turns it red) instead of a re-implementation of the thing under test.
+
+## Two tests failing on the SAME missing class can have opposite causes — and the feature commit's own test diff is the authority (TASK-15121, 2026-08-11)
+
+**Incident.** Two tests in `Tests/UI/test_console_native_chat_flow.py` went red on dev with
+what looked like one symptom: the Console send button no longer carried
+`console-send-blocked`. The obvious reading was a CSS-vocabulary rename — follow it in both
+tests and move on. Both readings were wrong in different directions:
+
+- `test_console_composer_stop_is_subdued_when_idle` mid-stream with an EMPTY draft: the
+  button was still genuinely `disabled`, just for a different reason
+  (`console-send-inactive`, the empty-draft gate) than the one pinned.
+- `test_console_duplicate_send_during_stream_does_not_break_stop_control` mid-stream with a
+  draft loaded: the button was `disabled is False` and `console-send-ready`. The single
+  `composer.load_draft("second send")` between the two tests is the whole difference.
+
+Had both been "fixed" as a rename, the second would have kept asserting a control was
+unavailable when it is now deliberately available — the exact class of silent claim
+task-14920 lost a real bug behind for four days.
+
+Neither the class name nor the production code said which reading was right. What settled
+it was the **test diff of the commit that caused it**: `git log -S 'send_blocked = not
+queue_presentation.send_enabled'` named `14cc326e4` ("feat(console): add visible prompt
+queue"), and that commit's own diff to a SIBLING test file
+(`Tests/UI/test_console_send_disabled_state.py`) rewrote the same assertions to the new
+contract and renamed a test from `..._while_run_blocked_still_shows_feedback` to
+`..._queues_draft_behind_accepted_run`. The author changed the contract deliberately
+(ADR-046: "once accepted, the normal `Send` action becomes `Queue`") and updated one test
+file, not two.
+
+**What to do.** On a post-merge test failure that looks cosmetic, `git log -S` the assertion's
+symbol, then read that commit's *test* diff before its production diff — an author who meant
+the change usually left the new contract written out somewhere. And classify each failure
+separately even when the symptom string is identical: same missing class, different inputs,
+different truth. Where a pinned behaviour really was removed, say so in the test and pin what
+replaced it (here: the duplicate send must still not start a second run, must land in the
+bounded queue, and must not break Stop) rather than deleting the assertion.
+
+---
+
+## What is LISTENING on your machine can change what the test suite does (2026-08-11)
+
+**The trap.** A suite can be environment-dependent in a direction nobody checks: not a
+missing dependency, but an *extra* process. If production code probes a hardcoded
+localhost port, then whether a developer happens to be running a local server decides
+which branch the tests take — and the difference is invisible, because the escape's
+failure mode is *success*.
+
+**What happened.** task-15111. `Tests/UI`'s Console suites were opening real TCP
+connections to `127.0.0.1:8080` and `127.0.0.1:11434` on every test that mounted
+`ChatScreen` with an unconfigured provider. Mechanism: a blocking setup card starts
+`_maybe_start_console_local_discovery` → `discover_local_servers`, whose candidate list
+*always* leads with those two well-known defaults regardless of config, and
+`probe_models_endpoint` builds a real `httpx.AsyncClient` when none is injected. A
+record-only socket shim logged **386 connect attempts across 20 test files in the first
+12% of `Tests/UI` alone** — on a machine that happened to have an `audiocpp` server bound
+to 8080. Exactly one test in the suite had ever stubbed the `console_local_server_discovery`
+seam; every other Console test fell through to the network.
+
+Two things made it worse than "a stray GET":
+
+- **The escape was self-concealing.** `_get_models_payload` ends in
+  `except Exception: return None, "No models endpoint..."`. Blocking the socket, raising,
+  timing out and answering all look identical from outside. A guard that only *raises* is
+  therefore not enough — the guard has to **record** the attempt and something has to
+  assert on the record, or the code under test simply eats it.
+- **It could have POSTed.** `_configure_native_ready_console` points the Console at
+  `http://127.0.0.1:9099` and several tests then drive a REAL send through
+  `ConsoleProviderGateway`. On CI nothing listens, `_is_reachable`'s `GET /health` fails,
+  and the send stops — so the suite looked read-only. Standing up a stand-in server on
+  9099 and re-running one such test showed it going on to send **two POSTs to
+  `/v1/chat/completions`** (streaming, then the non-streaming fallback) carrying the
+  test's prompt. With a real llama.cpp on that port, `pytest` would have driven inference
+  on the developer's server.
+
+**What to do.** Default-deny sockets in the test configuration (`Tests/network_guard.py`,
+installed at conftest *import* time so collection and post-test worker threads are covered
+too), with an explicit `@pytest.mark.allow_network` opt-in, and fix the seams that build a
+real client so the guard is a backstop rather than the mechanism. And when you want to know
+what a suite would do against a live endpoint, do not reason about it: **bind a stand-in
+server on the port and read what it receives.** Recording connects tells you a socket
+opened; recording requests tells you the verb, the path and the body — which is the
+difference between "reads something" and "writes to your server".

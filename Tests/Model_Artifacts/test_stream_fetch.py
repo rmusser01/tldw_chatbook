@@ -13,6 +13,13 @@ from tldw_chatbook.Model_Artifacts.fetch import (
     stream_fetch,
 )
 
+# Network opt-in (task-15111): this module fetches from
+# `FixtureArtifactServer`, an in-process HTTP server on an ephemeral
+# loopback port.
+# The autouse guard in Tests/conftest.py denies egress by default; every address
+# these tests reach is a port this process itself is listening on.
+pytestmark = pytest.mark.allow_network
+
 BODY = b"0123456789" * 1000  # 10 KB
 
 
