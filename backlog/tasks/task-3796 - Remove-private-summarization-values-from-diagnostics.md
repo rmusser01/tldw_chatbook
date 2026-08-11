@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 14:49'
-updated_date: '2026-08-11 05:21'
+updated_date: '2026-08-11 06:02'
 labels:
   - llm-calls
   - observability
@@ -210,16 +210,21 @@ Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026
   independent runtime privacy mutations, two traceback-capture mutations, and
   three stable-guard mutations (unclassified call, changed frozen expression,
   and exception capture) each failed their owning assertion before inverse
-  restoration. Final production blob hashes were restored exactly to Local
-  `c4599dd418734ff991d0df71ed1d3b329feec9bd` and General
-  `c8c03fb4a45a8271195adbe5d9480ca068699668`.
+  restoration. Final production blob hashes, including the PR review
+  correction below, are Local `6f71f80cd94129f478844ac0bba6842c794c4f55`
+  and General `b3595d2cd85b79d985b42a962afd807e60b500bd`.
+- PR review added bounded `line_length` context to the Local LLM and Llama
+  malformed-stream diagnostics and a sanitized provider token to the
+  `analyze()` failure diagnostic. Direct real-function tests first failed on
+  the absent context, then passed after the metadata-only corrections; no
+  response content or provider-controlled value is logged.
 - Only diagnostic arguments changed. Provider selection, request payloads and
   transport calls, response handling, retry/error paths, return strings,
   streaming laziness/chunks, and response-close behavior remain under direct
   tests and unchanged contracts.
 - The governed manifest changes only Local `242 -> 229` (digest
-  `1ccaf200dcf244f3effc`) and General `281 -> 271` (digest
-  `5e988a1c16e064c39fcb`), plus the derived TASK-492 total `1,167 -> 1,144`.
+  `6e78b604a2504fca4b07`) and General `281 -> 271` (digest
+  `d37486940059e7af2679`), plus the derived TASK-492 total `1,167 -> 1,144`.
   Owners, reasons, unrelated checked entries, and six-file sink topology are
   unchanged. Exact latest dev independently carries an unrelated 17-owner
   baseline drift (`44` additions / `30` deletions; Git-patch SHA-256
@@ -227,8 +232,8 @@ Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026
   which remains unblessed with separate To Do ownership. This lower-numbered
   task intentionally omits the later task ID under the repository's
   no-forward-reference rule.
-- Fresh focused evidence: the privacy file passed `255` tests; the complete
-  touched-functionality command passed `305` tests with only the approved
+- Fresh focused evidence: the privacy file passed `257` tests; the complete
+  touched-functionality command passed `307` tests with only the approved
   current-dev baseline failure
   `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
   Detached exact base `39298db48f173976a8563ad1a95415f8cf506c24` passed the

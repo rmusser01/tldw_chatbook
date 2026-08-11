@@ -111,7 +111,9 @@ def summarize_with_local_llm(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        "Local LLM: Failed to decode streamed JSON"
+                                        "Local LLM: Failed to decode streamed JSON; "
+                                        "line_length=%s",
+                                        len(decoded_line),
                                     )
                                     continue
 
@@ -299,7 +301,9 @@ def summarize_with_llama(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        "Llama: Failed to decode streamed JSON"
+                                        "Llama: Failed to decode streamed JSON; "
+                                        "line_length=%s",
+                                        len(decoded_line),
                                     )
                                     continue
 

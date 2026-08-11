@@ -779,7 +779,10 @@ def analyze(
             elif isinstance(
                 final_string_summary, str
             ) and final_string_summary.startswith("Error:"):
-                logging.error("Summarization failed")
+                logging.error(
+                    "Summarization failed; provider=%s",
+                    safe_metadata_token(api_name),
+                )
                 return final_string_summary
             elif isinstance(final_string_summary, str):
                 logging.info(

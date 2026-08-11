@@ -832,14 +832,14 @@
     },
     {
       "call_count": 229,
-      "diagnostic_digest": "1ccaf200dcf244f3effc",
+      "diagnostic_digest": "6e78b604a2504fca4b07",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
       "call_count": 271,
-      "diagnostic_digest": "5e988a1c16e064c39fcb",
+      "diagnostic_digest": "d37486940059e7af2679",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

@@ -606,7 +606,7 @@ LOCAL_RUNTIME_SENTINEL_CASES = (
         LOCAL_RESPONSE_CANARY,
         _ignore_runtime_tmp_path(_invoke_local_response),
         _assert_empty_stream,
-        "Local LLM: Failed to decode streamed JSON",
+        "Local LLM: Failed to decode streamed JSON; line_length=",
     ),
     RuntimeSentinelCase(
         "local",
@@ -2636,6 +2636,36 @@ def test_local_llm_malformed_stream_contract_hides_response_canary(
 
     _assert_empty_stream(result)
     assert LOCAL_RESPONSE_CANARY not in captured.text
+    assert "Local LLM: Failed to decode streamed JSON; line_length=" in captured.text
+
+
+def test_local_core_llama_malformed_stream_logs_only_safe_length(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response = _FakeResponse(
+        lines=(f"data: {{{LOCAL_RESPONSE_CANARY}".encode(), b"data: [DONE]")
+    )
+    monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
+    monkeypatch.setattr(
+        local_summarization.requests,
+        "Session",
+        lambda: _FakeSession(response),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        generator = local_summarization.summarize_with_llama(
+            "fixed input",
+            "fixed prompt",
+            api_key="fixed-llama-key",
+            streaming=True,
+        )
+        result = list(generator)
+
+    assert result == []
+    assert response.iter_lines_started is True
+    assert LOCAL_RESPONSE_CANARY not in captured.text
+    assert "Llama: Failed to decode streamed JSON; line_length=" in captured.text
 
 
 def test_local_llm_exception_contract_hides_exception_canary(
@@ -3974,6 +4004,30 @@ def test_analyze_nested_generator_exception_is_consumed_without_private_diagnost
     assert GENERAL_ANALYZE_STREAM_EXCEPTION_CANARY not in captured.text
     assert "Error consuming generator; exception_type=RuntimeError" in captured.text
     assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_analyze_error_result_logs_safe_provider_context(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_dispatch = general_summarization._dispatch_to_api
+    signature = inspect.signature(real_dispatch)
+
+    def fake_dispatch(*args: object, **kwargs: object) -> str:
+        signature.bind(*args, **kwargs)
+        return "Error: fixed provider failure"
+
+    monkeypatch.setattr(general_summarization, "_dispatch_to_api", fake_dispatch)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.analyze(
+            "fixed-provider",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Error: fixed provider failure"
+    assert "Summarization failed; provider=fixed-provider" in captured.text
 
 
 def test_analyze_chunk_failure_preserves_placeholder_without_logging_private_output(
