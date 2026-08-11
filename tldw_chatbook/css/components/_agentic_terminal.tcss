@@ -1260,6 +1260,32 @@ LibraryFileNotesGitPanel Button:disabled {
     background: $surface-darken-1;
 }
 
+/* TASK-15509: Session Git previously redeclared a fixed focus palette inside
+   widget DEFAULT_CSS, masking theme-level design-system overrides. Keep a
+   built-in semantic fallback in the widget for isolated mounting, then let
+   the app tier own the shared workbench focus surface in production. */
+LibraryFileNotesGitPanel .file-notes-git-row:focus,
+LibraryFileNotesGitPanel .file-notes-git-row.-highlight,
+LibraryFileNotesGitPanel .file-notes-git-commit-included-row:focus,
+LibraryFileNotesGitPanel .file-notes-git-commit-included-row.-highlight {
+    background: $primary-background;
+    color: $text;
+    text-style: bold underline;
+    outline: none;
+}
+
+LibraryFileNotesGitPanel Button.-style-default:focus {
+    background: $primary-background;
+    color: $text;
+    text-style: bold underline;
+    outline: none;
+}
+
+LibraryFileNotesGitPanel #file-notes-git-push-body:focus,
+LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
+    outline: heavy $primary;
+}
+
 /* Disabled-action recovery remains on screen and uses readable semantic ink.
    These lines carry the reason and next step, so muted telemetry contrast is
    not sufficient across the complete shipped theme catalog. */

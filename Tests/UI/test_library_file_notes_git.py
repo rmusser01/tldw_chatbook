@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import types
 from collections.abc import Callable, Mapping, Sequence
@@ -54,6 +55,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionGitStageAction,
     SessionGitStatus,
 )
+from tldw_chatbook.css.Themes.themes import ALL_THEMES  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
@@ -167,6 +169,21 @@ class _PanelHarness(App[None]):
         message,
     ) -> None:
         self.messages.append(message)
+
+
+class _ThemedPanelHarness(_PanelHarness):
+    """Mount the panel with the production design-system bundle and themes."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def on_mount(self) -> None:
+        for theme in ALL_THEMES:
+            self.register_theme(theme)
 
 
 class _PanelWithOutsideControlHarness(_PanelHarness):
@@ -889,6 +906,68 @@ async def _wait_for_current_git_row_projection(
         f"model={len(panel.rows)}, mounted={mounted_count}, "
         f"display={row_list.display}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+async def test_git_focus_surfaces_follow_the_active_theme_tokens(
+    size: tuple[int, int],
+) -> None:
+    css = LibraryFileNotesGitPanel.DEFAULT_CSS
+    assert re.search(r"^\s*\$ds-focus-(?:bg|fg)\s*:", css, re.MULTILINE) is None
+
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _ThemedPanelHarness(panel)
+    observed: dict[str, Color] = {}
+
+    async with app.run_test(size=size) as pilot:
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            lambda: len(panel.query(".file-notes-git-row")) == 1,
+            "Git row did not mount",
+        )
+        row_list = panel.query_one("#file-notes-git-rows", ListView)
+        back = panel.query_one("#file-notes-git-back", Button)
+        commit_workflow = panel.query_one("#file-notes-git-commit-workflow")
+        commit_body = panel.query_one("#file-notes-git-commit-body")
+
+        for theme_name in ("textual-dark", "agentic_terminal"):
+            app.theme = theme_name
+            expected_focus = Color.parse(
+                str(app.get_css_variables()["primary-background"])
+            )
+            expected_outline = Color.parse(str(app.get_css_variables()["primary"]))
+            panel.query_one("#file-notes-git-list-surface").display = True
+            commit_workflow.display = False
+            row_list.index = 0
+            row_list.focus()
+            await pilot.pause()
+            await pilot.pause()
+
+            row = panel.query_one(".file-notes-git-row")
+            assert row.has_class("-highlight")
+            assert row.styles.text_style.bold
+            assert row.styles.text_style.underline
+            assert row.region.height == 2
+            observed[theme_name] = row.styles.background
+            assert observed[theme_name] == expected_focus
+
+            back.focus()
+            await pilot.pause()
+            assert back.has_focus
+            assert back.render_line(0).text.strip() == str(back.label)
+            assert back.styles.background == observed[theme_name]
+
+            panel.query_one("#file-notes-git-list-surface").display = False
+            commit_workflow.display = True
+            commit_body.focus()
+            await pilot.pause()
+            assert commit_body.has_focus
+            assert commit_body.styles.outline.top[1] == expected_outline
+
+        assert observed["textual-dark"] != observed["agentic_terminal"]
 
 
 async def _open_git_and_stage_one(
@@ -2942,6 +3021,7 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
         files_tree = workspace.query_one("#file-notes-tree", Tree)
         search_tree = workspace.query_one("#file-notes-search-results", Tree)
         search = workspace.query_one("#file-notes-search", Input)
+        search_row = workspace.query_one("#file-notes-search-row")
         panel = workspace.query_one(
             "#file-notes-git-panel",
             LibraryFileNotesGitPanel,
@@ -2962,7 +3042,8 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
         assert workspace.query_one("#file-notes-search-results", Tree) is search_tree
         assert not files_tree.display
         assert not search_tree.display
-        assert not search.display
+        assert not search_row.display
+        assert search.display
 
         panel.query_one("#file-notes-git-back", Button).press()
         await _wait_until(

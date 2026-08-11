@@ -621,9 +621,6 @@ class LibraryFileNotesGitPanel(Vertical):
     ]
 
     DEFAULT_CSS = """
-    $ds-focus-bg: #51677e;
-    $ds-focus-fg: $text;
-
     LibraryFileNotesGitPanel {
         display: none;
         height: 1fr;
@@ -712,8 +709,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
     .file-notes-git-row:focus,
     .file-notes-git-row.-highlight {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
@@ -736,8 +733,8 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     LibraryFileNotesGitPanel Button.-style-default:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
@@ -775,7 +772,7 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-push-body:focus {
-        outline: heavy $ds-focus-bg;
+        outline: heavy $primary;
     }
 
     .file-notes-git-push-phase {
@@ -911,7 +908,7 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-commit-body:focus {
-        outline: heavy $ds-focus-bg;
+        outline: heavy $primary;
     }
 
     .file-notes-git-commit-phase {
@@ -992,8 +989,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
     .file-notes-git-commit-included-row:focus,
     .file-notes-git-commit-included-row.-highlight {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        background: $primary-background;
+        color: $text;
         text-style: bold underline;
         outline: none;
     }
