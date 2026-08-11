@@ -29,6 +29,13 @@ def test_api_mode_config_then_default_and_exact_values() -> None:
         )
         == "responses"
     )
+    assert (
+        normalize_qwencloud_api_mode(
+            "responses",
+            provider_settings=7,  # type: ignore[arg-type]
+        )
+        == "responses"
+    )
 
     for rejected in ("response", "chat", "chat-completions", "unknown", ""):
         with pytest.raises(ChatConfigurationError) as exc_info:
@@ -77,6 +84,20 @@ def test_base_url_rejects_unsafe_or_malformed_values() -> None:
         assert "secret" not in str(exc_info.value)
 
 
+def test_base_url_rejects_malformed_authorities() -> None:
+    malformed_authorities = (
+        "https://good.example\\evil/v1",
+        "https://%zz/v1",
+        "https://good.example|evil/v1",
+        "https://good.example^evil/v1",
+        "https://good.example\x00evil/v1",
+    )
+    for value in malformed_authorities:
+        with pytest.raises(ChatConfigurationError) as exc_info:
+            normalize_qwencloud_base_url(value)
+        assert exc_info.value.provider == "qwencloud"
+
+
 def test_api_key_precedence_is_provider_isolated() -> None:
     environ = {
         "DASHSCOPE_API_KEY": "default-env-key",
@@ -96,7 +117,23 @@ def test_api_key_precedence_is_provider_isolated() -> None:
         == "trusted-key"
     )
     assert (
+        resolve_qwencloud_api_key(
+            "trusted-key",
+            provider_settings=7,  # type: ignore[arg-type]
+            environ=7,  # type: ignore[arg-type]
+        )
+        == "trusted-key"
+    )
+    assert (
         resolve_qwencloud_api_key(None, provider_settings=settings, environ=environ)
+        == "modern-key"
+    )
+    assert (
+        resolve_qwencloud_api_key(
+            None,
+            provider_settings={"api_key": "modern-key"},
+            environ=7,  # type: ignore[arg-type]
+        )
         == "modern-key"
     )
     assert (
@@ -117,6 +154,31 @@ def test_api_key_precedence_is_provider_isolated() -> None:
         )
     assert exc_info.value.provider == "qwencloud"
     assert "do-not-use" not in str(exc_info.value)
+
+
+def test_resolution_helpers_reject_invalid_mapping_shapes() -> None:
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        normalize_qwencloud_api_mode(
+            None,
+            provider_settings=7,  # type: ignore[arg-type]
+        )
+    assert exc_info.value.provider == "qwencloud"
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        resolve_qwencloud_api_key(
+            None,
+            provider_settings=7,
+            environ={},  # type: ignore[arg-type]
+        )
+    assert exc_info.value.provider == "qwencloud"
+
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        resolve_qwencloud_api_key(
+            None,
+            provider_settings={},
+            environ=7,  # type: ignore[arg-type]
+        )
+    assert exc_info.value.provider == "qwencloud"
 
 
 def test_responses_payload_has_exact_allowlist_and_stateless_invariants() -> None:
@@ -222,6 +284,33 @@ def test_responses_system_message_maps_to_instructions() -> None:
                 {"role": "system", "content": "Too late."},
             ],
         )
+
+
+def test_leading_system_row_with_tool_calls_is_rejected() -> None:
+    messages = [
+        {
+            "role": "system",
+            "content": "Never execute tools.",
+            "tool_calls": [
+                {
+                    "id": "call_system",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "user", "content": "Hello"},
+    ]
+    for mode in ("responses", "chat_completions"):
+        with pytest.raises(ChatBadRequestError) as exc_info:
+            build_qwencloud_payload(
+                api_mode=mode,
+                model="qwen3.8-max",
+                system_message=None,
+                messages_payload=messages,
+                streaming=False,
+            )
+        assert exc_info.value.provider == "qwencloud"
 
 
 def test_responses_reasoning_effort_enum_is_exact() -> None:
@@ -338,6 +427,23 @@ def test_chat_payload_has_exact_allowlist_and_thinking_invariant() -> None:
                 streaming=False,
                 response_format=rejected_format,
             )
+
+
+def test_chat_stop_sequence_is_deep_copied() -> None:
+    stop = ["END", "DONE"]
+    payload = build_qwencloud_payload(
+        api_mode="chat_completions",
+        model="qwen3.8-max",
+        system_message=None,
+        messages_payload=[{"role": "user", "content": "Hello"}],
+        streaming=False,
+        stop=stop,
+    )
+
+    assert payload["stop"] == ["END", "DONE"]
+    assert payload["stop"] is not stop
+    stop.append("MUTATED")
+    assert payload["stop"] == ["END", "DONE"]
 
 
 def test_function_tools_translate_by_mode() -> None:
@@ -475,6 +581,32 @@ def test_invalid_or_builtin_tools_fail_before_network() -> None:
                     tools=[valid_function],
                     tool_choice=rejected_choice,
                 )
+
+
+@pytest.mark.parametrize(
+    "invalid_override",
+    (
+        {"messages_payload": None},
+        {"tools": 7},
+        {"response_format": 7},
+    ),
+    ids=("messages-none", "tools-int", "response-format-int"),
+)
+def test_invalid_public_build_shapes_raise_typed_error(
+    invalid_override: dict[str, object],
+) -> None:
+    kwargs: dict[str, object] = {
+        "api_mode": "chat_completions",
+        "model": "qwen3.8-max",
+        "system_message": None,
+        "messages_payload": [{"role": "user", "content": "Hello"}],
+        "streaming": False,
+    }
+    kwargs.update(invalid_override)
+
+    with pytest.raises(ChatBadRequestError) as exc_info:
+        build_qwencloud_payload(**kwargs)  # type: ignore[arg-type]
+    assert exc_info.value.provider == "qwencloud"
 
 
 def test_message_content_translation_is_role_safe_and_immutable() -> None:
@@ -703,6 +835,37 @@ def test_responses_pairs_out_of_order_results_by_call_id() -> None:
         streaming=False,
     )
     assert chat["messages"] == original
+
+
+def test_tool_call_arguments_reject_non_finite_json_constants() -> None:
+    for arguments in ('{"x":NaN}', '{"x":Infinity}', '{"x":-Infinity}'):
+        history = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_strict_json",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": arguments},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_strict_json",
+                "content": "ok",
+            },
+        ]
+        with pytest.raises(ChatBadRequestError) as exc_info:
+            build_qwencloud_payload(
+                api_mode="responses",
+                model="qwen3.8-max",
+                system_message=None,
+                messages_payload=history,
+                streaming=False,
+            )
+        assert exc_info.value.provider == "qwencloud"
 
 
 def test_responses_rejects_unpairable_tool_batches_before_network() -> None:

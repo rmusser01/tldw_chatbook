@@ -32,6 +32,10 @@ def _bad_request(message: str) -> ChatBadRequestError:
     return ChatBadRequestError(provider="qwencloud", message=message)
 
 
+def _reject_non_finite_json_constant(value: str) -> None:
+    raise ValueError(f"Non-finite JSON constant is not supported: {value}")
+
+
 def normalize_qwencloud_api_mode(
     api_mode: str | None,
     *,
@@ -49,7 +53,11 @@ def normalize_qwencloud_api_mode(
     Raises:
         ChatConfigurationError: If the resolved value is not an exact mode.
     """
-    configured = provider_settings.get("api_mode") if provider_settings else None
+    configured = None
+    if api_mode is None:
+        if provider_settings is not None and not isinstance(provider_settings, Mapping):
+            raise _configuration_error("QwenCloud provider settings must be an object.")
+        configured = provider_settings.get("api_mode") if provider_settings else None
     candidate = api_mode if api_mode is not None else configured
     if candidate is None:
         candidate = "responses"
@@ -82,6 +90,7 @@ def normalize_qwencloud_base_url(api_base_url: str | None) -> str:
     candidate = candidate.strip().rstrip("/")
     if (
         any(character.isspace() for character in candidate)
+        or any(ord(character) < 32 or ord(character) == 127 for character in candidate)
         or "?" in candidate
         or "#" in candidate
     ):
@@ -101,6 +110,8 @@ def normalize_qwencloud_base_url(api_base_url: str | None) -> str:
         raise _configuration_error(
             "QwenCloud API base URL must not contain credentials."
         )
+    if any(character in parsed.netloc for character in '\\%|^{}<>"`'):
+        raise _configuration_error("QwenCloud API base URL authority is malformed.")
     if parsed.query or parsed.fragment:
         raise _configuration_error(
             "QwenCloud API base URL must not contain a query or fragment."
@@ -161,11 +172,18 @@ def resolve_qwencloud_api_key(
     """
     if isinstance(explicit_api_key, str) and explicit_api_key.strip():
         return explicit_api_key
+    if provider_settings is not None and not isinstance(provider_settings, Mapping):
+        raise _configuration_error("QwenCloud provider settings must be an object.")
 
     settings = provider_settings or {}
     configured = settings.get("api_key")
     if isinstance(configured, str) and configured.strip():
         return configured
+
+    if environ is not None and not isinstance(environ, Mapping):
+        raise _configuration_error(
+            "QwenCloud credential environment must be an object."
+        )
 
     env_name = settings.get("api_key_env_var", _DEFAULT_KEY_ENV_VAR)
     if not isinstance(env_name, str) or not env_name.strip():
@@ -270,7 +288,9 @@ def _validate_tool_calls(
                 "QwenCloud function call arguments must be a JSON string."
             )
         try:
-            decoded_arguments = json.loads(arguments)
+            decoded_arguments = json.loads(
+                arguments, parse_constant=_reject_non_finite_json_constant
+            )
         except (TypeError, ValueError) as exc:
             raise _bad_request(
                 "QwenCloud function call arguments must contain valid JSON."
@@ -290,6 +310,10 @@ def _translate_messages(
 ) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     if system_message is not None and not isinstance(system_message, str):
         raise _bad_request("QwenCloud system instructions must be a string.")
+    if not isinstance(messages_payload, Sequence) or isinstance(
+        messages_payload, (str, bytes)
+    ):
+        raise _bad_request("QwenCloud messages must be a list.")
     messages: list[dict[str, Any]] = []
     for message in messages_payload:
         if not isinstance(message, Mapping):
@@ -299,6 +323,8 @@ def _translate_messages(
     leading_system: str | None = None
     if messages and messages[0].get("role") == "system":
         system_row = messages.pop(0)
+        if "tool_calls" in system_row:
+            raise _bad_request("QwenCloud tool calls require the assistant role.")
         normalized, _ = _normalize_message_content(
             "system", system_row.get("content"), has_tool_calls=False
         )
@@ -411,6 +437,8 @@ def _translate_function_tools(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if tools is None:
         return [], []
+    if not isinstance(tools, Sequence) or isinstance(tools, (str, bytes)):
+        raise _bad_request("QwenCloud function tools must be a list.")
 
     chat_tools: list[dict[str, Any]] = []
     responses_tools: list[dict[str, Any]] = []
@@ -523,7 +551,6 @@ def build_qwencloud_payload(
             ("max_completion_tokens", max_tokens),
             ("seed", seed),
             ("presence_penalty", presence_penalty),
-            ("stop", stop),
             ("logprobs", logprobs),
             ("top_logprobs", top_logprobs),
             ("reasoning_effort", reasoning_effort),
@@ -531,7 +558,11 @@ def build_qwencloud_payload(
         for key, value in optional_values:
             if value is not None:
                 chat_payload[key] = value
+        if stop is not None:
+            chat_payload["stop"] = deepcopy(stop)
         if response_format is not None:
+            if not isinstance(response_format, Mapping):
+                raise _bad_request("QwenCloud response format must be an object.")
             copied_format = deepcopy(dict(response_format))
             if copied_format not in ({"type": "text"}, {"type": "json_object"}):
                 raise _bad_request("Unsupported QwenCloud response format.")
