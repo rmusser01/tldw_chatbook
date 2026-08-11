@@ -271,8 +271,20 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
         str(coverage_statics[0].renderable)
         == "Semantic search found nothing from: Notes."
     )
-    # It renders directly under the heading -- the first body child.
-    assert rag_children[0] is coverage_statics[0]
+    # It renders above the evidence cards, directly under the "N results
+    # for 'query'." headline task-2859 item 10 added between it and the
+    # Evidence heading (this assertion read `rag_children[0]` until that
+    # headline landed, and has been failing on dev ever since -- the
+    # ordering it was written to pin is "ahead of every row card", which is
+    # what it now says).
+    count_lines = [
+        child
+        for child in rag_children
+        if getattr(child, "id", None) == "library-rag-results-count-line"
+    ]
+    assert len(count_lines) == 1
+    assert rag_children[0] is count_lines[0]
+    assert rag_children[1] is coverage_statics[0]
 
     # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
     # coverage claim to make) -> no widget mounted at all.

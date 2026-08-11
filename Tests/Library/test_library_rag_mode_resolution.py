@@ -11,12 +11,15 @@ Fixtures mirror `test_library_local_rag_search_service.py` (its
 re-declared); the mode-aware double below adds the profile surface the
 Library service now reads (`config.search.default_search_mode`,
 `profile.name`) and reproduces `RAGService.search`'s real
-`metadata_allowlist`-only-with-semantic ValueError, so the scoped-hybrid
-test proves the guard is respected rather than assuming it.
+`metadata_allowlist` contract -- accepted for semantic AND hybrid
+(TASK-15020/B1), still refused for keyword, materialized once, empty
+sequence entries rejected -- so the scoped-hybrid tests prove the engine's
+actual guards are respected rather than assuming them.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +27,7 @@ import pytest
 from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
     SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
 )
 from tldw_chatbook.Library import library_local_rag_search_service as rag_service_module
 from tldw_chatbook.Library.library_local_rag_search_service import (
@@ -41,7 +45,6 @@ from Tests.Library.test_library_local_rag_search_service import (
 # the contract rather than restating whatever the implementation happens to
 # define.
 _ROUTE_NOTES_KEY = "retrieval_route_notes"
-_NOTE_HYBRID_SCOPED = "scope active — semantic only until scope-aware hybrid lands"
 _NOTE_HYBRID_NO_KEYWORD_SOURCES = (
     "no keyword leg for the selected sources — semantic only"
 )
@@ -96,12 +99,26 @@ class _ProfileRagService:
         metadata_allowlist=None,
         keyword_source_types=None,
     ):
-        # The real engine raises here (rag_service.py:580) -- allowlists are
-        # a semantic-only pushdown. Reproduced so a routing bug that sends a
-        # scoped query to hybrid fails loudly in this suite too.
-        if metadata_allowlist and search_type != "semantic":
+        # The real engine's allowlist contract (TASK-15020/B1, mirrored from
+        # `RAGService.search` + `_allowlist_entries`): accepted for semantic
+        # AND hybrid, still refused for keyword, materialized ONCE up front
+        # (a one-shot iterable would otherwise reach the legs drained --
+        # i.e. unscoped -- which fails OPEN), and a sequence carrying an
+        # empty entry is a caller defect rather than a silent widening.
+        # Reproduced here so a routing change that hands the engine a shape
+        # it rejects fails loudly in this suite instead of passing against a
+        # more permissive double.
+        if metadata_allowlist is not None and not isinstance(
+            metadata_allowlist, Mapping
+        ):
+            metadata_allowlist = tuple(metadata_allowlist)
+            if any(not entry for entry in metadata_allowlist):
+                raise ValueError(
+                    "metadata_allowlist entries must each be a non-empty mapping"
+                )
+        if metadata_allowlist and search_type == "keyword":
             raise ValueError(
-                "metadata_allowlist is only supported for search_type='semantic'"
+                "metadata_allowlist is not supported for search_type='keyword'"
             )
         # The mirror-image guard (TASK-14751): `keyword_source_types` scopes
         # the KEYWORD leg, so the engine refuses it for a semantic search
@@ -138,7 +155,7 @@ def _media_result(source_id: str = "media-1", score: float = 0.8, **metadata):
     }
 
 
-def _note_result(source_id: str = "note-1", score: float = 0.9):
+def _note_result(source_id: str = "note-1", score: float = 0.9, **metadata):
     return {
         "id": f"{source_id}-chunk",
         "score": score,
@@ -147,6 +164,7 @@ def _note_result(source_id: str = "note-1", score: float = 0.9):
             "title": "Note doc",
             "source_id": source_id,
             "source_type": "note",
+            **metadata,
         },
     }
 
@@ -240,10 +258,16 @@ async def test_hybrid_profile_unscoped_calls_engine_hybrid():
 
 
 @pytest.mark.asyncio
-async def test_hybrid_profile_with_active_scope_stays_semantic_and_discloses():
-    """Scope allowlists are a semantic-only pushdown (the engine raises for
-    hybrid + allowlist), so a scoped query under a hybrid profile runs
-    semantic -- and says so rather than pretending it ran hybrid."""
+async def test_hybrid_profile_with_active_scope_runs_fused_hybrid():
+    """(TASK-15020/B1) THE ROUTING FLIP.
+
+    A scope used to force a hybrid profile onto the semantic path, because
+    `RAGService.search` raised for a non-empty `metadata_allowlist` with any
+    non-semantic search type. That guard is gone for hybrid: the allowlist
+    now reaches BOTH legs, so a scoped query under a hybrid profile runs the
+    profile's own fused search -- and has nothing left to disclose, because
+    nothing was diverted.
+    """
     rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
@@ -253,9 +277,106 @@ async def test_hybrid_profile_with_active_scope_stays_semantic_and_discloses():
     )
 
     assert rag.calls, "the scoped query never reached the runtime"
-    assert {call["search_type"] for call in rag.calls} == {"semantic"}
-    assert result["runtime_backend"] == "rag-semantic"
-    assert _NOTE_HYBRID_SCOPED in _route_notes(result)
+    assert [call["search_type"] for call in rag.calls] == ["hybrid"]
+    assert result["runtime_backend"] == "rag-hybrid"
+    assert _route_notes(result) == (), (
+        "a scoped hybrid search now runs exactly as the profile configures "
+        "it, so there is no divert left to disclose"
+    )
+    # The scope reached the engine in the shape `build_semantic_allowlists`
+    # produces (one AND-group per source type) -- not dropped, and not
+    # flattened into a single dict that cannot express a union. Recorded as
+    # the tuple the engine materializes it into, since that materialization
+    # is itself part of the contract (a one-shot iterable would reach the
+    # legs drained, i.e. unscoped).
+    assert rag.calls[0]["metadata_allowlist"] == (
+        {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"media-1"}},
+    )
+    # ...alongside the keyword-leg selection, which scopes a different
+    # dimension (which sub-legs run, not which ids they may return).
+    assert rag.calls[0]["keyword_source_types"] == {"media"}
+
+
+@pytest.mark.asyncio
+async def test_scoped_hybrid_sends_one_allowlist_entry_per_scoped_source_type():
+    """A two-type scope must arrive as a UNION of AND-groups.
+
+    `{"source_type": {media, note}, "source_id": {m1, n1}}` would allow a
+    note row carrying a media id; the engine's contract (and every FTS
+    sub-leg's id filter) depends on the per-type split surviving the
+    Library's call.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    scope = _scoped(
+        **{SOURCE_TYPE_MEDIA: {"media-1"}, SOURCE_TYPE_NOTE: {"note-1"}}
+    )
+
+    await service.search(
+        "credential", ("media", "notes"), "rag", top_k=5, scope=scope
+    )
+
+    assert rag.calls[0]["metadata_allowlist"] == (
+        {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"media-1"}},
+        {"source_type": {SOURCE_TYPE_NOTE}, "source_id": {"note-1"}},
+    )
+    assert rag.calls[0]["keyword_source_types"] == {"media", "note"}
+
+
+@pytest.mark.asyncio
+async def test_scoped_hybrid_without_an_fts_servable_source_still_diverts():
+    """The one surviving divert: hybrid needs a source the FTS leg serves.
+
+    Scope is no longer a reason to leave the hybrid path, but a prompts-only
+    selection still is (the engine has no prompts sub-leg at all), and the
+    diverted semantic search must still carry the scope's allowlists -- a
+    divert that dropped the scope would silently widen retrieval.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
+
+    result = await service.search(
+        "credential", ("prompts",), "rag", top_k=5, scope=scope
+    )
+
+    assert [call["search_type"] for call in rag.calls] == ["semantic"]
+    assert _NOTE_HYBRID_NO_KEYWORD_SOURCES in _route_notes(result)
+    # `_search_semantic` predates the engine's multi-entry support and still
+    # issues one store query per AND-group, so each call carries ONE mapping.
+    assert rag.calls[0]["metadata_allowlist"] == {
+        "source_type": {SOURCE_TYPE_MEDIA},
+        "source_id": {"media-1"},
+    }
+    # A prompts-only selection drops every semantic row in the post-filter
+    # (prompts have no semantic seam), so this lands on the scoped path's own
+    # zero-results outcome -- labeled semantic, which is what actually ran.
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.runtime_backend == "rag-semantic"
+
+
+@pytest.mark.asyncio
+async def test_scoped_hybrid_with_no_rows_keeps_the_scope_recovery_state():
+    """Zero rows under a scope is a scope-shaped dead end, not a generic one.
+
+    The scoped semantic path answers it with "nothing matched among the N
+    items you scoped to -- broaden or clear the scope"; routing the same
+    query to hybrid must not silently downgrade that to the generic no-match
+    state, or the one actionable thing on screen disappears with the route
+    change.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1", "media-2"}})
+
+    result = await service.search(
+        "credential", ("media",), "rag", top_k=5, scope=scope
+    )
+
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "empty"
+    assert result.runtime_backend == "rag-hybrid"
+    assert result.recovery_state.why == "No results within scope (2 items searched)"
 
 
 @pytest.mark.asyncio
@@ -415,6 +536,79 @@ async def test_semantic_leg_empty_note_never_fires_when_the_vector_leg_scored():
     result = await service.search("credential", ("media",), "rag", top_k=5)
 
     assert _NOTE_SEMANTIC_LEG_EMPTY not in _route_notes(result)
+
+
+# --- Coverage diagnostics under hybrid (TASK-14752) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_hybrid_coverage_separates_keyword_only_types_from_absent_ones():
+    """(TASK-14752) A type whose rows came only from the FTS leg is neither
+    "covered" nor "found nothing".
+
+    Before TASK-3996 the engine's keyword leg served media only, so under a
+    hybrid profile a type with no semantic hits also had no evidence at all
+    and one flat `uncovered` list said everything there was to say. With
+    notes and conversation sub-legs, a type can now be ON SCREEN entirely
+    from the keyword leg -- and calling that "covered" hides that the
+    semantic leg never matched it, while calling it "uncovered" would
+    contradict the rows the user is looking at. Three states, three lists.
+    """
+    rag = _ProfileRagService(
+        mode="hybrid",
+        results=[
+            _media_result(
+                "media-1",
+                hybrid_fusion={
+                    "fts_rank": 2,
+                    "vector_rank": 1,
+                    "fts_score": 0.001,
+                    "vector_score": 0.81,
+                },
+            ),
+            _note_result(
+                "note-1",
+                hybrid_fusion={
+                    "fts_rank": 1,
+                    "vector_rank": None,
+                    "fts_score": 0.002,
+                    "vector_score": None,
+                },
+            ),
+        ],
+    )
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+
+    result = await service.search(
+        "credential", ("notes", "media", "conversations"), "rag", top_k=5
+    )
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["media"],
+        "uncovered": ["conversations"],
+        "keyword_only": ["notes"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rows_without_a_fusion_block_are_never_called_keyword_only():
+    """The un-judgeable case fails toward silence, not toward a claim.
+
+    A row with no fusion provenance cannot prove which leg produced it (the
+    same reason `_rows_are_keyword_only` refuses to judge such a set), so it
+    keeps counting as covered -- inventing a "keyword matches only" claim
+    from missing evidence would be the defect this fix exists to remove,
+    pointed the other way.
+    """
+    rag = _ProfileRagService(mode="hybrid", results=[_media_result("media-1")])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+
+    result = await service.search("credential", ("media",), "rag", top_k=5)
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["media"],
+        "uncovered": [],
+    }
 
 
 # --- Profile switching mid-session ------------------------------------------

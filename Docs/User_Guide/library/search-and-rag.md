@@ -105,19 +105,19 @@ follows whichever **search mode** your active RAG profile
   similarity band on the resulting rows (they read `| keyword match`
   instead — see [Evidence rows](#evidence-rows) below).
 - **Semantic** profiles run vector retrieval, same as before.
-- **Hybrid** profiles blend keyword and vector retrieval when the query
-  is unscoped and at least one **keyword-indexed source** is selected —
-  Media, Notes or Conversations, all three of which the keyword leg now
-  searches. A query narrowed by a RAG scope falls back to semantic-only
-  retrieval for now (scope-aware hybrid retrieval is later work), as does
-  a selection of Prompts alone, which the keyword leg cannot search. Both
-  fallbacks are disclosed rather than silent.
+- **Hybrid** profiles blend keyword and vector retrieval whenever at least
+  one **keyword-indexed source** is selected — Media, Notes or
+  Conversations, all three of which the keyword leg now searches. A query
+  narrowed by a RAG scope stays on the hybrid path: the scope is pushed
+  into *both* legs, so keyword matches from inside your scope reach the
+  results and nothing from outside it can. The one remaining fallback to
+  semantic-only retrieval is a selection of **Prompts alone**, which the
+  keyword leg cannot search — and it is disclosed rather than silent.
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
 nothing from…" lines described below, when the route taken is worth
 naming: `Profile 'BM25 Only': keyword search (no vectors).`,
-`Scope active — semantic only until scope-aware hybrid lands.`,
 `No keyword leg for the selected sources — semantic only.`, or
 `Semantic leg empty — keyword-only results.` (shown when a hybrid
 profile's vector leg came back empty but its keyword leg still found
@@ -295,9 +295,12 @@ actually touch one of your selected sources (or every hit's match is weak),
 a quiet line appears above the rows, e.g. "Semantic search found nothing
 from: Notes, Conversations." or "No strong semantic matches — results
 below are weak." — telling you *why* a source is missing instead of leaving
-you to guess whether it has nothing relevant or was never searched. Search
-mode never shows this line; its keyword leg always queries every selected
-source.
+you to guess whether it has nothing relevant or was never searched. Under a
+**hybrid** profile a source can also be on screen purely from the keyword
+leg; that reads "Keyword matches only from: Notes." rather than claiming
+the search found nothing from a source whose rows you are looking at.
+Search mode never shows this line; its keyword leg always queries every
+selected source.
 
 ### Recent searches
 
@@ -463,9 +466,11 @@ only." Every one of those route notes rendered on zero-row outcomes too.*
 > media, so turning Media off while Notes or Conversations stay selected
 > runs the fused hybrid path instead of falling back to semantic, and the
 > "Media excluded — semantic only." disclosure no longer exists. Semantic
-> fallback under a hybrid profile now happens only for a scoped query or a
-> Prompts-only selection, the latter disclosed as "No keyword leg for the
-> selected sources — semantic only." The rest of that walkthrough stands.
+> fallback under a hybrid profile now happens only for a Prompts-only
+> selection, disclosed as "No keyword leg for the selected sources —
+> semantic only." (A scoped query was the other fallback until
+> TASK-15020/B1 pushed scope allowlists into both legs; it now stays on the
+> hybrid path.) The rest of that walkthrough stands.
 
 *Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
 scratch profile holding a copy of the real Library DBs and vector index,

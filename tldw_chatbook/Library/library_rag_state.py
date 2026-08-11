@@ -1664,9 +1664,11 @@ LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX = (
 # (RAG-port P0, Workstream A) Diagnostics slot carrying retrieval-ROUTING
 # disclosures: one short phrase per way the retrieval that actually ran
 # differs from the active RAG profile's configured search mode -- e.g. a
-# hybrid profile forced onto the semantic path because a scope allowlist is
-# active (the engine's allowlist pushdown is semantic-only), or a plain
-# (BM25) profile routed to the Library's own four-seam keyword path.
+# hybrid profile forced onto the semantic path because no selected source
+# has a keyword leg, or a plain (BM25) profile routed to the Library's own
+# four-seam keyword path. (An active scope used to head that list; since
+# TASK-15020/B1 the allowlist reaches both engine legs, so a scoped hybrid
+# search runs hybrid and has nothing to disclose.)
 # Distinct in MEANING from `semantic_scope_coverage` (which reports which
 # requested source types a search that ran as configured actually touched),
 # but deliberately rendered into the SAME single quiet line under the
@@ -1689,6 +1691,23 @@ def _route_note_sentence(note: str) -> str:
         return ""
     text = text[0].upper() + text[1:]
     return text if text[-1] in ".!?" else f"{text}."
+
+
+def _coverage_labels(source_types: Sequence[str]) -> str:
+    """Render coverage source types as one display-vocabulary, escaped list.
+
+    `_source_type_display_label` falls back to the raw, unrecognized
+    `source_type` verbatim when it isn't one of `LIBRARY_RAG_SOURCE_TYPES`
+    -- and these come from the service's `semantic_scope_coverage`
+    diagnostics mapping, a swappable attribute this module does not control
+    the shape of. Every other user-visible string this module builds is
+    `escape_markup`-escaped before reaching a `Static`; these labels were
+    the one gap (task-15 finding M8).
+    """
+    return ", ".join(
+        escape_markup(_source_type_display_label(source_type))
+        for source_type in source_types
+    )
 
 
 def library_rag_coverage_note(
@@ -1736,6 +1755,15 @@ def library_rag_coverage_note(
         `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined) when
         `library_rag_all_matches_weak(rows)` is True -- or just the
         weak-prefix alone when nothing is uncovered.
+
+        A hybrid profile can also report `"keyword_only"` types (TASK-14752):
+        sources whose rows on screen came entirely from the engine's FTS leg
+        with no semantic hit. Those get their own sentence, `"Keyword matches
+        only from: <types>."`, appended after the uncovered one -- because
+        the uncovered sentence said "found nothing" about a source the user
+        can see rows from, which reads as the opposite of the screen. The
+        key is absent for semantic and plain profiles, whose copy is
+        therefore unchanged.
     """
     route_notes = (
         tuple(
@@ -1767,20 +1795,19 @@ def library_rag_coverage_note(
         if isinstance(coverage, Mapping)
         else ()
     )
-    # `_source_type_display_label` falls back to the raw, unrecognized
-    # `source_type` verbatim when it isn't one of `LIBRARY_RAG_SOURCE_TYPES`
-    # -- and `uncovered` above is `str(item)` from the service's
-    # `semantic_scope_coverage` diagnostics mapping, a swappable attribute
-    # this module does not control the shape of. Every other user-visible
-    # string this module builds is `escape_markup`-escaped before reaching a
-    # `Static`; these labels were the one gap (task-15 finding M8).
-    uncovered_labels = tuple(
-        escape_markup(_source_type_display_label(source_type))
-        for source_type in uncovered
+    keyword_only = (
+        tuple(str(item) for item in coverage.get("keyword_only", ()) or ())
+        if isinstance(coverage, Mapping)
+        else ()
     )
     message = (
-        f"Semantic search found nothing from: {', '.join(uncovered_labels)}."
-        if uncovered_labels
+        f"Semantic search found nothing from: {_coverage_labels(uncovered)}."
+        if uncovered
+        else ""
+    )
+    keyword_only_message = (
+        f"Keyword matches only from: {_coverage_labels(keyword_only)}."
+        if keyword_only
         else ""
     )
     parts = [
@@ -1790,6 +1817,7 @@ def library_rag_coverage_note(
             if library_rag_all_matches_weak(rows)
             else "",
             message,
+            keyword_only_message,
             *(_route_note_sentence(note) for note in route_notes),
         )
         if part

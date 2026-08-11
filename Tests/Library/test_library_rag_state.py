@@ -1770,6 +1770,85 @@ class TestLibraryRagCoverageNote:
             "Semantic search found nothing from: Notes."
         )
 
+    # --- TASK-14752: keyword-sourced evidence is not "found nothing" -------
+
+    def test_keyword_only_types_render_their_own_sentence(self):
+        """(TASK-14752 AC#1/#2) A type whose rows came from the FTS leg has
+        evidence ON SCREEN; the bare "Semantic search found nothing from:
+        Notes." sentence, while literally true of the semantic leg, reads as
+        "Notes produced nothing" to a user looking at note rows."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": [],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Notes."
+        )
+
+    def test_keyword_only_and_absent_types_are_two_separate_sentences(self):
+        """The mixed case is the whole point: one type matched on keywords
+        alone, another produced nothing at all, and collapsing them into one
+        list is what made the old sentence ambiguous."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["conversations"],
+                "keyword_only": ["notes", "media"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "Semantic search found nothing from: Conversations. "
+            "Keyword matches only from: Notes, Media."
+        )
+
+    def test_keyword_only_labels_route_through_the_display_label_table(self):
+        """Same vocabulary rule as the uncovered sentence -- and the same
+        escaping, since these labels are service-supplied and reach a
+        `Static`."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": [],
+                "keyword_only": ["media", "mystery_source"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Media, mystery_source."
+        )
+
+    def test_absent_keyword_only_key_leaves_the_note_exactly_as_before(self):
+        """(TASK-14752 AC#3) The semantic and plain profiles never produce
+        this key; their copy must be byte-identical to what it was."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Notes."
+        )
+
+    def test_keyword_only_claims_stay_suppressed_at_zero_rows(self):
+        """A "Keyword matches only from: X" sentence is a claim about rows on
+        screen; with no rows it would be self-contradicting, so it obeys the
+        same zero-row suppression the uncovered sentence does."""
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["media"],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == ""
+
     def test_empty_rows_never_render_a_coverage_note(self):
         """Edge case (c): zero results overall is the no-match state's
         territory (Task 11), not a coverage note listing every requested
@@ -1782,10 +1861,12 @@ class TestLibraryRagCoverageNote:
 
     # (RAG-port P0, Workstream A) The service now also reports how the
     # retrieval was ROUTED when it could not run the active profile's
-    # configured mode -- a hybrid profile forced onto the semantic path by
-    # an active scope, a plain profile routed to the keyword seams. Those
-    # disclosures share this one quiet line rather than opening a second
-    # note channel on the same screen.
+    # configured mode -- a hybrid profile diverted to semantic because no
+    # selected source has a keyword leg, a plain profile routed to the
+    # keyword seams. Those disclosures share this one quiet line rather than
+    # opening a second note channel on the same screen. (The scope divert
+    # that used to head this list retired with TASK-15020/B1: a scoped
+    # hybrid search now runs hybrid, so there is nothing to disclose.)
 
     def test_route_note_renders_as_a_sentence_when_nothing_else_to_say(self):
         rows = (self._row(0.6),)
@@ -1820,13 +1901,13 @@ class TestLibraryRagCoverageNote:
         diagnostics = {
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]},
             LIBRARY_RAG_ROUTE_NOTES_KEY: [
-                "scope active — semantic only until scope-aware hybrid lands"
+                "no keyword leg for the selected sources — semantic only"
             ],
         }
         assert library_rag_coverage_note(diagnostics, rows) == (
             "No strong semantic matches — results below are weak. "
             "Semantic search found nothing from: Notes. "
-            "Scope active — semantic only until scope-aware hybrid lands."
+            "No keyword leg for the selected sources — semantic only."
         )
 
     def test_route_notes_survive_the_zero_row_outcome(self):
@@ -1852,11 +1933,11 @@ class TestLibraryRagCoverageNote:
         diagnostics = {
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]},
             LIBRARY_RAG_ROUTE_NOTES_KEY: [
-                "scope active — semantic only until scope-aware hybrid lands"
+                "no keyword leg for the selected sources — semantic only"
             ],
         }
         assert library_rag_coverage_note(diagnostics, ()) == (
-            "Scope active — semantic only until scope-aware hybrid lands."
+            "No keyword leg for the selected sources — semantic only."
         )
 
     def test_blank_route_notes_render_nothing(self):
