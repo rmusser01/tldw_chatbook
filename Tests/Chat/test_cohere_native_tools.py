@@ -525,7 +525,7 @@ def test_schema_projection_removes_each_unsupported_family_recursively():
     projected = _cohere_tools_payload([tool])[0]["function"]["parameters"]
 
     assert not (UNSUPPORTED_COHERE_SCHEMA_KEYWORDS & set(_schema_keywords(projected)))
-    assert projected["title"] == "Strict task patch"
+    assert "title" not in projected
     assert projected["description"] == "A transport disclosure."
     assert projected["required"] == ["choice"]
     assert projected["properties"]["choice"] == {
@@ -542,7 +542,7 @@ def test_schema_projection_intersects_type_union_and_any_of_order_independently(
     branches = [
         {"enum": ["ready"], "description": "Named state."},
         {
-            "anyOf": [{"const": "queued"}, {"const": None}],
+            "anyOf": [{"enum": ["queued"]}, {"enum": [None]}],
             "description": "Nested alternatives.",
         },
     ]
@@ -591,6 +591,76 @@ def test_schema_projection_intersects_type_union_and_any_of_order_independently(
 
     projected[0]["anyOf"][0]["anyOf"][0]["enum"].append("changed")
     assert tools == original
+
+
+def test_schema_projection_omits_arbitrary_unknown_keywords_recursively():
+    private_sentinel = "api_key=private-secret /Users/private/credentials.toml"
+    schema = {
+        "type": "object",
+        "description": "Supported root description.",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Supported task description.",
+                "enum": ["ready"],
+                "futureTaskConstraint": {"private": private_sentinel},
+            },
+            "details": {
+                "type": "object",
+                "properties": {
+                    "child": {
+                        "type": "string",
+                        "futureChildSecret": private_sentinel,
+                    }
+                },
+                "required": ["child"],
+                "additionalProperties": False,
+                "futureObjectKeyword": [private_sentinel],
+            },
+        },
+        "required": ["task"],
+        "additionalProperties": False,
+        "anyOf": [
+            {
+                "required": ["task"],
+                "futureBranchKeyword": private_sentinel,
+            }
+        ],
+        "futureRootKeyword": {"private": private_sentinel},
+    }
+    tool = {
+        "type": "function",
+        "function": {"name": "future_schema", "parameters": schema},
+    }
+    original = deepcopy(tool)
+
+    projected = _cohere_tools_payload([tool])[0]["function"]["parameters"]
+
+    assert projected == {
+        "type": "object",
+        "description": "Supported root description.",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Supported task description.",
+                "enum": ["ready"],
+            },
+            "details": {
+                "type": "object",
+                "properties": {"child": {"type": "string"}},
+                "required": ["child"],
+                "additionalProperties": False,
+            },
+        },
+        "required": ["task"],
+        "additionalProperties": False,
+        "anyOf": [{"required": ["task"]}],
+    }
+    assert private_sentinel not in json.dumps(projected)
+    assert tool == original
+
+    projected["properties"]["task"]["enum"].append("changed")
+    assert tool == original
 
 
 @patch("requests.Session.post")

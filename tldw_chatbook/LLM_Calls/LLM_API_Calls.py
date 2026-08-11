@@ -1937,49 +1937,28 @@ def chat_with_anthropic(
         ) from e
 
 
-_COHERE_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
+_COHERE_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
     {
-        "allOf",
-        "oneOf",
-        "not",
-        "if",
-        "then",
-        "else",
-        "minimum",
-        "maximum",
-        "exclusiveMinimum",
-        "exclusiveMaximum",
-        "multipleOf",
-        "minLength",
-        "maxLength",
-        "pattern",
-        "minItems",
-        "maxItems",
-        "uniqueItems",
-        "contains",
-        "minContains",
-        "maxContains",
-        "minProperties",
-        "maxProperties",
-        "propertyNames",
-        "patternProperties",
-        "dependentRequired",
-        "dependentSchemas",
-        "dependencies",
-        "unevaluatedProperties",
-        "unevaluatedItems",
+        "type",
+        "properties",
+        "description",
+        "required",
+        "enum",
+        "items",
+        "anyOf",
+        "additionalProperties",
     }
 )
 
 
 def _cohere_schema_projection(schema: dict) -> dict:
-    """Return a fresh Cohere strict-tools disclosure subset of ``schema``."""
+    """Copy only Cohere strict-tools' supported schema keywords."""
     raw_type = schema.get("type")
     type_union = raw_type if isinstance(raw_type, list) else None
     existing_any_of = schema.get("anyOf")
     projected: dict = {}
     for key, value in schema.items():
-        if key in _COHERE_UNSUPPORTED_SCHEMA_KEYWORDS:
+        if key not in _COHERE_SUPPORTED_SCHEMA_KEYWORDS:
             continue
         if type_union is not None and key in {"type", "anyOf"}:
             continue

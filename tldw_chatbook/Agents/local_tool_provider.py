@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterator, NotRequired, TypedDict
 
 from loguru import logger
 
@@ -763,6 +763,21 @@ def _todo_json(payload: object) -> str:
     return text
 
 
+class _TodoCreateKwargs(TypedDict):
+    content: object
+    on_change: TodoChangeCallback | None
+    active_form: NotRequired[object]
+
+
+class _TodoUpdateKwargs(TypedDict):
+    task_id: str
+    expected_version: int
+    on_change: TodoChangeCallback | None
+    content: NotRequired[object]
+    status: NotRequired[object]
+    active_form: NotRequired[object]
+
+
 def _make_todo_create_handler(
     store: SessionTodoStore,
     on_todo_change: TodoChangeCallback | None,
@@ -775,7 +790,7 @@ def _make_todo_create_handler(
             allowed={"content", "activeForm"},
             required={"content"},
         )
-        kwargs: dict[str, object] = {
+        kwargs: _TodoCreateKwargs = {
             "content": values["content"],
             "on_change": on_todo_change,
         }
@@ -800,18 +815,17 @@ def _make_todo_update_handler(
         )
         task_id = _validate_task_id(values["id"])
         expected_version = _validate_expected_version(values["expected_version"])
-        kwargs: dict[str, object] = {
+        kwargs: _TodoUpdateKwargs = {
             "task_id": task_id,
             "expected_version": expected_version,
             "on_change": on_todo_change,
         }
-        for argument, store_argument in (
-            ("content", "content"),
-            ("status", "status"),
-            ("activeForm", "active_form"),
-        ):
-            if argument in values:
-                kwargs[store_argument] = values[argument]
+        if "content" in values:
+            kwargs["content"] = values["content"]
+        if "status" in values:
+            kwargs["status"] = values["status"]
+        if "activeForm" in values:
+            kwargs["active_form"] = values["activeForm"]
         return _todo_json(store.update(**kwargs))
 
     return _handler
