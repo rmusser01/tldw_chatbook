@@ -16,6 +16,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
+from Tests.UI.background_signals import wait_for_background_signal
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -4901,7 +4902,9 @@ class TestServerCharacterSourceIsolation:
             switch = asyncio.create_task(
                 screen.handle_runtime_backend_changed("server")
             )
-            await started.wait()
+            await wait_for_background_signal(
+                started, switch, what="the runtime-backend switch"
+            )
             await pilot.pause()
 
             assert screen._characters == []
@@ -5243,7 +5246,9 @@ class TestServerCharacterSourceIsolation:
         screen._display_character_page = display
 
         load = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the character page reload"
+        )
         screen.state.runtime_source = "server"
         release.set()
         await load
@@ -5276,7 +5281,9 @@ class TestServerCharacterSourceIsolation:
         screen._notify = notify
 
         load = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the character page reload"
+        )
         await screen.handle_runtime_backend_changed("server")
         assert screen._characters == []
         assert screen._character_total == 0
@@ -5324,7 +5331,9 @@ class TestServerCharacterSourceIsolation:
         screen._display_character_page = display
 
         stale = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, stale, what="the stale character page reload"
+        )
         screen.state.page_offset = 50
         await screen._reload_character_page()
         assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
@@ -5372,7 +5381,9 @@ class TestServerCharacterSourceIsolation:
         )
 
         older_x = asyncio.create_task(screen._reload_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, older_x, what="the older character page reload"
+        )
         screen.state.search_query = "y"
         await screen._reload_character_page()
         screen.state.search_query = ""
@@ -5429,7 +5440,9 @@ class TestServerCharacterSourceIsolation:
             screen.state.tag_filter = "older-tag"
 
             stale = asyncio.create_task(screen._reload_character_page())
-            await stale_render_started.wait()
+            await wait_for_background_signal(
+                stale_render_started, stale, what="the stale character page render"
+            )
 
             screen.state.sort_key = "name_asc"
             screen.state.tag_filter = None
@@ -5567,10 +5580,14 @@ class TestServerCharacterSourceIsolation:
             screen.state.tag_filter = "older-tag"
 
             stale = asyncio.create_task(screen._reload_character_page())
-            await stale_render_started.wait()
+            await wait_for_background_signal(
+                stale_render_started, stale, what="the stale character page render"
+            )
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_stale_render.set()
@@ -5669,10 +5686,16 @@ class TestServerCharacterSourceIsolation:
             stale_character = asyncio.create_task(
                 screen._reload_character_page()
             )
-            await character_writer_entered.wait()
+            await wait_for_background_signal(
+                character_writer_entered,
+                stale_character,
+                what="the stale character page reload",
+            )
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_character_writer.set()
@@ -5782,15 +5805,25 @@ class TestServerCharacterSourceIsolation:
             stale_character = asyncio.create_task(
                 screen._reload_character_page()
             )
-            await initial_character_published.wait()
+            await wait_for_background_signal(
+                initial_character_published,
+                stale_character,
+                what="the initial character publication",
+            )
 
             screen.state.tag_filter = None
             await screen._reload_character_page()
             release_initial_character.set()
-            await cleanup_writer_entered.wait()
+            await wait_for_background_signal(
+                cleanup_writer_entered,
+                stale_character,
+                what="the stale reload's cleanup writer",
+            )
 
             newer_mode = asyncio.create_task(screen._apply_mode(new_mode))
-            await mode_render_started.wait()
+            await wait_for_background_signal(
+                mode_render_started, newer_mode, what="the newer mode render"
+            )
             await pilot.pause()
 
             release_cleanup_writer.set()
@@ -5901,7 +5934,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             stale_fetch = asyncio.create_task(screen._apply_mode(source_mode))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, stale_fetch, what="the stale shared-mode fetch"
+            )
 
             library = screen.query_one("#personas-library-pane")
             if owner_change == "query":
@@ -6038,7 +6073,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             older_x_request = asyncio.create_task(render(query="x"))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, older_x_request, what="the older render request"
+            )
 
             screen.state.search_query = "y"
             await render(query="y")
@@ -6141,7 +6178,9 @@ class TestServerCharacterSourceIsolation:
             )
 
             older_request = asyncio.create_task(render())
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, older_request, what="the older render request"
+            )
 
             await screen._apply_mode("prompts")
             await screen._apply_mode(source_mode)
@@ -6254,7 +6293,9 @@ class TestServerCharacterSourceIsolation:
             )
             generation_before = screen._dictionary_lore_request_generation
             valid_request = asyncio.create_task(valid_render(query="owner"))
-            await fetch_started.wait()
+            await wait_for_background_signal(
+                fetch_started, valid_request, what="the valid render request"
+            )
             accepted_generation = screen._dictionary_lore_request_generation
 
             if stale_callback == "wrong-mode":
@@ -6367,7 +6408,9 @@ class TestServerCharacterSourceIsolation:
         screen._notify = notify
 
         older_x = asyncio.create_task(screen._reload_server_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, older_x, what="the older server character page load"
+        )
         mock_app_instance.active_server_id = "target-y"
         await screen._reload_server_character_page()
         mock_app_instance.active_server_id = "target-x"
@@ -6410,7 +6453,9 @@ class TestServerCharacterSourceIsolation:
         screen._character_total = 1
 
         load = asyncio.create_task(screen._reload_server_character_page())
-        await started.wait()
+        await wait_for_background_signal(
+            started, load, what="the server character page load"
+        )
         if changed_dimension == "source":
             screen.state.runtime_source = "local"
         elif changed_dimension == "target":
@@ -6460,7 +6505,9 @@ class TestServerCharacterSourceIsolation:
         screen._character_total = 1
 
         load_a = asyncio.create_task(screen._reload_server_character_page())
-        await started_a.wait()
+        await wait_for_background_signal(
+            started_a, load_a, what="the target-A server character page load"
+        )
         mock_app_instance.active_server_id = "target-b"
         await screen._reload_server_character_page()
         assert screen._characters == [{"id": 2, "name": "Target B"}]
@@ -10593,7 +10640,9 @@ async def test_character_tts_server_principal_change_rejects_late_population(
                 "server",
             )
         )
-        await started.wait()
+        await wait_for_background_signal(
+            started, task, what="the character TTS refresh worker"
+        )
         if final_authority_check == "error":
             provider.raise_on_check = True
         else:

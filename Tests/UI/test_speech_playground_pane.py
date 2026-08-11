@@ -12,6 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _native_profile_artifact,
@@ -790,7 +791,9 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
         pane._play_audio()
-        await player.first_get_state_started.wait()
+        await wait_for_signal(
+            player.first_get_state_started, what="the first playback get_state"
+        )
 
         pane._generation_complete(new_artifact)
         await _wait_until(pilot, lambda: player.played == [new_path])
@@ -872,7 +875,9 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         )
 
         pane._generation_complete(new_artifact)
-        await player.replacement_stop_started.wait()
+        await wait_for_signal(
+            player.replacement_stop_started, what="the replacement playback stop"
+        )
         pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
         player.release_replacement_stop.set()
         await app.workers.wait_for_complete()
@@ -957,7 +962,9 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         )
 
         pane._generation_complete(new_artifact)
-        await player.replacement_stop_started.wait()
+        await wait_for_signal(
+            player.replacement_stop_started, what="the replacement playback stop"
+        )
         try:
             play = app.query_one("#audio-play-btn", Button)
             stop = app.query_one("#stop-audio-btn", Button)
@@ -1199,10 +1206,12 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
         monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
 
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await first_started.wait()
+        await wait_for_signal(first_started, what="the first catalog worker starting")
         pane._load_provider_catalog("audio_cpp", refresh=True)
-        await first_cancelled.wait()
-        await second_started.wait()
+        await wait_for_signal(
+            first_cancelled, what="the first catalog worker's cancellation"
+        )
+        await wait_for_signal(second_started, what="the second catalog worker starting")
 
         assert "audio_cpp" in pane._catalog_checking_providers
 

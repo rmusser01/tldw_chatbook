@@ -611,10 +611,13 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     (:class:`_RecordingIngestTransport`) -- see its docstring for exactly
     what that means the assertions do and do not prove.
 
-    Deliberately holds no 0-byte file: the forecast counts one as a
-    failure, but on this backend the app SENDS it and only the server
-    decides, which this process cannot know and this test must not
-    invent.
+    (task-14910) It now DOES hold a 0-byte file. It deliberately held
+    none while the app sent one: the forecast counted it as a failure, but
+    the outcome belonged to a server this process cannot inspect, so any
+    assertion here would have been the stub deciding. The client refuses a
+    0-byte file itself now -- ``empty.txt`` below never reaches
+    ``transport.submitted``, and its fate is decided entirely by code this
+    test runs for real.
     """
     from tldw_chatbook.Library.ingest_capabilities import (
         get_capabilities,
@@ -654,6 +657,10 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     (folder / "talk.mp3").write_bytes(b"ID3 not really an mp3")
     (folder / "diagram.png").write_bytes(b"\x89PNG not really a png")
     (folder / "weird.xyz").write_bytes(b"no handler for this")
+    # (task-14910) A perfectly well-mapped type (.txt -> document) with
+    # nothing in it: the one file whose server-side fate used to be
+    # unknowable from here.
+    (folder / "empty.txt").write_text("")
 
     preflight = analyze_path(str(folder))
     forecast = build_ingest_forecast(preflight, targets_server=True)
@@ -686,7 +693,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
         async with app.run_test() as pilot:
             assert app._resolve_ingest_backend() == "server"
             app.submit_library_ingest_job(source_path=str(folder))
-            assert len(app.library_ingest_jobs.jobs()) == 5
+            assert len(app.library_ingest_jobs.jobs()) == 6
 
             terminal = {
                 IngestJobState.DONE,
@@ -735,7 +742,11 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
                 name
                 for name, job in outcomes.items()
                 if job.state is IngestJobState.FAILED
-            } == {"diagram.png", "weird.xyz"}
+            } == {"diagram.png", "weird.xyz", "empty.txt"}
+            # (task-14910) ...and the 0-byte one failed HERE, without the
+            # transport being consulted: the stub decides nothing about it.
+            assert "empty" in (outcomes["empty.txt"].error or "")
+            assert outcomes["empty.txt"].permanent is True
             # ...and the ones it promised to SEND really reached the wire,
             # under the media types the server accepts.
             assert {
@@ -748,8 +759,116 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
             }
             # ...and the sentence that carried those numbers to the user.
             assert commit_line == (
-                "3 will be sent to the server · 2 will fail (unsupported by "
-                "the server) · server tooling isn't checked from here"
+                "3 will be sent to the server · 3 will fail (2 unsupported "
+                "by the server, 1 empty) · server tooling isn't checked "
+                "from here"
             ), commit_line
     finally:
         db.close_connection()
+
+
+# --- task-14911: the gate must ask the backend the run is aimed at ----------
+
+
+@pytest.mark.asyncio
+async def test_server_mode_start_creates_no_job_for_a_selection_the_server_refuses(
+    library_screen, tmp_path
+):
+    """(task-14911 AC#1) The server counterpart of
+    ``test_empty_folder_creates_no_job_at_all``.
+
+    A folder of nothing but images imports fine on this machine and has no
+    server media type at all (task-3307). Aimed at the server it forecast
+    "0 will be sent to the server · 2 will fail (unsupported by the
+    server)" while Start stayed ENABLED, and pressing it queued two rows
+    that could only ever land as permanent failures -- the guaranteed
+    failure submit task-14823 gated on the local path.
+
+    Driven through the REAL pre-flight and the REAL submit seam, and the
+    assertion is the registry's own contents: gating the button alone
+    would leave Enter in the path field (and every other caller) free to
+    manufacture the receipt.
+    """
+    screen, pilot = library_screen
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    (folder / "one.png").write_bytes(b"\x89PNG not really a png")
+    (folder / "two.png").write_bytes(b"\x89PNG not really a png either")
+
+    app = screen.app_instance
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server", server_configured=True)
+    )
+    app.server_media_reading_service = SimpleNamespace(
+        submit_ingest_jobs=lambda **kwargs: None
+    )
+    app._resolve_ingest_backend = lambda: "server"
+    screen._server_binding_is_shipped_placeholder = lambda: False
+    # Every OTHER gate open, so a closed Start can only mean this one: the
+    # harness leaves ``media_db`` unset, which closes it for an unrelated
+    # reason and would make this test pass vacuously.
+    app.media_db = SimpleNamespace()
+    app._top_up_ingest_parse_pool = lambda: None
+
+    form = screen._library_ingest_form
+    form.path = str(folder)
+    screen._trigger_preflight(str(folder))
+    await screen.app.workers.wait_for_complete()
+    await pilot.pause()
+
+    state = screen._build_library_ingest_state()
+    assert state.ingest_backend == "server"
+    assert state.forecast is not None
+    assert state.forecast.will_import == 0
+    assert state.start_enabled is False
+    assert state.selection_has_nothing_importable is True
+    assert "unsupported by the server" in state.start_quiet_line
+
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert screen.app_instance.library_ingest_jobs.jobs() == (), (
+        "a submit the server was certain to refuse reached the queue"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_same_folder_still_imports_on_this_machine(
+    library_screen, tmp_path
+):
+    """(task-14911 AC#2) Guard, through the same real pre-flight: the gate
+    is a fact about the TARGET, not about the files. Locally these images
+    are ordinary import candidates, so Start stays live and the submit
+    reaches the queue."""
+    screen, pilot = library_screen
+    folder = tmp_path / "shots-local"
+    folder.mkdir()
+    (folder / "one.png").write_bytes(b"\x89PNG not really a png")
+
+    app = screen.app_instance
+    app.media_db = SimpleNamespace()
+    app._top_up_ingest_parse_pool = lambda: None
+
+    form = screen._library_ingest_form
+    form.path = str(folder)
+    screen._trigger_preflight(str(folder))
+    await screen.app.workers.wait_for_complete()
+    await pilot.pause()
+
+    state = screen._build_library_ingest_state()
+    assert state.ingest_backend == "local"
+    assert state.start_enabled is True
+    assert state.selection_has_nothing_importable is False
+
+    # The local press takes the CONSENT route (this venv has no OCR
+    # backend, so the image import is at risk) -- not the refusal route.
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+    assert screen._library_ingest_start_confirm_armed is True
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+    await pilot.pause()
+
+    assert len(screen.app_instance.library_ingest_jobs.jobs()) == 1

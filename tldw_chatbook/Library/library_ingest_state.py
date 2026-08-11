@@ -730,16 +730,27 @@ class IngestForecast:
             feature. The pre-flight already warned about that exact
             dependency, so promising these as imports was the defect.
         will_fail_empty: 0-byte files, which fail identically every time.
+            True on BOTH backends because both refuse them in code this
+            process runs: locally the parse chain raises
+            ``EmptySourceIngestError`` before any write, and (task-14910)
+            a server submission refuses one at
+            :func:`~tldw_chatbook.Library.server_ingest_request.empty_source_refusal`
+            rather than sending it and letting a server this process
+            cannot inspect decide -- which is what this count used to
+            quietly assume.
         at_risk: Files that are still forecast to import but whose group
             has an unmet OPTIONAL feature -- degraded, not doomed.
         tooling_groups: The type groups blocked by a missing required
             feature, in pre-flight order.
         staged_total: Every file in the selection, whatever its fate.
-            Carried here rather than re-counted by a caller because the
-            outcome buckets deliberately overlap (``will_fail_empty``
-            files are also inside ``will_import``'s group counts), so a
-            caller summing them would derive a second, wrong total --
-            which is the class of defect this object exists to remove.
+            Carried here rather than re-derived by a caller, because a
+            second computation of the same number is exactly the defect
+            this object exists to remove -- and because which buckets a
+            caller would have to sum is a property of the pre-flight, not
+            of this dataclass (``analyze_path`` lifts 0-byte files OUT of
+            ``type_groups``, so ``will_fail_empty`` is disjoint from the
+            group counts; a pre-flight that did not would silently make a
+            summing caller wrong).
         targets_server: Whether this forecast describes a SERVER run. A
             server import never loads a local parser, so the local tooling
             gaps that drive ``will_fail_tooling``/``at_risk`` say nothing
@@ -929,6 +940,68 @@ def server_local_tooling_advisory(missing_components: int) -> str:
         f"{missing_components} local {noun} {verb} installed — that affects "
         "imports on this machine only; this one runs on the server."
     )
+
+
+#: (task-14911) The Start gate's opening when the TARGETED backend is the
+#: server and it will take nothing in the selection. Deliberately not the
+#: local gate's "Nothing in this selection can be imported": these files
+#: may well import on this machine (an image does), so the sentence names
+#: what is actually true -- they are not going to be *sent*.
+INGEST_SERVER_NOTHING_SENDABLE_PREFIX = (
+    "Nothing in this selection can be sent to the server"
+)
+
+#: (task-14911) ...and the way out. Two of them, neither promised: the
+#: switch this canvas already offers, and the set of types the server
+#: accepts -- which IS knowable here (``SERVER_ACCEPTED_MEDIA_TYPES`` was
+#: established against a live server), unlike its tooling.
+INGEST_SERVER_NOTHING_SENDABLE_RECOVERY = (
+    "Switch to importing on this machine, or choose video, audio, "
+    "document, PDF or e-book files."
+)
+
+
+def server_nothing_sendable_line(forecast: IngestForecast | None) -> str:
+    """Render the Start gate's reason for a wholly server-refused selection.
+
+    (task-14911) Read FROM the forecast, never re-derived: task-14823's
+    gate asked whether the pre-flight had found a supported type group,
+    which is a LOCAL verdict, so a folder of nothing but images forecast
+    "0 will be sent to the server · 3 will fail (unsupported by the
+    server)" with Start still enabled. The gate and the commit line now
+    state the same numbers because there is only one of them.
+
+    Args:
+        forecast: The selection's forecast (``targets_server``).
+
+    Returns:
+        The gate sentence, naming each blocker by kind. The recovery
+        clause is appended only when the server's refusal is one of the
+        blockers -- switching target does nothing for a 0-byte file,
+        which is refused on both.
+    """
+    if forecast is None:
+        return ""
+    parts: list[str] = []
+    refused = forecast.will_fail_refused
+    empty = forecast.will_fail_empty
+    if refused:
+        noun = "file" if refused == 1 else "files"
+        parts.append(f"{refused} {noun} {INGEST_SERVER_REFUSED_COPY}")
+    if empty:
+        noun = "file" if empty == 1 else "files"
+        parts.append(f"{empty} empty {noun}")
+    if not parts:
+        # Defensive: the caller only asks when the forecast sends nothing,
+        # and every staged file is then refused or empty. Say the count
+        # rather than an empty reason.
+        staged = forecast.staged_total
+        noun = "file" if staged == 1 else "files"
+        parts.append(f"{staged} {noun} the server won't take")
+    line = f"{INGEST_SERVER_NOTHING_SENDABLE_PREFIX} — {' and '.join(parts)}."
+    if refused:
+        line += f" {INGEST_SERVER_NOTHING_SENDABLE_RECOVERY}"
+    return line
 
 
 def forecast_summary_line(forecast: IngestForecast | None) -> str:
@@ -1408,7 +1481,11 @@ class LibraryIngestCanvasState:
     retry_confirm_armed: bool = False
     #: (task-14823) Whether the pre-flight has established that NOTHING in
     #: this selection can be imported -- an empty folder, or a folder whose
-    #: files are all unsupported/0-byte. Closes the Start gate above, and
+    #: files are all unsupported/0-byte.
+    #: (task-14911) ...by the backend the run is AIMED at: in server mode
+    #: it is also True for a selection the server refuses entirely (a
+    #: folder of images), which this machine would import happily. The
+    #: gate line says which of the two it is. Closes the Start gate above, and
     #: the screen refuses a submit on it directly so no entry point can
     #: manufacture the failure receipt the pre-flight already ruled out.
     #: Distinct from ``not start_enabled``, which is also False for
@@ -2485,6 +2562,25 @@ def build_library_ingest_state(
         and not type_groups
         and (active_preflight.total_files > 0 or empty_selection)
     )
+    # (task-14911) ...and the same gate, asked of the backend this run is
+    # actually aimed at. ``nothing_importable`` above is a LOCAL verdict
+    # ("did the pre-flight find a supported type group"), so a folder of
+    # nothing but images -- which the server has no media type for at all
+    # -- forecast "0 will be sent to the server · 3 will fail (unsupported
+    # by the server)" while Start stayed ENABLED and every row landed as a
+    # permanent failure. Read from the FORECAST rather than re-deriving a
+    # second notion of importability: it already knows what this backend
+    # accepts, and the gate line and the commit line then cannot disagree.
+    # ``will_match`` guards the task-2223 ruling: zero imports plus
+    # predicted duplicate matches keeps Start enabled, because the
+    # duplicate probe is capped best-effort and never a blocker.
+    nothing_sendable = (
+        targets_server
+        and forecast is not None
+        and forecast.staged_total > 0
+        and forecast.will_import == 0
+        and forecast.will_match == 0
+    )
     # (task-2130) Invalid option values gate Start exactly like a bad path:
     # "abc" as a chunk size used to sail into a running job with only a
     # focus-only colored border as the signal.
@@ -2501,6 +2597,7 @@ def build_library_ingest_state(
         and media_db_available
         and bool(form.path.strip())
         and not nothing_importable
+        and not nothing_sendable
         and not option_errors
         and not errors_are_path_problem
     )
@@ -2548,6 +2645,14 @@ def build_library_ingest_state(
             f"Nothing in this selection can be imported — "
             f"{' and '.join(blocker_parts)}."
         )
+    elif nothing_sendable:
+        # (task-14911) Ordered AFTER ``nothing_importable`` on purpose: a
+        # file nothing on this machine can read is diagnosed the same way
+        # whichever target is selected, and switching to Local would not
+        # help. This branch is the other case -- files this machine reads
+        # perfectly well that this destination will not take -- and it
+        # needs the server's own vocabulary and its own recovery.
+        start_quiet_line = server_nothing_sendable_line(forecast)
     elif errors_are_path_problem:
         start_quiet_line = (
             "Can't find that path — check it, or use Browse… to pick a "
@@ -2778,7 +2883,9 @@ def build_library_ingest_state(
         # (xhigh review + live-verify round) Gated on visibility: a
         # stale armed flag can never label a hidden affordance.
         retry_confirm_armed=bool(retry_confirm_armed) and show_retry_last,
-        selection_has_nothing_importable=bool(nothing_importable),
+        selection_has_nothing_importable=bool(
+            nothing_importable or nothing_sendable
+        ),
     )
 
 

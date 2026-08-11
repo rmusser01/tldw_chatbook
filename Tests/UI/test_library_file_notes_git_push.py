@@ -19,6 +19,7 @@ sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 from Tests.Notes.test_file_notes_git_push_service import (  # noqa: E402
     _publish_candidate_on_owner,
 )
+from Tests.UI.background_signals import wait_for_signal  # noqa: E402
 from Tests.UI.test_library_file_notes_git import (  # noqa: E402
     _FakeGitService,
     _DialogHarness,
@@ -3497,7 +3498,9 @@ async def test_workspace_back_to_files_keeps_push_publication_and_attention(
         )
 
         service.mark_push_child_started()
-        await service.actual_child_started.wait()
+        await wait_for_signal(
+            service.actual_child_started, what="the actual push-child start"
+        )
         await _until(
             pilot,
             lambda: "Pushing" in str(

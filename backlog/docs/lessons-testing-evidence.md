@@ -595,7 +595,58 @@ bound the loop at the *source* (here: the mocked `stream.read` flips the stop fl
 after N reads) so no gating change can make it unbounded. When a test's behavior
 depends on an optional dependency, run it in both installed and absent
 configurations before trusting green. And treat "the run died at N%" as possibly
-ONE test: the timeout stack dump names it.
+ONE test: the timeout stack dump names it — **except when the hang is an awaited
+asyncio primitive; see the next entry.**
+
+---
+
+## The timeout stack dump does NOT name the hung test when the hang is an awaited Event
+
+**TASK-3316 / TASK-14912, 2026-08-10.**
+`test_file_notes_collections_source_transition_blocks_mutation_through_recompose`
+drove `_select_library_rail_row` as a fire-and-forget `asyncio.create_task` and
+then `await`ed an `asyncio.Event` only that coroutine could set. Its stub returned
+`None` — correct when written (`eb036a6a1`) — until PR #1439 retyped
+`_flush_library_note_save` to return `NoteFlushOutcome`; the caller then died one
+line in on `AttributeError: 'NoneType' object has no attribute 'kind'`. **Nobody
+retrieves a `create_task` result, so the exception was swallowed**, the signal
+became unreachable, and `await event.wait()` blocked forever.
+
+Two things this cost, beyond the one test:
+
+1. **The stack dump was useless.** TASK-1466's advice above does not hold here: a
+   coroutine suspended at an `await` has no frames on any thread stack, so
+   pytest-timeout printed only `MainThread` idle in `selectors.select` and never
+   named the test. Diagnosis required inspecting the *task object*
+   (`task.done()` / `task.exception()`), not the dump. Reproduced deliberately
+   while writing the bound: 25s timeout, stacks dumped, process terminated,
+   **zero** tests reported in the summary line.
+2. **Every test after it in the file silently never ran**, so the file's pass
+   count was a lie for as long as the hang existed. Repairing that one test
+   revealed three further failures the hang had been hiding.
+
+**What to do.** Never `await <event>.wait()` on a signal only background work can
+set. Route it through `Tests/UI/background_signals.py`:
+`wait_for_background_signal(event, task, what=...)` when the test owns the task
+(it re-raises what the task swallowed), or `wait_for_signal(event, what=...)` when
+the product owns the work (timeout-only, but a named failure in seconds instead of
+a dead process). `Tests/UI/test_background_signal_bounds.py` enforces this by AST
+over the whole directory — grep cannot, because it cannot tell an unbounded
+`await ev.wait()` from one already inside `asyncio.wait_for`, nor an
+`asyncio.Event` from a Textual `Worker`/retained-operation handle whose `.wait()`
+re-raises and therefore cannot strand.
+
+Two corollaries worth carrying:
+
+* **A file that has ever contained a hang has an UNKNOWN pass count** until it is
+  re-run whole. A previously recorded count for such a file is not evidence.
+* **In practice the re-raise branch fires less often than you would expect.** Of
+  four sites broken deliberately with the stale-stub shape, only one propagated;
+  the other three product paths caught the `AttributeError` internally, logged it,
+  and returned early — so the bound reported "finished without signalling" rather
+  than the exception. That is still a 1-3s named failure instead of a dead run,
+  but it means the helper's early-return branch is not a corner case: do not drop
+  it in favour of "just re-raise".
 
 ---
 
@@ -2120,6 +2171,19 @@ Anything the stub would have to invent is a fixture you must leave out and name:
 this fixture holds no 0-byte file, because the app sends one and only the server
 decides.
 
+**The follow-through (TASK-14910, 2026-08-11).** That last sentence turned out to
+be the finding, not the caveat. A fixture you cannot write because the outcome is
+unknowable is usually pointing at a CLAIM the product should not be making: the
+same forecast counted that 0-byte file as a certain failure while admitting, one
+segment later, that "server tooling isn't checked from here". The fix was not a
+cleverer stub — it was to make the outcome knowable, by refusing to send a 0-byte
+file at all (the client already knows why, the local backend already refuses one,
+and the round trip buys nothing). The fixture then grew to hold `empty.txt`, whose
+fate is now decided entirely by code the test runs for real; the stub never sees
+it. So: when a governance test has to leave a case out, name it AND file it — the
+gap is evidence about the product, and the honest close is usually to remove the
+unknowability rather than to keep the fixture short forever.
+
 ---
 
 ## An `await event.wait()` on a fire-and-forget task hangs on the task's OWN exception — and the timeout dump names nothing (2026-08-10, TASK-3316/TASK-14913)
@@ -2250,3 +2314,30 @@ docstring can assert a stale number while never naming the constant that used
 to produce it — that is exactly what lets it survive a symbol-only grep, and
 exactly why an inline-literal arrow chain needs a human reading the prose, not
 a tool, to catch on the first pass.
+## A gate with several conditions can close for the WRONG one — open the others or the test pins nothing (TASK-14911, 2026-08-11)
+
+**Incident.** `start_enabled` on the Library ingest canvas is a conjunction:
+registry present AND media DB present AND a non-blank path AND nothing-importable
+false AND no option errors AND no path error. The new test staged a folder of
+images in server mode and asserted `state.start_enabled is False` — the defect
+being that it was `True`. The first run of that test, written BEFORE the fix,
+reported the gate already closed. Not because the gate worked: the shared screen
+harness (`Tests/UI/app_factory.py`) leaves `media_db = None`, so a *different*
+conjunct was False the whole time. Had the test asserted only `start_enabled`, it
+would have passed against the unfixed code, pinned nothing, and stayed green
+forever after someone later broke the backend-aware gate.
+
+It was caught only because the same test also asserted the specific flag the fix
+introduces (`selection_has_nothing_importable`) and the gate line's own wording —
+those two went red while the boolean did not.
+
+**What to do.** For any multi-condition gate:
+
+1. In the fixture, explicitly OPEN every condition except the one under test
+   (`app.media_db = SimpleNamespace()` here), and say in a comment why — a shared
+   harness's defaults are not neutral.
+2. Assert the REASON, not just the closed state: the flag the fix sets, and the
+   user-visible sentence naming it. A boolean shared by six causes cannot
+   discriminate between them.
+3. Run the test before the fix and READ which assertion fails. "It failed" is not
+   enough when the boolean can fail for free.

@@ -17,6 +17,8 @@ the service, not here.
 
 from __future__ import annotations
 
+from pathlib import Path
+from stat import S_ISREG
 from typing import Any, Iterable, Mapping
 
 from tldw_chatbook.Library.ingest_capabilities import (
@@ -122,6 +124,52 @@ def server_media_type_for(source: str) -> str:
     return media_type
 
 
+def empty_source_refusal(source: str) -> str | None:
+    """Return why a 0-byte local file is refused before it is sent.
+
+    (task-14910) The forecast counts every 0-byte staged file as a certain
+    failure on BOTH backends. Locally that is verified -- the parse chain
+    raises ``EmptySourceIngestError`` before any write. On the server path
+    it was an unearned claim: the app built kwargs for the empty file and
+    sent it, handing the outcome to a server this process cannot inspect
+    -- the very reason the same forecast line admits "server tooling isn't
+    checked from here".
+
+    Refusing here is what makes the claim true rather than lucky, and it
+    is the better outcome anyway: a 0-byte file is almost certainly a
+    mistake, the reason is already known locally, and stating it takes no
+    round trip. Both the forecast-side predicate
+    (:func:`server_ingest_refusal`) and the submit-side builder
+    (:func:`build_server_ingest_kwargs`) call THIS function, so what the
+    canvas promises and what the queue records cannot drift.
+
+    Args:
+        source: A local file path or an http(s) URL.
+
+    Returns:
+        The refusal reason -- the exact message the failed job row will
+        carry -- or ``None`` when the source is not a 0-byte local file.
+        A URL has no local size to measure and is never called empty; nor
+        is a path that cannot be statted, mirroring the pre-flight's own
+        ``_statted_size`` (an unreadable file is not a 0 B one).
+    """
+    text = str(source or "").strip()
+    if not text or is_http_url(text):
+        return None
+    try:
+        path = Path(text).expanduser()
+        info = path.stat()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    # ``S_ISREG`` because a DIRECTORY can stat at 0 bytes on some
+    # filesystems, and "this folder is empty" is a different diagnosis
+    # with a different recovery (the ingest gate owns that one).
+    if info.st_size != 0 or not S_ISREG(info.st_mode):
+        return None
+    name = path.name or text
+    return f"{name} is empty; there was nothing to send."
+
+
 def server_ingest_refusal(source: str) -> str | None:
     """Return why a SERVER-targeted submission will refuse ``source``.
 
@@ -152,6 +200,13 @@ def server_ingest_refusal(source: str) -> str | None:
         return "No source was given."
     if is_web_clip_source(text):
         return None
+    # (task-14910) Emptiness outranks the type mapping: a 0-byte .png is
+    # counted by the forecast as an EMPTY failure (the pre-flight pulls
+    # 0-byte files out before classifying them), so the row it produces
+    # must give the empty reason rather than the image one.
+    empty = empty_source_refusal(text)
+    if empty is not None:
+        return empty
     try:
         server_media_type_for(text)
     except ServerIngestUnsupported as exc:
@@ -209,8 +264,15 @@ def build_server_ingest_kwargs(
         Keyword arguments for ``ServerMediaReadingService.submit_ingest_jobs``.
 
     Raises:
-        ServerIngestUnsupported: When ``source`` has no server equivalent.
+        ServerIngestUnsupported: When ``source`` has no server equivalent,
+            or (task-14910) when it is a 0-byte file -- there is nothing
+            in it to send, and only a refusal here makes the forecast's
+            "will fail" a fact about this process rather than a guess
+            about the server's.
     """
+    empty = empty_source_refusal(source)
+    if empty is not None:
+        raise ServerIngestUnsupported(empty)
     media_type = server_media_type_for(source)
     source = source.strip()
 
