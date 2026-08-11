@@ -5,7 +5,7 @@
 > `superpowers:executing-plans` to execute this plan task by task with the
 > review checkpoints below.
 
-**Goal:** Review the exact 18-owner persistent-diagnostic drift under ADR-029,
+**Goal:** Review the exact 19-owner persistent-diagnostic drift under ADR-029,
 repair every unsafe diagnostic without unrelated behavior changes, and accept
 only the reviewed manifest delta while preserving the six-file sink topology.
 
@@ -39,7 +39,7 @@ metadata policy.
   narrow state record and signature-checked collaborator seams.
 - Do not regenerate the checked manifest until every source call and ledger row
   is reviewed and the privacy guards are green.
-- Do not accept a nineteenth owner, a new call in an already-authorized owner,
+- Do not accept a twentieth owner, a new call in an already-authorized owner,
   unknown JSON data, a derived-summary mismatch, a classification change, or
   any sink-topology movement.
 - Preserve call order, returns, raised/returned operational errors, retry and
@@ -52,10 +52,8 @@ metadata policy.
 ## Verified planning baseline
 
 - Planning base: exact `origin/dev`
-  `85863257dd7a30b16451f8f32e0c7142dd1d5273`. The intervening
-  visual-evaluation change touches the approved provider-gateway owner but
-  preserves its exact diagnostic population and sink set, and introduces no
-  additional diagnostic owner.
+  `82b595049d97836482c118cfeb4d31df537a86a1`, audited from a detached
+  export without rebasing the task branch or writing the checked manifest.
 - Focused architecture baseline:
 
   ```bash
@@ -63,44 +61,59 @@ metadata policy.
     Tests/Architecture/test_persistent_diagnostic_inventory.py
   ```
 
-  Expected at the planning base: the sole known failure is
-  `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`; any
-  other failure stops implementation.
+  Expected after rebasing the task branch: the canonical inventory comparison
+  remains red and the already-implemented TASK-15103 ledger/history nodes are
+  additionally red only for their stale 18-owner planning base/path/population
+  evidence. Record the exact failure set; any unrelated failure stops
+  implementation. Do not hard-code a predicted test count.
 - Stored/generated totals at that base are respectively:
-  - owner files: `485 / 487`
+  - owner files: `485 / 488`
   - TASK-492 calls: `1,144 / 1,180`
-  - TASK-494 calls: `6,962 / 6,987`
+  - TASK-494 calls: `6,962 / 6,990`
   - persistent sink files: `6 / 6`
-- Detached canonical `--write` regeneration is 46 additions/32 deletions with
+- Detached canonical `--write` regeneration is 53 additions/32 deletions with
   Git-patch SHA-256
-  `286f4acecbe504571b2cfed82078bd7763b40db2fac8609af8a76e72ef5e99fb`.
+  `adee369a60248da32fbc77c36b703618c73c61f5d5ef63d95460ada758f15a0f`;
+  persistent-sink topology is unchanged across the exact six paths
+  `tldw_chatbook/Local_Ingestion/ingest_parse_worker.py`,
+  `tldw_chatbook/Logging_Config.py`, `tldw_chatbook/MCP/execution_log.py`,
+  `tldw_chatbook/Utils/private_paths.py`, `tldw_chatbook/app.py`, and
+  `tldw_chatbook/config.py`.
 - Historical comparison: TASK-3796 reduced TASK-492 by 23 calls on both the
-  stored and generated sides before this stop gate. Latest dev then adds three
-  `console_chat_controller.py` calls to the generated side only, producing the
-  current 1,180 total; those calls are part of this review.
-- Current generated owner evidence is: controller 35 calls/digest
-  `5361a9926d2d6bede509` (superseding planning 32/digest prefix `491f...`),
-  provider gateway two/digest prefix `747b...`, and chat screen 158/digest
-  prefix `eef7...`.
-- `settings_screen.py` is the newly observed owner: stored 30 calls/digest
-  `2044ee00fa6768794e14`; generated 31 calls/digest
-  `62ea61e3ba363d516a6e`; owner `TASK-494`; reason
+  stored and generated sides before the earlier stop gate. The subsequently
+  approved three `console_chat_controller.py` additions remain unchanged and
+  keep the current generated total at 1,180.
+- The prior planned ledger freezes 18 owner populations at exact
+  `85863257dd7a30b16451f8f32e0c7142dd1d5273`. All remain byte-for-byte
+  identical by count/digest at latest dev except `library_screen.py`, which
+  moves from 84/`c14a8222d35aec3a6e34` to
+  86/`ae0fac2e87bf1a6ee81c` because of two new diagnostics.
+- `text_selection_crash_guard.py` is the sole new owner: no stored/prior row,
+  generated one call/digest `f90a373ef5fcc81a8c1c`, owner `TASK-494`, reason
   `remaining Chatbook production diagnostic owner`.
+- Actual source/AST classification adds one reviewed-safe call—the Library
+  Trash restore warning with only `type(exc).__name__` and no capture—and two
+  metadata repairs: the Library Trash load warning captures the exception via
+  `logger.opt(exception=True)`, while the Utils warning renders unbounded
+  `repr(select_widget)` and event coordinates. Task 1 must freeze these exact
+  conclusions before any production edit.
 
 ### Current-base plan deviation
 
-Before implementation began, the latest-dev stop gate advanced the exact base
-and expanded the owner boundary by `settings_screen.py`; it also added three
-controller calls. The task, design, ledger schema, review batches, manifest
-boundary, and checkpoints therefore use the authoritative 18-owner evidence
-above. No production, ledger, manifest, or architecture-test correction may
-start from the superseded boundary.
+After the prior 18-owner ledger/schema tranche but before production repair,
+latest dev advanced from `85863257dd7a30b16451f8f32e0c7142dd1d5273` to the
+exact base above, added two Library diagnostics, and introduced the Utils
+owner. This docs-only tranche deliberately leaves the now-stale ledger and
+guard unchanged. The next Task 1 correction must amend and independently
+reconstruct the 19-owner policy boundary in its own reviewed commit before any
+production, manifest, or further architecture-test work.
 
 ## Task 1: Freeze the incident and add the ledger schema
 
 **Files:**
 
-- Create: `Docs/security/task-15103-diagnostic-review.json`
+- Modify: `Docs/security/task-15103-diagnostic-review.json` (currently frozen
+  at the stale 18-owner planning boundary)
 - Modify: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 - Reuse unchanged: `Tests/LLM_Calls/summarization_diagnostic_guard.py`
 
@@ -118,12 +131,13 @@ start from the superseded boundary.
   ```
 
   Expected: conflict-free or fully reconciled rebase; clean worktree; exact
-  execution base recorded; ancestry exit `0`; the focused test has the sole
-  known inventory failure and no other failure. If latest `dev` changes any of
-  the 18 owner populations, owner set, manifest summary, or sink topology,
-  update the design/plan evidence and re-review it before continuing.
+  execution base recorded; ancestry exit `0`; the focused test fails only for
+  the canonical stale manifest and the explicitly expected stale 18-owner
+  TASK-15103 planning evidence. If latest `dev` changes any of the 19 owner
+  populations, owner set, manifest summary, or sink topology, update the
+  design/plan evidence and re-review it before continuing.
 
-- [ ] **Step 2: Add schema tests before the ledger exists**
+- [ ] **Step 2: Correct schema tests before amending the stale ledger**
 
   Add tests that require these exact top-level ledger fields:
 
@@ -141,7 +155,7 @@ start from the superseded boundary.
   exact `starting` call-count/digest pair; `reviewed_final` and `final_base` are
   forbidden. In `reviewed` state, `final_base` and every owner's exact
   `reviewed_final` pair are required. Each change group must contain an ID, one
-  of the 18 owner paths, exact commit or narrow verified range provenance, one
+  of the 19 owner paths, exact commit or narrow verified range provenance, one
   disposition (`reviewed-safe`,
   `metadata-repair`, `justified-deletion`), rationale, permitted-field
   provenance, and removed/added multiset atoms. Each atom must contain method,
@@ -167,9 +181,16 @@ start from the superseded boundary.
   - removed and added atom multiplicities by owner;
   - every owner starting count/digest in planned state, and both starting/final
     pairs in reviewed state; and
-  - exactly the recorded 18 owner paths, no fewer and no more.
+  - exactly the recorded 19 owner paths, no fewer and no more.
 
-- [ ] **Step 3: Run the schema tests and confirm RED for the missing artifact**
+  Retain the complete-history gate already implemented: read planned sources
+  from immutable Git blobs at `incident.planning_base`, not the live worktree;
+  reconstruct each owner's full stored-population-to-planning-base transition
+  history; form the independent introduced/removed denominator; and require
+  every transition atom to be consumed exactly once by ledger groups. Do not
+  hard-code the expanded denominator, group totals, or atom arithmetic.
+
+- [ ] **Step 3: Run the schema/history tests and confirm RED for stale evidence**
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
@@ -177,12 +198,13 @@ start from the superseded boundary.
     -k 'task_15103_review_ledger' -vv
   ```
 
-  Expected: normal collection; the new ledger tests fail because the artifact
-  is missing. No syntax, import, or setup failure counts as RED.
+  Expected: normal collection; the current 18-owner ledger and guard fail on
+  the exact planning-base/path/population mismatch. No syntax, import, setup,
+  live-source substitution, or unrelated failure counts as RED.
 
 - [ ] **Step 4: Reconstruct and write the complete incident ledger**
 
-  Use canonical current AST extraction plus Git history for all 18 owners. Do
+  Use canonical current AST extraction plus Git history for all 19 owners. Do
   not infer a unique before/after pair for duplicate calls. Represent rewrites
   as groups of removed and added atoms, and record an exact introducing commit
   only when Git proves one; otherwise use the narrowest verified range.
@@ -208,6 +230,7 @@ start from the superseded boundary.
   tldw_chatbook/UI/Screens/library_screen.py
   tldw_chatbook/app.py
   tldw_chatbook/UI/Screens/settings_screen.py
+  tldw_chatbook/Utils/text_selection_crash_guard.py
   ```
 
   Record exact proposed surviving-call semantic contracts for unsafe current
@@ -219,11 +242,16 @@ start from the superseded boundary.
   is the immutable policy oracle; mechanically derived final owner evidence is
   appended only in Task 7 after production matches it.
 
-  Preliminary inspection suggests the bridge, MCP local-server tools, MCP
-  prompts, MCP server, simplified search service, and the new settings call may
-  be review-only; the ledger audit, not this preliminary classification, is
-  authoritative. Do not hard-code predicted post-review group counts: Task 1's
-  reconstruction and schema-validated arithmetic are authoritative.
+  Preserve every prior planned disposition/contract as immutable unless the
+  complete Git-history reconstruction proves it invalid. Append the exact new
+  Library/Utils transitions in a separately reviewed ledger-contract amendment:
+  Library Trash restore is preliminary `reviewed-safe`; Library Trash load and
+  the Utils selection-guard warning are preliminary `metadata-repair`. The
+  bridge, MCP local-server tools, MCP prompts, MCP server, simplified search
+  service, and settings call may remain review-only. The ledger audit—not these
+  preliminary classifications—is authoritative. Do not hard-code predicted
+  post-review group counts: Task 1's reconstructed denominator, exact-once
+  consumption, and schema-validated arithmetic are authoritative.
 
 - [ ] **Step 5: Make schema/arithmetic tests GREEN without accepting source**
 
@@ -233,10 +261,11 @@ start from the superseded boundary.
     -k 'task_15103_review_ledger' -vv
   ```
 
-  Expected: every planned-ledger schema, path-set, provenance, multiplicity,
-  and starting arithmetic node passes. A separate synthetic reviewed-state
-  fixture proves final evidence is required in that state. The canonical
-  manifest test remains red.
+  Expected: every planned-ledger schema, exact 19-path set, immutable
+  planning-Git-source population, complete-history denominator, exact-once
+  consumption, provenance, multiplicity, and starting-arithmetic node passes.
+  A separate synthetic reviewed-state fixture proves final evidence is required
+  in that state. The canonical manifest test remains red.
 
 - [ ] **Step 6: Review and commit Task 1**
 
@@ -253,9 +282,10 @@ start from the superseded boundary.
   git commit -m "test(security): inventory TASK-15103 diagnostic drift"
   ```
 
-  Review checkpoint: independently verify exact 18-owner coverage, provenance,
-  disposition arithmetic, duplicate multiplicity, and absence of guessed
-  one-to-one pairing before Task 2.
+  Review checkpoint: independently verify exact 19-owner coverage, immutable
+  planned Git-source evidence, complete-history denominator/exact-once
+  consumption, provenance, disposition arithmetic, duplicate multiplicity,
+  and absence of guessed one-to-one pairing before Task 2.
 
 ## Task 2: Replace the shallow review check with the ledger-driven guard
 
@@ -276,7 +306,7 @@ start from the superseded boundary.
   never determine equality. A missing, extra, or duplicate match fails.
 
   Exercise that adapter with temporary source plus temporary ledger contracts;
-  do not add the aggregate real-18-owner node yet. Keep the existing
+  do not add the aggregate real-19-owner node yet. Keep the existing
   pre-TASK-15103 map for its existing owners. Do not copy any TASK-15103 labels
   or expressions into a second Python constant.
 
@@ -671,6 +701,7 @@ start from the superseded boundary.
   - `tldw_chatbook/app.py`
 - Review and modify only if the ledger proves a repair is required:
   - `tldw_chatbook/UI/Screens/settings_screen.py`
+  - `tldw_chatbook/Utils/text_selection_crash_guard.py`
 - Modify: `Tests/Architecture/test_task_15103_diagnostic_privacy.py`
 - Modify: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 - Read/freeze: `Docs/security/task-15103-diagnostic-review.json`
@@ -678,11 +709,13 @@ start from the superseded boundary.
   - `Tests/UI/test_app_quit_guard.py`
   - `Tests/UI/test_console_session_controller.py`
   - `Tests/UI/test_library_screen.py`
+  - `Tests/App/test_text_selection_crash_guard.py` from the rebased source;
+    never execute its Textual app harness
 
 - [ ] **Step 1: Add the UI/app source contract, function-only sentinels, and RED**
 
   Add `test_task_15103_ui_app_source_contracts`, invoking the reusable adapter
-  with only the five UI/app owner paths. It must begin RED on current unsafe
+  with only the six UI/app owner paths. It must begin RED on current unsafe
   calls and enforce the already-frozen UI/app semantic contracts.
 
   Invoke exact production methods directly. For `TldwCli`, call the unbound
@@ -700,16 +733,46 @@ start from the superseded boundary.
   `type(exc).__name__` do not expose a private sentinel. Its apparent
   metadata-only shape is not acceptance evidence.
 
+  Before any repair, add direct function-only RED coverage for both Library
+  Trash diagnostics. `_load_library_media_trash` warning event `Failed to load
+  the Library media trash page.` currently has extracted expressions
+  `module='LibraryScreen'` and `exception=True` and captures the exception;
+  preserve its error state, refresh/focus behavior, and collaborator ordering
+  while omitting exception messages and capture.
+  `_restore_library_media_from_trash` warning event `Failed to restore a
+  Library media item from the Trash view (error_type={}).` has expression
+  `type(exc).__name__` and no capture; preserve its result/state/count behavior
+  and prove that reviewed-safe contract. Feed private media IDs and exception
+  messages through the exact methods.
+
+  Also add a conditional Utils source-contract and direct sentinel owned by
+  this batch. Exercise the exact crash matcher/dispatch functions without
+  constructing, subclassing, mounting, piloting, or running a Textual app.
+  Supply a widget whose `repr` is a distinctive private canary and distinctive
+  mouse coordinates; pin the narrow crash-match, click-drop, select-state, and
+  re-raise behavior before asserting neither value persists. Do not run the
+  existing `Tests/App/test_text_selection_crash_guard.py` app harness.
+  The current warning method is `warning`; its fixed event projection is
+  `Dropped a MouseDown that hit Textual's text-selection begin path while its
+  target widget was mid-recompose (detached parent): target=,
+  screen_offset=(,). Upstream Textual race (screen.py _forward_event,
+  container=None) -- the click was not delivered; the app stays alive
+  (task-14903).`; its expressions are `target`,
+  `getattr(event, 'screen_x', '?')`, and `getattr(event, 'screen_y', '?')`;
+  it does not capture the exception.
+
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_task_15103_diagnostic_privacy.py \
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
-    -k 'console_session or chat_screen or library_screen or settings_screen or app_quit or task_15103_ui_app_source_contracts' \
+    -k 'console_session or chat_screen or library_screen or settings_screen or text_selection or app_quit or task_15103_ui_app_source_contracts' \
     -vv
   ```
 
-  Expected: current session-ID/capture diagnostics fail their owning privacy
-  assertions after behavior assertions pass.
+  Expected: current session-ID/capture, Library Trash capture, and Utils
+  private-repr/coordinate diagnostics fail their owning privacy assertions
+  after behavior assertions pass. Do not edit production before this batch RED
+  and the frozen source contracts are recorded.
 
 - [ ] **Step 2: Apply fixed same-severity non-capturing replacements**
 
@@ -718,13 +781,19 @@ start from the superseded boundary.
   failure, guard failure, audio failure, persistence failure, and cancellation.
   Modify `settings_screen.py` only if the frozen ledger and sentinel prove a
   repair is required; otherwise preserve it as an explicitly reviewed call.
+  For Library Trash load, remove exception capture at the same severity and
+  retain only ledger-approved metadata. For the Utils call, if the frozen
+  ledger confirms the preliminary metadata-repair disposition, remove the
+  unbounded widget `repr` and event coordinates and ensure prohibited rendering
+  is not retained solely for logging; preserve the exact narrow crash predicate
+  and click-drop behavior.
 
 - [ ] **Step 3: Prove UI/app source matches the frozen ledger and run GREEN**
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_task_15103_diagnostic_privacy.py \
-    -k 'console_session or chat_screen or library_screen or settings_screen or app_quit' -vv
+    -k 'console_session or chat_screen or library_screen or settings_screen or text_selection or app_quit' -vv
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest -q \
     Tests/Architecture/test_persistent_diagnostic_inventory.py \
     -k 'task_15103_ui_app_source_contracts or task_15103_review_ledger' -vv
@@ -732,10 +801,10 @@ start from the superseded boundary.
 
   Expected: all selected nodes pass and no app object was constructed.
 
-- [ ] **Step 4: Add and run the aggregate 18-owner source contract**
+- [ ] **Step 4: Add and run the aggregate 19-owner source contract**
 
   Add `test_task_15103_all_reviewed_owner_source_contracts`, which invokes the
-  same adapter over the ledger's exact 18-owner path set. This node is added
+  same adapter over the ledger's exact 19-owner path set. This node is added
   only after all four batch nodes are green.
 
   ```bash
@@ -770,11 +839,15 @@ start from the superseded boundary.
     Tests/Architecture/test_persistent_diagnostic_inventory.py
   # Run this only when ledger/sentinel evidence proves a settings repair.
   git add tldw_chatbook/UI/Screens/settings_screen.py
+  # Run this only when ledger/sentinel evidence proves the Utils repair.
+  git add tldw_chatbook/Utils/text_selection_crash_guard.py
   git commit -m "fix(security): remove UI lifecycle traceback diagnostics"
   ```
 
   Stage `tldw_chatbook/UI/Screens/settings_screen.py` only when the ledger and
-  focused sentinel prove an actual production repair is required.
+  focused sentinel prove an actual production repair is required. Stage
+  `tldw_chatbook/Utils/text_selection_crash_guard.py` and its focused direct
+  test only when its frozen ledger contract proves the preliminary repair.
   Review checkpoint: independently inspect that test code never constructs an
   application and that production diffs contain logging-only behavior changes.
 
@@ -796,7 +869,7 @@ start from the superseded boundary.
     -vv
   ```
 
-  Expected: exact 18-owner source contracts, all schema/arithmetic checks, and
+  Expected: exact 19-owner source contracts, all schema/arithmetic checks, and
   all syntax mutation nodes pass. Stop if any source call is pending,
   ambiguous, missing, extra, or captures exceptions.
 
@@ -810,12 +883,12 @@ start from the superseded boundary.
 - [ ] **Step 2: Write deep manifest-boundary tests and capture missing-boundary RED**
 
   Compare deep copies of the complete checked and generated documents. Remove
-  only the exact 18 owner rows from the general owner equality comparison, then
+  only the exact 19 owner rows from the general owner equality comparison, then
   validate those rows separately for exact path, owner, reason, reviewed count,
   and reviewed digest. Independently recompute owner-file, TASK-492, TASK-494,
   and sink-file totals for each document before normalization.
 
-  Require the known owner-file transition `485 -> 487`, exact reviewed owner
+  Require the known owner-file transition `485 -> 488`, exact reviewed owner
   rows, and identical six-file sink topology. Every unknown field, section,
   list order, exclusion, classification rule, unreviewed owner row, and sink
   row must remain deeply equal.
@@ -824,7 +897,7 @@ start from the superseded boundary.
 
   1. unknown top-level data;
   2. forged derived summary;
-  3. a nineteenth owner;
+  3. a twentieth owner;
   4. an owner/reason classification change on one reviewed path;
   5. a persistent-sink change.
 
@@ -845,7 +918,7 @@ start from the superseded boundary.
 - [ ] **Step 3: Implement the boundary and make synthetic tests GREEN**
 
   Implement only the deep-copy normalization, independent summary
-  recomputation, exact 18-row validation, unknown-field rejection, and sink
+  recomputation, exact 19-row validation, unknown-field rejection, and sink
   topology comparison described above.
 
   ```bash
@@ -867,7 +940,7 @@ start from the superseded boundary.
 
   Expected: every synthetic boundary node and
   `test_task_15103_manifest_delta_is_exact_and_fail_closed` pass because the
-  candidate-aware boundary accepts exactly the authorized reviewed 18-owner
+  candidate-aware boundary accepts exactly the authorized reviewed 19-owner
   stale-to-generated delta. The sole failure is the canonical
   `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`, which
   requires byte equality and remains red until regeneration. Record the exact
@@ -880,7 +953,7 @@ start from the superseded boundary.
   git diff -- Docs/security/production-diagnostic-inventory.json
   ```
 
-  Expected: only the 18 reviewed owner rows and independently derived summary
+  Expected: only the 19 reviewed owner rows and independently derived summary
   totals change; all six sink rows/topology and every unreviewed owner remain
   byte-equivalent after normalization. Stop rather than edit around any extra
   delta.
@@ -909,7 +982,7 @@ start from the superseded boundary.
      ```
 
   3. require that node to fail with the mutation's exact unknown-field,
-     forged-summary, nineteenth-owner, classification, or sink-topology text;
+     forged-summary, twentieth-owner, classification, or sink-topology text;
   4. inverse-restore with `apply_patch`;
   5. require restored SHA-256 equals the baseline; and
   6. rerun the exact positive node GREEN.
@@ -950,7 +1023,7 @@ start from the superseded boundary.
 - Modify: `Docs/security/task-15103-diagnostic-review.json`
 - Modify if final rebase changes reviewed source:
   `Docs/security/production-diagnostic-inventory.json`
-- Modify: `backlog/tasks/task-15103 - Reconcile-18-owner-latest-dev-diagnostic-inventory-drift.md`
+- Modify: `backlog/tasks/task-15103 - Reconcile-19-owner-latest-dev-diagnostic-inventory-drift.md`
 - Modify: this plan's step markers and any exact-base evidence
 - Modify: the design status line
 - Modify lessons only if this task produced genuinely new incident-based,
@@ -958,7 +1031,7 @@ start from the superseded boundary.
 
 - [ ] **Step 1: Record pre-rebase complete owner populations**
 
-  Serialize every diagnostic call from all 18 owners using the canonical
+  Serialize every diagnostic call from all 19 owners using the canonical
   semantic atom (`method`, `event`, `message_shape`, `expressions`, capture
   state, and `level_expression`) plus multiplicity. Exclude scope, line, and
   occurrence from equality; retain them only in an external navigation report.
@@ -986,7 +1059,7 @@ start from the superseded boundary.
   ```
 
   Expected: conflict-free or fully reconciled rebase; ancestry exit `0`; `0`
-  behind. If upstream changes any of the 18 owners or complete populations,
+  behind. If upstream changes any of the 19 owners or complete populations,
   reopen its per-call audit, provenance, ledger, sentinel, and manifest row.
 
 - [ ] **Step 3: Compare the complete post-rebase populations**
@@ -1065,7 +1138,7 @@ start from the superseded boundary.
   - false fixed-event wording;
   - new eager evaluation or behavior changes;
   - ledger/source/manifest mismatch;
-  - a nineteenth owner or sink movement;
+  - a twentieth owner or sink movement;
   - duplicate policy data outside the ledger;
   - app/test-app/reduced-app construction; and
   - stale base/count/hash evidence.
@@ -1091,7 +1164,7 @@ start from the superseded boundary.
 - [ ] **Step 8: Commit closeout documentation**
 
   ```bash
-  git add backlog/tasks/task-15103\ -\ Reconcile-18-owner-latest-dev-diagnostic-inventory-drift.md \
+  git add backlog/tasks/task-15103\ -\ Reconcile-19-owner-latest-dev-diagnostic-inventory-drift.md \
     Docs/superpowers/specs/2026-08-11-task-15103-diagnostic-inventory-reconciliation-design.md \
     Docs/superpowers/plans/2026-08-11-task-15103-diagnostic-inventory-reconciliation.md
   git commit -m "docs(security): close TASK-15103 inventory reconciliation"
@@ -1107,7 +1180,7 @@ The handoff must report:
 
 - exact final base and HEAD;
 - clean ancestry and ahead/behind relation;
-- exact 18-owner path set and full-population comparison;
+- exact 19-owner path set and full-population comparison;
 - ledger hash plus group/atom/disposition arithmetic;
 - stored/generated manifest totals and six-sink topology;
 - every focused test command and result;

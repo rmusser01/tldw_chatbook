@@ -13,36 +13,40 @@ behavior changes, and the six-file persistent-sink topology remains unchanged.
 ## Current verified state
 
 The approved design was revalidated at the implementation stop gate on exact
-`origin/dev` `85863257dd7a30b16451f8f32e0c7142dd1d5273`. The intervening
-visual-evaluation change touches `console_provider_gateway.py` but leaves its
-two-call digest `747b675587167a1bec60` and empty sink set unchanged; its other
-changed production files introduce no diagnostic owner or sink. The approved
-18-owner population and the evidence below are therefore unchanged.
+`origin/dev` `82b595049d97836482c118cfeb4d31df537a86a1` from a detached
+canonical regeneration. The branch was not rebased and the checked manifest
+was not written.
 
 - The stored inventory contains 485 owner files, 1,144 TASK-492 calls, 6,962
   TASK-494 calls, and six persistent-sink files.
-- The generated inventory contains 487 owner files, 1,180 TASK-492 calls,
-  6,987 TASK-494 calls, and the same six persistent-sink files.
+- The generated inventory contains 488 owner files, 1,180 TASK-492 calls,
+  6,990 TASK-494 calls, and the same six persistent-sink files.
 - Detached canonical `--write` regeneration changes only
-  `Docs/security/production-diagnostic-inventory.json`, with 46 additions and
+  `Docs/security/production-diagnostic-inventory.json`, with 53 additions and
   32 deletions. Its Git-patch SHA-256 is
-  `286f4acecbe504571b2cfed82078bd7763b40db2fac8609af8a76e72ef5e99fb`.
+  `adee369a60248da32fbc77c36b703618c73c61f5d5ef63d95460ada758f15a0f`.
+- Persistent-sink topology is unchanged between stored and generated
+  inventories. The exact six-file topology remains
+  `tldw_chatbook/Local_Ingestion/ingest_parse_worker.py`,
+  `tldw_chatbook/Logging_Config.py`, `tldw_chatbook/MCP/execution_log.py`,
+  `tldw_chatbook/Utils/private_paths.py`, `tldw_chatbook/app.py`, and
+  `tldw_chatbook/config.py`, with every sink kind, method, scope, and digest
+  unchanged.
 - Historical comparison: TASK-3796 reduced TASK-492 by 23 calls on both the
-  stored and generated sides before this stop gate. Latest dev then adds three
-  controller calls to the generated side only, producing the current 1,180
-  generated total while the stored total remains 1,144.
-- The current generated owner rows for
-  `tldw_chatbook/Chat/console_chat_controller.py`,
-  `tldw_chatbook/Chat/console_provider_gateway.py`, and
-  `tldw_chatbook/UI/Screens/chat_screen.py` are respectively 35 calls with
-  digest `5361a9926d2d6bede509`, two calls with digest prefix
-  `747b...`, and 158 calls with digest prefix `eef7...`. The controller
-  supersedes the planning evidence of 32 calls with digest prefix `491f...`;
-  the other two rows are unchanged.
-- `tldw_chatbook/UI/Screens/settings_screen.py` is the newly observed owner.
-  Its stored row has 30 calls and digest `2044ee00fa6768794e14`; its generated
-  row has 31 calls and digest `62ea61e3ba363d516a6e`, owner `TASK-494`, and
-  reason `remaining Chatbook production diagnostic owner`.
+  stored and generated sides before the earlier stop gate; the three approved
+  controller additions remain present, producing the current generated
+  TASK-492 total of 1,180 while the stored total remains 1,144.
+- The frozen prior ledger proves the approved 18-owner starting population at
+  exact `85863257dd7a30b16451f8f32e0c7142dd1d5273`. Comparing every one of
+  those owner count/digest pairs with latest dev finds exactly one changed
+  prior owner: `tldw_chatbook/UI/Screens/library_screen.py` moves from 84
+  calls/digest `c14a8222d35aec3a6e34` to 86 calls/digest
+  `ae0fac2e87bf1a6ee81c`. The other 17 approved owner populations are
+  identical.
+- `tldw_chatbook/Utils/text_selection_crash_guard.py` is the sole new owner.
+  It has no stored row and a generated row of one call/digest
+  `f90a373ef5fcc81a8c1c`, owner `TASK-494`, reason
+  `remaining Chatbook production diagnostic owner`.
 - The three new controller diagnostics are one
   `console_visual_compaction_prepared` call and two
   `console_visual_compaction_fell_back_to_text` calls. Each binds private
@@ -55,6 +59,29 @@ changed production files introduce no diagnostic owner or sink. The approved
   expressions `type(screen).__name__`, `generation`, and
   `type(exc).__name__`. It appears metadata-only, but must still be proven and
   ledger-reviewed rather than auto-blessed.
+- Commit `566b4f0ea5db6b6fd6c6c9658b1633e134e53227` adds the two Library
+  diagnostics. `LibraryScreen._load_library_media_trash` calls warning with
+  fixed event `Failed to load the Library media trash page.`, extracted
+  expressions `module='LibraryScreen'` and `exception=True`, and
+  `captures_exception=True`; this is a metadata repair, not reviewed-safe. The
+  same commit adds
+  `LibraryScreen._restore_library_media_from_trash`, warning with fixed event
+  `Failed to restore a Library media item from the Trash view
+  (error_type={}).`, expression `type(exc).__name__`, and no exception
+  capture; this is reviewed-safe subject to the frozen-ledger and direct
+  production-function proof.
+- Commit `27779ef37108fef4f4c1bfecba22df6a2e5389bc` adds
+  `TextSelectionCrashGuard.on_event`, warning with fixed event projection
+  `Dropped a MouseDown that hit Textual's text-selection begin path while its
+  target widget was mid-recompose (detached parent): target=,
+  screen_offset=(,). Upstream Textual race (screen.py _forward_event,
+  container=None) -- the click was not delivered; the app stays alive
+  (task-14903).`, expressions `target`,
+  `getattr(event, 'screen_x', '?')`, and `getattr(event, 'screen_y', '?')`,
+  and no exception capture. Because `target` is unbounded
+  `repr(select_widget)` and the interaction coordinates are not ADR-029's
+  approved metadata, this call requires metadata repair and a direct sentinel;
+  the source comment's safety claim is not policy evidence.
 
 The drift is limited to these owners:
 
@@ -76,6 +103,7 @@ The drift is limited to these owners:
 16. `tldw_chatbook/UI/Screens/library_screen.py`
 17. `tldw_chatbook/app.py`
 18. `tldw_chatbook/UI/Screens/settings_screen.py`
+19. `tldw_chatbook/Utils/text_selection_crash_guard.py`
 
 ## Governing boundary
 
@@ -128,7 +156,7 @@ ledger. The implementation therefore reconstructs the incident from Git
 history and the current AST inventory:
 
 1. generate the current candidate inventory without accepting it;
-2. prove its owner-path delta is exactly the recorded 18 paths and that sink
+2. prove its owner-path delta is exactly the recorded 19 paths and that sink
    topology is unchanged;
 3. use content-sensitive Git history and source inspection to enumerate every
    added, removed, reworded, re-levelled, or structurally changed diagnostic;
@@ -158,6 +186,16 @@ proposed surviving-call contract. If implementation proves a contract wrong,
 work stops and a separately reviewed ledger-contract amendment is committed
 before production resumes.
 
+The planned-state source gate reads immutable blobs at
+`incident.planning_base` through Git plumbing; it never substitutes the live
+worktree for planned evidence. For every owner, the guard reconstructs the
+complete `--follow` history from the stored-population match through the
+planning base, calculates every introduced/removed semantic transition as the
+independent denominator, and requires ledger groups to consume that transition
+multiset exactly once—no missing, duplicate, or extra claim. The expanded
+19-owner reconstruction is authoritative; later transition, group, and atom
+counts are derived rather than copied or hard-coded from the prior ledger.
+
 The canonical semantic atom is the compact, key-sorted JSON serialization of
 `method`, `event`, `message_shape`, `expressions`, `captures_exception`, and
 `level_expression` from the alias-aware `DiagnosticCall`; its digest is the
@@ -169,7 +207,7 @@ so relocation is ignored while deleting or adding a duplicate remains visible.
 
 After every repair matches the frozen semantic contracts, acceptance appends
 the exact final base revision plus the reviewed-final complete
-call-count/digest pair for each of the 18 owners and changes the ledger state
+call-count/digest pair for each of the 19 owners and changes the ledger state
 from `planned` to `reviewed`. The schema requires final evidence only in the
 reviewed state and forbids it in the planned state, so the canonical artifact
 never contains nulls, TODOs, placeholder digests, or speculative raw-source
@@ -185,7 +223,7 @@ count/digest. Unknown checkpoint keys or an invalid pre/post lifecycle fail.
 The final task Implementation Notes retain the exact ledger hash, reconcile
 change-group totals by disposition, and separately reconcile atom multiplicity
 by owner and before/after side. A mismatch, ambiguous call, missing ledger row,
-or nineteenth owner stops reconciliation; it is not guessed or silently
+or twentieth owner stops reconciliation; it is not guessed or silently
 absorbed.
 
 ### Permanent review boundary
@@ -276,10 +314,10 @@ or provider seam.
 The inventory is regenerated only after every source repair and focused guard
 is green. The resulting manifest may change only:
 
-- the 18 reviewed owner entries, including additions or removals already
+- the 19 reviewed owner entries, including additions or removals already
   identified by the incident;
 - the independently derived owner-file, TASK-492, and TASK-494 totals,
-  including the known 485-to-487 owner-file transition; and
+  including the known 485-to-488 owner-file transition; and
 - no persistent-sink entry or topology field.
 
 The candidate is compared against both the original branch base and the final
@@ -287,7 +325,7 @@ source. Unknown top-level data, an unreviewed owner, a changed classification,
 or sink-topology movement fails closed.
 
 The comparison uses deep copies of the complete checked and generated
-documents. It removes only the exact 18 reviewed owner rows from the general
+documents. It removes only the exact 19 reviewed owner rows from the general
 owner-list equality check, then validates those rows separately for exact path,
 owner, reason, reviewed call count, and reviewed digest. Every other field,
 section, list order, exclusion, classification rule, owner row, and sink row
@@ -297,8 +335,8 @@ summary equality produced by the generator is not trusted as independent
 evidence.
 
 Mutation tests must make this boundary red for an unknown top-level field, a
-forged derived summary, a nineteenth owner, an owner/reason classification
-change on one of the 18 paths, and a persistent-sink change. Each mutant is
+forged derived summary, a twentieth owner, an owner/reason classification
+change on one of the 19 paths, and a persistent-sink change. Each mutant is
 restored before the next. A non-equal mutant hash proves the mutation occurred;
 restored byte hashes and equality to the recorded legitimate pre-mutation diff
 prove restoration without falsely requiring a clean worktree before the
@@ -312,7 +350,7 @@ incidental assertion.
 
 Immediately before the final rebase, commit to the canonical ledger the
 complete canonical-semantic-atom multiset hash and per-owner count/hash for all
-18 owners, not only each inventory entry. Scope/line/occurrence remain external
+19 owners, not only each inventory entry. Scope/line/occurrence remain external
 navigation evidence and do not affect equality. The committed checkpoint keeps
 the rebase worktree clean and makes the comparison reproducible. After rebasing
 onto the final `origin/dev`, append the post-rebase per-owner evidence and
@@ -351,12 +389,12 @@ Verification remains limited to touched files and affected functionality:
    historical private-value and traceback shapes, each failing its owning
    assertion for the intended reason;
 5. independent manifest-boundary mutations for unknown data, forged derived
-   totals, a nineteenth owner, classification change, and sink change;
+   totals, a twentieth owner, classification change, and sink change;
 6. ledger reconciliation proving every historical delta has exactly one
    disposition and every reviewed-final owner digest matches generated source;
 7. Ruff lint and focused formatting for edited Python, `py_compile`, JSON
    parsing, and `git diff --check`; and
-8. a final current-`dev` rebase followed by the complete 18-owner call-population
+8. a final current-`dev` rebase followed by the complete 19-owner call-population
    comparison, the same touched-scope gates, and an exact branch-scope audit.
 
 Repository-wide pytest is not run. Application tests, test applications,
@@ -372,12 +410,12 @@ reduced applications, and simplified application substitutes are prohibited.
   application harness.
 - **AC4:** the durable per-call disposition ledger, provenance evidence,
   complete owner-population reconciliation, and permanent guard cover every
-  generated-versus-stored delta for all 18 owners under ADR-029.
+  generated-versus-stored delta for all 19 owners under ADR-029.
 
 ## Out of scope
 
 - redesigning the persistent-diagnostic inventory format or sink filter;
 - changing ADR-029's admitted metadata or six operational events;
-- general logging cleanup outside the 18-owner incident;
+- general logging cleanup outside the 19-owner incident;
 - refactoring Agents, Chat, MCP, RAG, UI, or application state ownership; and
 - accepting unrelated inventory drift that appears after the final rebase.
