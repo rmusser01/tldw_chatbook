@@ -1993,3 +1993,23 @@ candidate and require one matching identity; do not reapply the aggregate label
 as if no choice had been made. Multi-model integration fixtures must include the
 common real layout where several supported packages share one selected root,
 not only the tidier one-directory-per-model arrangement.
+
+---
+
+## A repository scanner must decode source explicitly or a platform can silently disappear files
+
+**Console model-picker verification (TASK-3600/TASK-14812, 2026-08-10).** The
+blocking-I/O architecture suite reported eight stale baseline entries for two
+Chatbooks modules even though the referenced `.glob()` and `ZipFile` calls were
+still present. On Windows, `_scan_package` used `Path.read_text()` without an
+encoding. The locale codec could not decode bytes in those UTF-8 source files;
+the scanner caught `UnicodeDecodeError` and skipped each entire module. The
+stale-baseline assertion was therefore reporting missing scan input, not clean
+code. Reading the same files explicitly as UTF-8 restored the intended findings
+and made all six guard tests pass.
+
+**What to do.** Repository-wide source scanners must use an explicit source
+encoding, normally `encoding="utf-8"`, and must treat decode failures as visible
+evidence rather than silently interpreting them as a clean file. When an
+inventory entry becomes "stale" while the named code is visibly still present,
+inspect the scanner's input and exception path before deleting the baseline.
