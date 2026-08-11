@@ -303,13 +303,15 @@ def _assert_legible_painted_text(
     needle: str,
     *,
     theme_name: str,
+    minimum_ratio: float = 3.0,
 ) -> None:
     style = _painted_style_of_text(app, widget.region, needle)
     assert style is not None and style.color is not None
     assert style.bgcolor is not None
     ratio = _contrast_ratio(style.color, style.bgcolor)
-    assert ratio >= 3.0, (
-        f"{theme_name}: {needle!r} paints at {ratio:.2f}:1, below 3:1"
+    assert ratio >= minimum_ratio, (
+        f"{theme_name}: {needle!r} paints at {ratio:.2f}:1, "
+        f"below {minimum_ratio}:1"
     )
 
 
@@ -601,8 +603,9 @@ async def test_file_notes_root_details_preserve_exact_path_and_warning(
         )
         root_status = workspace.query_one("#file-notes-root-status")
         assert root_status.has_class("-warning")
-        assert "#file-notes-root-status.-warning" in workspace.DEFAULT_CSS
-        assert "color: $warning;" in workspace.DEFAULT_CSS
+        assert "#file-notes-root-status.-warning," in workspace.DEFAULT_CSS
+        assert "#file-notes-root-status.-offline," in workspace.DEFAULT_CSS
+        assert "background: $warning 14%;" in workspace.DEFAULT_CSS
         tooltip = workspace.query_one("#file-notes-root-status").tooltip
         assert tooltip is not None
         assert str(root.resolve()) in str(tooltip)
@@ -2497,6 +2500,163 @@ async def test_reload_confirmation_rejects_stale_editor_identity(
         status = _static_text(workspace, "#file-notes-action-status")
         assert "active root, file, or editing session changed" in status
         assert "Draft preserved" in status
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_high_stakes_file_notes_states_keep_explicit_labels_and_classes(
+    tmp_path: Path,
+) -> None:
+    """State classes must reinforce complete labels and clear without residue."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "state.md").write_text("body\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("state.md")
+        root_status = workspace.query_one("#file-notes-root-status")
+        save_status = workspace.query_one("#file-notes-save-status")
+
+        workspace._root_offline = True
+        workspace._runtime_warning = "Recovery unavailable: replica locked"
+        workspace._update_root_surface()
+        workspace._set_save_state("conflict", "file changed on disk")
+        await pilot.pause()
+
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Offline · Warning · Local folder: notes"
+        )
+        assert root_status.has_class("-offline")
+        assert root_status.has_class("-warning")
+        assert _static_text(workspace, "#file-notes-save-status") == (
+            "Conflict: draft preserved in editor; file changed on disk"
+        )
+        assert save_status.has_class("-conflict")
+        assert not save_status.has_class("-error")
+
+        workspace._set_save_state("error", "permission denied")
+        assert _static_text(workspace, "#file-notes-save-status") == (
+            "Save failed: draft preserved in editor; permission denied"
+        )
+        assert save_status.has_class("-error")
+        assert not save_status.has_class("-conflict")
+
+        workspace._root_offline = False
+        workspace._runtime_warning = ""
+        workspace._update_root_surface()
+        workspace._set_save_state("saved")
+        await pilot.pause()
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Linked · Local folder: notes"
+        )
+        assert not root_status.has_class("-offline")
+        assert not root_status.has_class("-warning")
+        assert not save_status.has_class("-conflict")
+        assert not save_status.has_class("-error")
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.asyncio
+async def test_high_stakes_file_notes_states_are_legible_in_shipped_themes(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Semantic state tints must preserve painted copy and compact reachability."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "state.md").write_text("body\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("state.md")
+        workspace._narrow_view = "editor"
+        workspace._apply_responsive_layout(workspace.size.width)
+        root_status = workspace.query_one("#file-notes-root-status")
+        save_status = workspace.query_one("#file-notes-save-status")
+
+        for theme_name in (
+            "textual-dark",
+            "textual-light",
+            "high_contrast_yellow_black",
+        ):
+            pilot.app.theme = theme_name
+            workspace._root_offline = True
+            workspace._runtime_warning = "Recovery unavailable"
+            workspace._update_root_surface()
+            workspace._set_save_state("conflict", "file changed on disk")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert "Offline" in _static_text(
+                workspace,
+                "#file-notes-root-status",
+            )
+            assert "Conflict" in _static_text(
+                workspace,
+                "#file-notes-save-status",
+            )
+            assert root_status in pilot.app.screen._compositor.visible_widgets
+            assert save_status in pilot.app.screen._compositor.visible_widgets
+            _assert_legible_painted_text(
+                pilot.app,
+                root_status,
+                "Offline",
+                theme_name=theme_name,
+                minimum_ratio=4.5,
+            )
+            _assert_legible_painted_text(
+                pilot.app,
+                save_status,
+                "Conflict",
+                theme_name=theme_name,
+                minimum_ratio=4.5,
+            )
+
+            workspace._set_save_state("error", "permission denied")
+            await pilot.pause()
+            _assert_legible_painted_text(
+                pilot.app,
+                save_status,
+                "Save failed",
+                theme_name=theme_name,
+                minimum_ratio=4.5,
+            )
+            for status in (root_status, save_status):
+                assert status.region.x >= 0
+                assert status.region.right <= size[0]
+                assert status.region.y >= 0
+                assert status.region.bottom <= size[1]
+                border = status.styles.border
+                assert all(
+                    edge[0] in {"", "none"}
+                    for edge in (
+                        border.top,
+                        border.right,
+                        border.bottom,
+                        border.left,
+                    )
+                )
+                assert status.styles.padding.width == 0
 
     await workspace.shutdown()
     replica.close()

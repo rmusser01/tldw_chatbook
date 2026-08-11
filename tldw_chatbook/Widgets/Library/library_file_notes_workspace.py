@@ -428,8 +428,17 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow: hidden hidden;
     }
 
-    #file-notes-root-status.-warning {
-        color: $warning;
+    #file-notes-root-status.-warning,
+    #file-notes-root-status.-offline,
+    #file-notes-save-status.-conflict {
+        color: $text;
+        background: $warning 14%;
+        text-style: bold;
+    }
+
+    #file-notes-save-status.-error {
+        color: $text;
+        background: $error 14%;
         text-style: bold;
     }
 
@@ -1418,14 +1427,16 @@ class LibraryFileNotesWorkspace(Vertical):
             status.update(self._root_status_summary)
             status.set_class(True, "-empty-root")
             status.set_class(False, "-warning")
+            status.set_class(False, "-offline")
             body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
             return
         status.set_class(False, "-empty-root")
-        status.set_class(bool(self._runtime_warning), "-warning")
         is_offline = self._root_offline if offline is None else offline
+        status.set_class(bool(self._runtime_warning), "-warning")
+        status.set_class(is_offline is True, "-offline")
         state = (
             "Checking"
             if is_offline is None
@@ -1436,7 +1447,11 @@ class LibraryFileNotesWorkspace(Vertical):
             detail = f"{detail} · {self._runtime_warning}"
         self._root_status_detail = detail
         folder_name = self._root.name or self._root.anchor or str(self._root)
-        display_state = "Warning" if self._runtime_warning else state
+        display_state = (
+            "Offline · Warning"
+            if is_offline is True and self._runtime_warning
+            else ("Warning" if self._runtime_warning else state)
+        )
         self._root_status_summary = (
             f"{display_state} · Local folder: {folder_name}"
         )
@@ -3340,7 +3355,10 @@ class LibraryFileNotesWorkspace(Vertical):
             label = _SAVE_STATE_COPY[state]
             if detail:
                 label = f"{label}; {detail}"
-            self.query_one("#file-notes-save-status", Static).update(label)
+            status = self.query_one("#file-notes-save-status", Static)
+            status.set_class(state == "conflict", "-conflict")
+            status.set_class(state == "error", "-error")
+            status.update(label)
             self._update_controls()
 
     def _set_action_status(self, text: str) -> None:
