@@ -30,6 +30,13 @@
 - Create `Tests/STT/test_parakeet_external.py`: tiny-descriptor verifier tests.
 - Create `Tests/STT/test_parakeet_sources.py`: source preference, migration, VAD atomicity, cache lifetime, copy, and path-private failure tests.
 - Create `Tests/UI/test_model_external_view.py`: external Lab Models section behavior.
+- Create `.github/scripts/task598_external_parakeet_evidence.py`: supervised,
+  path-private native platform probe using the production acquisition, source,
+  coordinator, executor, and ONNX CPU boundaries.
+- Create `.github/workflows/task-598-platform-evidence.yml`: label-gated bootstrap
+  and later manual v2/v3 INT8 evidence matrix for the four remaining targets.
+- Create `Tests/CI/test_task598_external_parakeet_evidence.py`: workflow-shape,
+  timeout-result, validation, and path-privacy checks for the evidence seam.
 - Modify `tldw_chatbook/Model_Artifacts/service.py` and `tldw_chatbook/Model_Artifacts/__init__.py`: exact dependency-only shared leases; no fake root readiness.
 - Modify `tldw_chatbook/Local_Ingestion/parakeet_v2_artifact.py`: VAD-only catalog/preflight/provision helpers with `activate=False`.
 - Modify `tldw_chatbook/STT/executor.py`, `tldw_chatbook/STT/executor_worker.py`, and `tldw_chatbook/STT/dispatch_coordinator.py`: carry and retain exact managed dependency references alongside a verified local root.
@@ -786,3 +793,161 @@ git commit -m "fix(stt): address external Parakeet review"
 ```
 
 If there are no findings, do not create an empty commit.
+
+### Task 12: Close the remaining native external-Parakeet evidence gates
+
+**Files:**
+- Create: .github/scripts/task598_external_parakeet_evidence.py
+- Create: .github/workflows/task-598-platform-evidence.yml
+- Create: Tests/CI/test_task598_external_parakeet_evidence.py
+- Modify after successful remote evidence: Docs/STT_Evaluation/task-598/README.md
+- Create after successful remote evidence: Docs/STT_Evaluation/task-598/platform-evidence.json
+- Modify after all lanes pass: backlog/tasks/task-598 - Use-descriptor-verified-external-Parakeet-ONNX-bundles.md
+
+- [ ] **Step 1: Write the focused RED tests before the probe or workflow exists**
+
+Add one CI test file. Read the workflow as text, following the existing CI-shape
+tests, and import the probe only after asserting its path exists. Cover:
+
+- only pull_request labeled activity plus workflow_dispatch can trigger it;
+- the job requires task-598-platform-evidence for a PR and permits manual dispatch;
+- the matrix is exactly ubuntu-24.04, ubuntu-24.04-arm, windows-2022, and
+  macos-15-intel, uses Python 3.12, fail-fast false, and max-parallel 2;
+- installation uses transcription_parakeet_onnx without a CI-only ORT pin;
+- dependency-install failure is converted into a valid path-private lane JSON
+  before the job fails, rather than skipping artifact creation;
+- worker timeout is shorter than job timeout, validation always runs, and the
+  uniquely named result artifact always uploads;
+- supervising a sleeping child writes a valid timeout result with no scratch
+  path or username;
+- validation requires the tested SHA, run ID/attempt, exact v2/v3 keys, CPU
+  provider, null artifact roots, exact VAD, unchanged external/cache/store
+  invariants, and successful shutdown;
+- validation rejects any string value containing the supplied scratch root.
+- successful validation requires platform, architecture, Python, onnx-asr, and
+  ONNX Runtime versions; an install failure records the unresolved stage instead.
+
+Representative timeout test:
+
+    def test_supervisor_records_a_path_private_timeout(tmp_path):
+        output = tmp_path / "result.json"
+        result = evidence.supervise(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            output=output,
+            timeout_seconds=0.05,
+            run_identity={
+                "tested_commit": "a" * 40,
+                "workflow_run_id": "1",
+                "workflow_run_attempt": "1",
+            },
+            forbidden_roots=(tmp_path,),
+        )
+        assert result["failure_code"] == "timeout"
+        assert str(tmp_path) not in output.read_text(encoding="utf-8")
+
+Run: ../../.venv/bin/python -m pytest -q Tests/CI/test_task598_external_parakeet_evidence.py --confcutdir=Tests/CI
+
+Expected: FAIL because the probe and workflow do not exist.
+
+- [ ] **Step 2: Implement the smallest supervised, path-private probe**
+
+Use only stdlib imports at module import time. Provide parent, worker, and
+validate CLI modes. Parent mode creates the scratch profile/config/data/cache
+tree, sets HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME, HF_HOME, and
+TLDW_CONFIG_PATH before application imports, then launches the same script in
+worker mode with subprocess.run and a timeout. Capture child output. Timeout
+or nonzero exit writes only a bounded failure code and safe exception class;
+never copy exception messages or child output into JSON.
+
+Worker mode checks the resolved managed root is beneath the explicit scratch
+paths.data_dir and binds the injected ModelArtifactService to that same root,
+then processes Parakeet v2 INT8 and v3 INT8 sequentially:
+
+1. Run production preflight/provision with an injected ModelArtifactService.
+2. Copy only declared files with shutil.copy2 to the external directory and
+   delete the temporary managed root through ModelArtifactService.delete.
+3. Snapshot external sizes, hashes, modes, and mtimes.
+4. Enable the Hugging Face offline variables, then create fresh TldwCli-owned
+   source service/coordinator/executor resources for that model so import-time
+   environment checks observe offline mode; verify the
+   root, run plan_managed_copy/copy_into_managed, prove no readiness or source
+   preference was created, and delete that managed copy.
+5. Enable HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE; snapshot HF_HOME,
+   XDG_CACHE_HOME, and the managed store; transcribe four seconds of generated
+   16 kHz mono 16-bit zero PCM through TranscriptionService.transcribe_buffer,
+   passing provider="parakeet-onnx", the exact model ID, language="en",
+   precision="int8", and model_dir=str(external_directory).
+6. Require a dictionary result with a string text field, CPUExecutionProvider,
+   null artifact_root, and the exact VAD dependency. Close source service,
+   coordinator, then executor before removing that model's external root.
+7. Require external/cache/store invariants, record path-free timings and
+   identities, remove the external directory, and process the other model.
+
+The final store may contain only the exact VAD dependency. Success JSON records
+platform, architecture, Python, onnx-asr, and ONNX Runtime versions plus the
+checked-out git revision and workflow run identity. Always write JSON atomically.
+Validation walks every string recursively and rejects forbidden roots,
+credentials, usernames, and temporary-directory names.
+
+- [ ] **Step 3: Make RED tests GREEN and mutation-check the guards**
+
+Implement the label-gated workflow with contents read permission, the exact
+matrix, max-parallel 2, bounded job timeout, and Python 3.12. Checkout the
+pull-request head SHA explicitly (falling back to github.sha for manual runs),
+then initialize a path-private pending JSON before dependency installation.
+Run installation with continue-on-error, convert a failed install outcome into
+a dependency_install failure JSON, and run the supervised probe only after a
+successful install. Always run validation and artifact upload; validation keeps
+the lane failed when the recorded result is not successful.
+
+Run the Step 1 command. Expected: PASS.
+
+Mutation-check and restore: remove the label condition; use the default PR
+merge checkout instead of the head SHA; skip dependency-install failure JSON;
+remove macOS Intel or v3; leak the scratch path in timeout JSON; accept a
+non-CPU provider or non-null root; omit the offline cache/store invariant. Each
+focused test must fail under its matching mutation.
+
+- [ ] **Step 4: Run focused local verification and commit the CI seam**
+
+Run:
+
+    ../../.venv/bin/python -m pytest -q Tests/CI/test_task598_external_parakeet_evidence.py Tests/CI/test_github_actions_test_workflow.py --confcutdir=Tests/CI
+    ../../.venv/bin/python -m ruff check .github/scripts/task598_external_parakeet_evidence.py Tests/CI/test_task598_external_parakeet_evidence.py
+    ../../.venv/bin/python -m ruff format --check .github/scripts/task598_external_parakeet_evidence.py Tests/CI/test_task598_external_parakeet_evidence.py
+    ../../.venv/bin/python -m py_compile .github/scripts/task598_external_parakeet_evidence.py
+    git diff --check
+
+Review for absolute paths, credentials, exception text, post-provision network
+access, model caching, and activation/preference state. Commit the three new
+files and this updated plan as ci(stt): verify external Parakeet platforms.
+
+- [ ] **Step 5: Push, bootstrap the labeled draft PR, and monitor the matrix**
+
+Push the rebased branch, create or reuse a draft PR targeting dev, and apply
+task-598-platform-evidence only after the workflow commit is visible remotely.
+Confirm the run tests branch HEAD on all four runner labels. Wait once with a
+bound. If a lane fails, inspect only that lane and its JSON. Fix only proven
+product/packaging or probe defects; remove and reapply the label for a rerun.
+Never substitute an architecture or accelerator for a failed CPU lane.
+
+- [ ] **Step 6: Persist evidence and close TASK-598 only if honest**
+
+After all lanes pass, download and validate all four JSON artifacts and confirm
+their SHA/run identity. Commit one normalized platform-evidence.json with the
+run URL and four results. Update the README with resolved versions, timings,
+and the limitation that generated zero PCM is a runtime—not quality—smoke.
+
+Use Backlog CLI to check AC7 and mark TASK-598 Done only if these four results
+plus existing macOS arm64 evidence satisfy the five-target matrix and every
+Definition-of-Done item. Otherwise record the exact open lane and keep In
+Progress.
+
+Run:
+
+    ../../.venv/bin/python -m json.tool Docs/STT_Evaluation/task-598/platform-evidence.json
+    backlog task 598 --plain
+    git diff --check
+
+Commit only durable evidence and Backlog updates as
+docs(stt): record native Parakeet platform evidence.
