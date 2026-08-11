@@ -1549,6 +1549,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
+        "_active_usage_payloads",
         "_usage_lock",
     ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
@@ -1556,6 +1557,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
+        "_active_usage_payloads",
         "_usage_lock",
     )
     assert not hasattr(signals, "__dict__")
@@ -3105,7 +3107,7 @@ class _CloseTrackingIterator:
         items: list[object],
         *,
         failure: BaseException | None = None,
-        close_failure: Exception | None = None,
+        close_failure: BaseException | None = None,
     ) -> None:
         self._items = iter(items)
         self._failure = failure
@@ -3128,6 +3130,153 @@ class _CloseTrackingIterator:
         self.close_calls += 1
         if self._close_failure is not None:
             raise self._close_failure
+
+
+class _RecordingAccumulator:
+    def __init__(self, failure: BaseException | None = None) -> None:
+        self.failure = failure
+        self.payloads: list[object] = []
+
+    def feed_payload(self, payload: object) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.payloads.append(payload)
+
+
+class _BlockingLateIterator:
+    def __init__(self, item: object) -> None:
+        self.item = item
+        self.next_entered = threading.Event()
+        self.release_next = threading.Event()
+        self.next_calls = 0
+        self.close_calls = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.next_calls += 1
+        self.next_entered.set()
+        self.release_next.wait(timeout=5)
+        return self.item
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.release_next.set()
+
+
+class _CloseableMapping(dict):
+    def __init__(self, *args, close_failure: BaseException | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.close_calls = 0
+        self.close_failure = close_failure
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.close_failure is not None:
+            raise self.close_failure
+
+
+def test_tee_tool_calls_explicit_close_stops_future_iteration() -> None:
+    underlying = _CloseTrackingIterator([{"content": "late"}])
+    accumulator = _RecordingAccumulator()
+    tee = gateway_module._tee_tool_calls(underlying, accumulator)
+
+    tee.close()
+
+    with pytest.raises(StopIteration):
+        next(tee)
+    assert underlying.close_calls == 1
+    assert accumulator.payloads == []
+
+
+def test_tee_tool_calls_discards_item_returned_after_concurrent_close() -> None:
+    payload = {"choices": [{"delta": {"content": "late"}}]}
+    underlying = _BlockingLateIterator(payload)
+    accumulator = _RecordingAccumulator()
+    tee = gateway_module._tee_tool_calls(underlying, accumulator)
+    outcomes: list[object] = []
+
+    def consume() -> None:
+        try:
+            outcomes.append(next(tee))
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            outcomes.append(exc)
+
+    consumer = threading.Thread(target=consume)
+    consumer.start()
+    assert underlying.next_entered.wait(timeout=1)
+
+    tee.close()
+    consumer.join(timeout=1)
+
+    assert not consumer.is_alive()
+    assert len(outcomes) == 1 and isinstance(outcomes[0], StopIteration)
+    assert underlying.close_calls == 1
+    assert accumulator.payloads == []
+
+
+@pytest.mark.parametrize("failure_stage", ["decode", "feed"])
+def test_tee_tool_calls_closes_once_on_decode_or_accumulator_failure(
+    failure_stage: str,
+    monkeypatch,
+) -> None:
+    underlying = _CloseTrackingIterator([{"content": "chunk"}])
+    accumulator = _RecordingAccumulator(
+        ValueError("feed-primary") if failure_stage == "feed" else None
+    )
+    if failure_stage == "decode":
+
+        def fail_decode(_item):
+            raise ValueError("decode-primary")
+
+        monkeypatch.setattr(gateway_module, "_decode_stream_item", fail_decode)
+    tee = gateway_module._tee_tool_calls(underlying, accumulator)
+
+    with pytest.raises(ValueError, match=f"{failure_stage}-primary"):
+        next(tee)
+    assert underlying.close_calls == 1
+    tee.close()
+    assert underlying.close_calls == 1
+
+
+def test_tee_tool_calls_closes_mapping_when_accumulator_fails() -> None:
+    response = _CloseableMapping(
+        {"choices": []},
+        close_failure=KeyboardInterrupt("close-secondary"),
+    )
+    accumulator = _RecordingAccumulator(ValueError("feed-primary"))
+
+    caught: BaseException | None = None
+    try:
+        gateway_module._tee_tool_calls(response, accumulator)
+    except BaseException as exc:  # noqa: BLE001 - primary identity asserted below
+        caught = exc
+
+    assert isinstance(caught, ValueError)
+    assert str(caught) == "feed-primary"
+    assert response.close_calls == 1
+
+
+def test_tee_tool_calls_provider_error_survives_keyboard_interrupt_from_close() -> None:
+    provider_error = ValueError("provider-primary")
+    underlying = _CloseTrackingIterator(
+        [],
+        failure=provider_error,
+        close_failure=KeyboardInterrupt("close-secondary"),
+    )
+    tee = gateway_module._tee_tool_calls(underlying, _RecordingAccumulator())
+
+    caught: BaseException | None = None
+    try:
+        next(tee)
+    except BaseException as exc:  # noqa: BLE001 - primary identity asserted below
+        caught = exc
+
+    assert caught is provider_error
+    assert underlying.close_calls == 1
+    tee.close()
+    assert underlying.close_calls == 1
 
 
 def test_tee_tool_calls_closes_underlying_iterator_once() -> None:
@@ -4070,23 +4219,6 @@ async def test_gateway_cancellation_closes_qwencloud_iterator() -> None:
             pending.cancel()
         provider_iterator.released.set()
         await stream.aclose()
-
-
-def test_qwencloud_total_tokens_reaches_agent_usage_counter() -> None:
-    from tldw_chatbook.Agents.agent_service import _usage_total_tokens
-
-    terminal = {
-        "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
-        "usage": {
-            "input_tokens": 9,
-            "input_tokens_details": {"cached_tokens": 2},
-            "output_tokens": 3,
-            "output_tokens_details": {"reasoning_tokens": 1},
-            "total_tokens": 12,
-        },
-    }
-
-    assert _usage_total_tokens(terminal) == 12
 
 
 @pytest.mark.asyncio

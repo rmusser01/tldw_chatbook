@@ -115,6 +115,11 @@ class ConsoleProviderStreamSignals:
         default_factory=list,
         repr=False,
     )
+    _active_usage_payloads: dict[object, dict[str, Any]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _usage_lock: threading.Lock = field(
         default_factory=threading.Lock,
         init=False,
@@ -162,7 +167,82 @@ class ConsoleProviderStreamSignals:
             payloads = [dict(payload) for payload in self.completed_usage_payloads]
             if self.usage_payload is not None:
                 payloads.append(dict(self.usage_payload))
+            payloads.extend(
+                dict(payload) for payload in self._active_usage_payloads.values()
+            )
             return payloads
+
+    def new_usage_call(self) -> "ConsoleProviderCallSignals":
+        """Return an isolated usage recorder for one provider call."""
+        return ConsoleProviderCallSignals(self)
+
+    def _record_scoped_usage_call(
+        self,
+        token: object,
+        payload: Mapping[str, Any],
+    ) -> None:
+        with self._usage_lock:
+            self._active_usage_payloads[token] = dict(payload)
+
+    def _complete_scoped_usage_call(
+        self,
+        token: object,
+        payload: Mapping[str, Any],
+    ) -> None:
+        with self._usage_lock:
+            self._active_usage_payloads.pop(token, None)
+            self.completed_usage_payloads.append(dict(payload))
+
+
+@dataclass(slots=True)
+class ConsoleProviderCallSignals:
+    """Call-scoped signal view that publishes usage to one aggregate."""
+
+    _aggregate: ConsoleProviderStreamSignals = field(repr=False)
+    _token: object = field(default_factory=object, init=False, repr=False)
+    _usage_payload: dict[str, Any] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+    _usage_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
+
+    @property
+    def synthetic_fallback_emitted(self) -> bool:
+        return self._aggregate.synthetic_fallback_emitted
+
+    def mark_synthetic_fallback(self) -> None:
+        self._aggregate.mark_synthetic_fallback()
+
+    def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        with self._usage_lock:
+            if self._closed:
+                return
+            merged = dict(self._usage_payload or {})
+            merged.update(payload)
+            self._usage_payload = merged
+            self._aggregate._record_scoped_usage_call(self._token, merged)
+
+    def close_usage_call(self) -> None:
+        with self._usage_lock:
+            if self._closed:
+                return
+            self._closed = True
+            payload = (
+                dict(self._usage_payload) if self._usage_payload is not None else None
+            )
+        if payload is not None:
+            self._aggregate._complete_scoped_usage_call(self._token, payload)
+
+    def usage_snapshot(self) -> dict[str, Any] | None:
+        with self._usage_lock:
+            return (
+                dict(self._usage_payload) if self._usage_payload is not None else None
+            )
+
+
+_ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -609,7 +689,14 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
     three shapes ``chat_api_call`` returns: a full mapping (non-streaming),
     an iterator of mappings, or an iterator of SSE strings."""
     if isinstance(response, Mapping):
-        accumulator.feed_payload(response)
+        try:
+            accumulator.feed_payload(response)
+        except BaseException:
+            close = getattr(response, "close", None)
+            if callable(close):
+                with contextlib.suppress(BaseException):
+                    close()
+            raise
         return response
     if not _is_iterable_response(response):
         return response
@@ -620,12 +707,22 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
             self._closed = False
 
         def __next__(self) -> Any:
+            with self._close_lock:
+                if self._closed:
+                    raise StopIteration
             try:
                 item = next(response)
             except BaseException:
                 self.close()
                 raise
-            accumulator.feed_payload(_decode_stream_item(item))
+            try:
+                with self._close_lock:
+                    if self._closed:
+                        raise StopIteration
+                    accumulator.feed_payload(_decode_stream_item(item))
+            except BaseException:
+                self.close()
+                raise
             return item
 
         def close(self) -> None:
@@ -635,7 +732,7 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
                 self._closed = True
             close = getattr(response, "close", None)
             if callable(close):
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(BaseException):
                     close()
 
     return _ToolCallTee()
@@ -1772,7 +1869,7 @@ class ConsoleProviderGateway:
         | PreparedConsoleRequest
         | PreparedProviderRequest,
         tools: list | None = None,
-        signals: ConsoleProviderStreamSignals | None = None,
+        signals: _ProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -1798,6 +1895,13 @@ class ConsoleProviderGateway:
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
+        call_signals = (
+            signals
+            if isinstance(signals, ConsoleProviderCallSignals)
+            else signals.new_usage_call()
+            if signals is not None
+            else None
+        )
         try:
             if not resolution.ready or not resolution.model:
                 return
@@ -1858,19 +1962,19 @@ class ConsoleProviderGateway:
                 return
             if resolution.execution_key:
                 async for chunk in self._stream_generic_chat(
-                    effective_resolution, prepared, signals=signals
+                    effective_resolution, prepared, signals=call_signals
                 ):
                     yield chunk
                 return
         finally:
-            if signals is not None:
-                signals.close_usage_call()
+            if call_signals is not None:
+                call_signals.close_usage_call()
 
     async def _stream_generic_chat(
         self,
         resolution: ConsoleProviderResolution,
         request: PreparedProviderRequest,
-        signals: ConsoleProviderStreamSignals | None = None,
+        signals: _ProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
@@ -2019,7 +2123,7 @@ class ConsoleProviderGateway:
     def normalize_provider_response(
         response: Any,
         suppress_fallback_copy: bool = False,
-        signals: ConsoleProviderStreamSignals | None = None,
+        signals: _ProviderStreamSignals | None = None,
     ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
@@ -2398,7 +2502,7 @@ def _is_iterable_response(response: Any) -> bool:
 
 def _maybe_record_usage(
     payload: Mapping[str, Any],
-    signals: "ConsoleProviderStreamSignals | None",
+    signals: "_ProviderStreamSignals | None",
 ) -> None:
     if signals is None:
         return
@@ -2410,7 +2514,7 @@ def _maybe_record_usage(
 def _content_from_provider_item(
     item: Any,
     *,
-    signals: "ConsoleProviderStreamSignals | None" = None,
+    signals: "_ProviderStreamSignals | None" = None,
 ) -> str | object:
     if isinstance(item, str):
         if item.startswith("data:"):
@@ -2430,7 +2534,7 @@ def _content_from_provider_item(
 def _content_from_sse_data(
     line: str,
     *,
-    signals: "ConsoleProviderStreamSignals | None" = None,
+    signals: "_ProviderStreamSignals | None" = None,
 ) -> str | object:
     ConsoleProviderGateway._raise_for_sse_error(line)
     data = line.removeprefix("data:").strip()
