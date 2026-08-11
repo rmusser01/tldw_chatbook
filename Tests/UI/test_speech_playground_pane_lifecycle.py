@@ -307,6 +307,8 @@ def test_audio_cpp_runtime_projection_uses_state_specific_actions(
     restart: bool,
     shutdown: bool,
 ) -> None:
+    """Each managed runtime state exposes only its valid lifecycle actions."""
+
     projection = project_audio_cpp_runtime_card(observation)
 
     assert projection.primary_action.label == primary_label
@@ -321,6 +323,8 @@ def test_audio_cpp_runtime_projection_uses_state_specific_actions(
 
 
 def test_guided_text_ready_projection_is_one_complete_sample_action() -> None:
+    """A text-ready Guided default projects one combined first-sample action."""
+
     observation = _runtime_observation(
         saved_setup_source="guided",
         applied_setup_source="guided",

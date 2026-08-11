@@ -388,6 +388,16 @@ def select_audio_cpp_guided_backend(
 
     This pure selection seam is shared by passive Settings validation and
     deliberate launch so Save cannot promise a tuple that launch will reject.
+
+    Args:
+        preference: User-selected backend preference.
+        recipes: Exact reviewed package recipes that must share one backend.
+        system: Optional normalized host-system override for deterministic tests.
+        architecture: Optional host-architecture override for deterministic tests.
+
+    Returns:
+        The selected evidenced backend, or ``None`` when the tuple is not
+        supported on the host.
     """
 
     host_system = (platform.system() if system is None else system).casefold()

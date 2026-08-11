@@ -67,6 +67,8 @@ def test_guided_settings_load_save_and_reload_preserve_all_dormant_sources(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Guided edits round-trip without erasing dormant External or JSON values."""
+
     binary = tmp_path / "audiocpp_server"
     binary.write_bytes(b"synthetic-binary")
     binary.chmod(0o700)
@@ -130,6 +132,8 @@ def test_guided_save_rejects_backend_without_host_recipe_evidence(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Passive Save rejects a backend the exact host/package tuple cannot run."""
+
     binary = tmp_path / "audiocpp_server"
     binary.write_bytes(b"synthetic-binary")
     binary.chmod(0o700)

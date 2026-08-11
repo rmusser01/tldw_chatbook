@@ -28,6 +28,8 @@ def _bindings() -> dict[str, str]:
 @pytest.mark.unit
 @pytest.mark.parametrize("key,action", sorted(SUPPORTED_PANE_SHORTCUTS.items()))
 def test_each_supported_pane_shortcut_is_bound(key, action):
+    """Every approved pane-local chord keeps its documented action."""
+
     bound = _bindings()
     assert key in bound, f"{key} ({action}) is no longer bound"
     assert bound[key] == action, f"{key} now runs {bound[key]!r}, not {action!r}"
@@ -43,6 +45,8 @@ def test_every_bound_action_exists(action):
 
 
 def test_pane_does_not_shadow_reserved_or_terminal_shortcuts() -> None:
+    """Pane-local bindings leave global and terminal-convention chords free."""
+
     assert FORBIDDEN_PANE_SHORTCUTS.isdisjoint(_bindings())
 
 

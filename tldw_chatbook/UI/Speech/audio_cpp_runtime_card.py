@@ -90,7 +90,11 @@ def _action(
 
 
 def project_audio_cpp_unknown_action() -> AudioCppRuntimeAction:
-    """Project the safe primary action used before passive runtime truth arrives."""
+    """Project the safe primary action used before passive runtime truth arrives.
+
+    Returns:
+        A Test Connection action that does not reuse stale runtime evidence.
+    """
 
     return _action(
         "test",

@@ -531,6 +531,31 @@ async def test_complete_wav_result_has_safe_provenance_and_repeat_save_actions(
         assert generate_calls == [True]
 
 
+def test_current_result_provenance_bounds_and_flattens_provider_identifiers(
+    tmp_path: Path,
+) -> None:
+    """Provider-controlled identifiers cannot break the one-line result card."""
+
+    path = tmp_path / "provider-identifiers.wav"
+    path.write_bytes(b"RIFF")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="legacy\nprovider" + ("p" * 200),
+        model_id="model\tidentifier" + ("m" * 200),
+        voice_id="voice\r\x00\u200bidentifier" + ("v" * 200),
+        source_text="Synthetic text",
+        operation_id="provider-identifier-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    copy = SpeechPlaygroundPane._current_result_provenance_copy(artifact)
+
+    assert all(character not in copy for character in "\r\n\t\x00\u200b")
+    assert len(copy) <= 270
+    assert copy.count("…") == 3
+
+
 @pytest.mark.asyncio
 async def test_current_result_disabled_actions_explain_the_current_state(
     tmp_path: Path,

@@ -22,6 +22,7 @@ import math
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Optional
+import unicodedata
 
 from loguru import logger
 from textual.css.query import NoMatches
@@ -45,6 +46,33 @@ EXAMPLE_TEXTS = [
     "Testing, one, two, three. Can you hear the difference between various voice models?",
     "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park.",
 ]
+
+_PROVENANCE_FIELD_MAX_CHARACTERS = 80
+
+
+def _safe_provenance_field(value: object, fallback: str) -> str:
+    """Return one bounded control-safe field for literal provenance display.
+
+    Args:
+        value: Provider-controlled identifier to render.
+        fallback: Copy used when ``value`` is not a usable string.
+
+    Returns:
+        A single-line value capped at the provenance field limit.
+    """
+
+    if type(value) is not str:
+        return fallback
+    flattened = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Cf", "Cs"} else character
+        for character in value
+    )
+    flattened = " ".join(flattened.split())
+    if not flattened:
+        return fallback
+    if len(flattened) <= _PROVENANCE_FIELD_MAX_CHARACTERS:
+        return flattened
+    return flattened[: _PROVENANCE_FIELD_MAX_CHARACTERS - 1].rstrip() + "…"
 
 
 class SpeechPlaybackMixin:
@@ -445,12 +473,18 @@ class SpeechPlaybackMixin:
         provider = (
             "audio.cpp"
             if artifact.provider_id == "audio_cpp"
-            else artifact.provider_id.replace("_", " ").title()
+            else _safe_provenance_field(
+                artifact.provider_id,
+                "Unknown provider",
+            )
+            .replace("_", " ")
+            .title()
         )
-        voice = artifact.voice_id or "Server default"
+        model = _safe_provenance_field(artifact.model_id, "Unknown model")
+        voice = _safe_provenance_field(artifact.voice_id, "Server default")
         parts = [
             f"Provider: {provider}",
-            f"Model: {artifact.model_id}",
+            f"Model: {model}",
             f"Voice: {voice}",
         ]
         selection = artifact.requested_selection
