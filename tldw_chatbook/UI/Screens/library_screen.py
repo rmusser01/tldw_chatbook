@@ -3586,6 +3586,10 @@ class LibraryScreen(BaseAppScreen):
             }
         )
 
+    def _library_notes_compact_workflow_active(self) -> bool:
+        """Return whether either Notes source owns compact canvas routing."""
+        return self._library_notes_workflow_active() or self._file_notes_active()
+
     def _library_notes_focus_region(
         self,
     ) -> Literal["", "navigator", "editor", "preview", "context", "create", "sync"]:
@@ -4053,7 +4057,7 @@ class LibraryScreen(BaseAppScreen):
             return "notes"
         if identity.stage == "rail":
             return "rail"
-        if identity.stage == "notes" and self._library_notes_workflow_active():
+        if identity.stage == "notes" and self._library_notes_compact_workflow_active():
             return "notes"
         if self._library_notes_focus_region() in {
             "editor",
@@ -4068,7 +4072,8 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope single-stage behavior to Library entry and active Notes routes."""
         return (
-            self._library_notes_stage == "rail" or self._library_notes_workflow_active()
+            self._library_notes_stage == "rail"
+            or self._library_notes_compact_workflow_active()
         )
 
     def _apply_library_notes_stage_visibility(self) -> None:
@@ -11862,6 +11867,11 @@ class LibraryScreen(BaseAppScreen):
         # must follow this same transition or Escape works unadvertised.
         self._register_footer_shortcuts()
         self.refresh(recompose=True)
+        # The production app can recompose Library after the initial mount-time
+        # responsive callback. Measure again once the Files canvas owns its
+        # final shell geometry so a compact terminal cannot retain stale wide
+        # presentation state from startup.
+        self.call_after_refresh(self._update_library_notes_responsive_state)
 
     @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:

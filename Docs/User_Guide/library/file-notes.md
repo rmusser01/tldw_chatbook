@@ -21,11 +21,11 @@ commit to its existing upstream, without leaving the app.
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
 **Database** | **Files**. Click **Files** — while the workspace loads you'll
-briefly see "Opening File Notes…". The rail and the rest of the Library
-shell stay visible; the workspace fills the canvas pane next to them, the
-same as every other Notes view. Click **Database**, or press **Escape**, to
-switch back; either switch first saves any unsaved edits on the side you're
-leaving.
+briefly see "Opening File Notes…". At 120 columns and wider, the rail stays
+visible and the workspace fills the canvas pane next to it. On compact
+terminals, Library shows the File Notes canvas as the single visible stage so
+its controls remain on-screen; **Escape** or **Database** returns to Database
+Notes. Either switch first saves any unsaved edits on the side you're leaving.
 
 ## Layout tour
 

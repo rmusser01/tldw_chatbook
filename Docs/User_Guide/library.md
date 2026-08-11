@@ -94,8 +94,9 @@ pages:
 
 One special case: selecting **Notes** adds a **Database | Files** strip
 above the workbench. **Files** swaps the canvas pane for the File Notes
-workspace — the rail and the rest of the shell stay put, and Escape (or
-the **Database** link) returns to the notes list — see
+workspace. At 120 columns and wider the rail stays beside it; on compact
+terminals the canvas becomes the single visible stage so its controls remain
+on-screen. Escape (or the **Database** link) returns to the notes list — see
 [File Notes](library/file-notes.md).
 
 ## Features & controls

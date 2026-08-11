@@ -639,7 +639,7 @@ async def test_empty_root_prompt_and_choose_button_render_adjacent() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(170, 50), (100, 30)])
+@pytest.mark.parametrize("size", [(170, 50), (100, 30), (40, 20)])
 async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
     size: tuple[int, int],
 ) -> None:
@@ -647,7 +647,8 @@ async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
     the Library screen. Before the fix, ``compose_content`` returned early
     with just the source-toggle strip and the workspace as direct screen
     children, so the rail and the ``#library-canvas`` frame around it never
-    mounted at all. Checked at both sizes the live re-verification covers.
+    mounted at all. Compact widths keep both mounted but show one stage at a
+    time, matching the Database Notes workbench contract.
     """
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
@@ -655,23 +656,33 @@ async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
         screen = pilot.app.screen
         rail = screen.query_one("#library-rail")
         canvas_host = screen.query_one("#library-canvas")
-        assert rail.display
         assert canvas_host.display
-        # The workspace renders INSIDE the canvas pane, alongside the rail
-        # -- not as a full-screen replacement of the whole shell.
+        assert rail.display is (size[0] >= 120), (
+            f"size={screen.size!r}, grid={screen.query_one('#library-shell-grid').region!r}, "
+            f"compact={screen._library_notes_compact!r}, "
+            f"stage={screen._library_notes_stage!r}"
+        )
+        # The workspace renders inside the retained canvas pane, not as a
+        # full-screen replacement of the whole shell.
         assert workspace.parent is canvas_host
+        assert workspace.region.x >= 0
+        assert workspace.region.right <= screen.size.width
+        assert workspace.region.bottom <= screen.size.height
     replica.close()
 
 
 @pytest.mark.asyncio
-async def test_escape_in_files_mode_returns_to_database_notes() -> None:
+@pytest.mark.parametrize("size", [(170, 50), (40, 20)])
+async def test_escape_in_files_mode_returns_to_database_notes(
+    size: tuple[int, int],
+) -> None:
     """task-2850 AC3: Escape is a real, working way out of Files mode --
     not just the small "Database" strip link, which was the only exit
     before this fix (Escape was previously dead on this surface).
     """
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
-    async with _production_workspace_context(workspace, size=(170, 50)) as pilot:
+    async with _production_workspace_context(workspace, size=size) as pilot:
         screen = pilot.app.screen
         assert screen._library_notes_source == "files"
 
@@ -2325,7 +2336,7 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(120, 40), (160, 45)])
+@pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(
     tmp_path: Path,
     size: tuple[int, int],
@@ -2406,6 +2417,30 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             ),
             "Files source did not open from the keyboard",
         )
+        canvas = screen.query_one("#library-canvas")
+        rail = screen.query_one("#library-rail")
+        await _wait_until(
+            pilot,
+            lambda: workspace.region.width > 0 and workspace.region.height > 0,
+            "File Notes workspace did not receive rendered geometry",
+        )
+        assert canvas.display is True
+        assert workspace.region.x >= 0
+        assert workspace.region.y >= 0
+        assert workspace.region.right <= screen.size.width
+        assert workspace.region.bottom <= screen.size.height
+        if size == (40, 20):
+            assert screen._library_notes_stage == "notes"
+            assert rail.display is False
+            search = workspace.query_one("#file-notes-search", Input)
+            for _ in range(120):
+                if search.has_focus:
+                    break
+                await pilot.press("tab")
+            assert search.has_focus
+            assert search.region.right <= screen.size.width
+        else:
+            assert rail.display is True
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_until(
@@ -2459,6 +2494,85 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             )
             == "Database (selected)"
         )
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
+    tmp_path: Path,
+) -> None:
+    """Files stays visible, focused, and retained through shell breakpoints."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "library.md").write_text("library file", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(
+        app,
+        file_notes_workspace_factory=lambda: workspace,
+    )
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        assert await workspace.open_path("library.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        screen.set_focus(editor)
+        await pilot.pause()
+
+        for width, height in ((40, 20), (120, 40), (160, 45), (40, 20)):
+            await pilot.resize_terminal(width, height)
+            await _wait_until(
+                pilot,
+                lambda: screen._library_notes_compact is (width < 120),
+                f"Library compact state did not settle at {width}x{height}",
+            )
+            await _wait_until(
+                pilot,
+                lambda: workspace.region.width > 0 and workspace.region.height > 0,
+                f"File Notes lost rendered geometry at {width}x{height}",
+            )
+
+            canvas = screen.query_one("#library-canvas")
+            rail = screen.query_one("#library-rail")
+            assert canvas.display is True
+            assert workspace is screen.query_one("#library-file-notes-workspace")
+            assert workspace.query_one("#file-notes-editor", TextArea) is editor
+            assert workspace.current_path == "library.md"
+            assert editor.text == "library file"
+            assert workspace.region.x >= 0
+            assert workspace.region.right <= screen.size.width
+            assert workspace.region.bottom <= screen.size.height
+            assert screen.focused is not None
+            assert screen.focused.visible
+            assert canvas in screen.focused.ancestors_with_self
+            if width < 120:
+                assert screen._library_notes_stage == "notes"
+                assert rail.display is False
+            else:
+                assert rail.display is True
 
     await workspace.shutdown()
 
