@@ -1040,6 +1040,32 @@ def test_create_uses_last_id_once_then_fails_without_reuse_or_callback() -> None
     assert callbacks == []
 
 
+def test_create_prefers_id_exhaustion_when_live_task_capacity_is_also_reached() -> None:
+    maximum = todo_store_module.MAX_TODO_NUMBER
+    task_numbers = [*range(1, MAX_TODO_ITEMS), maximum]
+    payload = {
+        "next_id": maximum + 1,
+        "tasks": [
+            {
+                "id": str(task_number),
+                "version": 1,
+                "content": f"Task {index}",
+                "status": "pending",
+            }
+            for index, task_number in enumerate(task_numbers)
+        ],
+    }
+    callbacks: list[list[dict[str, object]]] = []
+    store = SessionTodoStore.from_snapshot(payload)
+    before = store.export_snapshot()
+
+    with pytest.raises(TodoStoreError, match="^task id space exhausted$"):
+        store.create(content="Cannot allocate", on_change=callbacks.append)
+
+    assert store.export_snapshot() == before
+    assert callbacks == []
+
+
 @pytest.mark.parametrize("status", ["completed", "deleted"])
 def test_update_rejects_version_exhaustion_atomically(status: str) -> None:
     maximum = todo_store_module.MAX_TODO_NUMBER

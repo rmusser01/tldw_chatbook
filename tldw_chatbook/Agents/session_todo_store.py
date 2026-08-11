@@ -137,10 +137,10 @@ class SessionTodoStore:
             )
 
         def commit() -> TodoRecord:
-            if len(self._tasks) >= MAX_TODO_ITEMS:
-                raise TodoStoreError("task limit reached")
             if self._next_id > MAX_TODO_NUMBER:
                 raise TodoStoreError("task id space exhausted")
+            if len(self._tasks) >= MAX_TODO_ITEMS:
+                raise TodoStoreError("task limit reached")
             task_id = str(self._next_id)
             record: TodoRecord = {
                 "id": task_id,
