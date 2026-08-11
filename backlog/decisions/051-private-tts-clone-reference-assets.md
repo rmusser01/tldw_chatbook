@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-09
-Related Task: N/A — task decomposition follows the approved design
+Related Tasks: TASK-13203, TASK-13204, TASK-13205, TASK-13206
 Extends: ADR-028, ADR-029, ADR-040, ADR-050
 Supersedes: The audio.cpp empty-options/no-reference limitation in ADR-028 only;
 all other profile ownership and portability rules remain in force
@@ -113,6 +113,60 @@ never publishes a partial migration. Downgrade is explicit: close the new app,
 restore the dedicated v2 backup, then use the old build, accepting loss of
 post-migration profile changes. Switching to manual audio.cpp setup inside the
 new build is feature rollback, not a database downgrade.
+
+## Amendment: exact portable recipe provenance (2026-08-11)
+
+TASK-13206 advances the profile store from schema v3 to v4 so an explicit voice
+bundle can retain the exact recipe dependency after its originating model
+configuration is removed. The reference row gains optional recipe ID and
+positive recipe-revision fields. They are both null or both valid and the
+requirement's model ID must match the owning profile.
+
+New clone-profile saves, reference replacements, and bundle imports require
+exact recipe provenance from admitted generation or a validated bundle.
+Migration never infers historical provenance from current Settings or recipe
+catalog state. Existing v3 references migrate with both fields null, remain
+usable under the prior guided-Managed compatibility contract, show a bounded
+`Recipe provenance unavailable` advisory, cannot qualify as an exact bundle
+duplicate, and cannot be exported as a bundle until regenerated and saved.
+
+The v3→v4 migration follows the same guarded ownership rule as v2→v3: validate
+v3 under exclusive ownership; durably publish a separate owner-private
+`<profile-db>.pre-v4.sqlite3` sibling; migrate and validate transactionally;
+then publish v4. It preserves any prior retained backup, reserves the pre-v4
+path and aliases from ordinary backup destinations, and leaves v3 authoritative
+on disk-space, backup, validation, cancellation, or publication failure.
+Downgrade explicitly restores the pre-v4 backup while the repository is closed
+and accepts loss of all post-migration changes and recipe provenance.
+
+Bundle schema v1 contains exactly `manifest.json`, `profile.json`,
+`reference.wav`, and `reference.txt`. The deterministic Chatbook writer uses
+fixed `ZIP_STORED` metadata. The manifest checksums only the other three entries
+(a manifest cannot checksum itself without recursion), records exact
+recipe/model dependency and bounded WAV facts, and carries a fixed
+plaintext-warning acknowledgement. The acknowledgement is not proof of
+consent, identity, signature, or authenticity; import always displays its own
+warning.
+
+Import never trusts archive paths or a prior inspection. It uses verified
+owner-private containment, validates and copies the unchanged source, shows
+only bounded safe facts, then repeats full validation and conflict/dependency
+inspection at commit. Exact reuse requires equality of sanitized selection,
+recipe requirement, transcript, and canonical WAV, but exposes only the
+boolean result rather than a digest oracle. Missing but syntactically valid
+future recipes may be imported only through an explicit inactive choice.
+
+The availability state vocabulary remains unchanged. A bounded reason records
+recipe provenance unavailable, missing dependency, or mismatch. For references
+with exact provenance, service-owned runtime admission compares the persisted
+recipe/model requirement with adapter-issued evidence before materialization or
+provider work and never silently falls back or retargets. Dependency recovery
+changes availability only; it never assigns a character or changes a default.
+
+Until a platform has verified ADR-029 owner-private containment, bundle controls
+fail closed with a truthful unsupported-platform explanation. Archive workers,
+migration backup, atomic output publication, cleanup, and repository commit are
+retained and joined across cancellation and shutdown.
 
 ## Context
 
