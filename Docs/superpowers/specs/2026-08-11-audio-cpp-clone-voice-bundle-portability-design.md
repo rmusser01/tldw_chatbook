@@ -137,7 +137,7 @@ using the existing v1 validators and serialization order:
   "name": "<validated display name>",
   "provider_id": "<validated provider ID>",
   "model_id": "<validated model ID>",
-  "voice_id": null,
+  "voice_id": "<validated exact voice ID or null>",
   "response_format": "<validated format>",
   "speed": 1.0,
   "options": {},
@@ -177,9 +177,25 @@ trailing LF. `reference.txt` is the canonical bounded UTF-8 transcript without
 a BOM or added newline.
 
 The writer's complete archive bytes are deterministic for the same canonical
-input. Import may accept bounded `ZIP_STORED` or `ZIP_DEFLATED` payload entries;
-canonical decoded contents, not compressed bytes, define equivalence for
-third-party re-packing.
+input. Import may accept the bounded interoperable metadata below; canonical
+decoded contents, not compressed bytes, define equivalence for repacking.
+
+Accepted importer metadata is exact:
+
+- compression method `0` (`STORED`) or `8` (`DEFLATED`);
+- general-purpose flag bits either `0` or only bit 11 (UTF-8 names); encryption,
+  data-descriptor, patched-data, strong-encryption, masked-header, and every
+  other bit are rejected;
+- version-needed `10` or `20` for `STORED`, exactly `20` for `DEFLATED`, and
+  version-created `10` or `20`;
+- create system `3` (Unix) with a regular-file mode and no setuid/setgid/sticky
+  bits, or create system `0` (DOS) with directory and volume-label attributes
+  clear; and
+- no member/archive comment, extra field, multipart marker, or ZIP64 value.
+
+Member names are the four exact ASCII strings, so the optional UTF-8-name bit
+does not change their decoded value. Imported mode attributes never determine
+staging permissions; Chatbook creates every staged file itself as owner-private.
 
 ### `profile.json`
 
@@ -196,7 +212,7 @@ canonical compact encoding. Its exact object is:
   "response_format": "wav",
   "schema_version": 1,
   "speed": 1.0,
-  "voice_id": null
+  "voice_id": "<validated exact voice ID or null>"
 }
 ```
 
@@ -210,6 +226,11 @@ The semantic fields are:
 - response format;
 - speed; and
 - empty canonical options under the current audio.cpp profile contract.
+
+Import validates the exact voice/reference combination against the identified
+recipe. A recipe permitting both preserves the voice ID; export never coerces
+it to null. In both JSON examples, the voice placeholder denotes either a
+validated JSON string or the JSON value `null`; it is not a literal wire value.
 
 It contains no database revision, normalized name, timestamps, reference
 metadata, assignment, default, endpoint, credential, origin, path, generated
@@ -313,19 +334,24 @@ backup and advances that candidate through every required schema step.
 
 For each supported starting version:
 
-- v3: validate v3, durably publish the exact candidate as
+- v3: validate v3, durably prepare the exact candidate as
   `<profile-db>.pre-v4.sqlite3`, then migrate a separate candidate to v4;
-- v2: durably retain validated v2 as the existing pre-v3 backup, migrate the
-  candidate to validated v3, durably retain that exact intermediate as the
+- v2: durably prepare validated v2 as the existing pre-v3 backup, migrate the
+  candidate to validated v3, durably prepare that exact intermediate as the
   pre-v4 backup, then migrate the candidate to v4; and
 - any older supported version: advance the private candidate through the
-  existing ordered migrations, publishing the applicable validated v2 and v3
+  existing ordered migrations, preparing the applicable validated v2 and v3
   downgrade snapshots at those boundaries before reaching v4.
 
-Restore qualification uses the same rule. A v3 restore candidate produces a
-new retained pre-v4 snapshot before active v4 publication; an older candidate
-produces every applicable boundary snapshot. Fresh retained-backup publication
-is rollback-protected so a failure preserves the prior retained file.
+Restore qualification uses the same rule. A v3 restore candidate prepares a
+new pre-v4 snapshot before active v4 publication; an older candidate prepares
+every applicable boundary snapshot. New retained backups are not yet
+authoritative: every prior retained backup remains under rollback identity
+through the active-file replacement, reopen, and validation protocol.
+All new candidates and backups are durably prepared under private temporary
+identities. A small owner-private publication journal records the old/new
+identities before the point of no return; startup recovery completes or rolls
+back an interrupted multi-file publication before opening any store.
 
 The v3→v4 candidate transaction adds nullable recipe ID/revision fields with a
 both-null-or-both-valid invariant, preserves every existing value, and leaves
@@ -339,9 +365,12 @@ documented non-cancellable point of no return. The repository retains the old
 active file under a private rollback identity, replaces with the validated v4
 candidate, fsyncs the directory, reopens/validates v4, and only then releases
 rollback ownership. A post-replace failure synchronously restores and fsyncs
-the old active file before returning failure. If storage failure prevents both
-completion and restoration, the repository remains boundedly unavailable with
-both recovery files retained; it does not claim that v3 is authoritative.
+the old active file and every prior retained backup before returning failure.
+Only after the new active store is reopened and authoritative are the prepared
+pre-v3/pre-v4 backups durably published and prior rollback identities released.
+If storage failure prevents completion or full restoration, the repository
+remains boundedly unavailable with all recovery files retained; it does not
+claim that the failed restore candidate or its backups are authoritative.
 
 The task acceptance contract therefore distinguishes pre-publication rollback
 from the non-cancellable publication protocol rather than promising an
@@ -370,24 +399,40 @@ new or replaced v4 reference requires exact recipe evidence.
 ## Availability and runtime admission
 
 The existing availability vocabulary remains `available`, `unavailable`, and
-`unverified`. Add a bounded reason dimension rather than another broad state.
-Relevant reasons include:
+`unverified`. Add a bounded blocking dependency reason rather than another
+broad state. Relevant blocking reasons include:
 
 - `none`;
-- `recipe_provenance_unavailable`;
-- `recipe_missing`; and
+- `recipe_missing`;
 - `recipe_mismatch`; and
 - `recipe_pending_apply`.
+
+Recipe provenance absence is a separate nonblocking portability advisory, not
+a competing availability reason. It stays visible when another blocker owns
+the primary action.
 
 Add a separate immutable dependency-action projection so existing generic
 profile recovery actions are not overloaded:
 
 | Reason | Display | Action |
 | --- | --- | --- |
-| `recipe_provenance_unavailable` | Recipe provenance unavailable | `generate_new_profile` (open exact profile Preview in Speech Lab) |
 | `recipe_missing` | Needs compatible model | `open_audio_cpp_settings` |
 | `recipe_mismatch` | Needs compatible model | `open_audio_cpp_settings` |
 | `recipe_pending_apply` | Compatible model saved; apply settings | `open_speech_lab_apply` |
+
+The separate `recipe_provenance_unavailable` advisory displays **Recipe
+provenance unavailable** and offers secondary action `generate_new_profile`
+(open exact profile Preview in Speech Lab).
+
+Primary blocker precedence is:
+
+1. damaged or structurally invalid reference/profile;
+2. provider/configuration unavailable;
+3. exact recipe missing, mismatched, or pending apply; and
+4. no blocker.
+
+The provenance advisory is rendered alongside whichever primary state wins. It
+never replaces a repair action with an impossible generate action.
 
 The reason is derived from the persisted requirement and an immutable
 local-only saved/applied guided-configuration plus recipe-registry snapshot.
@@ -402,11 +447,12 @@ execution snapshot includes the exact requirement. Before acquiring a provider
 lease or materializing an adapter, request admission compares it with the pure
 applied registry/configuration snapshot. After the exact lease is acquired, a
 side-effect-free adapter configuration preflight repeats the check before
-`ensure_ready`; mismatch still causes no launch/network/provider work. After
-deliberate readiness, admission compares the same requirement again with the
-adapter-issued recipe/model/process-generation capability before reference
-materialization or the synthesis HTTP request. Any mismatch is bounded and
-never falls back or retargets.
+`ensure_ready`; recipe/model/config mismatch still causes no
+launch/network/provider work. After deliberate readiness, admission compares
+the same requirement again with adapter-issued process-generation capability.
+Post-ready generation drift may be detected after launch/health work but always
+blocks before reference materialization or the synthesis HTTP request. Neither
+failure falls back or retargets.
 
 An unknown but syntactically valid future recipe is a missing dependency, not a
 malformed bundle, and may be stored inactive after explicit confirmation.
@@ -521,15 +567,15 @@ After acknowledgement and destination selection, export:
 - reads the exact reference and recipe requirement under repository fences;
 - builds the complete ZIP in an owner-private temporary file in the validated
   destination directory;
-- records whether the destination was absent or, after an explicit overwrite
-  confirmation, the exact regular-file identity observed by the picker;
-- fsyncs the file, atomically replaces only the intended non-directory target
-  without following a symlink, and fsyncs the directory where supported; and
-- preserves the previous destination if fresh publication fails.
+- requires the selected destination to remain absent;
+- fsyncs the file, publishes with an atomic no-replace primitive, and fsyncs
+  the directory where supported; and
+- removes its temporary output if fresh publication fails.
 
-A destination or parent type/identity change after confirmation returns
-`destination_changed`; it is never silently overwritten. The final bundle is
-owner-private even when its user-selected parent is not.
+If the selected filename already exists, the user must choose a different name
+(or remove it outside this operation and reselect). A destination appearing or
+parent type/identity change before publication returns `destination_changed`.
+The final bundle is owner-private even when its user-selected parent is not.
 
 The acknowledgement is not persisted as a preference. Selection changes,
 navigation, modal replacement, or shutdown fence late publication and UI
@@ -537,18 +583,21 @@ status.
 
 ## Lifecycle and cancellation
 
-Archive copy, validation, decompression, migration backup, repository commit,
-atomic export publication, and cleanup run as retained service-owned work.
+Archive copy, validation, decompression, atomic export publication, and cleanup
+run as retained bundle-service work. Repository migration, backup, and commit
+remain retained repository-owned work.
+
 Cancellation joins a shielded blocking worker before propagating and cleans any
 published staging/output it owns. UI unmount prevents stale presentation but
 does not abandon work.
 
-The bundle portability service closes before repository shutdown. Close seals
-new import/export/session admission, invalidates handles, cancels or completes
-work as appropriate, initiates cleanup, and retains definitive joining.
-`wait_closed()`
-cannot report ownership zero while a backup, copy, decompressor, output
-publication, repository commit, handle, or cleanup task remains owned.
+The bundle portability service closes before repository shutdown. Its close
+seals new import/export/session admission, invalidates handles, and joins
+sessions, copies, decompressors, output publication, cleanup, and repository
+commands submitted by this service. Repository `close()`/`wait_closed()` then
+owns migration, backup, and general commit joining. Only composite application
+shutdown, after both services have joined in that order, claims global zero
+ownership.
 
 ## Error and privacy contract
 
@@ -566,7 +615,7 @@ Bounded public categories and recoveries are:
 | `recipe_provenance_unavailable` | Preview/generate and save a new profile |
 | `profile_conflict` | Review the exact current collision choices |
 | `stale_inspection` | Inspect again |
-| `destination_changed` | Choose/confirm the destination again |
+| `destination_changed` | Choose a new absent destination |
 | `migration_failed` | Keep/restore the prior store and retry after resolving storage health |
 | `cleanup_failed` | Wait for retained cleanup or restart Chatbook before retrying |
 | `operation_failed` | Retry without exposing collaborator detail |
@@ -620,9 +669,10 @@ may appear only in the explicit review UI, not general logs.
   unmount invalidation, and close-before-repository ordering.
 - Repository-lane races proving collision/reference changes cannot interleave
   between recheck and exact reuse/create.
-- Runtime admission proving exact recipe/model match before materialization or
-  provider lease/adapter/provider work, exact adapter preflight and post-ready
-  capability matching, and no fallback on mismatch.
+- Runtime admission proving recipe/model/config mismatch before provider
+  lease/adapter/provider work, exact adapter preflight, post-ready generation
+  drift refusal before private materialization or synthesis HTTP, and no
+  fallback.
 - Display-name-only reference-profile edits and blocked generation-field edits
   across exact and migrated-null provenance.
 - Cleanup and ownership under success, refusal, malformed input, cancellation,

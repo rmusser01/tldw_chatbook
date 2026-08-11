@@ -131,21 +131,28 @@ usable under the prior guided-Managed compatibility contract, show a bounded
 duplicate, and cannot be exported as a bundle until regenerated and saved.
 
 The v3→v4 migration uses a private candidate rather than upgrading the active
-file in place. It validates v3 under exclusive ownership, durably publishes a
-separate owner-private `<profile-db>.pre-v4.sqlite3` sibling, migrates and fully
+file in place. It validates v3 under exclusive ownership, prepares a separate
+owner-private `<profile-db>.pre-v4.sqlite3` sibling, migrates and fully
 validates/fsyncs the candidate, then enters one non-cancellable atomic
 publication protocol with retained rollback ownership. Pre-publication failure
 leaves the active store unchanged. Post-replace failure restores and fsyncs the
-prior active file; a total storage failure that prevents both completion and
-restoration leaves the repository unavailable with recovery files retained
-rather than making an impossible authority claim.
+prior active file and every prior retained backup. Prepared backups become
+authoritative only after the new active store is reopened and validated. A
+total storage failure that prevents completion or full restoration leaves the
+repository unavailable with all recovery files retained rather than making an
+impossible authority claim.
 
 A v2-or-older jump advances the private candidate through each supported
-migration and durably publishes validated v2 and v3 downgrade snapshots at
-their respective boundaries. Restore qualification follows the same rule, so a
-v3 restore candidate yields a fresh retained pre-v4 snapshot before active v4
-publication. Retained publication preserves any prior backup on failure and
-reserves backup paths and aliases from ordinary backup destinations.
+migration and prepares validated v2 and v3 downgrade snapshots at their
+respective boundaries. Restore qualification follows the same rule, so a v3
+restore candidate prepares a fresh pre-v4 snapshot before active v4
+publication. Every prior backup remains under rollback identity until the
+active replacement succeeds; failed publication restores and fsyncs the prior
+active store and all prior backups. Backup paths and aliases remain reserved
+from ordinary backup destinations. A private durable publication journal lets
+startup complete or roll back an interrupted multi-file publication before
+opening the store.
+
 Downgrade explicitly restores the pre-v4 backup while the repository is closed
 and accepts loss of all post-migration changes and recipe provenance.
 
@@ -173,14 +180,17 @@ and immediate transaction that rechecks UUID/name/profile revision/reference
 identity and the reviewed copy destination before returning no-op or inserting
 profile, recipe, and reference atomically.
 
-The availability state vocabulary remains unchanged. A bounded reason records
-recipe provenance unavailable, missing dependency, or mismatch. For references
-with exact provenance, a pure local guided-config/recipe snapshot classifies
-dependency state without acquiring an adapter or performing network/runtime
-work. Runtime performs a side-effect-free applied-config preflight before
-readiness and compares adapter-issued evidence again after readiness but before
-materialization or synthesis HTTP. It never silently falls back or retargets.
-Dependency recovery
+The availability state vocabulary remains unchanged. A bounded blocking reason
+records missing, mismatched, or pending recipe dependency. Provenance absence
+is a separate nonblocking portability advisory, so damaged/provider failures
+retain their truthful primary recovery while the advisory stays visible. For
+references with exact provenance, a pure local guided-config/recipe snapshot
+classifies dependency state without acquiring an adapter or performing
+network/runtime work. Runtime rejects recipe/model/config mismatch before
+provider work and compares adapter-issued process-generation evidence again
+after readiness.
+Post-ready generation drift still blocks before private materialization or
+synthesis HTTP. It never silently falls back or retargets. Dependency recovery
 changes availability only; it never assigns a character or changes a default.
 
 Reference-bearing profile editing is display-name-only. Model, voice, format,
@@ -188,8 +198,9 @@ speed, or option changes require a newly admitted result/new profile or a
 future explicit atomic reference replacement; every v4 reference set/replacement
 requires exact recipe evidence.
 
-Owner-private traversal applies to application staging, backups, temporary
-outputs, and final bundle files, not recursively to ordinary user-selected
+Bundle output is atomic create-only and never overwrites an existing
+destination. Owner-private traversal applies to application staging, backups,
+temporary outputs, and final bundle files, not recursively to user-selected
 source/destination parents. Sources still require no-follow regular-file
 ownership/stability checks, and final POSIX bundles are mode `0600`. Until a
 platform has verified ADR-029 application-owned containment, bundle controls
