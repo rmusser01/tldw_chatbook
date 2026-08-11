@@ -78,8 +78,11 @@ async def test_openai_backend_raises_the_typed_error_on_connection_failure(
     backend = OpenAITTSBackend(
         {"OPENAI_BASE_URL": "http://127.0.0.1:1/v1/audio/speech"}
     )
+    # The constructor builds a real AsyncClient; close it before swapping in
+    # the stub so the test leaks no client.
+    await backend.client.aclose()
 
-    class _FailingStream:
+    class FailingStream:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -89,9 +92,13 @@ async def test_openai_backend_raises_the_typed_error_on_connection_failure(
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(
-        backend, "client", type("C", (), {"stream": _FailingStream})()
-    )
+    class StubClient:
+        stream = FailingStream
+
+        async def aclose(self) -> None:
+            """Keep ``backend.close()`` safe after the swap."""
+
+    monkeypatch.setattr(backend, "client", StubClient())
 
     request = OpenAISpeechRequest(
         model="mock-model", input="hi", voice="mock-voice",
@@ -100,3 +107,4 @@ async def test_openai_backend_raises_the_typed_error_on_connection_failure(
     with pytest.raises(TTSBackendConnectionError):
         async for _chunk in backend.generate_speech_stream(request):
             pass
+    await backend.close()
