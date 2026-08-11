@@ -211,22 +211,34 @@ def _ollama_settings() -> dict[str, Any]:
 
 def _custom_openai_settings(
     *,
-    api_key: str = "fixed-custom-openai-key",
-    api_url: str = "http://custom-openai.invalid/v1/chat/completions",
+    provider_1_key: str | None = "fixed-custom-openai-1-key",
+    provider_1_url: str = "http://custom-openai-1.invalid/v1/chat/completions",
+    provider_1_model: str = "fixed-custom-openai-1-model",
+    provider_2_key: str | None = "fixed-custom-openai-2-key",
+    provider_2_url: str = "http://custom-openai-2.invalid/v1/chat/completions",
+    provider_2_model: str = "fixed-custom-openai-2-model",
 ) -> dict[str, Any]:
-    provider_settings = {
-        "api_key": api_key,
-        "api_ip": api_url,
-        "model": "fixed-custom-openai-model",
-        "temperature": 0.2,
-        "max_tokens": 64,
-        "streaming": False,
-        "api_retries": 0,
-        "api_retry_delay": 0,
-    }
     return {
-        "custom_openai_api": dict(provider_settings),
-        "custom_openai_api_2": dict(provider_settings),
+        "custom_openai_api": {
+            "api_key": provider_1_key,
+            "api_ip": provider_1_url,
+            "model": provider_1_model,
+            "temperature": 0.2,
+            "max_tokens": 64,
+            "streaming": False,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        },
+        "custom_openai_api_2": {
+            "api_key": provider_2_key,
+            "api_ip": provider_2_url,
+            "model": provider_2_model,
+            "temperature": 0.2,
+            "max_tokens": 64,
+            "streaming": False,
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        },
     }
 
 
@@ -304,26 +316,51 @@ OLLAMA_STREAM_CANARY = "OLLAMA_STREAM_CANARY_3796"
 OLLAMA_EXCEPTION_CANARY = "OLLAMA_EXCEPTION_CANARY_3796"
 CUSTOM_OPENAI_INPUT_CANARY = "CUSTOM_OPENAI_INPUT_CANARY_3796"
 CUSTOM_OPENAI_PROMPT_CANARY = "CUSTOM_OPENAI_PROMPT_CANARY_3796"
-CUSTOM_OPENAI_CREDENTIAL_CANARY = "CUST0M_K3Y_MIDDLE_Z9X8W"
-CUSTOM_OPENAI_ENDPOINT_CANARY = (
-    "http://CUSTOM_OPENAI_ENDPOINT_CANARY_3796.invalid/v1/chat/completions"
+CUSTOM_OPENAI_1_CREDENTIAL_CANARY = "CUST0M_1_K3Y_MIDDLE_Z1X1W"
+CUSTOM_OPENAI_2_CREDENTIAL_CANARY = "CUST0M_2_K3Y_MIDDLE_Z2X2W"
+CUSTOM_OPENAI_1_ENDPOINT_CANARY = (
+    "http://CUSTOM_OPENAI_1_ENDPOINT_CANARY_3796.invalid/v1/chat/completions"
 )
+CUSTOM_OPENAI_2_ENDPOINT_CANARY = (
+    "http://CUSTOM_OPENAI_2_ENDPOINT_CANARY_3796.invalid/v1/chat/completions"
+)
+CUSTOM_OPENAI_1_MODEL = "fixed-custom-openai-1-model"
+CUSTOM_OPENAI_2_MODEL = "fixed-custom-openai-2-model"
 CUSTOM_OPENAI_RESPONSE_CANARY = "CUSTOM_OPENAI_RESPONSE_CANARY_3796"
 CUSTOM_OPENAI_STREAM_CANARY = "CUSTOM_OPENAI_STREAM_CANARY_3796"
 CUSTOM_OPENAI_EXCEPTION_CANARY = "CUSTOM_OPENAI_EXCEPTION_CANARY_3796"
 CUSTOM_OPENAI_FILE_PATH_CANARY = "CUSTOM_OPENAI_FILE_PATH_CANARY_3796"
 
 
+@dataclass(frozen=True)
+class _CustomOpenAIVariant:
+    id: str
+    summarizer: Callable[..., object]
+    event_prefix: str
+    settings_section: str
+    api_key: str
+    endpoint: str
+    model: str
+
+
 CUSTOM_OPENAI_VARIANTS = (
-    (
-        "custom-openai-1",
+    _CustomOpenAIVariant(
+        "local-custom-openai-1",
         local_summarization.summarize_with_custom_openai,
         "Custom OpenAI API",
+        "custom_openai_api",
+        CUSTOM_OPENAI_1_CREDENTIAL_CANARY,
+        CUSTOM_OPENAI_1_ENDPOINT_CANARY,
+        CUSTOM_OPENAI_1_MODEL,
     ),
-    (
-        "custom-openai-2",
+    _CustomOpenAIVariant(
+        "local-custom-openai-2",
         local_summarization.summarize_with_custom_openai_2,
         "Custom OpenAI API-2",
+        "custom_openai_api_2",
+        CUSTOM_OPENAI_2_CREDENTIAL_CANARY,
+        CUSTOM_OPENAI_2_ENDPOINT_CANARY,
+        CUSTOM_OPENAI_2_MODEL,
     ),
 )
 
@@ -1894,7 +1931,7 @@ def test_no_pending_local_custom_sites() -> None:
     )
 
 
-def test_local_module_has_no_pending_private_sites() -> None:
+def test_local_custom_module_has_no_pending_private_sites() -> None:
     local = [
         site
         for site in _ledger_sites()
@@ -2637,18 +2674,15 @@ def test_ollama_http_exception_hides_message_and_preserves_error_contract(
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_success_hides_input_prompt_key_endpoint_and_response(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_success_hides_input_prompt_key_endpoint_and_response(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     response = _FakeResponse(
         json_data={
             "choices": [
@@ -2659,15 +2693,19 @@ def test_custom_openai_success_hides_input_prompt_key_endpoint_and_response(
     settings_calls = _install_signature_bound_settings(
         monkeypatch,
         _custom_openai_settings(
-            api_key=CUSTOM_OPENAI_CREDENTIAL_CANARY,
-            api_url=CUSTOM_OPENAI_ENDPOINT_CANARY,
+            provider_1_key=CUSTOM_OPENAI_1_CREDENTIAL_CANARY,
+            provider_1_url=CUSTOM_OPENAI_1_ENDPOINT_CANARY,
+            provider_1_model=CUSTOM_OPENAI_1_MODEL,
+            provider_2_key=CUSTOM_OPENAI_2_CREDENTIAL_CANARY,
+            provider_2_url=CUSTOM_OPENAI_2_ENDPOINT_CANARY,
+            provider_2_model=CUSTOM_OPENAI_2_MODEL,
         ),
     )
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
-            CUSTOM_OPENAI_CREDENTIAL_CANARY,
+        result = variant.summarizer(
+            None,
             CUSTOM_OPENAI_INPUT_CANARY,
             CUSTOM_OPENAI_PROMPT_CANARY,
             temp=0.2,
@@ -2678,11 +2716,12 @@ def test_custom_openai_success_hides_input_prompt_key_endpoint_and_response(
     assert settings_calls == [((), {})]
     assert len(transport_calls) == 1
     args, kwargs = transport_calls[0]
-    assert args == (CUSTOM_OPENAI_ENDPOINT_CANARY,)
+    assert args == (variant.endpoint,)
     assert kwargs["headers"] == {
-        "Authorization": f"Bearer {CUSTOM_OPENAI_CREDENTIAL_CANARY}",
+        "Authorization": f"Bearer {variant.api_key}",
         "Content-Type": "application/json",
     }
+    assert kwargs["json"]["model"] == variant.model
     assert kwargs["json"]["messages"] == [
         {"role": "system", "content": "fixed system message"},
         {
@@ -2695,40 +2734,40 @@ def test_custom_openai_success_hides_input_prompt_key_endpoint_and_response(
     for canary in (
         CUSTOM_OPENAI_INPUT_CANARY,
         CUSTOM_OPENAI_PROMPT_CANARY,
-        CUSTOM_OPENAI_CREDENTIAL_CANARY[:5],
-        CUSTOM_OPENAI_CREDENTIAL_CANARY[-5:],
-        CUSTOM_OPENAI_ENDPOINT_CANARY,
+        variant.api_key[:5],
+        variant.api_key[-5:],
+        variant.endpoint,
         CUSTOM_OPENAI_RESPONSE_CANARY,
     ):
         assert canary not in captured.text
-    assert f"{event_prefix}: Credential configured" in captured.text
-    assert f"{event_prefix}: Input received" in captured.text
-    assert f"{event_prefix}: Input processing completed" in captured.text
-    assert f"{event_prefix}: Text extraction completed" in captured.text
-    assert f"{event_prefix}: Prompt prepared; character_count=" in captured.text
-    assert f"{event_prefix}: API endpoint configured" in captured.text
-    assert f"{event_prefix}: Chat response received; character_count=" in captured.text
+    assert f"{variant.event_prefix}: Credential configured" in captured.text
+    assert f"{variant.event_prefix}: Input received" in captured.text
+    assert f"{variant.event_prefix}: Input processing completed" in captured.text
+    assert f"{variant.event_prefix}: Text extraction completed" in captured.text
+    assert f"{variant.event_prefix}: Prompt prepared; character_count=" in captured.text
+    assert f"{variant.event_prefix}: API endpoint configured" in captured.text
+    assert (
+        f"{variant.event_prefix}: Chat response received; character_count="
+        in captured.text
+    )
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_non_success_hides_response_body_and_preserves_contract(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_non_success_hides_response_body_and_preserves_contract(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     response = _FakeResponse(status_code=503, text=CUSTOM_OPENAI_RESPONSE_CANARY)
     _install_signature_bound_settings(monkeypatch, _custom_openai_settings())
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             "fixed prompt",
@@ -2739,22 +2778,22 @@ def test_custom_openai_non_success_hides_response_body_and_preserves_contract(
     assert result == "OpenAI: Failed to process chat response. Status code: 503"
     assert len(transport_calls) == 1
     assert CUSTOM_OPENAI_RESPONSE_CANARY not in captured.text
-    assert f"{event_prefix}: Chat request failed with status code 503" in captured.text
+    assert (
+        f"{variant.event_prefix}: Chat request failed with status code 503"
+        in captured.text
+    )
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_request_exception_hides_message_and_traceback(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_request_exception_hides_message_and_traceback(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     _install_signature_bound_settings(monkeypatch, _custom_openai_settings())
     transport_calls = _install_signature_bound_session_post(
         monkeypatch,
@@ -2762,7 +2801,7 @@ def test_custom_openai_request_exception_hides_message_and_traceback(
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             "fixed prompt",
@@ -2771,37 +2810,35 @@ def test_custom_openai_request_exception_hides_message_and_traceback(
         )
 
     assert result == (
-        f"{event_prefix}: Error making API request: {CUSTOM_OPENAI_EXCEPTION_CANARY}"
+        f"{variant.event_prefix}: Error making API request: "
+        f"{CUSTOM_OPENAI_EXCEPTION_CANARY}"
     )
     assert len(transport_calls) == 1
     assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
     assert (
-        f"{event_prefix}: API request failed; exception_type=RequestException"
+        f"{variant.event_prefix}: API request failed; exception_type=RequestException"
         in captured.text
     )
     assert all(record.exc_info is None for record in caplog.records)
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_unexpected_exception_hides_message_and_traceback(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_unexpected_exception_hides_message_and_traceback(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     settings = _custom_openai_settings()
     settings["custom_openai_api"]["max_tokens"] = CUSTOM_OPENAI_EXCEPTION_CANARY
     settings["custom_openai_api_2"]["max_tokens"] = CUSTOM_OPENAI_EXCEPTION_CANARY
     _install_signature_bound_settings(monkeypatch, settings)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             "fixed prompt",
@@ -2809,29 +2846,26 @@ def test_custom_openai_unexpected_exception_hides_message_and_traceback(
             system_message="fixed system message",
         )
 
-    assert result.startswith(f"{event_prefix}: Unexpected error occurred: ")
+    assert result.startswith(f"{variant.event_prefix}: Unexpected error occurred: ")
     assert CUSTOM_OPENAI_EXCEPTION_CANARY in result
     assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
     assert (
-        f"{event_prefix}: Unexpected failure; exception_type=ValueError"
+        f"{variant.event_prefix}: Unexpected failure; exception_type=ValueError"
         in captured.text
     )
     assert all(record.exc_info is None for record in caplog.records)
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_malformed_stream_is_lazy_consumed_and_hides_line(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_malformed_stream_is_lazy_consumed_and_hides_line(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     private_line = f'data: {{"content":"{CUSTOM_OPENAI_STREAM_CANARY}"'.encode()
     response = _FakeResponse(
         lines=(
@@ -2844,7 +2878,7 @@ def test_custom_openai_malformed_stream_is_lazy_consumed_and_hides_line(
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        generator = summarizer(
+        generator = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             "fixed prompt",
@@ -2859,25 +2893,23 @@ def test_custom_openai_malformed_stream_is_lazy_consumed_and_hides_line(
     assert result == (["fixed chunk", "fixed chunk"], None)
     assert response.iter_lines_started is True
     assert CUSTOM_OPENAI_STREAM_CANARY not in captured.text
-    assert f"{event_prefix}: Failed to decode streamed JSON; line_length=" in (
-        captured.text
+    assert (
+        f"{variant.event_prefix}: Failed to decode streamed JSON; line_length="
+        in captured.text
     )
     assert f"line_length={len(private_line) - len(b'data: ')}" in captured.text
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_response_json_error_hides_detail_and_preserves_contract(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_response_json_error_hides_detail_and_preserves_contract(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     decode_error = json.JSONDecodeError(
         CUSTOM_OPENAI_EXCEPTION_CANARY,
         "private response",
@@ -2888,7 +2920,7 @@ def test_custom_openai_response_json_error_hides_detail_and_preserves_contract(
     _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             "fixed prompt",
@@ -2896,28 +2928,27 @@ def test_custom_openai_response_json_error_hides_detail_and_preserves_contract(
             system_message="fixed system message",
         )
 
-    assert result == f"{event_prefix}: Error decoding JSON input: {decode_error}"
+    assert result == (
+        f"{variant.event_prefix}: Error decoding JSON input: {decode_error}"
+    )
     assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
     assert (
-        f"{event_prefix}: Response JSON decode failed; "
+        f"{variant.event_prefix}: Response JSON decode failed; "
         "exception_type=JSONDecodeError" in captured.text
     )
     assert all(record.exc_info is None for record in caplog.records)
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_malformed_input_hides_parse_detail_and_still_submits(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_malformed_input_hides_parse_detail_and_still_submits(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
     malformed_input = '{"private":"' + CUSTOM_OPENAI_INPUT_CANARY
     response = _FakeResponse(
         json_data={"choices": [{"message": {"content": "fixed summary"}}]}
@@ -2926,7 +2957,7 @@ def test_custom_openai_malformed_input_hides_parse_detail_and_still_submits(
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             malformed_input,
             "fixed prompt",
@@ -2940,24 +2971,25 @@ def test_custom_openai_malformed_input_hides_parse_detail_and_still_submits(
         malformed_input
     )
     assert CUSTOM_OPENAI_INPUT_CANARY not in captured.text
-    assert f"{event_prefix}: Input JSON parse failed; exception_type=" in captured.text
+    assert (
+        f"{variant.event_prefix}: Input JSON parse failed; exception_type="
+        in captured.text
+    )
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_missing_config_credential_contract_is_unchanged(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_missing_config_credential_contract_is_unchanged(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del variant_name
-    settings = _custom_openai_settings(api_key="")
-    settings["custom_openai_api"]["api_key"] = None
-    settings["custom_openai_api_2"]["api_key"] = None
+    settings = _custom_openai_settings(
+        provider_1_key=None,
+        provider_2_key=None,
+    )
     settings_calls = _install_signature_bound_settings(monkeypatch, settings)
 
     def transport_must_not_run() -> object:
@@ -2969,7 +3001,7 @@ def test_custom_openai_missing_config_credential_contract_is_unchanged(
         transport_must_not_run,
     )
 
-    result = summarizer(
+    result = variant.summarizer(
         None,
         "fixed input",
         "fixed prompt",
@@ -2979,24 +3011,97 @@ def test_custom_openai_missing_config_credential_contract_is_unchanged(
 
     assert settings_calls == [((), {})]
     assert result == (
-        f"{event_prefix}: API Key Not Provided/Found in Config file or is empty"
+        f"{variant.event_prefix}: API Key Not Provided/Found in Config file or is empty"
     )
 
 
 @pytest.mark.parametrize(
-    ("variant_name", "summarizer", "event_prefix"),
+    "variant",
     CUSTOM_OPENAI_VARIANTS,
-    ids=lambda value: value if isinstance(value, str) else None,
+    ids=lambda variant: variant.id,
 )
-def test_custom_openai_non_string_prompt_preserves_stringification_contract(
-    variant_name: str,
-    summarizer: Callable[..., object],
-    event_prefix: str,
+def test_local_custom_openai_missing_provider_section_preserves_error_contract(
+    variant: _CustomOpenAIVariant,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    del variant_name
+    settings = _custom_openai_settings()
+    del settings[variant.settings_section]
+    settings_calls = _install_signature_bound_settings(monkeypatch, settings)
+    transport_calls = _install_signature_bound_session_post(
+        monkeypatch,
+        AssertionError("transport invoked before missing-section failure"),
+    )
 
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = variant.summarizer(
+            "fixed-explicit-key",
+            "fixed input",
+            "fixed prompt",
+            temp=0.2,
+            system_message="fixed system message",
+        )
+
+    assert settings_calls == [((), {})]
+    assert transport_calls == []
+    assert result == (
+        f"{variant.event_prefix}: Unexpected error occurred: "
+        f"'{variant.settings_section}'"
+    )
+    assert variant.settings_section not in captured.text
+    assert (
+        f"{variant.event_prefix}: Unexpected failure; exception_type=KeyError"
+        in captured.text
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    CUSTOM_OPENAI_VARIANTS,
+    ids=lambda variant: variant.id,
+)
+def test_local_custom_openai_missing_model_preserves_error_contract(
+    variant: _CustomOpenAIVariant,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _custom_openai_settings()
+    del settings[variant.settings_section]["model"]
+    settings_calls = _install_signature_bound_settings(monkeypatch, settings)
+    transport_calls = _install_signature_bound_session_post(
+        monkeypatch,
+        AssertionError("transport invoked before missing-model failure"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = variant.summarizer(
+            "fixed-explicit-key",
+            "fixed input",
+            "fixed prompt",
+            temp=0.2,
+            system_message="fixed system message",
+        )
+
+    assert settings_calls == [((), {})]
+    assert transport_calls == []
+    assert result == f"{variant.event_prefix}: Unexpected error occurred: 'model'"
+    assert "'model'" not in captured.text
+    assert (
+        f"{variant.event_prefix}: Unexpected failure; exception_type=KeyError"
+        in captured.text
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    CUSTOM_OPENAI_VARIANTS,
+    ids=lambda variant: variant.id,
+)
+def test_local_custom_openai_non_string_prompt_preserves_stringification_contract(
+    variant: _CustomOpenAIVariant,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class FixedPrompt:
         def __init__(self) -> None:
             self.calls = 0
@@ -3013,7 +3118,7 @@ def test_custom_openai_non_string_prompt_preserves_stringification_contract(
     transport_calls = _install_signature_bound_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
-        result = summarizer(
+        result = variant.summarizer(
             "fixed-custom-openai-key",
             "fixed input",
             prompt,
@@ -3028,10 +3133,12 @@ def test_custom_openai_non_string_prompt_preserves_stringification_contract(
         "fixed-object-prompt"
     )
     assert "fixed-object-prompt" not in captured.text
-    assert f"{event_prefix}: Prompt prepared; character_count=19" in captured.text
+    assert (
+        f"{variant.event_prefix}: Prompt prepared; character_count=19" in captured.text
+    )
 
 
-def test_save_summary_to_file_hides_path_and_preserves_write_contract(
+def test_local_save_summary_to_file_hides_path_and_preserves_write_contract(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -3050,7 +3157,7 @@ def test_save_summary_to_file_hides_path_and_preserves_write_contract(
     assert "Summary saved to file" in captured.text
 
 
-def test_save_summary_to_file_does_not_report_success_before_open_completes(
+def test_local_save_summary_to_file_does_not_report_success_before_open_completes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3083,4 +3190,74 @@ def test_save_summary_to_file_does_not_report_success_before_open_completes(
         ]
     )
     assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
+    assert "Summary saved to file" not in captured.text
+
+
+def test_local_save_summary_to_file_does_not_report_success_before_write_completes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source_path = (
+        tmp_path / "nested" / f"{CUSTOM_OPENAI_FILE_PATH_CANARY}-segments.json"
+    )
+    real_open = builtins.open
+    open_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class WriteFailingFile:
+        entered = False
+        exit_type: type[BaseException] | None = None
+
+        def __enter__(self) -> WriteFailingFile:
+            self.entered = True
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: object,
+        ) -> bool:
+            del exc_value, traceback
+            self.exit_type = exc_type
+            return False
+
+        def write(self, summary: str) -> None:
+            assert summary == "fixed private summary"
+            raise OSError(CUSTOM_OPENAI_EXCEPTION_CANARY)
+
+    fake_file = WriteFailingFile()
+
+    def fake_open(*args: object, **kwargs: object) -> WriteFailingFile:
+        inspect.signature(real_open).bind(*args, **kwargs)
+        open_calls.append((args, kwargs))
+        return fake_file
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        with pytest.raises(OSError, match=CUSTOM_OPENAI_EXCEPTION_CANARY):
+            local_summarization.save_summary_to_file(
+                "fixed private summary",
+                str(source_path),
+            )
+
+    assert source_path.parent.is_dir()
+    assert open_calls == [
+        (
+            (
+                str(
+                    source_path.with_name(
+                        f"{CUSTOM_OPENAI_FILE_PATH_CANARY}-segments_summary.txt"
+                    )
+                ),
+                "w",
+            ),
+            {},
+        )
+    ]
+    assert fake_file.entered is True
+    assert fake_file.exit_type is OSError
+    assert CUSTOM_OPENAI_EXCEPTION_CANARY not in captured.text
+    assert CUSTOM_OPENAI_FILE_PATH_CANARY not in captured.text
     assert "Summary saved to file" not in captured.text
