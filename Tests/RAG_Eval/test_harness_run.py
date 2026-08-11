@@ -45,15 +45,26 @@ EXPECTED_BACKEND = {
 
 
 def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
-    from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, load_fixtures
+    from Tests.RAG_Eval.harness.goldenset import (
+        NEGATIVE_CATEGORY,
+        SCOPED_CATEGORY,
+        load_fixtures,
+    )
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
     from Tests.RAG_Eval.harness.runner import MODES, run_eval
 
     corpus, golden = load_fixtures()
     category_counts = Counter(query.category for query in golden)
+    # Cells: every category except negatives (which have nothing to score).
+    # Averaged: that set minus scoped, which is measured in its own cell but
+    # kept out of the cross-mode overall row (a scope diverts hybrid to
+    # semantic — see `runner`'s module docstring). No scoped queries exist
+    # yet, so both derivations are unchanged until they are authored.
     scored_categories = sorted(set(category_counts) - {NEGATIVE_CATEGORY})
     scored_total = sum(
-        count for name, count in category_counts.items() if name != NEGATIVE_CATEGORY
+        count
+        for name, count in category_counts.items()
+        if name not in (NEGATIVE_CATEGORY, SCOPED_CATEGORY)
     )
 
     runtime = build_eval_runtime(corpus, tmp_path)

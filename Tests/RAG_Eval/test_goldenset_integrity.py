@@ -36,6 +36,9 @@ from Tests.RAG_Eval.harness.goldenset import (
     CORPUS_PATH,
     GOLDEN_PATH,
     NEGATIVE_CATEGORY,
+    REQUIRED_CATEGORIES,
+    SCOPEABLE_SOURCE_TYPES,
+    SCOPED_CATEGORY,
     SOURCE_TYPES,
     CorpusDoc,
     GoldenQuery,
@@ -160,13 +163,31 @@ def _valid_corpus() -> list[CorpusDoc]:
 
 
 def _valid_golden() -> list[GoldenQuery]:
-    """Minimal inline golden set covering all four categories."""
+    """Minimal inline golden set covering every REQUIRED category.
+
+    Deliberately no `scoped` query: that category is declared but not yet
+    required (see `REQUIRED_CATEGORIES`), so the minimal *valid* set is the
+    one a corpus without scoped fixtures can produce.
+    """
     return [
         GoldenQuery("q-kw", "alpha beta", "keyword", ("n1",)),
         GoldenQuery("q-pr", "eta theta", "paraphrase", ("m1",)),
         GoldenQuery("q-vm", "nu xi", "vocabulary_mismatch", ("c1",)),
         GoldenQuery("q-neg", "nothing here", "negative", ()),
     ]
+
+
+def _scoped_query(
+    query_id: str = "q-sc",
+    *,
+    category: str = SCOPED_CATEGORY,
+    relevant: tuple[str, ...] = ("n1",),
+    scope: tuple[str, ...] | None = ("n1", "m1"),
+) -> GoldenQuery:
+    """A scoped golden query, with every rule-relevant part parameterized."""
+    return GoldenQuery(
+        query_id, "alpha beta", category, relevant, scope_slugs=scope
+    )
 
 
 def _defects(corpus: list[CorpusDoc], golden: list[GoldenQuery]) -> str:
@@ -263,7 +284,29 @@ def test_golden_set_category_quotas(golden):
     assert counts["paraphrase"] >= 10
     assert counts["vocabulary_mismatch"] >= 8
     assert counts["negative"] >= 6
-    assert set(counts) == set(CATEGORIES)
+    # Two-sided rather than an equality: no category outside the declared
+    # vocabulary may appear, and every REQUIRED category must. `scoped` is
+    # declared but not yet required — its fixtures (and its quota, floor 6)
+    # land with the fail-first authoring task of the P2ab arc, and until then
+    # an equality here would fail for a category nobody has authored yet.
+    assert set(counts) <= set(CATEGORIES)
+    assert set(REQUIRED_CATEGORIES) <= set(counts)
+
+
+def test_the_scoped_category_is_declared_but_not_yet_required(golden):
+    """The handoff, pinned: schema now, fixtures later (P2ab Task 3).
+
+    Task 2 ships the scope schema and the runner machinery against a corpus
+    that is byte-identical to P1's. If this ever fails because scoped queries
+    now exist, the follow-up is to ADD `scoped` to `REQUIRED_CATEGORIES` (and
+    a quota above), not to delete this test: an authored-then-silently-lost
+    scoped set is exactly the "cell vanishes from the report" defect the
+    presence rule exists for.
+    """
+    assert SCOPED_CATEGORY in CATEGORIES
+    assert SCOPED_CATEGORY not in REQUIRED_CATEGORIES
+    assert not [query for query in golden if query.category == SCOPED_CATEGORY]
+    assert all(query.scope_slugs is None for query in golden)
 
 
 def test_loaded_records_are_frozen(corpus, golden):
@@ -374,7 +417,12 @@ def test_each_capability_group_spans_all_three_source_types(golden, by_slug):
     — the four-seam keyword mode is measured per type."""
     spread: dict[str, set[str]] = {}
     for query in golden:
-        if query.category == NEGATIVE_CATEGORY:
+        # `scoped` is exempt by construction, not by convenience: a scope can
+        # only name media and notes (conversations are outside the scope
+        # vocabulary, rag_scope spec D5), so a scoped query CANNOT span all
+        # three source types. Do not "fix" a future scoped failure by
+        # dropping the requirement for the other categories.
+        if query.category in (NEGATIVE_CATEGORY, SCOPED_CATEGORY):
             continue
         for slug in query.relevant_slugs:
             spread.setdefault(query.category, set()).add(by_slug[slug].source_type)
@@ -470,8 +518,12 @@ def test_fixture_files_parse_as_plain_toml_with_the_documented_shape():
     assert {key for doc in raw_corpus["doc"] for key in doc} == {
         "slug", "source_type", "title", "content",
     }
-    assert {key for query in raw_golden["query"] for key in query} == {
-        "id", "query", "category", "relevant_slugs",
+    golden_keys = {key for query in raw_golden["query"] for key in query}
+    assert {"id", "query", "category", "relevant_slugs"} <= golden_keys
+    # `scope_slugs` is optional (scoped queries only), so it is permitted but
+    # not required; nothing else may appear.
+    assert golden_keys <= {
+        "id", "query", "category", "relevant_slugs", "scope_slugs",
     }
 
 
@@ -595,6 +647,113 @@ def test_every_defect_is_reported_in_one_error_not_just_the_first():
 
 
 # --------------------------------------------------------------------------
+# validator: the scoped category and its `scope_slugs`
+#
+# A scoped query measures retrieval *under a restriction*, so its scope is
+# part of the measurement, not decoration. Every rule below turns a scope
+# defect into a loud failure instead of a plausible number: a scope on the
+# wrong category silently measures nothing, a missing scope makes a "scoped"
+# cell unscoped, and a target outside its own scope scores 0.0 forever and
+# reads as a retrieval regression.
+# --------------------------------------------------------------------------
+
+
+def test_a_valid_scoped_query_is_accepted():
+    golden = _valid_golden()
+    golden.append(_scoped_query())
+    assert validate(_valid_corpus(), golden) is None
+
+
+def test_scope_slugs_on_a_non_scoped_category_is_reported():
+    """Only the scoped category may carry a scope.
+
+    A `scope_slugs` on a keyword query would be silently ignored by the
+    runner (it scopes by category), so the query would measure unscoped
+    retrieval while its fixture claims otherwise.
+    """
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-kw-scoped", category="keyword"))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-kw-scoped'" in message
+    assert "scope_slugs" in message
+    assert "scoped" in message
+
+
+def test_a_scoped_query_without_scope_slugs_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-none", scope=None))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-none'" in message
+    assert "scope_slugs" in message
+
+
+def test_an_empty_scope_slugs_list_is_reported():
+    """Empty is not "unscoped": `EffectiveScope` has no scoped-with-nothing
+    state, so an empty scope would resolve to a plain unscoped search."""
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-empty", scope=()))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-empty'" in message
+    assert "scope_slugs" in message
+
+
+def test_unknown_scope_slug_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-ghost", scope=("n1", "ghost-doc")))
+    message = _defects(_valid_corpus(), golden)
+    assert "unknown scope_slug" in message
+    assert "'ghost-doc'" in message
+    assert "'q-sc-ghost'" in message
+
+
+def test_repeated_scope_slug_in_one_query_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-dup", scope=("n1", "n1")))
+    message = _defects(_valid_corpus(), golden)
+    assert "repeats scope_slug" in message
+    assert "'n1'" in message
+
+
+def test_a_scope_slug_naming_an_unscopeable_source_type_is_reported():
+    """Conversations are outside the scope vocabulary (rag_scope spec D5).
+
+    Scoping one would build an allowlist the seam cannot honour, and the
+    query would quietly measure something else.
+    """
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-conv", relevant=("c1",), scope=("c1",)))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-conv'" in message
+    assert "'c1'" in message
+    assert "source_type" in message
+
+
+def test_a_scoped_querys_targets_must_lie_inside_its_own_scope():
+    """The defect that costs a whole category: a target outside the scope is
+    unreachable *by construction*, so the cell reports 0.0 recall forever and
+    reads as a retrieval regression rather than as a broken fixture."""
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-outside", relevant=("c1",), scope=("n1", "m1")))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-outside'" in message
+    assert "'c1'" in message
+    assert "scope" in message
+
+
+def test_the_scopeable_source_types_match_the_apps_scope_vocabulary():
+    """Drift guard: the harness's notion of "scopeable" is the app's.
+
+    `SCOPEABLE_SOURCE_TYPES` is stated locally so the always-on fixture
+    module stays stdlib-only, which only stays honest while it agrees with
+    `rag_scope`'s own vocabulary.
+    """
+    from tldw_chatbook.Chat.rag_scope import _KNOWN_SOURCE_TYPES
+
+    assert set(SCOPEABLE_SOURCE_TYPES) == set(_KNOWN_SOURCE_TYPES)
+    assert set(SCOPEABLE_SOURCE_TYPES) < set(SOURCE_TYPES)
+
+
+# --------------------------------------------------------------------------
 # loaders: structural defects
 # --------------------------------------------------------------------------
 
@@ -679,6 +838,60 @@ relevant_slugs = ["n1", 3]
         load_golden(path)
     message = str(excinfo.value)
     assert "relevant_slugs" in message
+    assert len(excinfo.value.defects) >= 2
+
+
+def test_load_golden_reads_scope_slugs_and_defaults_to_none(tmp_path):
+    """The loader must *accept* the key (it is not an unknown key) and must
+    distinguish "absent" from "present but empty"; the validator, not the
+    loader, decides which categories may carry it."""
+    path = _write_toml(
+        tmp_path,
+        "golden.toml",
+        """
+[[query]]
+id = "q1"
+query = "alpha"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = ["n1", " m1 "]
+
+[[query]]
+id = "q2"
+query = "beta"
+category = "keyword"
+relevant_slugs = ["n1"]
+""",
+    )
+    queries = load_golden(path)
+    assert queries[0].scope_slugs == ("n1", "m1")
+    assert queries[1].scope_slugs is None
+
+
+def test_load_golden_rejects_bad_scope_slugs(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        "golden.toml",
+        """
+[[query]]
+id = "q1"
+query = "alpha"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = "n1"
+
+[[query]]
+id = "q2"
+query = "beta"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = ["n1", 3]
+""",
+    )
+    with pytest.raises(GoldenSetError) as excinfo:
+        load_golden(path)
+    message = str(excinfo.value)
+    assert "scope_slugs" in message
     assert len(excinfo.value.defects) >= 2
 
 

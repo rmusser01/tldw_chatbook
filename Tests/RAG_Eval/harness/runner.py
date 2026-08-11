@@ -29,6 +29,20 @@ relevant set is 0.0 by convention, which would drag every average toward
 zero for reasons that say nothing about retrieval). They are reported
 separately: how much a mode returned anyway, and how confident it was.
 
+**Scoped queries are measured, and averaged only into their own cell.** A
+query in the ``scoped`` category runs under a real `EffectiveScope` built
+from the runtime's own ids (`build_query_scope`) and passed to the seam's
+`scope=` parameter — the same object production passes. It is excluded from
+the cross-mode overall row for the same reason negatives are excluded from
+everything: the modes are not comparable there. A scope forces the seam to
+divert a hybrid profile to the semantic path (the engine's allowlist
+pushdown is semantic-only), so the "hybrid" and "semantic" columns of a
+scoped row are one measurement wearing two names, and folding them into the
+overall row would move a cross-mode number for a routing reason. Which route
+each scoped query actually took is recorded per query
+(``runtime_backend`` + ``route_notes``), so a change in routing shows up as
+a change in the report rather than only in the score.
+
 **An erroring query is reported, not scored.** The run continues, the error
 is recorded against that query and surfaced in the mode's ``errors`` list,
 and the query is left out of the averages — a failed query silently scored
@@ -43,9 +57,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
+from tldw_chatbook.Chat.rag_scope import EffectiveScope
 from tldw_chatbook.RAG_Search.eval.metrics import evaluate_retrieval_batch
 from Tests.RAG_Eval.harness.canonicalize import rows_to_doc_ids, slug_lookup_from
-from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, GoldenQuery
+from Tests.RAG_Eval.harness.goldenset import (
+    NEGATIVE_CATEGORY,
+    SCOPEABLE_SOURCE_TYPES,
+    SCOPED_CATEGORY,
+    GoldenQuery,
+)
 
 __all__ = [
     "EvalReport",
@@ -54,6 +74,7 @@ __all__ = [
     "NegativeProbe",
     "QueryOutcome",
     "SOURCE_TYPES",
+    "build_query_scope",
     "run_eval",
 ]
 
@@ -89,6 +110,12 @@ class QueryOutcome:
     top_score: float | None
     top_vector_score: float | None
     error: str | None
+    #: The seam's own routing disclosures for this query (its
+    #: ``diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY]``), e.g. "a hybrid profile
+    #: ran semantic because a scope is active". Empty for a query that ran
+    #: exactly as its profile configures. Recorded because the backend label
+    #: alone says which path ran but not *why* it was chosen.
+    route_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """A JSON-serializable snapshot of this query's outcome.
@@ -106,6 +133,7 @@ class QueryOutcome:
             "rows_returned": self.rows_returned,
             "latency_ms": self.latency_s * 1000.0,
             "runtime_backend": self.runtime_backend,
+            "route_notes": list(self.route_notes),
             "top_score": self.top_score,
             "top_vector_score": self.top_vector_score,
             "error": self.error,
@@ -198,8 +226,12 @@ class EvalReport:
     modes: dict[str, ModeReport]
     source_types: tuple[str, ...] = SOURCE_TYPES
     num_queries: int = 0
+    #: Queries the overall row averages: everything that is neither negative
+    #: nor scoped. Both exclusions are visible as their own counts, so a
+    #: shrinking ``num_scored`` can always be accounted for.
     num_scored: int = 0
     num_negative: int = 0
+    num_scoped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """A JSON-serializable snapshot (Task 7's baselines are written from this)."""
@@ -209,6 +241,7 @@ class EvalReport:
             "num_queries": self.num_queries,
             "num_scored": self.num_scored,
             "num_negative": self.num_negative,
+            "num_scoped": self.num_scoped,
             "modes": {
                 mode: report.to_dict() for mode, report in self.modes.items()
             },
@@ -243,9 +276,11 @@ def run_eval(
         probes, latencies and per-query detail.
 
     Raises:
-        ValueError: ``golden`` is empty, ``k < 1``, or ``modes`` is empty.
-            An empty run would report a full set of 0.0 metrics, which reads
-            as a total retrieval failure rather than as no measurement.
+        ValueError: ``golden`` is empty, ``k < 1``, ``modes`` is empty, or a
+            scoped query's scope cannot be built against this runtime (see
+            `build_query_scope`). An empty run would report a full set of 0.0
+            metrics, which reads as a total retrieval failure rather than as
+            no measurement.
     """
     from tldw_chatbook.Library.library_local_rag_search_service import (
         LibraryLocalRagSearchService,
@@ -262,6 +297,14 @@ def run_eval(
     lookup = slug_lookup_from(runtime.slug_to_source)
     scope = tuple(source_types)
 
+    # Built once, before any mode runs: a scope that cannot be built is a
+    # fixture/runtime mismatch, and discovering it three modes deep would
+    # waste the whole pass. The same object is reused across modes, which is
+    # also what makes the cross-mode comparison of a scoped query honest.
+    scoped_queries = tuple(
+        (query, build_query_scope(runtime.slug_to_source, query)) for query in golden
+    )
+
     search_config = runtime.service.config.search
     original_mode = getattr(search_config, "default_search_mode", None)
     mode_reports: dict[str, ModeReport] = {}
@@ -269,7 +312,8 @@ def run_eval(
         for mode in modes:
             search_config.default_search_mode = mode
             outcomes = tuple(
-                _run_query(seam, runtime, query, k, scope, lookup) for query in golden
+                _run_query(seam, runtime, query, k, scope, lookup, query_scope)
+                for query, query_scope in scoped_queries
             )
             mode_reports[mode] = _build_mode_report(mode, k, outcomes)
     finally:
@@ -280,13 +324,83 @@ def run_eval(
             search_config.default_search_mode = original_mode
 
     negatives = sum(1 for query in golden if query.category == NEGATIVE_CATEGORY)
+    scoped = sum(1 for query in golden if query.category == SCOPED_CATEGORY)
     return EvalReport(
         k=k,
         modes=mode_reports,
         source_types=scope,
         num_queries=len(golden),
-        num_scored=len(golden) - negatives,
+        num_scored=len(golden) - negatives - scoped,
         num_negative=negatives,
+        num_scoped=scoped,
+    )
+
+
+def build_query_scope(
+    slug_to_source: Mapping[str, tuple[str, str]], query: GoldenQuery
+) -> EffectiveScope | None:
+    """Translate a scoped query's fixture slugs into the seam's scope object.
+
+    The harness must pass the *production* scope object, not a slug list or a
+    source-type filter: `EffectiveScope` is what `LibraryLocalRagSearchService.
+    search(scope=...)` accepts, and its allowlist carries the runtime ids the
+    real writers assigned — which is why the translation can only happen here,
+    against a live runtime's `slug_to_source` map.
+
+    Every failure raises rather than degrading. Dropping an unknown slug would
+    silently narrow the scope (a smaller haystack scores better for a reason
+    no report would show), and running a scoped query unscoped would report an
+    unscoped measurement in a scoped cell.
+
+    Args:
+        slug_to_source: The runtime's fixture slug -> (source_type, source_id)
+            map (`EvalRuntime.slug_to_source`).
+        query: The golden query to build a scope for.
+
+    Returns:
+        ``None`` for every category except ``scoped`` — an unscoped search,
+        which is what the seam's ``scope=None`` means. For a scoped query, an
+        `EffectiveScope` in state ``"scoped"`` whose allowlist holds one
+        non-empty frozenset of runtime ids per source type.
+
+    Raises:
+        ValueError: The query is scoped but carries no ``scope_slugs``, names
+            a slug this runtime never ingested, or names a document whose
+            source type is outside the scope vocabulary.
+    """
+    if query.category != SCOPED_CATEGORY:
+        return None
+    if not query.scope_slugs:
+        raise ValueError(
+            f"golden query {query.id!r} is category {SCOPED_CATEGORY!r} but "
+            "carries no scope_slugs; running it would measure unscoped "
+            "retrieval in a scoped cell"
+        )
+
+    allowlist: dict[str, set[str]] = {}
+    for slug in query.scope_slugs:
+        entry = slug_to_source.get(slug)
+        if entry is None:
+            raise ValueError(
+                f"golden query {query.id!r} scopes slug {slug!r}, which this "
+                "runtime never ingested; the scope would be narrower than the "
+                "fixture asks for"
+            )
+        source_type, source_id = entry
+        if source_type not in SCOPEABLE_SOURCE_TYPES:
+            raise ValueError(
+                f"golden query {query.id!r} scopes slug {slug!r}, whose source "
+                f"type {source_type!r} is outside the scope vocabulary "
+                f"(scopeable: {', '.join(SCOPEABLE_SOURCE_TYPES)})"
+            )
+        allowlist.setdefault(source_type, set()).add(str(source_id))
+
+    return EffectiveScope(
+        state="scoped",
+        allowlist={
+            source_type: frozenset(ids) for source_type, ids in allowlist.items()
+        },
+        cause=None,
     )
 
 
@@ -297,14 +411,20 @@ def _run_query(
     k: int,
     source_types: tuple[str, ...],
     lookup: Mapping[tuple[str, str], str],
+    scope: EffectiveScope | None = None,
 ) -> QueryOutcome:
-    """Run one query and canonicalize its rows, recording rather than raising."""
+    """Run one query and canonicalize its rows, recording rather than raising.
+
+    ``scope`` is passed straight through to the seam's own ``scope=``
+    parameter — `None` for every unscoped query, which is byte-for-byte the
+    call the harness has always made.
+    """
     start = time.perf_counter()
     error: str | None = None
     result: Any = None
     try:
         result = runtime.run(
-            seam.search(query.query, source_types, "rag", top_k=k)
+            seam.search(query.query, source_types, "rag", top_k=k, scope=scope)
         )
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
@@ -312,8 +432,10 @@ def _run_query(
 
     rows: list[Mapping[str, Any]] = []
     backend = ""
+    route_notes: tuple[str, ...] = ()
     if error is None:
         rows, backend, error = _extract_rows(result)
+        route_notes = _route_notes(result)
 
     # Canonicalization failures are NOT caught: they mean the seam's row
     # shape changed under the harness, which must fail the run loudly rather
@@ -332,7 +454,34 @@ def _run_query(
         top_score=top_score,
         top_vector_score=top_vector_score,
         error=error,
+        route_notes=route_notes,
     )
+
+
+def _route_notes(result: Any) -> tuple[str, ...]:
+    """The seam's routing disclosures for one result, if it carried any.
+
+    Both seam shapes keep them in the same place
+    (``diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY]``), and a result that ran
+    exactly as its profile configures carries no ``diagnostics`` key at all —
+    which reads as "no disclosure", not as an error.
+    """
+    # Imported here, not at module scope: this module is imported by the
+    # directory's ALWAYS-ON tests, and the Library state module pulls the
+    # app's config chain in behind it.
+    from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_ROUTE_NOTES_KEY
+
+    diagnostics = (
+        result.get("diagnostics")
+        if isinstance(result, Mapping)
+        else getattr(result, "diagnostics", None)
+    )
+    if not isinstance(diagnostics, Mapping):
+        return ()
+    notes = diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY)
+    if not isinstance(notes, (list, tuple)):
+        return ()
+    return tuple(str(note) for note in notes)
 
 
 def _extract_rows(result: Any) -> tuple[list[Mapping[str, Any]], str, str | None]:
@@ -424,7 +573,13 @@ def _build_mode_report(
         for outcome in outcomes
         if outcome.category != NEGATIVE_CATEGORY and outcome.error is None
     ]
-    overall = _metrics_for(scored, k)
+    # Scoped queries ARE scored — into their own cell — but never into the
+    # cross-mode overall row: a scope diverts a hybrid profile to the
+    # semantic path, so those two columns hold one measurement, and averaging
+    # it in would move a cross-mode number for a routing reason. Same
+    # mechanism as the negative exclusion above, one category further out.
+    averaged = [outcome for outcome in scored if outcome.category != SCOPED_CATEGORY]
+    overall = _metrics_for(averaged, k)
     per_category: dict[str, dict[str, float]] = {}
     for category in sorted({outcome.category for outcome in scored}):
         per_category[category] = _metrics_for(
@@ -470,8 +625,11 @@ def _build_mode_report(
             if outcome.error is not None
         ),
         mean_docs_at_k=(
-            sum(len(outcome.retrieved_doc_ids[:k]) for outcome in scored) / len(scored)
-            if scored
+            # Over the SAME set the overall row averages: it is read as a
+            # companion to that row's precision.
+            sum(len(outcome.retrieved_doc_ids[:k]) for outcome in averaged)
+            / len(averaged)
+            if averaged
             else 0.0
         ),
     )
@@ -495,8 +653,8 @@ def _format_summary(report: EvalReport) -> str:
     lines: list[str] = []
     lines.append(
         f"Retrieval eval @k={k} — {report.num_queries} golden queries "
-        f"({report.num_scored} scored, {report.num_negative} negative) over "
-        f"{'/'.join(report.source_types)}"
+        f"({report.num_scored} scored, {report.num_negative} negative, "
+        f"{report.num_scoped} scoped) over {'/'.join(report.source_types)}"
     )
     lines.append("")
 
@@ -584,12 +742,49 @@ def _format_summary(report: EvalReport) -> str:
             f"{_optional(max(vector_scores) if vector_scores else None)}"
         )
 
+    lines.extend(_scoped_lines(report))
+
     plain = report.modes.get("plain")
     hybrid = report.modes.get("hybrid")
     if plain is not None and hybrid is not None:
         lines.append("")
         lines.append(_delta_line(plain, hybrid, k))
     return "\n".join(lines)
+
+
+def _scoped_lines(report: EvalReport) -> list[str]:
+    """The scoped section: which route each scoped query actually took.
+
+    Omitted entirely for a set with no scoped queries (the header's scoped
+    count is always shown, so "0 scoped" is never silent). The route, not
+    just the score, is the point:
+    while a scope diverts a hybrid profile to semantic, the hybrid column of
+    a scoped row is a second semantic column, and this section is what says
+    so on the face of the report instead of in a docstring.
+    """
+    if not report.num_scoped:
+        return []
+    lines = ["", (
+        f"scoped (excluded from every average above) — {report.num_scoped} "
+        "queries run under a real retrieval scope; reported in their own "
+        "category cell"
+    )]
+    for mode, mode_report in report.modes.items():
+        outcomes = [
+            outcome
+            for outcome in mode_report.queries
+            if outcome.category == SCOPED_CATEGORY
+        ]
+        if not outcomes:
+            lines.append(f"  {mode:<10} no scoped queries ran")
+            continue
+        for outcome in outcomes:
+            notes = "; ".join(outcome.route_notes) or "no routing disclosure"
+            lines.append(
+                f"  {mode:<10} {outcome.query_id:<28} -> "
+                f"{outcome.runtime_backend or '-'}  ({notes})"
+            )
+    return lines
 
 
 def _optional(value: float | None) -> str:

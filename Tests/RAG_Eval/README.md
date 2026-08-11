@@ -28,6 +28,7 @@ Tests/RAG_Eval/
   test_runner_error_paths.py       always-on: three-mode runner's error/edge paths (fake seam, no model)
   test_harness_smoke.py            env-gated: harness can stand up a real indexed runtime at all
   test_harness_run.py              env-gated: the real three-mode run, and the baseline gate itself
+  test_harness_scoped.py           env-gated: what a SCOPED query routes to today (the before-pin)
   conftest.py                      un-sandboxes the model cache dir for env-gated tests only
   harness/
     environment.py                 the RAG_EVAL gate + HF-offline latch
@@ -48,9 +49,10 @@ The metrics and regression/gating modules live in
 Fixture-integrity (`goldenset.py`) and canonicalization are chatbook-native
 harness code, not ports. All four are always-on: they need no model, no
 extras, and run in every ordinary `pytest` invocation.
-Only the two files that stand up a real indexed corpus and run real queries
-through the real seam (`test_harness_smoke.py`, `test_harness_run.py`) are
-gated behind `RAG_EVAL=1`.
+Only the files that stand up a real indexed corpus and run real queries
+through the real seam (`test_harness_smoke.py`, `test_harness_run.py`,
+`test_harness_scoped.py`, `test_fusion_sweep.py`) are gated behind
+`RAG_EVAL=1`.
 
 ## Running it
 
@@ -226,7 +228,7 @@ is more dangerous than a red one.
 
 ## Category meanings
 
-Every golden query carries one of four categories:
+Every golden query carries one of five categories:
 
 - **`keyword`** — the query shares literal tokens with its relevant
   document(s). Exercises the FTS/keyword leg (plain's four-seam path, and
@@ -272,6 +274,28 @@ Every golden query carries one of four categories:
   so TASK-4110's k change moved it 0.0115 → 0.1167 without any retrieval
   getting more confident. `max_top_vector_score` stayed at 0.2387 across
   that same re-stamp, and it is the one to read for confidence.
+- **`scoped`** — the query runs under a real retrieval scope. It is the one
+  category that carries `scope_slugs` (and the only one allowed to): the
+  runner translates those fixture slugs into the production
+  `EffectiveScope` object, using the runtime ids the real writers assigned,
+  and passes it to the seam's own `scope=` parameter. Scoped queries are
+  **excluded from the cross-mode overall row** — the same treatment
+  negatives get, for the same "these columns are not comparable" reason,
+  but here it is routing rather than metric semantics: while the engine's
+  allowlist pushdown is semantic-only, the seam diverts a hybrid profile to
+  the semantic path whenever a scope is active, so a scoped row's `hybrid`
+  and `semantic` columns are one measurement wearing two names. They are
+  still measured, in their own `scoped` cell, and each scoped query records
+  **which route actually executed** (`runtime_backend` plus the seam's
+  `route_notes` disclosure) — that record is what makes a later routing
+  change visible as a change in the report. `test_harness_scoped.py` pins
+  today's diverted routing, deliberately, so that change cannot land
+  silently.
+
+  *Status:* the schema and the runner machinery ship ahead of the fixtures.
+  Until scoped fixtures are authored, this category has no queries, is
+  absent from `REQUIRED_CATEGORIES`, and no `scoped` cell appears in any
+  report or baseline.
 
 ## Reading the summary table
 
@@ -439,7 +463,11 @@ describes the engine path and does not transfer to the pipeline path.
    ∈ `note`/`media`/`conversation`, `title`, `content`) or a `[[query]]`
    entry to `fixtures/golden.toml` (`id`, `query`, `category`,
    `relevant_slugs` — a list of corpus slugs, `[]` only for `category =
-   "negative"`).
+   "negative"`; plus `scope_slugs` for `category = "scoped"`, which only
+   that category may carry and every scoped query must — a non-empty list
+   of `media`/`note` slugs that includes all of its own `relevant_slugs`.
+   Conversations cannot be scoped: they are outside the app's scope
+   vocabulary).
 2. Run `pytest Tests/RAG_Eval/test_goldenset_integrity.py -q` — the
    validator fails fast and lists **every** structural defect at once
    (duplicate slugs/ids, an unknown category or source_type, a

@@ -18,6 +18,14 @@ Contract consumed by the ingestion and runner tasks:
 `source_type` uses the app's singular ingestion vocabulary ("note" / "media" /
 "conversation", the ITEM_TYPE_* values), so a fixture doc names its writer
 without translation.
+
+One golden field is optional: `scope_slugs`, which only the `scoped` category
+may carry and every scoped query must. It names the corpus documents a scoped
+query's retrieval scope allows, and the runner turns it into the production
+`EffectiveScope` object (`runner.build_query_scope`). It is validated at least
+as strictly as `relevant_slugs`, because a scope defect does not surface as an
+error either — it surfaces as a category of numbers that quietly measures
+something other than scoped retrieval.
 """
 from __future__ import annotations
 
@@ -36,6 +44,9 @@ __all__ = [
     "GoldenQuery",
     "GoldenSetError",
     "NEGATIVE_CATEGORY",
+    "REQUIRED_CATEGORIES",
+    "SCOPEABLE_SOURCE_TYPES",
+    "SCOPED_CATEGORY",
     "SOURCE_TYPES",
     "load_corpus",
     "load_fixtures",
@@ -52,17 +63,49 @@ CATEGORIES: tuple[str, ...] = (
     "paraphrase",
     "vocabulary_mismatch",
     "negative",
+    "scoped",
 )
 
 #: The one category permitted to carry an empty ``relevant_slugs``.
 NEGATIVE_CATEGORY = "negative"
+
+#: The one category permitted to carry ``scope_slugs`` -- and required to.
+#: A scoped query measures retrieval under a real ``EffectiveScope`` built
+#: from those slugs, and is reported in its own cell rather than averaged
+#: across modes (see `runner.run_eval`): while a scope forces a hybrid
+#: profile down the semantic path, the "hybrid" and "semantic" columns of a
+#: scoped row are the same measurement, and averaging them into the overall
+#: row would move a cross-mode number for a routing reason.
+SCOPED_CATEGORY = "scoped"
+
+#: Categories that must have at least one query for the set to be valid.
+#: ``scoped`` is deliberately absent: the schema lands before its fixtures
+#: (P2ab Task 2 before Task 3), and requiring a category nobody has authored
+#: would fail the always-on integrity gate for the whole arc. Add it here
+#: when the scoped fixtures land, together with their quota.
+REQUIRED_CATEGORIES: tuple[str, ...] = tuple(
+    category for category in CATEGORIES if category != SCOPED_CATEGORY
+)
+
+#: Source types a ``scope_slugs`` entry may name. Conversations are outside
+#: the scope vocabulary (rag-scope-narrowing spec D5: a scoped search
+#: excludes the conversations seam outright rather than allowlisting it), so
+#: scoping a conversation document would build an allowlist the seam cannot
+#: honour. Stated here rather than imported so this module stays stdlib-only;
+#: `test_goldenset_integrity` pins it against `rag_scope`'s own vocabulary.
+SCOPEABLE_SOURCE_TYPES: tuple[str, ...] = ("media", "note")
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 CORPUS_PATH = FIXTURES_DIR / "corpus.toml"
 GOLDEN_PATH = FIXTURES_DIR / "golden.toml"
 
 _CORPUS_KEYS: tuple[str, ...] = ("slug", "source_type", "title", "content")
-_GOLDEN_KEYS: tuple[str, ...] = ("id", "query", "category", "relevant_slugs")
+#: ``scope_slugs`` is OPTIONAL (scoped queries only) but must be listed:
+#: `_check_unknown_keys` rejects anything not named here, so a loader that
+#: did not know the key would reject every scoped fixture as malformed.
+_GOLDEN_KEYS: tuple[str, ...] = (
+    "id", "query", "category", "relevant_slugs", "scope_slugs",
+)
 
 
 class GoldenSetError(Exception):
@@ -100,12 +143,20 @@ class GoldenQuery:
     ``relevant_slugs`` is a tuple of **fixture slugs**, never DB ids: the real
     writer APIs assign autoincrement ids per run, so ingestion records the
     slug -> runtime-id mapping and the metric layer resolves through it.
+
+    ``scope_slugs`` carries the same kind of slugs for the same reason, and
+    is ``None`` for every category except ``scoped``: ``None`` means "run
+    this query unscoped", which is what every pre-scope query means and must
+    keep meaning. An empty tuple is NOT that -- it is rejected by `validate`,
+    because ``EffectiveScope`` has no scoped-with-nothing state and an empty
+    scope would silently resolve to an unrestricted search.
     """
 
     id: str
     query: str
     category: str
     relevant_slugs: tuple[str, ...]
+    scope_slugs: tuple[str, ...] | None = None
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -133,6 +184,46 @@ def _clean_string_field(
         )
         return ""
     return value.strip()
+
+
+def _slug_list_field(
+    entry: dict[str, Any], key: str, label: str, defects: list[str]
+) -> tuple[str, ...] | None:
+    """Parse a list-of-slugs field, recording a defect per malformed entry.
+
+    Args:
+        entry: The raw query table.
+        key: Field name (``relevant_slugs`` or ``scope_slugs``).
+        label: Human label for defect messages.
+        defects: Accumulator, appended to in place.
+
+    Returns:
+        The stripped slugs as a tuple (``()`` for a present-but-empty list),
+        or ``None`` when the key is absent or its value was malformed. The
+        caller distinguishes those two cases: absence is legal for
+        ``scope_slugs`` and a separate defect for ``relevant_slugs``, while a
+        malformed value has already been recorded here.
+    """
+    if key not in entry:
+        return None
+    raw_slugs = entry[key]
+    if not isinstance(raw_slugs, list):
+        defects.append(
+            f"{label}: field {key!r} must be a list of corpus slugs "
+            f"(got {type(raw_slugs).__name__})"
+        )
+        return None
+    bad = False
+    for position, slug in enumerate(raw_slugs):
+        if not isinstance(slug, str) or not slug.strip():
+            defects.append(
+                f"{label}: {key}[{position}] must be a non-empty string "
+                f"(got {slug!r})"
+            )
+            bad = True
+    if bad:
+        return None
+    return tuple(slug.strip() for slug in raw_slugs)
 
 
 def _check_unknown_keys(
@@ -224,34 +315,93 @@ def load_golden(path: Path | str) -> list[GoldenQuery]:
             for key in ("id", "query", "category")
         }
 
-        slugs: tuple[str, ...] = ()
         if "relevant_slugs" not in entry:
             defects.append(f"{label}: missing required key 'relevant_slugs'")
-        else:
-            raw_slugs = entry["relevant_slugs"]
-            if not isinstance(raw_slugs, list):
-                defects.append(
-                    f"{label}: field 'relevant_slugs' must be a list of corpus "
-                    f"slugs (got {type(raw_slugs).__name__})"
-                )
-            else:
-                bad = False
-                for position, slug in enumerate(raw_slugs):
-                    if not isinstance(slug, str) or not slug.strip():
-                        defects.append(
-                            f"{label}: relevant_slugs[{position}] must be a "
-                            f"non-empty string (got {slug!r})"
-                        )
-                        bad = True
-                if not bad:
-                    slugs = tuple(slug.strip() for slug in raw_slugs)
+        slugs = _slug_list_field(entry, "relevant_slugs", label, defects) or ()
+        # Absent `scope_slugs` stays None ("run unscoped"), which is what
+        # every non-scoped query means; `validate` decides which categories
+        # may carry it.
+        scope_slugs = _slug_list_field(entry, "scope_slugs", label, defects)
 
         if all(values.values()):
-            queries.append(GoldenQuery(**values, relevant_slugs=slugs))
+            queries.append(
+                GoldenQuery(**values, relevant_slugs=slugs, scope_slugs=scope_slugs)
+            )
 
     if defects:
         raise GoldenSetError(defects, context=path)
     return queries
+
+
+def _check_scope_slugs(
+    query: GoldenQuery,
+    known_slugs: set[str],
+    source_type_by_slug: dict[str, str],
+    defects: list[str],
+) -> None:
+    """Check one query's ``scope_slugs`` against every scope rule.
+
+    Each rule turns a scope defect into a loud failure rather than a
+    plausible number: a scope on the wrong category is silently ignored by
+    the runner (which scopes by category), a missing or empty scope makes a
+    "scoped" cell an ordinary unscoped measurement, an unscopeable source
+    type builds an allowlist the seam cannot honour, and a target outside its
+    own scope is unreachable by construction -- it scores 0.0 forever and
+    reads as a retrieval regression.
+
+    Args:
+        query: The query to check.
+        known_slugs: Every slug the corpus defines.
+        source_type_by_slug: Corpus slug -> source_type.
+        defects: Accumulator, appended to in place.
+    """
+    if query.category != SCOPED_CATEGORY:
+        if query.scope_slugs is not None:
+            defects.append(
+                f"query {query.id!r}: category {query.category!r} must not "
+                f"carry scope_slugs (only {SCOPED_CATEGORY!r} may be scoped)"
+            )
+        return
+
+    if query.scope_slugs is None:
+        defects.append(
+            f"query {query.id!r}: category {SCOPED_CATEGORY!r} requires "
+            "scope_slugs (a scoped query without a scope measures unscoped "
+            "retrieval in a scoped cell)"
+        )
+        return
+    if not query.scope_slugs:
+        defects.append(
+            f"query {query.id!r}: scope_slugs is empty; there is no "
+            "scoped-with-nothing state, so an empty scope would search "
+            "everything"
+        )
+        return
+
+    for slug, count in sorted(Counter(query.scope_slugs).items()):
+        if count > 1:
+            defects.append(f"query {query.id!r}: repeats scope_slug {slug!r}")
+        if slug not in known_slugs:
+            defects.append(
+                f"query {query.id!r}: unknown scope_slug {slug!r} "
+                "(no corpus document has that slug)"
+            )
+        elif source_type_by_slug[slug] not in SCOPEABLE_SOURCE_TYPES:
+            defects.append(
+                f"query {query.id!r}: scope_slug {slug!r} has source_type "
+                f"{source_type_by_slug[slug]!r}, which is outside the scope "
+                f"vocabulary (scopeable: {', '.join(SCOPEABLE_SOURCE_TYPES)})"
+            )
+
+    outside = [
+        slug for slug in query.relevant_slugs if slug not in set(query.scope_slugs)
+    ]
+    if outside:
+        defects.append(
+            f"query {query.id!r}: relevant_slugs {outside} lie outside its own "
+            "scope, so they can never be retrieved and the cell reports 0.0 "
+            "forever"
+        )
 
 
 def validate(corpus: Sequence[CorpusDoc], golden: Sequence[GoldenQuery]) -> None:
@@ -269,8 +419,9 @@ def validate(corpus: Sequence[CorpusDoc], golden: Sequence[GoldenQuery]) -> None
             query ids, unknown ``source_type``/``category`` values, a
             ``relevant_slugs`` entry with no such document, an empty
             ``relevant_slugs`` on a non-negative query (or a non-empty one on
-            a negative query), a category with no queries, or a source type
-            with no documents.
+            a negative query), a REQUIRED category with no queries, a source
+            type with no documents, or any broken scope rule (see
+            ``_check_scope_slugs``).
     """
     defects: list[str] = []
 
@@ -295,7 +446,9 @@ def validate(corpus: Sequence[CorpusDoc], golden: Sequence[GoldenQuery]) -> None
             defects.append(f"duplicate query id: {query_id!r} appears {count} times")
 
     known_slugs = {doc.slug for doc in corpus}
+    source_type_by_slug = {doc.slug: doc.source_type for doc in corpus}
     for query in golden:
+        _check_scope_slugs(query, known_slugs, source_type_by_slug, defects)
         if query.category not in CATEGORIES:
             defects.append(
                 f"query {query.id!r}: unknown category {query.category!r} "
@@ -325,7 +478,7 @@ def validate(corpus: Sequence[CorpusDoc], golden: Sequence[GoldenQuery]) -> None
 
     if golden:
         present_categories = {query.category for query in golden}
-        for category in CATEGORIES:
+        for category in REQUIRED_CATEGORIES:
             if category not in present_categories:
                 defects.append(
                     f"no queries in category {category!r} — the per-capability "
