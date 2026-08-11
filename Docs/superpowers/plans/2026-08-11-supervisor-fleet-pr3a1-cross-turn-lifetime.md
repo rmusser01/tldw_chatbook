@@ -155,6 +155,19 @@ For each seam below, a surviving child must either keep a valid one, get a repla
   - `review_tool_calls` hook (`:9106`) and the gate state it closes over
   - `ToolCatalogRegistry` + providers (`:1367-1394`)
   - `_turn_definitions` (`agent_service.py:2411-2414`) — frozen per turn *by design*; confirm freezing is still right for a surviving child and say so explicitly
+  - **`ConsoleProviderGateway` / the owned HTTP client** (added after Task 1's
+    review — this list is an enumeration, so an omitted seam is a missed
+    seam). `gateway.aclose()`, called from `ChatScreen.on_unmount`, pops the
+    calling loop's client and schedules a stale-close for **every other
+    cached loop's** client, skipping only *closed* loops — and a live child's
+    loop is not closed, so its pool gets closed on its own loop mid-request.
+    Note this is **not** introduced by the fleet: it already reaches the
+    PRIMARY today, because `run_reply` is dispatched via `asyncio.to_thread`,
+    which survives Task cancellation (the controller's own comment at
+    `console_chat_controller.py:1322-1324` says so), so `on_unmount` can call
+    `aclose()` while a turn loop is still live. Per-child lifelines enlarge
+    the population from one loop to one-per-live-child. It becomes
+    user-visible from Task 2 onward, when children genuinely survive.
 - [ ] **Step 2: Confirm what already works.** `revoke_approval_rounds_for_run` is run-keyed and lives on the long-lived controller (`:4052-4145`) — verify a cross-turn child's approval cards still revoke correctly, with a test.
 - [ ] **Step 3: Implement the decisions.** **Step 4: Gate + Commit.**
 
