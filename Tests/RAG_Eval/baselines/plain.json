@@ -1,6 +1,6 @@
 {
   "baseline_id": "plain",
-  "created_at": "2026-08-11T02:16:38.868759+00:00",
+  "created_at": "2026-08-11T19:39:50.867557+00:00",
   "pipeline_config": {
     "mode": "plain",
     "k": 10,
@@ -8,25 +8,41 @@
     "source_types": [
       "media",
       "notes",
-      "conversations"
+      "conversations",
+      "prompts"
     ]
   },
   "metrics": {
-    "overall.precision": 0.3684210526315789,
-    "overall.recall": 0.35526315789473684,
-    "overall.mrr": 0.3684210526315789,
-    "overall.ndcg": 0.358240715599091,
-    "overall.f1": 0.35964912280701755,
+    "overall.precision": 0.30434782608695654,
+    "overall.recall": 0.29347826086956524,
+    "overall.mrr": 0.30434782608695654,
+    "overall.ndcg": 0.295937982451423,
+    "overall.f1": 0.2971014492753623,
     "category.keyword.precision": 0.875,
     "category.keyword.recall": 0.84375,
     "category.keyword.mrr": 0.875,
     "category.keyword.ndcg": 0.8508216995478411,
     "category.keyword.f1": 0.8541666666666666,
+    "category.negation.precision": 0.0,
+    "category.negation.recall": 0.0,
+    "category.negation.mrr": 0.0,
+    "category.negation.ndcg": 0.0,
+    "category.negation.f1": 0.0,
     "category.paraphrase.precision": 0.0,
     "category.paraphrase.recall": 0.0,
     "category.paraphrase.mrr": 0.0,
     "category.paraphrase.ndcg": 0.0,
     "category.paraphrase.f1": 0.0,
+    "category.prompt.precision": 0.0,
+    "category.prompt.recall": 0.0,
+    "category.prompt.mrr": 0.0,
+    "category.prompt.ndcg": 0.0,
+    "category.prompt.f1": 0.0,
+    "category.scoped.precision": 1.0,
+    "category.scoped.recall": 1.0,
+    "category.scoped.mrr": 1.0,
+    "category.scoped.ndcg": 1.0,
+    "category.scoped.f1": 1.0,
     "category.vocabulary_mismatch.precision": 0.0,
     "category.vocabulary_mismatch.recall": 0.0,
     "category.vocabulary_mismatch.mrr": 0.0,
@@ -39,7 +55,7 @@
       "transformers": "5.6.2",
       "torch": "2.11.0",
       "chromadb": "1.5.8",
-      "corpus_sha256": "db3937dc3c4dec4ba323e21b7899b789d6f12ea2d53b13bc4a9f074ea1404dcb",
+      "corpus_sha256": "7234f5823be703dd3de2e2b70ee78da1fbec76fc3d967520932a849830edca04",
       "platform": "darwin"
     },
     "environment_info": {
@@ -47,16 +63,17 @@
     },
     "report_only": {
       "latency": {
-        "count": 45.0,
-        "mean_ms": 31.4,
-        "p95_ms": 200.2,
-        "max_ms": 333.1,
-        "total_s": 1.4
+        "count": 60.0,
+        "mean_ms": 14.8,
+        "p95_ms": 25.1,
+        "max_ms": 41.3,
+        "total_s": 0.9
       },
-      "mean_docs_at_k": 0.368,
-      "num_queries": 38,
-      "num_golden_queries": 45,
+      "mean_docs_at_k": 0.304,
+      "num_queries": 46,
+      "num_golden_queries": 60,
       "num_negative": 7,
+      "num_scoped": 7,
       "runtime_backends": [
         "local-fts"
       ],

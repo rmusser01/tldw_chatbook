@@ -578,12 +578,12 @@ a 15-deep one or to have a prompt to find at all).*
 - ***A scoped hybrid query keeps its keyword leg.*** With a Console RAG
   scope narrowed to a single note (`Scope: 1`) and the hybrid profile
   active, "zircaloy flange torque" staged that note as evidence — a note
-  with no embedding at all, so only the keyword leg could have produced it,
-  and the pre-B1 scoped divert to semantic-only could not have. No
-  "semantic only" text appeared anywhere on that screen.
+  seeded after the vector index was copied and never indexed during the
+  session, so the keyword leg is what produced it, and the pre-B1 scoped
+  divert to semantic-only could not have. No "semantic only" text appeared
+  anywhere on that screen.
 - ***A prompt can now be found.*** In RAG Answer mode on the hybrid
   profile, "shift log summary supervisor" returned the saved prompt *Shift
   log summary for a supervisor* as evidence row 4, typed `prompt` and
   banded **`| keyword match`** — the first time a prompt has appeared in
   these results at all.
->>>>>>> 08c9fe294 (feat(library): rag depth honors the active profile default (B3) + live evidence)

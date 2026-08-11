@@ -10,16 +10,17 @@ deterministic fixture corpus + golden query set spanning notes, media,
 conversations and saved prompts, and an env-gated pytest harness that runs
 every golden query through the real seam across all three profile modes.
 
-> **Reading this during the P2ab arc.** The fixture set has been renewed
-> (172 documents, 60 queries) with fail-first classes — `scoped`,
-> `negation`, `prompt` — admitted only where today's pipeline was measured
-> to fail them. The per-category analysis further down still describes the
-> pre-renewal state, in which hybrid recall sat at 1.000 everywhere; the
-> per-category headroom table that replaces it, and the class-level
-> admission outcomes (`compositional` and `acronym` proved unfailable on
-> this corpus and model), land with the arc's one deliberate re-stamp. Until
-> then every gated run reads `environment_changed`, which is expected and
-> not a regression. See golden.toml's fail-first block for the measurements.
+> **The instrument was renewed in P2ab (TASK-15020, 2026-08-11).** 172
+> documents, 60 queries, with three fail-first classes — `scoped`,
+> `negation`, `prompt` — admitted only where today's pipeline was *measured*
+> to fail them. Hybrid overall recall came off the 1.000 ceiling it had sat
+> at since the weighting arc and now reads **0.826**, and the baselines were
+> re-stamped once, deliberately, at the end of that arc. Two candidate
+> classes (`compositional`, `acronym`) proved **unfailable** on this corpus
+> and model and were not authored — that is recorded evidence against two
+> P2c feature premises, not an omission. Start at the **headroom table**
+> below: it names, per category, what is left to improve and what can only
+> be regressed.
 
 **Why this exists.** Every later retrieval change in the RAG-port programme
 (P2's query expansion, HyDE, PRF, a clarification gate, a granularity
@@ -168,19 +169,62 @@ the only one where a *weighting* change (not a wiring change) moved a
 number, and it moved exactly one query: keyword recall 0.938 → 1.000 is
 15/16 → 16/16.
 
-**The rescue query is now at its ceiling too.** With
-`kw-plant-maintenance-record` answered, every scored query in this corpus
-is a hit in hybrid mode (overall recall 1.000). A future fusion retune
-therefore has *nothing left to improve* here and can only be measured for
-regression — the same trap documented for `vocabulary_mismatch` above. If
-another weighting change needs evidence that it *adds* something, it needs
-a **new** vector-blind fixture authored the way the existing one was (see
-the "VECTOR-BLIND KEYWORD TARGET" sections in both fixture files); do not
-read this corpus going quiet as "fusion is finished".
+### The headroom table (what P2c can actually move)
 
-**The bound on "nothing regressed".** It is a 49-document corpus in which
-every scored query except one was already answered at rank 1, so there was
-very little left to damage; and this harness measures at `k = 10`, while
+**The ceiling is gone.** At the end of the weighting arc every scored query
+in this corpus was a hit in hybrid mode (overall recall 1.000), so a fusion
+retune had nothing left to improve here and could only be measured for
+regression. P2ab's fail-first authoring is what fixed that. These are the
+numbers the re-stamp committed (`k=10`, 60 queries, 46 scored — negatives
+and scoped are excluded from the overall row and reported in their own
+cells):
+
+| category | n | semantic R@10 | plain R@10 | hybrid R@10 | headroom |
+|---|---|---|---|---|---|
+| `keyword` | 16 | 0.938 | 0.844 | **1.000** | hybrid at ceiling; semantic/plain can still show a rise |
+| `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
+| `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
+| `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
+| `prompt` | 5 | 0.000 | 0.000 | **0.000** | **bounded by TASK-15400**, not by prompts retrieval — see below |
+| `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
+| **overall** | **46** | **0.804** | **0.293** | **0.826** | hybrid is **0.174** off the ceiling |
+
+**The two 0.000 rows are P2c's admission targets.** `negation` and `prompt`
+are the only cells with room to rise, and they are not the same kind of
+problem:
+
+- **`negation` 0.000 in all three modes is a genuine open capability gap.**
+  Three fixtures, each describing the exception *without ever naming the
+  aspect the query negates*, so the cue word lives only in the
+  norm-asserting documents: the keyword paths cannot reach the target and
+  the vector leg is pulled onto the norm. Nothing in the pipeline addresses
+  this today. This is the cell to move.
+- **`prompt` 0.000 is an HONEST BOUND, not a B2 failure.** B2 shipped the
+  prompts keyword sub-leg and it is **proven reachable end-to-end** — the
+  same runtime answers "shift log summary supervisor" with the right prompt
+  at hybrid rank 9, FTS-only, provenance read off `metadata`. The category
+  still reads 0.000 because the engine's MATCH construction ANDs every
+  query token (TASK-15400 owns that, and the measurement is under "Reading
+  the summary table": the keyword leg returns zero rows for 40 of the 60
+  queries). Prompts have no vector leg to hide it, so prompts are where it
+  shows. **Do not read this cell as evidence that B2 did not land** — B2's
+  reachability is pinned separately, and fixing 15400 is what will move it.
+
+**Hybrid's 0.174 of overall headroom is real but is mostly those two
+classes.** Do not expect a fusion knob to reach it: `negation` needs a
+capability the pipeline does not have, and `prompt` needs 15400. If a
+future weighting change needs evidence that it *adds* something to the
+classes already covered, it still needs a **new** vector-blind fixture
+authored the way the existing one was (see the "VECTOR-BLIND KEYWORD
+TARGET" sections in both fixture files).
+
+**The bound on "nothing regressed", as it stood at the end of the weighting
+arc.** It was a 49-document corpus in which every scored query except one
+was already answered at rank 1, so there was very little left to damage —
+**that half is what P2ab's fail-first authoring retired**: the corpus is now
+172 documents and hybrid recall is 0.826, so there is something left to
+damage and something left to gain (see the headroom table above). The other
+half stood on `k`: this harness measures at `k = 10`, while
 the Library Search/RAG surface, at the time this was written, defaulted to a
 hardcoded `LIBRARY_RAG_DEFAULT_TOP_K = 5` (half the fused candidate window,
 since `_hybrid_search` fetches `top_k * hybrid_pool_multiplier` per leg). A
@@ -216,6 +260,109 @@ them later:
 The discipline the table demonstrates: informational gated runs mid-arc,
 **one** deliberate re-stamp at the end, and both sets of numbers in the PR.
 
+### The third real re-stamp: P2ab (TASK-15020, 2026-08-11)
+
+Eight tasks ran against these baselines without touching them. Every one of
+those gated runs read `ENVIRONMENT_CHANGED` — first on `corpus_sha256` (the
+corpus tripled in Task 3), then additionally on
+`pipeline_config.source_types` (B2 added `prompts`; a **pre-existing key
+whose value changed**, not a schema change). That was expected, recorded in
+each task's report, and deliberately never "fixed" early. One re-stamp
+closed it, and every delta in it belongs to one of five classes — no
+surprises were stamped over:
+
+| delta class | what moved | why |
+|---|---|---|
+| new category rows (`absent -> value`) | `negation`, `prompt`, `scoped` × 5 metrics × 3 modes | the fail-first classes exist for the first time |
+| the scoped flip | hybrid `scoped` 0.000 -> **1.000** (MRR 0.163, NDCG 0.348) | B1 routing, measured — see the `scoped` bullet under Category meanings |
+| semantic precision/F1 | `keyword` P 0.126 -> 0.117, `paraphrase` 0.103 -> 0.100, `vocabulary_mismatch` 0.106 -> 0.103 (+ their F1s) | **mechanical, not retrieval**: `precision@k` divides by `min(k, len(retrieved))`, and with 123 more documents semantic now fills all ten slots — `mean_docs_at_k` 9.105 -> 9.652, measured. Recall/MRR/NDCG on all three cells are byte-identical, which is what says retrieval did not move |
+| hybrid `keyword` MRR/NDCG −0.001 | 0.945 -> 0.944, 0.957 -> 0.956 | the single relevant rank that moved in the whole old golden set: `kw-plant-maintenance-record`'s target 8 -> 9 (still rescued). `(1/8 − 1/9)/16 = 0.00087`, which is the whole delta |
+| overall rows | semantic 0.974 -> 0.804, plain 0.355 -> 0.293, hybrid **1.000 -> 0.826** | the scored set grew 38 -> 46 with classes the pipeline fails |
+
+**The old-queries deviation, as adjudicated ACCEPT in Task 3** — carried
+here verbatim so the third and fourth rows above are never re-derived as an
+unexplained regression: *"Full top-10 identity was measured, not achieved,
+and it is not achievable when a corpus triples — no rewording fixes a tail.
+What was held (and is the property the measurement rests on) is that every
+old query's relevant ranks and every negative's behaviour are unchanged.
+Nothing was reworded because nothing needed it."* Concretely: 45 of 135
+before/after cells had identical top-10 lists and they are exactly the 45
+`plain` cells; relevant-document ranks were unchanged on 44 of 45 queries in
+every mode; `plain` still returns nothing for all 7 negatives.
+
+## Fail-first authoring: the admission protocol
+
+A fixture that the pipeline already answers measures nothing. P2ab
+therefore **probed every candidate against the real stack before admitting
+it**, and the protocol is now the rule for adding any query to this set:
+
+1. Write the candidate and its target document.
+2. Run it through the real seam at `k=10` in **all three modes**.
+3. **Admit it only if the target misses the top-10 in both vector-bearing
+   modes** (hybrid *and* semantic), each having actually run and returned
+   rows. The `plain` rank is recorded, never required.
+4. Write the measurement into the fixture as an `# admitted: <date>
+   hybrid=.. semantic=.. plain=..` receipt (`fixture_probe.admission_comment`
+   produces it; an always-on test checks both its presence and its shape).
+5. If the candidate passes today, **it is not admitted** — and the rejection
+   is recorded with its ranks, because a class that cannot be made to fail
+   is itself a finding.
+
+31 candidates were probed this way and **15 admitted**. Per-class outcomes,
+which are the recorded evidence P2c should plan against:
+
+| class | authored | ADMITTED | outcome |
+|---|---|---|---|
+| `scoped` | 8 | **7** | admitted by *routing* — `plain` rank 1 on all seven, vector-blind on all seven. B1 flipped hybrid 0.000 -> 1.000 |
+| `negation` | 6 | **3** | the admitted three never name the negated aspect; the rejected three (ranks 4, 6, 7) have exception documents that *are* about the queried aspect, so topical proximity answers them before negation-blindness can matter |
+| `prompt` | 5 | **5** | structural: no vector index by construction. Probed anyway, so the record shows absence rather than assumption |
+| `acronym` | 6 | **0** | **UNFAILABLE on this corpus and model** |
+| `compositional` | 6 | **0** | **UNFAILABLE on this corpus and model** |
+| `precision_pressure` | 0 | 0 | not authored, deliberately |
+
+**The two unfailable classes are P2c evidence, and the strongest kind — a
+measured negative.**
+
+- **`acronym`.** Bare acronym in the query, expansion spelled out in the
+  target, letters absent from it, plus the reverse direction and decoys
+  using the letters in another sense. `all-MiniLM-L6-v2` bridges MTBF / PPE
+  / BOM / RTO / UPS to their expansions unaided — ranks 1, 1, 1, 2, 2. The
+  one anchor deliberately diluted (four extra documents so the topical
+  anchor could not resolve the query alone) moved its target from rank 1 to
+  rank 4 and no further. **This retires acronym expansion as a P2c feature
+  premise**, the same way P1's vocabulary-mismatch collapse retired query
+  expansion.
+- **`compositional`.** Answer documents holding both halves of a stated
+  conjunction in different sentences, with decoys holding each half
+  squarely. Ranks 1, 1, 1, 1, 2, 2; anchor dilution did not move it. A
+  document containing both halves is simply the nearest neighbour of a
+  query naming both. **Retired as a P2c premise.**
+- **`precision_pressure` was not authored, deliberately.** The class needs
+  many near-relevant decoys *and* a crisp relevance boundary between them,
+  and the two requirements pull against each other: with a dozen
+  near-duplicates the cell measures where the label was drawn, not what
+  retrieval did.
+
+All 16 rejected candidates' query texts, targets and ranks are preserved in
+`golden.toml`'s measured-outcomes block, so both unfailable rulings can be
+audited in place rather than by re-authoring the candidates.
+
+**Two traps this protocol caught, worth knowing before authoring more:**
+
+- **Scope size is the `scoped` class's lever, and it was measured.** With 32
+  documents in scope, 1 of 8 candidates failed; at 80, six; at 100, seven.
+  A top-10 over a small scope returns nearly everything in it, so the cell
+  would report recall 1.000 for a reason unrelated to retrieval. The shipped
+  scope is pinned at **exactly 100** slugs, shared byte-identically by all
+  seven fixtures and digest-pinned (`SHIPPED_SCOPE_SHA256`) so a
+  coordinated swap at the same size still fails a test. Trimming it would
+  have raised the before-number from 0.000 to roughly 0.43 with every test
+  green.
+- **A candidate whose subject is the corpus's only document on that subject
+  measures corpus sparseness, not the pipeline.** Every class needed anchor
+  company before its ranks meant anything; 24 documents were added purely
+  for that.
+
 ## Fingerprint semantics: "environment changed" is not a regression
 
 Every baseline carries an environment fingerprint over the load-bearing
@@ -250,7 +397,11 @@ is more dangerous than a red one.
 
 ## Category meanings
 
-Every golden query carries one of five categories:
+Every golden query carries one of the seven categories in
+`goldenset.CATEGORIES`. A category must not be declared ahead of its
+fixtures (`test_every_declared_category_is_required_and_populated` pins
+that in both directions), which is why the two unfailable classes above are
+absent from the tuple entirely rather than sitting in it empty:
 
 - **`keyword`** — the query shares literal tokens with its relevant
   document(s). Exercises the FTS/keyword leg (plain's four-seam path, and
@@ -270,18 +421,42 @@ Every golden query carries one of five categories:
 - **`vocabulary_mismatch`** — a stronger version of paraphrase: the query
   and the document use genuinely disjoint vocabularies for the same concept
   (e.g. "no will" / "intestacy"). **Caveat, found running this harness for
-  real, not assumed at design time:** against this 49-document corpus and
+  real, not assumed at design time:** against this corpus and
   `all-MiniLM-L6-v2`, every planted vocabulary-mismatch pair is bridged —
   semantic and hybrid score 1.000 recall at rank 1 on all nine
   `vocabulary_mismatch` queries. Only `plain` shows the gap (0.000). So on
   *this* corpus and model, the category currently measures the
   plain-vs-vector delta, not P2 query-expansion headroom — there is no
   remaining ceiling to detect an *improvement* against, only a regression.
-  If P2 work wants a category that can show query-expansion gains, it needs
-  either a harder corpus (closer topical distractors, longer documents) or
-  a different kind of evidence than recall on this fixture set; do not read
-  vocabulary_mismatch's current 1.000s as "P2 already solved" or "nothing
-  left to build."
+  **P2ab tested exactly that escape hatch and it did not open.** The caveat
+  was first written against a 49-document corpus, and the obvious next move
+  was "make the corpus harder"; the corpus is now 172 documents with 24 of
+  them added specifically as topical anchors and decoys, and this cell is
+  still 1.000/1.000. So a *bigger* corpus is not the answer — if P2 work
+  wants a category that can show query-expansion gains it needs closer
+  distractors than this corpus contains, or a different kind of evidence
+  than recall on this fixture set. Do not read vocabulary_mismatch's
+  1.000s as "P2 already solved" or "nothing left to build." (The same
+  probe-before-you-believe move retired two further P2c premises outright:
+  see the unfailable classes in the admission protocol above.)
+- **`negation`** — the query asks for the case that *lacks* some property
+  ("which outstation does **not** take a standard mains supply"), and the
+  answer document describes the exception without ever naming the negated
+  aspect ("Skellow Isle draws everything from a solar array"). The cue word
+  therefore occurs only in the norm-asserting documents, so the keyword
+  paths cannot reach the target and the vector leg is pulled onto the norm.
+  **0.000 in all three modes**, and it is the one category whose zero is a
+  plain open capability gap rather than a bound on something else. Three
+  fixtures, admitted from six probed — see the admission protocol above for
+  why the other three are recorded as measured non-failures.
+- **`prompt`** — the target is a saved prompt (`source_type = "prompt"`).
+  Prompts are **keyword-only by construction**: B2 (TASK-15020) gave them a
+  read-only FTS sub-leg and deliberately no vector index, so `semantic`
+  reads 0.000 structurally. The category reads **0.000 in all three modes**,
+  which is a bound on the engine's MATCH construction (TASK-15400), not on
+  prompts retrieval — the sub-leg is proven reachable on the same runtime.
+  See the headroom table and the `docs`/FTS bullet under "Reading the
+  summary table" for the measurement and the caution.
 - **`negative`** — no relevant document exists for the query. Excluded from
   every averaged precision/recall/MRR/NDCG/F1 (recall over an empty
   relevant set is 0.0 by convention and would drag every average toward
@@ -364,9 +539,9 @@ Every golden query carries one of five categories:
 
 ```
 mode           P@k     R@k     MRR    NDCG      F1   docs    n   mean ms   p95 ms  errors  backend
-semantic     0.114   0.974   0.974   0.974   0.203    9.1   38      ...
-plain        0.368   0.355   0.368   0.358   0.360    0.4   38      ...
-hybrid       0.103   0.974   0.974   0.974   0.185   10.0   38      ...
+semantic     0.089   0.804   0.804   0.804   0.160    9.7   46      ...
+plain        0.304   0.293   0.304   0.296   0.297    0.3   46      ...
+hybrid       0.087   0.826   0.807   0.811   0.157   10.0   46      ...
 ```
 
 Two columns need context before you read the P/R/MRR/NDCG numbers as
@@ -374,7 +549,7 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 
 - **`docs`** is the mean number of documents each query actually returned.
   Precision here divides by `min(k, len(retrieved))`, not by `k` — so
-  plain's 0.4 docs/query and P=0.875-on-keyword means "when it returned
+  plain's 0.3 docs/query and P=0.875-on-keyword means "when it returned
   anything it was almost always right," not "it ranked ten results well."
   Compare `docs` before comparing precision across modes.
 - **The keyword (FTS) leg is silent for most of this golden set, and the
@@ -417,12 +592,18 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   part of the fingerprint or the gate. Do not add a latency threshold to
   this harness without first re-measuring that variance — it will fail on
   noise, not on a real slowdown.
-- **Ten of the `plain` cells sit at exactly 0.000** (paraphrase and
-  vocabulary_mismatch, all five gated metrics each — precision, recall,
-  MRR, NDCG and F1 — across the categories where plain-mode has no
-  literal-token overlap to find). A metric already
-  at its floor cannot register a regression — there is nowhere lower for it
-  to go — so those specific cells are structurally inert to the gate today.
+- **45 of the 105 gated cells sit at exactly 0.000**, and you should know
+  which before quoting the gate's coverage. A metric already at its floor
+  cannot register a regression — there is nowhere lower for it to go — so
+  those cells are structurally inert to the gate today. They are: `plain`
+  20 (paraphrase, vocabulary_mismatch, negation, prompt), `semantic` 15
+  (negation, prompt, scoped), `hybrid` 10 (negation, prompt) — all five
+  gated metrics each. **This is up from 10 of 60 before P2ab, and the
+  increase is the deliberate cost of fail-first authoring**: a cell at
+  0.000 is exactly what a category with headroom looks like before the
+  headroom is taken. The live (non-floor) count still rose, 50 → 60, so the
+  gate watches more than it did; it just also carries more declared-empty
+  cells that P2c is meant to fill.
   If plain-mode keyword expansion (P2) ever gives those cells a nonzero
   value, the baseline must be re-stamped before the *next* change can be
   gated against them; until then, treat "plain paraphrase precision is
