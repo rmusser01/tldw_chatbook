@@ -709,6 +709,13 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
         async def create_profile(self, *args: Any, **kwargs: Any) -> Any:
             raise AssertionError("not used")
 
+        async def create_profile_with_reference(
+            self,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            raise AssertionError("not used")
+
         async def update_profile(self, *args: Any, **kwargs: Any) -> Any:
             raise AssertionError("not used")
 

@@ -244,6 +244,7 @@ async def _cleanup_audio_cpp_privacy_resources(
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     expected = {
         "AssignedTTSProfileSnapshot",
+        "AudioCppCloneSetupProjection",
         "AudioCppDiagnosticLine",
         "AudioCppProcessAdmissionSnapshot",
         "AudioCppProcessFailure",
@@ -278,7 +279,10 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "ProgressSink",
         "ProviderHealth",
         "STTSGeneratedAudio",
+        "STTSPlaygroundCloneSnapshot",
+        "STTSPlaygroundProfilePreview",
         "STTSPlaygroundRequest",
+        "STTSPlaygroundResultProjection",
         "TTSAudioResponse",
         "TTSConfigMutation",
         "TTSCloneReference",

@@ -1043,6 +1043,16 @@ async def test_runtime_diagnostics_are_collapsed_and_interactions_are_passive(
     async with app.run_test(size=(150, 60)) as pilot:
         await _wait_until(pilot, lambda: service.runtime_observation_calls > 0)
         diagnostics = app.query_one("#audio-cpp-runtime-diagnostics", Collapsible)
+        await _wait_until(
+            pilot,
+            lambda: "generation: 5"
+            in str(
+                app.query_one(
+                    "#audio-cpp-diagnostics-generation",
+                    Static,
+                ).render()
+            ).lower(),
+        )
 
         assert diagnostics.collapsed is True
         assert (
