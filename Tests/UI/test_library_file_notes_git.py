@@ -1495,6 +1495,10 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
     panel.styles.display = "block"
     app = _PanelHarness(panel)
     async with app.run_test(size=size) as pilot:
+        # Let Textual's initial screen focus settle before exercising the
+        # feature-owned review transition. Otherwise the screen's one-time
+        # autofocus may race the review callback and focus the scroll owner.
+        await pilot.pause()
         panel.render_commit_review(_commit_review_projection())
         await pilot.pause()
 
@@ -1525,6 +1529,28 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
             assert confirm.region.right == footer.content_region.right
         else:
             assert edit.region.y == cancel.region.y == confirm.region.y
+
+
+@pytest.mark.asyncio
+async def test_medium_commit_review_transition_reliably_focuses_edit() -> None:
+    """Stress the mounted form-to-review focus handoff at medium width."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    draft = _commit_draft_projection(subject="Stable focus")
+    review = _commit_review_projection()
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        for _iteration in range(25):
+            panel.render_commit_form(draft)
+            await pilot.pause()
+            panel.render_commit_review(review)
+            await pilot.pause()
+            assert panel.query_one(
+                "#file-notes-git-commit-edit",
+                Button,
+            ).has_focus
 
 
 @pytest.mark.asyncio

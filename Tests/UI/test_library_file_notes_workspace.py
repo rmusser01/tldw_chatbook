@@ -473,6 +473,10 @@ async def test_file_notes_root_details_preserve_exact_path_and_warning(
             _static_text(workspace, "#file-notes-root-status")
             == "Warning · Local folder: Research Notes"
         )
+        root_status = workspace.query_one("#file-notes-root-status")
+        assert root_status.has_class("-warning")
+        assert "#file-notes-root-status.-warning" in workspace.DEFAULT_CSS
+        assert "color: $warning;" in workspace.DEFAULT_CSS
         tooltip = workspace.query_one("#file-notes-root-status").tooltip
         assert tooltip is not None
         assert str(root.resolve()) in str(tooltip)
@@ -487,7 +491,31 @@ async def test_file_notes_root_details_preserve_exact_path_and_warning(
         assert str(root.resolve()) in exact
         assert "Recovery unavailable: replica locked" in exact
 
+        workspace._runtime_warning = ""
+        workspace._update_root_surface(offline=False)
+        await pilot.pause()
+        assert not root_status.has_class("-warning")
+
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_navigation_and_key_guidance_use_one_phrase() -> None:
+    """Keep return navigation and key guidance consistent across File Notes."""
+    workspace = LibraryFileNotesWorkspace(root=None)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor_back = workspace.query_one("#file-notes-back", Button)
+        git_back = workspace.query_one("#file-notes-git-back", Button)
+        guide = _static_text(workspace, "#file-notes-git-guide")
+
+        assert str(editor_back.label) == "Back to navigator"
+        assert str(git_back.label) == "Back to navigator"
+        assert guide == "Up/Down select · Tab actions · Enter run · Esc back"
+        assert "|" not in guide
+
+    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
