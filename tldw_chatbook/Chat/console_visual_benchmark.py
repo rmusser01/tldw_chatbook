@@ -209,6 +209,27 @@ def visual_default_enablement_ready(
     )
 
 
+def visual_context_default_enablement_ready(
+    *,
+    token_reduction_ratio: float,
+    code_math_recovery: float | None,
+    instruction_recall: float | None,
+    adversarial_text_safe: bool | None,
+    usage_measured: bool = True,
+) -> bool:
+    """Return whether every ADR-056 context-use and measurement gate passes."""
+
+    return bool(
+        usage_measured
+        and token_reduction_ratio > 0
+        and code_math_recovery is not None
+        and code_math_recovery >= MIN_VISUAL_CODE_MATH_RECOVERY
+        and instruction_recall is not None
+        and instruction_recall >= MIN_VISUAL_INSTRUCTION_RECALL
+        and adversarial_text_safe is True
+    )
+
+
 __all__ = [
     "MIN_VISUAL_CODE_MATH_RECOVERY",
     "MIN_VISUAL_INSTRUCTION_RECALL",
@@ -216,5 +237,6 @@ __all__ = [
     "VisualBenchmarkEvaluation",
     "VisualBenchmarkReport",
     "run_visual_compaction_benchmark",
+    "visual_context_default_enablement_ready",
     "visual_default_enablement_ready",
 ]
