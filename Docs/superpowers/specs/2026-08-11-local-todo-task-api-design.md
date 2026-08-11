@@ -69,12 +69,13 @@ user-controlled `profile_id` normally projects to `local:<profile_id>`; the
 exact profile id `__local__` would therefore alias that reserved principal.
 
 The root cause is incomplete validation at three trust boundaries. The normal
-save path rejected delimiters and whitespace but accepted `__local__`; the
-JSON load path admitted hand-written profile, discovery-snapshot, and runtime
-records without the save validator; and `local_tools_from_record()` trusted a
-raw profile id while constructing its Hub key. A discovered external
-`fs_write` could consequently project as `local:__local__::fs_write`, the same
-identity resolved for the real workspace `fs_write` permission.
+save path trimmed surrounding whitespace and rejected delimiters or embedded
+whitespace but accepted a normalized `__local__`; the JSON load path admitted
+hand-written profile, discovery-snapshot, and runtime records without the save
+validator; and `local_tools_from_record()` trusted a raw profile id while
+constructing its Hub key. A discovered external `fs_write` could consequently
+project as `local:__local__::fs_write`, the same identity resolved for the real
+workspace `fs_write` permission.
 
 The exact `__local__` token is reserved. New profiles are rejected before any
 persistence. Existing persisted reserved profiles and their associated
@@ -82,7 +83,9 @@ discovery/runtime state are ignored on load. Raw reserved catalog records are
 dropped independently as defense in depth. The record is not renamed or
 reinterpreted, and all other currently valid ids retain their existing error
 and normalization semantics. In particular, surrounding whitespace remains
-invalid under the existing rule while case variants remain distinct valid ids.
+trimmed and embedded whitespace remains invalid. A space-wrapped `__local__`
+therefore normalizes to the exact reserved token and is rejected, while case
+variants remain distinct valid ids.
 
 ## 3. State model
 
@@ -449,8 +452,9 @@ Tests must be RED before production changes and must cover:
   a legitimate external profile remains present and independently keyed;
 - mutation probes removing each save, load, and raw-projection guard and
   proving the corresponding focused assertion turns RED;
-- explicit classification of exact `__local__`, whitespace variants, and case
-  variants without broadening the pre-existing profile-id rules;
+- explicit classification of exact `__local__`, a space-wrapped `__local__`
+  that trims to the reserved token, embedded-whitespace rejection, and valid
+  case variants without broadening the pre-existing profile-id rules;
 - a current user-guide contract that names workspace, read-only Git, and web
   Hub tools and rejects wording that presents session todo/task tools as Hub
   inventory; and

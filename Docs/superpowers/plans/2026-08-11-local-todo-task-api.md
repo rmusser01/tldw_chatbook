@@ -929,12 +929,13 @@ git commit -m "docs(todo): retire todo_write runtime contract"
 
 ### Reserved identity quality follow-up
 
-The normal external-profile save validator rejects `:` and whitespace but not
-the exact `__local__` segment that ADR-032 already assigns to the synthetic
-Console workspace-tool principal. Both hand-written store JSON and raw catalog
-records bypass that validator. Before the fix, a discovered external
-`fs_write` can therefore become `local:__local__::fs_write`, identical to the
-real workspace tool's Hub and permission key.
+The normal external-profile save path trims surrounding whitespace and rejects
+`:` or embedded whitespace, but it did not reject the normalized `__local__`
+segment that ADR-032 already assigns to the synthetic Console workspace-tool
+principal. Both hand-written store JSON and raw catalog records bypass that
+validator. Before the fix, a discovered external `fs_write` can therefore
+become `local:__local__::fs_write`, identical to the real workspace tool's Hub
+and permission key.
 
 - [ ] **Step 6: Commit the governing boundary before production changes**
 
@@ -956,7 +957,9 @@ one permission identity resolves both. Add an ordinary valid-profile control.
 The post-fix assertions must require rejection before persistence, complete
 load-time removal of the reserved profile and its associated discovery/runtime
 state, and empty raw projection. Explicitly test exact `__local__`, existing
-whitespace rejection, and case variants as still-valid distinct ids.
+surrounding-whitespace trimming, embedded-whitespace rejection, and case
+variants as still-valid distinct ids. A space-wrapped `__local__` must
+normalize to the exact reserved token and be rejected.
 
 - [ ] **Step 8: Implement all three narrow guards**
 
