@@ -87,7 +87,7 @@ highlighted result when it is an open tab. Esc cancels.
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters the row list; "Clear" resets it |
+| "Search conversations" + "Clear" | Filters the row list, settling about a fifth of a second after you stop typing; "Clear" resets it immediately |
 | "New conversation" | Starts a fresh conversation |
 | "Starred" / "Workspaces" / "Chats" | Groups; click a header's ▸/▾ toggle to expand or collapse |
 | Conversation row | Click to open it in the Console |

@@ -37,9 +37,11 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 class ConsoleBrowserSearchInput(Input):
     """Search input whose initial value never echoes as a user edit.
 
-    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` recomposes
-    unconditionally (see its own docstring for why an equality guard is
-    unsafe), so every sync re-mounts a fresh search input. Textual's
+    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` re-mounts a fresh
+    search input on every sync that actually changes anything -- which, while
+    the user is typing, is every one of them (TASK-15454 narrowed the tray's
+    recompose to changed states, so a no-op sync no longer replaces this
+    widget; a real search still does). Textual's
     `Input._watch_value` posts `Changed` for a constructor-set value
     unconditionally -- its `_initial_value` flag only positions the cursor --
     and that echo travels the message pump, so on a busy machine it lands
@@ -474,6 +476,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
+    #: (row id, row key) pairs for the grouped-browser rows the last COMPLETED
+    #: `compose()` built, or None when `compose` has not finished for this
+    #: instance (never started, or abandoned part-way). Only
+    #: `_can_skip_recompose` reads it; None means "no proof, recompose".
+    #: Class attribute so an instance that never composed still answers None.
+    _composed_row_signature: tuple[tuple[str, str], ...] | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_row_signature: list[tuple[str, str]] | None = None
+
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
 
@@ -551,12 +562,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # + resume flows) -- skipping `refresh(recompose=True)` also skips
         # rebuilding the row children, and this widget's own scroll/fit-pass
         # (`_schedule_recomposed_content_fit`) alone does not settle correct
-        # on-screen regions for the (unrebuilt) existing children. Tried
-        # narrowing the guard to skip only the recompose while still always
-        # scheduling the fit-pass -- still broke the same two tests -- so
-        # this keeps the original unconditional recompose. The screen-side
-        # skip in `_sync_console_workspace_context` (the `call_after_refresh`
-        # legacy-alias kick) still applies and is safe/tested.
+        # on-screen regions for the (unrebuilt) existing children.
+        #
+        # TASK-15454 re-guards this, NARROWLY. The lesson from the revert is
+        # that state equality alone is not evidence the DOM shows that
+        # state: the tray can hold state X while its children say something
+        # else, and the unconditional recompose was what healed that. So
+        # `_can_skip_recompose` skips only when the mounted DOM is *proved*
+        # to be the DOM this state produced -- see its docstring. Every case
+        # the revert was about (fresh instance, unsettled/emptied children,
+        # a recompose already latched) fails that proof and recomposes
+        # exactly as before.
+        if self._can_skip_recompose(state):
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -565,6 +583,73 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Return True only when the mounted DOM already IS ``state``'s DOM.
+
+        TASK-15454. This is deliberately not the value-equality guard the
+        siblings use. The reverted TASK-251 guard failed because
+        ``state == self.state`` answers "does the tray remember this state",
+        not "is the tray *showing* it" -- and those two came apart (a fresh
+        tray from a full-screen recompose, or one whose rows were superseded
+        before they settled, remembers rows it is not displaying). Skipping
+        there left the grouped-browser rows unbuilt and the click targets
+        with them.
+
+        So all five of these must hold before a recompose is skipped:
+
+        1. The rail has pushed at least one state into THIS instance
+           (``_console_workspace_context_synced``, set by
+           ``ConsoleLeftRail.sync_workspace_context`` after each push, and
+           dying with the widget). This is the same per-instance marker the
+           screen-side skip already uses, and it is what preserves the
+           TASK-344/349 one-time healing push for a fresh instance.
+        2. ``compose`` has run to completion for this instance, so there is
+           a recorded signature of the rows it built.
+        3. No recompose is already latched (``_recompose_required``): the
+           DOM is about to change, so it is not evidence of anything.
+        4. The tray is mounted and has children at all.
+        5. The state is value-equal AND the rows currently in the DOM match,
+           in order, the rows ``compose`` recorded building. Row id + row key
+           is exactly the identity Console click routing dispatches on
+           (`on_button_pressed` matches the id prefix, then reads `row_key`/
+           `conversation_id` off the button), so a signature match means
+           every click target is present, in place, and pointing at the same
+           conversation it did before.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when recomposing would rebuild an identical DOM.
+        """
+        if not getattr(self, "_console_workspace_context_synced", False):
+            return False
+        composed = self._composed_row_signature
+        if composed is None:
+            return False
+        if getattr(self, "_recompose_required", False):
+            return False
+        if not self.is_mounted or not self.children:
+            return False
+        if state != self.state:
+            return False
+        return self._mounted_row_signature() == composed
+
+    def _mounted_row_signature(self) -> tuple[tuple[str, str], ...]:
+        """Return the (row id, row key) pairs actually mounted, in DOM order.
+
+        Read from the live DOM rather than from state, so it can contradict
+        what the tray believes -- which is the whole point (see
+        ``_can_skip_recompose``).
+
+        Returns:
+            One pair per mounted grouped-browser row button.
+        """
+        return tuple(
+            (str(row.id or ""), str(getattr(row, "row_key", "") or ""))
+            for row in self.query(".console-workspace-conversation-row")
+        )
 
     def _nearest_scroll_parent(self) -> Any | None:
         """Return the nearest ancestor that owns vertical scrolling.
@@ -970,28 +1055,41 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
-        if self.show_heading:
-            yield self._static(
-                self.state.heading,
-                id="console-workspace-context-title",
-                classes="destination-section",
-            )
+        # TASK-15454: record the row signature of THIS pass so
+        # `_can_skip_recompose` can later check the mounted DOM against what
+        # was actually built, not against what `self.state` claims. The
+        # signature is published only after the generator runs to the end --
+        # a pass abandoned part-way (Textual closing the generator) leaves it
+        # None, which forbids skipping.
+        collected: list[tuple[str, str]] = []
+        self._composing_row_signature = collected
+        self._composed_row_signature = None
+        try:
+            if self.show_heading:
+                yield self._static(
+                    self.state.heading,
+                    id="console-workspace-context-title",
+                    classes="destination-section",
+                )
 
-        if self.content in {"all", "workspace"}:
-            yield from self._compose_workspace_context()
+            if self.content in {"all", "workspace"}:
+                yield from self._compose_workspace_context()
 
-        if self.content in {"all", "session"}:
-            yield from self._compose_session_context(
-                show_selected_summary=self.content == "session"
-            )
+            if self.content in {"all", "session"}:
+                yield from self._compose_session_context(
+                    show_selected_summary=self.content == "session"
+                )
 
-        browser = self.state.conversation_browser
-        if self.content in {"all", "conversations"} and browser is not None:
-            yield from self._compose_conversation_browser(
-                browser,
-                show_heading=self.content == "all",
-                show_selected_summary=self.content == "all",
-            )
+            browser = self.state.conversation_browser
+            if self.content in {"all", "conversations"} and browser is not None:
+                yield from self._compose_conversation_browser(
+                    browser,
+                    show_heading=self.content == "all",
+                    show_selected_summary=self.content == "all",
+                )
+        finally:
+            self._composing_row_signature = None
+        self._composed_row_signature = tuple(collected)
 
     def _compose_workspace_context(self) -> ComposeResult:
         """Render active workspace identity and workspace-scoped actions."""
@@ -1434,6 +1532,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 name_line_count=len(name_lines),
             )
             row_button.row_key = row.row_key
+            # TASK-15454: this pair is the row's click identity; `compose`
+            # publishes the collected sequence once it finishes.
+            if self._composing_row_signature is not None:
+                self._composing_row_signature.append(
+                    (str(row_button.id or ""), str(row.row_key or ""))
+                )
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id

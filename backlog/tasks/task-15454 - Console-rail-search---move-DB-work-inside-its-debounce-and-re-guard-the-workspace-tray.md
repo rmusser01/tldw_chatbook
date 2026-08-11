@@ -1,8 +1,9 @@
 ---
 id: TASK-15454
 title: Console rail search: move DB work inside its debounce and re-guard the workspace tray
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-11 12:05'
 labels:
   - perf
@@ -20,7 +21,129 @@ Fix direction: move everything between `:1858-1893` inside the debounced timer c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Zero SQLite queries and zero tray recompose on the keystroke path before the debounce fires (evidence)
-- [ ] #2 Tray recomposes only on structural change, with the historical click-targeting regression covered by a test
-- [ ] #3 Search results and rail behavior unchanged (existing surface green)
+- [x] #1 Zero SQLite queries and zero tray recompose on the keystroke path before the debounce fires (evidence)
+- [x] #2 Tray recomposes only on structural change, with the historical click-targeting regression covered by a test
+- [x] #3 Search results and rail behavior unchanged (existing surface green)
+- [x] #4 `_console_composer_or_none()` no longer walks the whole DOM twice per keystroke, and a cached reference can never be returned once it is detached (folded in from task-15452's review: it is 61% of the residual per-keystroke cost after 15452)
 <!-- AC:END -->
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Read the handler, the tray, the reverted-guard history and the two tests the
+   revert names; reproduce the historical click-targeting regression first-hand by
+   temporarily applying the naive full-equality guard and watching those two tests
+   go red (evidence, not folklore).
+2. Keystroke path: leave only pure state bookkeeping (query, tokens, timer swap)
+   in `Input.Changed`; the TTL-cache invalidation, the row derivation and the
+   tray sync all move behind the existing 0.2 s timer. The debounced callback
+   re-checks the cancellation token/query before doing any work. Keep the
+   already-cached rows visually consistent with the newest query via the pure
+   in-memory filter (no DB) so a tick-driven sync inside the debounce window
+   cannot paint rows that contradict the search box.
+3. Tray guard: skip `refresh(recompose=True)` only when the incoming state is
+   value-equal AND the mounted DOM is provably the DOM that state produced --
+   a structural row signature (ordered row ids + row keys, the things that
+   determine click targets) recorded by `compose()` itself and compared against
+   the same signature read back out of the live DOM, plus "no recompose already
+   pending" and "mounted". Any mismatch (including the fresh-tray / superseded-
+   rows desync the revert was about) recomposes exactly as today.
+4. Memoize `_console_composer_or_none()` on a class-level attribute, revalidating
+   `is_attached`/`is_mounted`/id/parent-screen on every hit and falling back to a
+   fresh query otherwise.
+5. Tests born red where feasible: a keystroke-path no-DB/no-recompose test, tray
+   guard tests including a regression test for the historical click-targeting
+   case, and composer-memo tests including a detached-widget mutation control.
+6. Measure the per-keystroke residual before/after with an isolated probe;
+   run the rail/search/tray/workspace suites plus the task-15452 gate suites.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Three changes, all measured. Plan followed; the one deviation is recorded
+under "The revert no longer reproduces" below.
+
+**1. The keystroke path is now bookkeeping only.** `Input.Changed` keeps the
+query/token mirrors and the timer swap, and defers everything else to a new
+`ChatScreen._start_console_conversation_browser_search(query, token)` that the
+0.2 s timer arms: the TASK-251 TTL invalidation, the native/membership row
+derivation, `_sync_console_workspace_context()`, and the `run_worker` kick.
+The debounced callback re-asserts the token/query contract before it does
+anything, so a superseded timer can never search for replaced text. One
+non-bookkeeping line stays in the handler: `_filter_console_browser_rows_for_
+query` over the rows already in memory (a pure filter, no service, no DB), so
+a poll tick landing inside the debounce window cannot paint rows that
+contradict the search box. Backspacing to empty is now debounced like any
+other keystroke — it used to clear synchronously, and that clear ran the same
+full derivation chain. The "Clear" BUTTON path is untouched and still
+immediate.
+
+**2. The tray guard is evidence-based, not equality-based.**
+`ConsoleWorkspaceContextTray.compose()` now records the ordered `(row id, row
+key)` pairs it builds — published only if the generator completes — and
+`_can_skip_recompose` skips only when: the rail has pushed at least one state
+into this instance, that signature exists, no recompose is latched, the tray
+is mounted with children, the state is value-equal, AND the rows read back
+out of the LIVE DOM still match the recorded signature. Row id + row key is
+the identity Console click routing dispatches on, so a match means every
+click target is present, in place, and pointing where it did. This is the
+direct answer to the revert: the reverted guard asked "does the tray remember
+this state", which is not the same question as "is the tray showing it".
+
+**The revert no longer reproduces.** Before designing anything, the naive
+`if state == self.state: return` guard was applied to today's dev and the
+suites the revert named were run. Both witness tests
+(`..._selection_keeps_query_active`, `..._invalidates_pending_worker`) PASS,
+and across `test_console_native_chat_flow.py` (309) +
+`test_console_rail_sections.py` the only failures were the two tick-gating
+pins and one pre-existing failure. The July regression has been dissolved by
+later work (most likely TASK-1900's non-echoing search input and TASK-1191's
+fit-pass rework). That is a reason to re-guard, not to guard loosely, so the
+DOM check stands anyway — and it is mutation-tested both ways: replacing
+`_can_skip_recompose` with `return state == self.state` reds the two safety
+tests, and with `return False` reds the two skip tests.
+
+**3. `_console_composer_or_none()` is memoized** on a class-level
+`_console_composer_ref` (the `__new__()` fixture convention), revalidated on
+every hit via `is_mounted` AND `self in cached.ancestors_with_self` rather
+than invalidated from teardown hooks — so a detached node can never be
+returned even if a future teardown path forgets the memo exists.
+
+**Measured** (isolated probe, scratch HOME/XDG/TLDW_CONFIG_PATH, headless
+Pilot, 12-keystroke burst; `scratchpad/probe_15454.py`, fast M-series Mac,
+small seeded workspace set — a real workspace/conversation set scales the
+"before" column, not the "after"):
+
+| per 12-keystroke burst | before (dev 7cfe8df4e) | after |
+|---|---|---|
+| handler wall cost, per keystroke | 0.558 ms | **0.009 ms** |
+| registry calls during the burst | 252 | **0** |
+| tray recomposes during the burst | 36 | **0** |
+| workspace-context syncs during the burst | 12 | **0** |
+| registry calls, burst + settle | 293 | **62** |
+| tray recomposes, burst + settle | 42 | **3** |
+| `_console_composer_or_none()` | 1182.6 µs | **0.40 µs** |
+
+The after-settle numbers are higher than before-settle precisely because the
+work moved there; the totals are what improved.
+
+**Tests.** New: `Tests/UI/test_console_rail_search_debounce.py` (8) and
+`Tests/UI/test_console_workspace_tray_recompose_guard.py` (6). Six of the
+eight debounce tests were confirmed born-red against HEAD content; the other
+two are deliberate controls. Updated with in-test comments explaining why:
+`test_console_tick_gating.py::..._tray_sync_state_always_recomposes` (the pin
+this task was required to revisit — now asserts the evidence-based contract
+plus a desync control), `..._fresh_tray_still_synced_mid_run` (clears the
+marker on all three projections, as a real full-screen recompose does),
+`test_console_native_chat_flow.py::..._search_worker_uses_dedicated_group`
+(source inspection followed the `run_worker` into the debounced callback),
+`test_console_workspace_controller.py::..._empty_query_clears_state_*`.
+
+**Modified/added:** `tldw_chatbook/UI/Screens/chat_screen.py`,
+`tldw_chatbook/Widgets/Console/console_workspace_context.py`,
+`Docs/User_Guide/console/sessions-tabs-workspaces.md`, the four test files
+above, plus the two new ones.
+
+**Known pre-existing failures, verified at HEAD content, not caused here:**
+`test_console_rail_sections.py::test_popover_apply_returns_replaced_settings`
+and the three in `test_console_rail_width_budget.py`.
+<!-- SECTION:NOTES:END -->

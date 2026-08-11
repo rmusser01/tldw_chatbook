@@ -1,7 +1,10 @@
 """TASK-1900: the browser search input's mount echo must not exist.
 
-`ConsoleWorkspaceContextTray.sync_state` recomposes unconditionally, so every
-sync re-mounts a fresh search `Input`. Textual's `Input._watch_value` posts
+`ConsoleWorkspaceContextTray.sync_state` re-mounts a fresh search `Input` on
+every sync that changes anything -- which, while the user is typing, is every
+one of them. (It used to do so on EVERY sync; TASK-15454 narrowed it to
+changed states, which removes some echoes but not the ones this test is
+about.) Textual's `Input._watch_value` posts
 `Changed` for a constructor-set value unconditionally (the `_initial_value`
 flag only positions the cursor), and that echo travels the message pump --
 on a busy machine it lands AFTER the user typed a newer query. The screen's

@@ -1854,7 +1854,26 @@ class ChatScreen(BaseAppScreen):
     def on_console_workspace_conversation_search_changed(
         self, event: Input.Changed
     ) -> None:
-        """Debounce grouped conversation-browser search in the Console rail."""
+        """Debounce grouped conversation-browser search in the Console rail.
+
+        TASK-15454: everything this handler does is now either a pure
+        attribute write or an in-memory filter over rows already held in
+        the screen. The DB work the 0.2s timer was supposed to be
+        debouncing -- the persisted-rows TTL invalidation, the
+        workspace-record/label reads (``ensure_default_workspace`` can open
+        a WRITE transaction), one ``list_workspace_conversations`` SELECT
+        per workspace, the starred-id SELECTs, and the workspace-context
+        tray sync that repeats all of it plus a 3-instance recompose --
+        used to run in front of the timer, so it ran once per KEYSTROKE and
+        the debounce only ever spared the persisted-row worker. It now runs
+        in ``_start_console_conversation_browser_search``, behind the timer.
+
+        The one non-bookkeeping line left here is the in-memory re-filter of
+        the rows the rail is already showing: it touches no service and no
+        DB, and it keeps a tick-driven sync landing inside the debounce
+        window from painting rows that contradict the search box. It can
+        only narrow the visible set; the debounced pass refills it.
+        """
         event.stop()
         event_input = getattr(event, "input", None)
         if getattr(event_input, "disabled", False):
@@ -1862,10 +1881,6 @@ class ChatScreen(BaseAppScreen):
         next_query = str(event.value or "")
         if next_query == self._console_conversation_browser_query:
             return
-        # TASK-251: invalidate before kicking the refresh -- a same-text
-        # re-search within the TTL window (e.g. clear then retype) must not
-        # be served a stale persisted-rows cache entry.
-        self._invalidate_console_persisted_rows_cache()
         self._console_conversation_browser_query = next_query
         self._console_workspace_conversation_query = (
             self._console_conversation_browser_query
@@ -1882,6 +1897,57 @@ class ChatScreen(BaseAppScreen):
         if self._console_workspace_conversation_search_timer is not None:
             self._console_workspace_conversation_search_timer.stop()
             self._console_workspace_conversation_search_timer = None
+        self._console_conversation_browser_rows = (
+            self._filter_console_browser_rows_for_query(
+                self._console_conversation_browser_rows,
+                query,
+            )
+        )
+        self._console_conversation_browser_search_timer = self.set_timer(
+            0.2,
+            partial(
+                self._start_console_conversation_browser_search,
+                query,
+                token,
+            ),
+        )
+        self._console_workspace_conversation_search_timer = (
+            self._console_conversation_browser_search_timer
+        )
+
+    def _start_console_conversation_browser_search(
+        self,
+        query: str,
+        token: int,
+    ) -> None:
+        """Run the debounced half of a rail conversation-search keystroke.
+
+        TASK-15454: the deferred body of
+        ``on_console_workspace_conversation_search_changed``. Everything
+        here was previously executed synchronously, per keystroke, in front
+        of the timer that schedules this.
+
+        The token/query re-check is belt-and-braces -- a superseded timer is
+        already stopped by the next keystroke -- but this callback now opens
+        transactions, so it re-asserts the same cancellation contract
+        ``_refresh_console_conversation_browser_search`` asserts before its
+        own work.
+
+        Args:
+            query: Search text captured when the timer was armed.
+            token: Search token captured when the timer was armed.
+
+        Returns:
+            None.
+        """
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        # TASK-251: invalidate before kicking the refresh -- a same-text
+        # re-search within the TTL window (e.g. clear then retype) must not
+        # be served a stale persisted-rows cache entry.
+        self._invalidate_console_persisted_rows_cache()
         if not query.strip():
             self._console_conversation_browser_rows = ()
             self._console_conversation_browser_total = None
@@ -1901,19 +1967,13 @@ class ChatScreen(BaseAppScreen):
         self._console_conversation_browser_total = None
         self._console_conversation_browser_error = ""
         self._sync_console_workspace_context()
-        self._console_conversation_browser_search_timer = self.set_timer(
-            0.2,
-            lambda: self.run_worker(
-                self._refresh_console_conversation_browser_search(
-                    query,
-                    token,
-                ),
-                group="console-workspace-conversation-search",
-                exclusive=True,
+        self.run_worker(
+            self._refresh_console_conversation_browser_search(
+                query,
+                token,
             ),
-        )
-        self._console_workspace_conversation_search_timer = (
-            self._console_conversation_browser_search_timer
+            group="console-workspace-conversation-search",
+            exclusive=True,
         )
 
     @on(Select.Changed, "#compact-api-provider")
@@ -5252,10 +5312,43 @@ class ChatScreen(BaseAppScreen):
                 )
         return selection
 
+    #: Memoized ``#console-native-composer`` node, or None when nothing has
+    #: been resolved (or the last resolved node went away). A CLASS attribute
+    #: default because the hand-built ``ChatScreen.__new__()`` test fixtures
+    #: never run ``__init__``. Never read directly -- always through
+    #: ``_console_composer_or_none``, which revalidates before returning it.
+    _console_composer_ref: ConsoleComposerBar | None = None
+
     def _console_composer_or_none(self) -> ConsoleComposerBar | None:
-        """Return the native Console composer when it is mounted."""
+        """Return the native Console composer when it is mounted.
+
+        TASK-15454 (folded in from task-15452's review): this used to run an
+        uncached ``self.query()`` -- a full walk of the largest widget tree
+        in the app -- and the draft-edit keystroke path alone calls it twice,
+        which measured as the majority of that path's residual cost. The
+        resolved node is memoized instead.
+
+        A stale reference must be impossible, so the memo is revalidated on
+        every hit rather than invalidated from teardown hooks: the cached
+        widget is returned only while it is still mounted AND still reachable
+        from this screen. A recompose that replaces the composer detaches the
+        old node (``_parent`` cleared by the prune) and clears its mounted
+        flag, so both halves fail closed and the next call re-queries. The
+        memo therefore cannot outlive the widget it names even if some future
+        teardown path forgets about it entirely.
+        """
+        cached = self._console_composer_ref
+        if cached is not None:
+            try:
+                still_live = cached.is_mounted and self in cached.ancestors_with_self
+            except Exception:  # pragma: no cover - defensive, see above
+                still_live = False
+            if still_live:
+                return cached
+            self._console_composer_ref = None
         composers = list(self.query("#console-native-composer"))
         if composers and isinstance(composers[0], ConsoleComposerBar):
+            self._console_composer_ref = composers[0]
             return composers[0]
         return None
 
@@ -11486,16 +11579,26 @@ class ChatScreen(BaseAppScreen):
             # construction time, so comparing against it here stays safe
             # across recomposes too.
             state_changed = state != workspace_context.state
-            # TASK-344/349: the tray recomposes unconditionally in its own
-            # sync_state (a widget-level equality guard is forbidden -- it
-            # breaks grouped-browser click targeting, see
-            # test_console_workspace_context_tray_sync_state_always_recomposes).
-            # That unconditional recompose ALSO self-heals a real DOM/state
+            # TASK-344/349: the tray used to recompose unconditionally in its
+            # own sync_state (a plain widget-level equality guard is still
+            # forbidden -- it breaks grouped-browser click targeting). That
+            # unconditional recompose ALSO self-healed a real DOM/state
             # desync: a full-screen recompose constructs a fresh tray whose
             # `.state` is set but whose rows can be superseded before they
             # settle, so `.state` says X while the DOM shows nothing -- the
             # next tick's recompose repaints it. So an equality guard is
-            # unsafe in general. It IS safe on the ~5x/second run tick: the
+            # unsafe in general.
+            #
+            # TASK-15454 replaced the unconditional recompose with an
+            # evidence-based one (`ConsoleWorkspaceContextTray.
+            # _can_skip_recompose`): the tray now skips only when the rows
+            # actually mounted still match the ones its last completed
+            # `compose` built, on an instance the rail has already pushed to.
+            # That subsumes the self-heal above rather than removing it -- a
+            # desynced or fresh tray fails the check and recomposes. The
+            # screen-side skip here is kept as-is: it is a cheaper, earlier
+            # exit on exactly the tick it was written for, and the two agree.
+            # It IS safe on the ~5x/second run tick: the
             # workspace state is unchanged and recomposing the browser that
             # often tore it visibly down mid-run (the list vanished / showed
             # a half-composed frame and displaced clicks).
