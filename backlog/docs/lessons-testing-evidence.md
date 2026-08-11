@@ -2376,6 +2376,7 @@ replaced, and make tests wait for model count, mounted count, and list visibilit
 agree before pressing a row action. While a `ListView.clear()`/extend cycle is in
 flight, poll service state with `asyncio.sleep`; `Pilot.pause()` deliberately waits on
 every message pump and can turn transient child teardown into a harness deadlock.
+
 ---
 
 ## A compaction threshold is not a send-admission ceiling (TASK-14913, 2026-08-11)
@@ -2397,3 +2398,45 @@ request also proves `known_overflow`. Test the complete decision cross-product:
 unknown model with inherited automatic budget, unknown model with a bounded
 custom budget, and known mandatory-material overflow. A settings-only assertion
 does not prove that the next send consumes the saved policy correctly.
+
+---
+
+## A reviewed-safe label needs adversarial provenance evidence (TASK-3796, 2026-08-10)
+
+**Incident.** TASK-3796's exhaustive ledger initially classified 199 diagnostics as
+private and froze 324 as reviewed-safe. Final review found that
+`general-2efc909241862caf` rendered `event.get("type")` from a Cohere streaming
+response. The value looked like bounded status metadata in the source review, but an
+unknown provider event can choose that string. A sentinel passed through the real
+`summarize_with_cohere()` generator and fully consumed the response; it reproduced the
+provider-controlled value in captured diagnostics. Restoring the historical
+interpolation made that sentinel fail, and the corrected ledger became 200 private /
+323 reviewed-safe.
+
+**What to do.** Do not freeze a dynamic diagnostic merely because its field name
+sounds operational. Prove where the value originates. For response events, config
+values, and adapter metadata, drive an adversarial distinctive value through the real
+production function and capture the actual logger path. A reviewed-safe classification
+is evidence only after the sentinel proves the producer—not the reviewer—bounds the
+value.
+
+---
+
+## A boundary projection must reject fields it does not understand (TASK-3796, 2026-08-10)
+
+**Incident.** TASK-3796's first permanent manifest-boundary test rebuilt an allowlist
+projection from known top-level fields and excluded the derived `task_492_calls`
+summary. That made two checks look stronger than they were: a newly introduced
+top-level section disappeared before hashing, and a self-consistent generator could
+change both the owner counts and their derived summary while the summary-delta
+assertion still agreed with itself. Review mutants adding an `unreviewed_section` and
+forging `task_492_calls` exposed both gaps. The repair normalizes a deep copy of the
+complete manifest, masks only the two explicitly owned count/digest fields, and
+recomputes the TASK-492 summary independently from every owner row.
+
+**What to do.** For a governed artifact, project by copying the whole schema and
+masking the narrowly authorized fields; do not reconstruct an allowlist of fields to
+retain. Validate derived totals from their primary rows before normalization. Then
+mutate an unknown field and mutate the derived value independently: both must make the
+boundary test red. Equality between two values produced by the same regeneration path
+does not independently validate either one.
