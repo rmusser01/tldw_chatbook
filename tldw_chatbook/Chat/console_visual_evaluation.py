@@ -866,6 +866,10 @@ def _output_enforcement_for(
     if normalized_base != _OFFICIAL_OPENAI_API_BASE:
         return "prompt_only"
     model = (resolution.model or "").strip().casefold()
+    if model == "gpt-5.6-terra":
+        return "provider_json_schema"
+    # Retain previously documented routes for matrix compatibility, but use
+    # current-generation models for new checked-in evidence.
     if model in {"gpt-4o", "gpt-4o-mini"}:
         return "provider_json_schema"
     if _dated_model_at_or_after(model, "gpt-4o-mini-", date(2024, 7, 18)):

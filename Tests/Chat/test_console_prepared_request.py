@@ -114,7 +114,7 @@ def test_response_format_is_frozen_and_dispatched_only_when_present() -> None:
     prepared = prepare_provider_request(
         semantic,
         wire_style="single_preamble",
-        model="gpt-4o",
+        model="gpt-5.6-terra",
         provider="openai",
         capacity=_capacity(None),
         count_fn=_word_count,
@@ -124,7 +124,7 @@ def test_response_format_is_frozen_and_dispatched_only_when_present() -> None:
     resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://api.openai.com/v1",
-        model="gpt-4o",
+        model="gpt-5.6-terra",
         ready=True,
         execution_key="openai",
         api_key="k",
@@ -140,7 +140,7 @@ def test_response_format_is_frozen_and_dispatched_only_when_present() -> None:
     plain = prepare_provider_request(
         semantic,
         wire_style="single_preamble",
-        model="gpt-4o",
+        model="gpt-5.6-terra",
         provider="openai",
         capacity=_capacity(None),
         count_fn=_word_count,

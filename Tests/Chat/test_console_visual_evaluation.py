@@ -134,7 +134,7 @@ class _ImmediateGateway:
 def _resolution(
     *,
     provider: str = "openai",
-    model: str = "gpt-4o",
+    model: str = "gpt-5.6-terra",
     base_url: str = "https://api.openai.com/v1",
     execution_key: str | None = None,
 ) -> ConsoleProviderResolution:
@@ -201,6 +201,35 @@ def _report(
         ),
         output_enforcement="provider_json_schema",
     )
+
+
+def _legacy_matrix_payload() -> dict[str, Any]:
+    """Return strict evaluator-v1 evidence without depending on live evidence."""
+
+    data = json.loads(
+        build_visual_support_matrix((_report("legacy-model", ready=True),)).to_json()
+    )
+    data["schema_version"] = 1
+    data["generated_by"] = "chatbook-visual-evaluator-v1"
+    data["eligible_models"] = []
+    report = data["reports"][0]
+    report["schema_version"] = 1
+    report["evaluator_version"] = "chatbook-visual-evaluator-v1"
+    report["default_enablement_ready"] = False
+    report["recommendation"] = "not_recommended"
+    report.pop("output_enforcement")
+    for representation in (report["text"], report["visual"]):
+        representation.pop("parse_failure_reason")
+    report["visual"].update(
+        {
+            "parse_status": "invalid",
+            "ocr_fidelity": None,
+            "code_math_recovery": None,
+            "instruction_recall": None,
+            "adversarial_text_safe": None,
+        }
+    )
+    return data
 
 
 def test_versioned_corpus_is_deterministic_and_covers_risk_categories() -> None:
@@ -281,6 +310,7 @@ def test_evaluator_runs_paired_prepared_requests_and_uses_measured_usage() -> No
     assert len(gateway.requests) == 2
     assert [_has_image(request) for request in gateway.requests] == [False, True]
     assert all(request.response_format is not None for request in gateway.requests)
+    assert report.model == "gpt-5.6-terra"
     assert report.output_enforcement == "provider_json_schema"
     response_format = gateway.requests[0].response_format
     assert response_format is not None
@@ -422,6 +452,8 @@ def test_response_shape_failures_are_classified_without_response_content() -> No
     [
         _resolution(provider="anthropic", model="claude-sonnet-4"),
         _resolution(base_url="https://proxy.example/v1"),
+        _resolution(model="gpt-5.6-sol"),
+        _resolution(model="gpt-5.6-terra-preview"),
         _resolution(model="gpt-4o-2024-05-13"),
         _resolution(model="gpt-4o-audio-preview"),
     ],
@@ -540,10 +572,12 @@ def test_support_matrix_round_trip_is_strict_and_content_free(tmp_path: Path) ->
         load_visual_support_matrix(path)
 
 
-def test_checked_in_evaluator_v1_matrix_remains_strictly_loadable() -> None:
-    original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
+def test_evaluator_v1_matrix_remains_strictly_loadable(tmp_path: Path) -> None:
+    original = _legacy_matrix_payload()
+    path = tmp_path / "legacy-matrix.json"
+    path.write_text(json.dumps(original), encoding="utf-8")
 
-    matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
+    matrix = load_visual_support_matrix(path)
 
     assert matrix.schema_version == 1
     assert matrix.reports[0].schema_version == 1
@@ -552,8 +586,24 @@ def test_checked_in_evaluator_v1_matrix_remains_strictly_loadable() -> None:
     assert json.loads(matrix.to_json()) == original
 
 
+def test_checked_in_evaluator_v2_matrix_is_current_terra_evidence() -> None:
+    original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
+
+    matrix = load_visual_support_matrix(SUPPORT_MATRIX_PATH)
+
+    assert matrix.schema_version == 2
+    assert len(matrix.reports) == 1
+    assert matrix.reports[0].model == "gpt-5.6-terra"
+    assert matrix.reports[0].output_enforcement == "provider_json_schema"
+    assert matrix.reports[0].measured_usage_complete is True
+    assert matrix.reports[0].default_enablement_ready is False
+    assert json.loads(matrix.to_json()) == original
+
+
 def test_new_matrix_can_preserve_v1_and_v2_reports_together(tmp_path: Path) -> None:
-    legacy = load_visual_support_matrix(SUPPORT_MATRIX_PATH).reports[0]
+    legacy_path = tmp_path / "legacy-matrix.json"
+    legacy_path.write_text(json.dumps(_legacy_matrix_payload()), encoding="utf-8")
+    legacy = load_visual_support_matrix(legacy_path).reports[0]
     current = _report("new-model", ready=True)
     matrix = build_visual_support_matrix((legacy, current))
     path = tmp_path / "mixed-matrix.json"
@@ -594,7 +644,7 @@ def test_cli_validates_confirmation_and_output_before_loading_config(
         output=tmp_path / "matrix.json",
         replace=False,
         provider="openai",
-        model="gpt-4o",
+        model="gpt-5.6-terra",
     )
     with pytest.raises(ValueError, match="exactly two"):
         validate_live_request(args)
@@ -606,7 +656,7 @@ def test_cli_validates_confirmation_and_output_before_loading_config(
 
     args.max_output_tokens = 4_096
     args.output.write_text(
-        build_visual_support_matrix((_report("gpt-4o", ready=True),)).to_json(),
+        build_visual_support_matrix((_report("gpt-5.6-terra", ready=True),)).to_json(),
         encoding="utf-8",
     )
     with pytest.raises(FileExistsError, match="--replace"):
@@ -615,7 +665,7 @@ def test_cli_validates_confirmation_and_output_before_loading_config(
     args.model = "gpt-4.1"
     assert validate_live_request(args) == args.output.resolve()
 
-    args.model = "gpt-4o"
+    args.model = "gpt-5.6-terra"
     args.replace = True
     assert validate_live_request(args) == args.output.resolve()
 
@@ -624,7 +674,7 @@ def test_cli_validates_confirmation_and_output_before_loading_config(
     ("arguments", "expected_returncode"),
     [
         (["--help"], 0),
-        (["--provider", "openai", "--model", "gpt-4o"], 2),
+        (["--provider", "openai", "--model", "gpt-5.6-terra"], 2),
     ],
 )
 def test_cli_help_and_refusal_do_not_initialize_application_config(

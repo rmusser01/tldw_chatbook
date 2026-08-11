@@ -18,9 +18,10 @@ eligible for a separate default-policy review; it does not change the default.
   and the recommendation gate result. Raw model output is represented only by
   its SHA-256 digest and is never persisted.
 
-Evaluator-v2 requests a strict provider-native JSON Schema only for documented
-GPT-4o and GPT-4o mini models routed to the official OpenAI endpoint. Every other
-provider, model, or custom endpoint retains prompt-only enforcement and is labeled
+Evaluator-v2 requests a strict provider-native JSON Schema for GPT-5.6 Terra
+routed to the official OpenAI endpoint. Previously supported model routes remain
+compatible, but current checked-in evidence uses Terra. Every unsupported model,
+provider, or custom endpoint retains prompt-only enforcement and is labeled
 `prompt_only` in its report. Evaluator-v1 matrices remain strictly loadable; when
 a v2 run appends to one, the resulting v2 matrix preserves the original v1 report
 without inventing diagnostics that were not recorded at evaluation time.
@@ -52,11 +53,11 @@ New-Item -ItemType Directory -Path $env:XDG_DATA_HOME,$env:XDG_CONFIG_HOME | Out
 
 .venv\Scripts\python.exe scripts\evaluate_visual_compaction.py `
   --provider openai `
-  --model gpt-4o `
+  --model gpt-5.6-terra `
   --confirm-billable
 ```
 
-Replace `openai` and `gpt-4o` with the exact configured provider/model pair.
+Replace `openai` and `gpt-5.6-terra` with the exact configured provider/model pair.
 The relevant provider credential must already be present in the process
 environment. Do not paste it into the command or commit it to this directory.
 New provider/model reports are appended to an existing matrix. Use `--replace`
@@ -88,14 +89,16 @@ reviewed follow-up rather than treating PNG byte compression as token savings.
 
 ## Checked-in result
 
-The 2026-08-11 `openai/gpt-4o` run used complete provider-reported usage. The
-text request consumed 914 input tokens; the two-page visual request consumed
-1,835, a measured token-reduction ratio of -100.8%. Rendering took 56 ms. The
-evaluator-v1 visual response did not satisfy its prompt-only JSON contract, so its
-OCR, code/math, recall, and adversarial scores are unknown rather than guessed. Its
-exact parse-failure category is `legacy_unspecified`; a new evaluator-v2 run would
-record a stable category such as `invalid_json` without storing the response.
+The 2026-08-11 `openai/gpt-5.6-terra` run made exactly two successful requests
+through Chat Completions with evaluator-v2 strict JSON Schema enforcement. It used
+complete provider-reported usage: the text request consumed 1,032 input tokens and
+the two-page visual request consumed 2,881. The visual representation therefore
+used 179.2% more input tokens than text (`token_reduction_ratio = -1.7917`).
+Rendering took 58 ms; text and visual request latency were 5,963 ms and 7,196 ms.
 
-Accordingly, `openai/gpt-4o` is not eligible for default review and the support
-matrix recommends no policy change. See `support-matrix.json` for the
-content-free evidence record.
+Both responses satisfied the schema. The visual result reached 0.9249 OCR fidelity,
+1.0 code/math recovery, 0.80 instruction recall, and passed adversarial safety. It
+missed the token-savings, OCR, and recall gates, so Terra is not eligible for
+default review and the support matrix recommends no policy change. The normal
+Chatbook config and data tree were fingerprinted before and after the isolated run
+and remained unchanged. See `support-matrix.json` for the content-free evidence.

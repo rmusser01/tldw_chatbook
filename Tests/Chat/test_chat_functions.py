@@ -717,6 +717,69 @@ class TestProviderRequestPayloads:
         assert "max_tokens" not in captured["json"]
         assert "max_output_tokens" not in captured["json"]
 
+    def test_gpt_5_6_terra_vision_schema_reaches_chat_completions_payload(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        image_part = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,VEVSUkE="},
+        }
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "visual_compaction_evaluation",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                    "required": ["answer"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Evaluate this image."},
+                    image_part,
+                ],
+            }
+        ]
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=messages,
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=4096,
+            response_format=response_format,
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["messages"] == messages
+        assert captured["json"]["messages"][0]["content"][1] == image_part
+        assert captured["json"]["response_format"] == response_format
+        assert captured["json"]["max_completion_tokens"] == 4096
+        assert "input" not in captured["json"]
+        assert "text" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+
     @pytest.mark.parametrize("model", ["o3", "openai/gpt-5.6-terra"])
     def test_openai_reasoning_none_for_non_gpt_5_6_uses_responses_api(
         self, monkeypatch, model
