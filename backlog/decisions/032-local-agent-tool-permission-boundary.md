@@ -27,6 +27,16 @@ sub-agent runs so nested invocations re-check permissions. Refusal strings are
 pinned constants from spec §3.3: `LOCAL_DENY_REFUSAL`, `LOCAL_TIMEOUT_REFUSAL`,
 and `LOCAL_KILL_SWITCH_REFUSAL`.
 
+**Addendum (TASK-13216, 2026-08-11): session tasks use item-oriented CAS.**
+The Console-local `todo_write` full-list replacement is retired. A supplied
+Console session store registers `todo_create`, `todo_update`, `todo_get`, and
+`todo_list`; create/update remain permission-gated mutations, get/list are
+read-only, and no task tool is registered without Console session state. Stable
+session-local IDs, exact expected-version checks, and atomic mutation preserve
+concurrent parent/fleet changes. State remains process-memory-only; the Console
+screen snapshot carries pure task records and the next-ID high-water mark solely
+across in-process navigation.
+
 **Addendum (TASK-14807, 2026-08-10): catalog availability defaults on.** The
 Console registers the standard local provider (workspace file, read-only Git,
 and standard web tools) for fresh profiles and profiles where
