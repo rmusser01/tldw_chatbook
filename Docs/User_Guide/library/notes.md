@@ -53,7 +53,7 @@ directly without mirroring it in.
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
-| "sort: Newest ▸" | Cycles the order: Newest → Oldest → Title. |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
 | "Sync" | Opens the Notes sync panel (below). |
 | "Import note" | Opens a file picker, "Import Note (TXT, MD, JSON, YAML)". The imported file becomes a new note. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
@@ -105,8 +105,8 @@ between a folder on disk and the Library.").
 |---|---|
 | "‹ Back to notes" | Returns to the list. |
 | folder + "Browse…" | The folder to mirror; Browse opens "Select Notes Sync Folder". |
-| "direction: … ▸" | Cycles through "Bidirectional", "Disk → Library", and "Library → Disk". |
-| "conflicts: … ▸" | Cycles the conflict policy through "Newer wins", "Disk wins", and "Library wins". |
+| "Direction" choices | An always-visible choice row — "Bidirectional", "Disk → Library", "Library → Disk" — with ✓ on the active one; click to pick. |
+| "Conflicts" choices | The same choice-row shape for the conflict policy: "Newer wins", "Disk wins", "Library wins". |
 | "auto-sync: every 5m ✓/○" | Toggles a background sync every five minutes. |
 | "Sync now" | Runs a sync immediately; the button reads "Syncing…" while it runs. |
 
@@ -130,8 +130,9 @@ most recent first.
 
 ### Set up folder sync
 1. In the notes list, click **Sync**.
-2. Enter a folder (or click **Browse…**), then set "direction" and
-   "conflicts" by clicking them until they show what you want.
+2. Enter a folder (or click **Browse…**), then pick a Direction and a
+   Conflicts policy — each is a choice row with ✓ on the active value;
+   click the one you want.
 3. Click **Sync now** and watch the status line; optionally turn on
    "auto-sync: every 5m" to keep it running every five minutes.
 
@@ -230,3 +231,10 @@ paragraph's prose already covered).*
 save note | esc back to notes" in the editor (with shorter labels at
 compact widths); locked states such as a running sync advertise no dead
 keys.)*
+*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+(task-14902: the Sort chooser described above is this page's pre-existing
+pattern — it became the Library-wide one; the table copy above was
+re-verified against the live control (its label reads "Sort: Newest",
+not the stale "sort: Newest ▸"), and the sync panel's Direction/Conflicts
+rows were corrected to describe the always-visible ✓ choice groups the
+panel actually shows.)*

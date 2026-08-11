@@ -1332,27 +1332,27 @@ def test_build_library_prompts_state_uses_loading_result_without_source_lookup()
     assert state.count == 0
 
 
-def test_handle_library_prompts_sort_cycles_newest_to_name():
+def test_handle_library_prompts_sort_opens_the_choice_strip():
+    """task-14902: the sort press no longer cycles the scope -- it toggles
+    the direct-pick strip (the pick handler owns the exact-scope request;
+    see Tests/UI/test_library_choice_strips.py)."""
     calls: list[PromptBrowseScope] = []
     fake = SimpleNamespace(
         _library_prompt_browse_controller=SimpleNamespace(scope=PromptBrowseScope()),
         _request_library_prompts_browse=lambda scope, **_kwargs: calls.append(scope),
+        _library_prompts_sort_choices_visible=False,
+        refresh=lambda recompose=False: None,
+        call_after_refresh=lambda *args, **kwargs: None,
+        _focus_library_control=lambda selector: None,
+        _focus_library_choice_strip_active=lambda selector, active: None,
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_prompts_sort(fake, event)
-    assert calls == [PromptBrowseScope(sort_by="name", sort_order="asc")]
-
-
-def test_handle_library_prompts_sort_cycles_name_back_to_newest():
-    calls: list[PromptBrowseScope] = []
-    fake = SimpleNamespace(
-        _library_prompt_browse_controller=SimpleNamespace(
-            scope=PromptBrowseScope(sort_by="name", sort_order="asc")
-        ),
-        _request_library_prompts_browse=lambda scope, **_kwargs: calls.append(scope),
-    )
-    LibraryScreen.handle_library_prompts_sort(fake, SimpleNamespace(stop=lambda: None))
-    assert calls == [PromptBrowseScope()]
+    assert fake._library_prompts_sort_choices_visible is True
+    assert calls == []
+    LibraryScreen.handle_library_prompts_sort(fake, event)
+    assert fake._library_prompts_sort_choices_visible is False
+    assert calls == []
 
 
 def test_handle_library_prompts_filter_submitted_flushes_debounce_once():

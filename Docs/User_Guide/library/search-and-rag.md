@@ -30,10 +30,11 @@ Top to bottom on the main canvas:
 - **"Search / RAG"** — the canvas title (task-2859: dropped the redundant
   "Library " prefix and now matches the rail row's own "Search / RAG"
   spacing; it used to read "Library Search/RAG").
-- **Query row** — the **"mode: Search ⇄"** button (click to cycle to
-  "mode: RAG Answer ▸" and back), the query box ("Ask or search Library
-  sources"), and **Run** (reads "Searching…" while a search is in flight).
-  A one-line status sits underneath.
+- **Query row** — the **"mode: ✓ Search ⇄ RAG Answer"** toggle (both modes
+  are on the label with ✓ on the active one; one click flips to the other),
+  the query box ("Ask or search Library sources"), and **Run** (reads
+  "Searching…" while a search is in flight). A one-line status sits
+  underneath.
 - **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
   all local sources" when every available source is selected, otherwise the
   selected sources followed by what's off, e.g. "Scope: Notes, Conversations
@@ -69,10 +70,11 @@ source." Those are quiet nudges, not errors. Real failures are louder — a
 **"Blocked | <reason>"** callout plus a recovery block spelling out Why /
 Next / Recovery / Owner.
 
-The **"mode: … ▸"** button cycles between the two modes; switching resets
-the current results. Its tooltip names which mode a press switches *to*
-and, for RAG Answer, that it's the paid one: "Next: RAG Answer — calls a
-paid provider." / "Next: Search — stays local." Once you're in RAG Answer
+The **mode** toggle carries both modes on its label — "mode: ✓ Search ⇄
+RAG Answer" — with ✓ marking the active one; a single press flips to the
+other mode and resets the current results. Its tooltip names which mode a
+press switches *to* and, for RAG Answer, that it's the paid one: "Next:
+RAG Answer — calls a paid provider." / "Next: Search — stays local." Once you're in RAG Answer
 mode with a provider configured, the query row's status line (silent in
 Search mode) states the same fact before you press Run: "RAG Answer sends
 your question and the evidence to \<provider>. Search stays local." — a
@@ -506,3 +508,8 @@ run start and again when results land, so Run visibly does something even
 when the configuration region fills the fold; the rail search box and the
 canvas query box now mirror each other as you type — one query, two
 views of it; the mode button reads "mode: Search ⇄".)*
+*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+(task-14902: the mode control stays a one-press toggle — a genuine
+two-state flip earns its single press — but its full option set moved
+onto the label: "mode: ✓ Search ⇄ RAG Answer", ✓ marking the active mode,
+so the option space is on screen instead of only in the tooltip.)*

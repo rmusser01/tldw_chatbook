@@ -16,9 +16,12 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
-    library_cycle_label,
-    library_cycle_tooltip,
+    library_choice_label,
+    library_choice_tooltip,
     library_disabled_action_label,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -88,15 +91,20 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         # 1fr sibling.
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
+        # task-14902: while the type choice strip is open it REPLACES this
+        # toolbar row (the Notes Sort precedent -- browse actions hide while
+        # the chooser is showing), keeping the vertical budget flat.
+        type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
+        toolbar.display = not type_choices_visible
         with toolbar:
             yield Button(
-                library_cycle_label("type", self.canvas.active_type),
+                # task-14902: a chooser-opener, no longer a cycler -- press
+                # opens the direct-pick strip below instead of advancing.
+                library_choice_label("type", self.canvas.active_type),
                 id="library-media-type-filter",
                 classes="library-canvas-action",
                 compact=True,
-                # AC#5/RC: the cycler's option set was undiscoverable --
-                # enumerate the full cycle at the control.
-                tooltip=library_cycle_tooltip(
+                tooltip=library_choice_tooltip(
                     "media type", tuple(self.canvas.type_options)
                 ),
             )
@@ -145,6 +153,19 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             if select_disabled:
                 select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
             yield select_btn
+        if type_choices_visible:
+            # task-14902 AC#1: the full type option set on screen with a
+            # direct pick; sits ABOVE the task-14900 workbench split, so one
+            # strip serves both the wide side-by-side and stacked layouts.
+            yield from compose_library_choice_strip(
+                strip_id="library-media-type-choices",
+                choice_class="library-media-type-choice",
+                options=tuple(
+                    (f"library-media-type-choice-{index}", value, value)
+                    for index, value in enumerate(self.canvas.type_options)
+                ),
+                active_value=self.canvas.active_type,
+            )
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:

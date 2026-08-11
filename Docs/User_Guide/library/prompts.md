@@ -22,7 +22,7 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
-  ("sort: Newest ▸" / "sort: Name ▸" and "Import…"), and one row per prompt
+  ("sort: Newest" / "sort: Name" and "Import…"), and one row per prompt
   showing its name, artifact/source/lane summary, and description and age when present.
   Lists longer than one 50-row page have **Previous** and **Next** controls
   plus an exact "Page … · showing … of …" line.
@@ -42,8 +42,8 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 | Control | What it does |
 |---|---|
 | Filter prompts… (Enter) | Filters local prompt names and descriptions after a short pause; **Enter** applies the pending text immediately without sending a second request |
-| collection: All prompts ▸ | Opens the local-only collection manager; choose **All prompts** or one collection |
-| sort: Newest ▸ / sort: Name ▸ | Click to toggle between most recently modified first and name A–Z; changing sort returns to page 1 |
+| collection: All prompts | Opens the local-only collection manager; choose **All prompts** or one collection |
+| sort: Newest / sort: Name | Press to open a one-row strip of Newest / Name (✓ on the active one) in place of the toolbar; pick one directly (changing sort returns to page 1), or press Escape to cancel |
 | Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
 | A prompt row | Opens that prompt in the editor |
@@ -287,3 +287,10 @@ documentation SHA.*
 (task-14901 / ADR-055: the delete confirmation copy now states the
 deletion cannot be undone from Library, on every variant — clean, dirty,
 and multi-item.)*
+
+*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+(task-14902: the sort control converged on the Library chooser-strip
+pattern — press opens Newest / Name with ✓ on the active one, a pick
+requests that exact scope at page 1, Escape cancels; the collection
+control's label dropped the cycle glyph — it opens the collection
+manager, a direct-pick surface, and never cycled.)*

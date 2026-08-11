@@ -69,6 +69,9 @@ class LibraryMediaCanvasState:
     # until acted on or replaced by a newer bulk-delete action. 0 means no
     # receipt to show (the normal state).
     delete_receipt_count: int = 0
+    # task-14902: True while the type chooser's direct-pick strip replaces
+    # the browse toolbar row (the Notes Sort choice-strip pattern).
+    type_choices_visible: bool = False
 
 
 @dataclass(frozen=True)
@@ -291,6 +294,7 @@ def build_library_media_state(
     selected_ids: frozenset[str] = frozenset(),
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
+    type_choices_visible: bool = False,
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -423,4 +427,5 @@ def build_library_media_state(
         selected_count=selected_count,
         confirming_bulk_delete=confirming_bulk_delete,
         delete_receipt_count=max(0, delete_receipt_count),
+        type_choices_visible=type_choices_visible,
     )

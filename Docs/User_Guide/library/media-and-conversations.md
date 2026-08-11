@@ -27,8 +27,9 @@ Both list canvases follow the same shape, top to bottom:
   "Conversations (3)" — task-2859: Conversations previously had no
   heading at all, so its top row read as bare "Export…"/"Select" with
   nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  cycling "type: All ⇄" filter right after the heading and a "Trash"
-  action (the browsable Trash view — see "Media Trash" below);
+  "type: All" chooser right after the heading (press it to open a one-row
+  strip of every type — ✓ marks the active one — and pick directly) and a
+  "Trash" action (the browsable Trash view — see "Media Trash" below);
   Conversations instead has a "Filter conversations… (Enter)" text box,
   which now renders above the empty-state text (task-2859: it used to sit
   below "No conversations yet.", reading as an afterthought).
@@ -131,7 +132,7 @@ restoring it.
 
 | Control | What it does |
 |---|---|
-| "type: All ⇄" | Cycles through All plus each media type present in your Library (the tooltip lists the full cycle). While filtered, a status line reads "2 of 5 · type: pdf". |
+| "type: All" | Opens a one-row strip of All plus each media type present in your Library, ✓ on the active one — pick a type directly, press Escape (or pick the current one) to cancel. While filtered, a status line reads "2 of 5 · type: pdf". |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
@@ -203,9 +204,11 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 ## Common tasks
 
 ### Filter media by type
-1. In **Media**, click "type: All ⇄" — each press cycles to the next type.
-2. The list narrows and the status line reads e.g. "2 of 5 · type: pdf".
-   Cycle back around to "type: All ⇄" to clear.
+1. In **Media**, click "type: All" — a one-row strip of every type appears
+   in place of the toolbar, with ✓ on the active one.
+2. Click the type you want. The list narrows and the status line reads
+   e.g. "2 of 5 · type: pdf". Pick "All" the same way to clear, or press
+   Escape to close the strip without changing anything.
 
 ### Open a media item and search inside it
 1. Click a row, then "Open in viewer".
@@ -365,3 +368,10 @@ described in the layout tour — live at 170/121 cols, back to the stacked
 flow at 119/100, keyboard traversal, Select mode and the bulk toolbar
 checked in both layouts, "No preview in Select mode." placeholder wide
 only.)*
+*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+(task-14902: the type filter converged on the Notes Sort chooser pattern —
+pressing "type: All" swaps the toolbar for a one-row strip of every type
+with ✓ on the active one; a pick applies directly (no more press-to-cycle),
+Escape cancels and refocuses the opener, and the footer/F1 read
+"enter choose type / esc cancel" while the strip is open. Checked live in
+both the wide side-by-side and stacked layouts, mouse and keyboard-only.)*

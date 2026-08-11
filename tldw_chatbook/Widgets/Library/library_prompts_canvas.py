@@ -27,8 +27,11 @@ from tldw_chatbook.Library.library_prompts_state import (
     prompt_editor_meta_line,
 )
 from tldw_chatbook.Library.library_shell_state import (
-    library_cycle_label,
-    library_cycle_tooltip,
+    library_choice_label,
+    library_choice_tooltip,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
 )
 from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
     LibraryPromptHistoryRegion,
@@ -127,11 +130,13 @@ class LibraryPromptsListCanvas(Vertical):
         history_current_compatible: bool = True,
         collection_label: str = "All prompts",
         membership_state: PromptMembershipState | None = None,
+        sort_choices_visible: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.sort_mode = sort_mode
+        self.sort_choices_visible = sort_choices_visible
         self.filter_value = filter_value
         self.browse_result = browse_result
         self.mode = mode
@@ -182,14 +187,17 @@ class LibraryPromptsListCanvas(Vertical):
             value=self.filter_value,
         )
         yield Button(
-            library_cycle_label("collection", escape_markup(self.collection_label)),
+            # task-14902: a chooser, not a cycler -- pressing opens the
+            # collection manager modal (browse lane: the full, unbounded
+            # collection set with a direct pick), so the label must not
+            # carry the press-advances "⇄" glyph.
+            library_choice_label("collection", escape_markup(self.collection_label)),
             id="library-prompts-collection",
             classes="library-canvas-action",
             compact=True,
-            # AC#5: cycle controls say what a press cycles through. The
-            # collection set is user-data (dynamic), so the tooltip names
-            # the cycle's shape rather than a stale enumeration.
-            tooltip="Cycles the prompt scope: All prompts, then each collection.",
+            # The collection set is user-data (dynamic), so the tooltip
+            # names the pick's shape rather than a stale enumeration.
+            tooltip="Press to pick the prompt scope: All prompts, or one collection.",
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
         # library_notes_canvas.py's toolbar exactly (same render-safe shape:
@@ -202,15 +210,18 @@ class LibraryPromptsListCanvas(Vertical):
         # works.
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
+        # task-14902: the sort choice strip replaces this toolbar row while
+        # open (the Notes Sort precedent).
+        toolbar.display = not self.sort_choices_visible
         with toolbar:
             yield Button(
-                library_cycle_label(
+                library_choice_label(
                     "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
                 ),
                 id="library-prompts-sort",
                 classes="library-canvas-action",
                 compact=True,
-                tooltip=library_cycle_tooltip(
+                tooltip=library_choice_tooltip(
                     "the sort order", tuple(_SORT_LABELS.values())
                 ),
             )
@@ -219,6 +230,16 @@ class LibraryPromptsListCanvas(Vertical):
                 id="library-prompts-import",
                 classes="library-canvas-action",
                 compact=True,
+            )
+        if self.sort_choices_visible:
+            yield from compose_library_choice_strip(
+                strip_id="library-prompts-sort-choices",
+                choice_class="library-prompts-sort-choice",
+                options=tuple(
+                    (f"library-prompts-sort-{mode}", mode, label)
+                    for mode, label in _SORT_LABELS.items()
+                ),
+                active_value=self.sort_mode,
             )
         if self.import_open:
             yield from self._compose_import_row()

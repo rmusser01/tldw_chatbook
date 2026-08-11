@@ -29,7 +29,6 @@ from tldw_chatbook.Library.library_export_state import (
     export_button_tooltip,
     format_last_export_line,
     media_quality_helper_copy,
-    next_media_quality,
     normalize_export_destination,
 )
 
@@ -262,14 +261,29 @@ def test_running_status_and_error_lines_pass_through_unchanged():
     assert failed_state.error_line == "Permission denied"
 
 
-# --- next_media_quality -------------------------------------------------------
+# --- quality option set -------------------------------------------------------
+# task-14902: ``next_media_quality`` retired with the per-press cycle -- the
+# quality control now opens a direct-pick strip over MEDIA_QUALITY_OPTIONS
+# (see Tests/UI/test_library_choice_strips.py), so the option tuple itself
+# is the remaining contract.
 
 
-def test_next_media_quality_cycles_and_wraps():
-    assert next_media_quality("thumbnail") == "compressed"
-    assert next_media_quality("compressed") == "original"
-    assert next_media_quality("original") == "thumbnail"
-    assert next_media_quality("bogus") == MEDIA_QUALITY_OPTIONS[0]
+def test_media_quality_options_are_the_three_known_values_in_order():
+    assert MEDIA_QUALITY_OPTIONS == ("thumbnail", "compressed", "original")
+    assert DEFAULT_MEDIA_QUALITY == "thumbnail"
+
+
+def test_export_form_state_carries_quality_choices_visible_flag():
+    state = build_library_export_form_state(
+        scope=ExportScope(kind="everything"),
+        counts={"media": 1, "conversations": 0, "notes": 0},
+        name="Library export 2026-08-11",
+        description="",
+        media_quality="thumbnail",
+        destination="",
+        quality_choices_visible=True,
+    )
+    assert state.quality_choices_visible is True
 
 
 # --- media_quality_helper_copy -------------------------------------------------

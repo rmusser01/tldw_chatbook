@@ -76,11 +76,11 @@ from ...Library.library_export_scope import (
 )
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
+    MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     build_library_export_form_state,
     default_export_name,
     format_last_export_line,
-    next_media_quality,
     normalize_export_destination,
 )
 from ...Widgets.Library.library_export_canvas import (
@@ -259,7 +259,7 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     LibraryShellState,
     build_library_shell_state,
-    library_cycle_label,
+    library_choice_label,
     library_disabled_action_label,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
@@ -2653,6 +2653,9 @@ class LibraryScreen(BaseAppScreen):
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
         self._library_media_view: str = "list"
+        # task-14902: True while the media type chooser's direct-pick strip
+        # replaces the browse toolbar row (the Notes Sort strip pattern).
+        self._library_media_type_choices_visible: bool = False
         # task-4025: the Trash view's own fetch/session state. ``None``
         # records mean the fetch has not landed yet (the view renders
         # "Loading Trash…"); the tuple is the ``list_media_trash`` page in
@@ -2697,6 +2700,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_debounce_timer: Timer | None = None
         self._selected_prompt_id: int | None = None
         self._library_prompts_view: str = "list"
+        # task-14902: True while the prompts sort chooser's direct-pick
+        # strip replaces the list toolbar row (the Notes Sort pattern).
+        self._library_prompts_sort_choices_visible: bool = False
         self._library_prompt_detail: Mapping[str, Any] | None = None
         self._library_prompt_original_name: str = ""
         self._library_prompt_version: int | None = None
@@ -2809,6 +2815,9 @@ class LibraryScreen(BaseAppScreen):
         # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
         # complication, ``detail["name"]`` is already the stable identity).
         self._library_skills_view: str = "list"
+        # task-14902: True while the skills sort chooser's direct-pick
+        # strip replaces the list toolbar row (the Notes Sort pattern).
+        self._library_skills_sort_choices_visible: bool = False
         self._library_skill_detail: Mapping[str, Any] | None = None
         self._library_skill_original_name: str = ""
         self._library_skill_editor_state: SkillEditorState | None = None
@@ -3102,6 +3111,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_scope: ExportScope = ExportScope(kind="everything")
         self._library_export_counts: dict[str, int] | None = None
         self._library_export_form: dict[str, Any] = self._default_library_export_form()
+        # task-14902: True while the export quality chooser's direct-pick
+        # strip renders below its (still-visible) opener button.
+        self._library_export_quality_choices_visible: bool = False
         self._library_export_running: bool = False
         self._library_export_error: str = ""
         # Task 3: the running export's quiet status line ("Exporting…
@@ -3231,6 +3243,11 @@ class LibraryScreen(BaseAppScreen):
         # their newly wired Escape. Export's label names the actual
         # destination -- the canvas whose "Export…" opened it, or the hub.
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            # task-14902 AC#3: while the quality strip is open, Enter picks
+            # and Escape cancels the pick (never "back") -- the footer must
+            # match what the keys genuinely do.
+            if self._library_open_choice_strip() is not None:
+                return (("enter", "choose quality"), ("esc", "cancel"))
             origin_label = _LIBRARY_HELP_SURFACE_LABELS.get(
                 self._library_export_origin_row_id, ""
             )
@@ -3271,6 +3288,12 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_SKILL_EDITOR_SHORTCUTS
         if self._library_media_confirming_bulk_delete:
             return self.LIBRARY_MEDIA_BULK_DELETE_CONFIRM_SHORTCUTS
+        # task-14902 AC#3: an open choice strip advertises its own keys.
+        # Placed AFTER the bulk-delete-confirm gate to match the escape
+        # bindings' declaration order (an armed confirm's Escape wins).
+        open_strip = self._library_open_choice_strip()
+        if open_strip is not None:
+            return (("enter", f"choose {open_strip[0]}"), ("esc", "cancel"))
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
@@ -7916,6 +7939,9 @@ class LibraryScreen(BaseAppScreen):
                         collection_label=self._library_prompt_collections_controller.collection_label(
                             self._library_prompt_browse_controller.scope.collection_id
                         ),
+                        sort_choices_visible=(
+                            self._library_prompts_sort_choices_visible
+                        ),
                         id="library-prompts-canvas",
                     )
                 elif (
@@ -7982,6 +8008,9 @@ class LibraryScreen(BaseAppScreen):
                         # off-thread (see ``_refresh_library_skills_trust_posture``).
                         trust_posture=self._library_skills_trust_posture,
                         confirming_reset=self._library_skill_trust_confirming_reset,
+                        sort_choices_visible=(
+                            self._library_skills_sort_choices_visible
+                        ),
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -8338,6 +8367,7 @@ class LibraryScreen(BaseAppScreen):
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
+            type_choices_visible=self._library_media_type_choices_visible,
         )
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
@@ -8422,9 +8452,9 @@ class LibraryScreen(BaseAppScreen):
         label = self._library_prompt_collections_controller.collection_label(
             self._library_prompt_browse_controller.scope.collection_id
         )
-        # AC#5: the in-place patcher must build the SAME cycle label the
-        # canvas composes (recompose discipline).
-        button.label = library_cycle_label("collection", escape_markup(label))
+        # AC#5/task-14902: the in-place patcher must build the SAME chooser
+        # label the canvas composes (recompose discipline).
+        button.label = library_choice_label("collection", escape_markup(label))
 
     def _refresh_library_prompt_after_membership_apply(self) -> None:
         """Invalidate list data and refresh counts after membership Apply.
@@ -9023,6 +9053,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_scope = scope or ExportScope(kind="everything")
         self._library_export_counts = None
         self._library_export_form = self._default_library_export_form()
+        # task-14902: a fresh visit never inherits a half-open quality strip.
+        self._library_export_quality_choices_visible = False
         self._library_export_running = False
         self._library_export_error = ""
         self._library_export_status = ""
@@ -9253,6 +9285,7 @@ class LibraryScreen(BaseAppScreen):
             status_line=self._library_export_status,
             error_line=self._library_export_error,
             last_export_line=last_export_line,
+            quality_choices_visible=self._library_export_quality_choices_visible,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
@@ -12274,33 +12307,58 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
-        """Cycle the Library media canvas filter to the next available type.
+        """Open (or close) the media type chooser's direct-pick strip.
 
-        Advances through the authoritative ``type_options`` tuple built by
-        ``_build_library_media_state`` (e.g. ``("All", "audio", "video")``),
-        wrapping back to the first option after the last. Replaces the
-        previous ``Select``-based filter, which did not render reliably in
-        the deployed TUI; a ``Button.Pressed`` handler only fires on real
-        user presses, so no mount-time-loop guard is needed here.
+        task-14902: the per-press cycle retired -- pressing the chooser now
+        swaps the browse toolbar row for a one-row strip of every
+        ``type_options`` value (the Notes Sort pattern), and the pick
+        handler below applies the exact chosen value. Inert while the
+        bulk-delete confirmation is armed: task-2853 AC3's rule -- nothing
+        may drift the list state under an armed confirm.
 
         Args:
-            event: Button press event emitted by the media type filter.
+            event: Button press event emitted by the media type chooser.
         """
         event.stop()
-        type_options = self._build_library_media_state().type_options
-        if not type_options:
+        if self._library_media_confirming_bulk_delete:
             return
-        try:
-            current_index = type_options.index(self._library_media_type_filter)
-        except ValueError:
-            current_index = 0
-        next_index = (current_index + 1) % len(type_options)
-        self._library_media_type_filter = type_options[next_index]
-        # task-2853 AC4: routes through the shared exit helper so this
-        # side-effect select-mode reset can't strand a pending bulk-delete
-        # confirmation either, and states the discard like every other exit.
-        self._exit_library_media_select_mode(announce_discard=True)
+        self._library_media_type_choices_visible = (
+            not self._library_media_type_choices_visible
+        )
         self.refresh(recompose=True)
+        if self._library_media_type_choices_visible:
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-media-type-choice",
+                self._library_media_type_filter,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-type-filter"
+            )
+
+    @on(Button.Pressed, ".library-media-type-choice")
+    def handle_library_media_type_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact media type carried by one strip choice.
+
+        Args:
+            event: Button press event emitted by a type-strip option.
+        """
+        event.stop()
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_media_type_choices_visible = False
+        type_options = self._build_library_media_state().type_options
+        if requested in type_options and requested != self._library_media_type_filter:
+            self._library_media_type_filter = requested
+            # task-2853 AC4: routes through the shared exit helper so this
+            # side-effect select-mode reset can't strand a pending
+            # bulk-delete confirmation either, and states the discard like
+            # every other exit.
+            self._exit_library_media_select_mode(announce_discard=True)
+        self.refresh(recompose=True)
+        self.call_after_refresh(
+            self._focus_library_control, "#library-media-type-filter"
+        )
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
@@ -12848,6 +12906,8 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._exit_library_media_select_mode(announce_discard=True)
         self._library_media_delete_receipt_ids = ()
+        # task-14902: same staleness rule as the viewer transition.
+        self._library_media_type_choices_visible = False
         self._library_media_view = "trash"
         self._library_media_trash_records = None
         self._library_media_trash_total = 0
@@ -13140,6 +13200,9 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._library_media_view = "viewer"
+        # task-14902: an open type strip must not survive the trip through
+        # the viewer and reappear (stale) on the way back.
+        self._library_media_type_choices_visible = False
         self._library_media_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
@@ -13176,7 +13239,9 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
         """Apply the exact sort value carried by one direct choice."""
         event.stop()
-        requested = str(getattr(event.button, "sort_mode", "") or "")
+        # task-14902: the shared strip composer stashes the payload as
+        # ``choice_value`` (the sync panel's convention).
+        requested = str(getattr(event.button, "choice_value", "") or "")
         if requested not in {"newest", "oldest", "title"}:
             return
         self._library_notes_sort = requested
@@ -13274,21 +13339,66 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompts-sort")
     def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
-        """Cycle newest/name by requesting a new exact service scope."""
+        """Open (or close) the prompts sort chooser's direct-pick strip.
+
+        task-14902: the per-press newest/name cycle retired -- Sort is one
+        control family across the list canvases, and Notes Sort already
+        opens choices on press; a same-named control that silently mutated
+        the order here was the grammar fork this task closes.
+        """
         event.stop()
+        self._library_prompts_sort_choices_visible = (
+            not self._library_prompts_sort_choices_visible
+        )
+        self.refresh(recompose=True)
+        if self._library_prompts_sort_choices_visible:
+            current = (
+                "name"
+                if self._library_prompt_browse_controller.scope.sort_by == "name"
+                else "newest"
+            )
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-prompts-sort-choice",
+                current,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-prompts-sort"
+            )
+
+    @on(Button.Pressed, ".library-prompts-sort-choice")
+    def handle_library_prompts_sort_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact sort value carried by one strip choice.
+
+        Maps to the exact browse scope the old cycle produced for that
+        value (``name`` -> name/asc, ``newest`` -> last_modified/desc),
+        always resetting to page 1. Picking the already-active value only
+        closes the strip -- no service request.
+        """
+        event.stop()
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_prompts_sort_choices_visible = False
         scope = self._library_prompt_browse_controller.scope
-        if scope.sort_by == "name":
+        current = "name" if scope.sort_by == "name" else "newest"
+        if requested not in {"newest", "name"} or requested == current:
+            self.refresh(recompose=True)
+            self.call_after_refresh(
+                self._focus_library_control, "#library-prompts-sort"
+            )
+            return
+        if requested == "name":
             scope = dataclasses.replace(
                 scope,
-                sort_by="last_modified",
-                sort_order="desc",
+                sort_by="name",
+                sort_order="asc",
                 page=1,
             )
         else:
             scope = dataclasses.replace(
                 scope,
-                sort_by="name",
-                sort_order="asc",
+                sort_by="last_modified",
+                sort_order="desc",
                 page=1,
             )
         self._request_library_prompts_browse(
@@ -13370,24 +13480,51 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skills-sort")
     def handle_library_skills_sort(self, event: Button.Pressed) -> None:
-        """Cycle the Library skills canvas sort mode (name/status).
+        """Open (or close) the skills sort chooser's direct-pick strip.
+
+        task-14902: the per-press name/status cycle retired -- Sort is one
+        control family across the list canvases (see
+        ``handle_library_prompts_sort``).
+
+        Args:
+            event: Button press event emitted by the skills sort control.
+        """
+        event.stop()
+        self._library_skills_sort_choices_visible = (
+            not self._library_skills_sort_choices_visible
+        )
+        self.refresh(recompose=True)
+        if self._library_skills_sort_choices_visible:
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-skills-sort-choice",
+                self._library_skills_sort,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-skills-sort"
+            )
+
+    @on(Button.Pressed, ".library-skills-sort-choice")
+    def handle_library_skills_sort_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact skills sort value carried by one strip choice.
 
         The already-fetched ``get_context`` snapshot payload is re-sorted by
         ``_build_library_skills_state`` -> ``build_skills_list_state`` on
         recompose, no worker needed.
 
         Args:
-            event: Button press event emitted by the skills sort control.
+            event: Button press event emitted by a sort-strip option.
         """
         event.stop()
-        try:
-            index = _LIBRARY_SKILLS_SORT_MODES.index(self._library_skills_sort)
-        except ValueError:
-            index = -1
-        self._library_skills_sort = _LIBRARY_SKILLS_SORT_MODES[
-            (index + 1) % len(_LIBRARY_SKILLS_SORT_MODES)
-        ]
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_skills_sort_choices_visible = False
+        if requested in _LIBRARY_SKILLS_SORT_MODES:
+            self._library_skills_sort = requested
         self.refresh(recompose=True)
+        self.call_after_refresh(
+            self._focus_library_control, "#library-skills-sort"
+        )
 
     @on(Input.Submitted, "#library-skills-filter")
     def handle_library_skills_filter(self, event: Input.Submitted) -> None:
@@ -15163,8 +15300,13 @@ class LibraryScreen(BaseAppScreen):
         rail. A running export keeps running; the canvas's own state
         (including the durable last-export receipt) survives exactly as a
         rail switch would leave it.
+
+        task-14902: an open quality strip consumes the Escape first --
+        cancelling a half-made pick must not eject the user from the form.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        if self._close_open_library_choice_strip():
             return
         origin = self._library_export_origin_row_id
         self._library_export_origin_row_id = ""
@@ -17948,6 +18090,77 @@ class LibraryScreen(BaseAppScreen):
         """
         await self._exit_library_prompt_editor_guarded()
 
+    def _library_open_choice_strip(self) -> tuple[str, str, str] | None:
+        """Return the open converged choice strip on the LIVE surface.
+
+        task-14902: one predicate shared by the Escape gate
+        (``_close_open_library_choice_strip``) and the footer/F1 seam
+        (``_library_footer_shortcuts_for_current_state``) so the two can
+        never disagree about whether a strip is open. The Notes Sort strip
+        keeps its own pre-existing wiring (its visibility lives in the
+        notes escape chain and footer tier).
+
+        Returns:
+            ``(subject, opener_selector, visibility_attr)`` for the open
+            strip, or ``None`` when no converged strip is showing.
+        """
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_media_type_choices_visible
+        ):
+            return (
+                "type",
+                "#library-media-type-filter",
+                "_library_media_type_choices_visible",
+            )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            and self._library_prompts_view == "list"
+            and self._library_prompts_sort_choices_visible
+        ):
+            return (
+                "sort",
+                "#library-prompts-sort",
+                "_library_prompts_sort_choices_visible",
+            )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._library_skills_view == "list"
+            and self._library_skills_sort_choices_visible
+        ):
+            return (
+                "sort",
+                "#library-skills-sort",
+                "_library_skills_sort_choices_visible",
+            )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+            and self._library_export_quality_choices_visible
+        ):
+            return (
+                "quality",
+                "#library-export-quality",
+                "_library_export_quality_choices_visible",
+            )
+        return None
+
+    def _close_open_library_choice_strip(self) -> bool:
+        """Close the open converged choice strip, refocusing its opener.
+
+        Returns:
+            ``True`` when a strip was open and has been closed (the caller
+            should stop -- Escape is consumed), ``False`` otherwise.
+        """
+        open_strip = self._library_open_choice_strip()
+        if open_strip is None:
+            return False
+        _subject, opener_selector, visibility_attr = open_strip
+        setattr(self, visibility_attr, False)
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_control, opener_selector)
+        return True
+
     def action_library_list_focus_rail(self) -> None:
         """Escape: move focus from a list canvas toward the rail (task-2856 AC2).
 
@@ -17958,7 +18171,14 @@ class LibraryScreen(BaseAppScreen):
         same ``#library-search-input`` target `/` (``on_key``) and F6
         (``_WORKBENCH_FOCUS_TARGETS``) already use, so all three routes to
         the rail agree on where "the rail" is.
+
+        task-14902: an open choice strip consumes the Escape first (close +
+        refocus the opener), mirroring the Notes Sort chooser's own escape
+        step -- the focus hop toward the rail happens only from a quiet
+        list.
         """
+        if self._close_open_library_choice_strip():
+            return
         try:
             self.query_one("#library-search-input", Input).focus()
         except (NoMatches, QueryError):
@@ -21531,21 +21751,48 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_form["description"] = event.value
 
     @on(Button.Pressed, "#library-export-quality")
-    def handle_library_export_quality_cycle(self, event: Button.Pressed) -> None:
-        """Cycle the media-quality control to its next option.
+    def handle_library_export_quality(self, event: Button.Pressed) -> None:
+        """Open or close the quality chooser's direct-pick strip.
 
-        Mirrors ``handle_library_media_type_filter_pressed``'s cycle-
-        button convention -- see ``next_media_quality``'s docstring for
-        why this isn't a ``Select``.
+        task-14902: the per-press thumbnail/compressed/original cycle
+        retired -- the chooser opens a strip of all three values below the
+        (still-visible) button, so a second press here also closes it.
 
         Args:
             event: Button press event emitted by the quality control.
         """
         event.stop()
-        self._library_export_form["quality"] = next_media_quality(
-            str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY))
+        self._library_export_quality_choices_visible = (
+            not self._library_export_quality_choices_visible
         )
         self.refresh(recompose=True)
+        if self._library_export_quality_choices_visible:
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-export-quality-choice",
+                str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)),
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-export-quality"
+            )
+
+    @on(Button.Pressed, ".library-export-quality-choice")
+    def handle_library_export_quality_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact quality value carried by one strip choice.
+
+        Args:
+            event: Button press event emitted by a quality-strip option.
+        """
+        event.stop()
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_export_quality_choices_visible = False
+        if requested in MEDIA_QUALITY_OPTIONS:
+            self._library_export_form["quality"] = requested
+        self.refresh(recompose=True)
+        self.call_after_refresh(
+            self._focus_library_control, "#library-export-quality"
+        )
 
     @on(Button.Pressed, "#library-export-destination")
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
@@ -21890,10 +22137,34 @@ class LibraryScreen(BaseAppScreen):
 
     def _focus_library_note_control(self, selector: str) -> None:
         """Focus one stable note control when its presentation is visible."""
+        self._focus_library_control(selector)
+
+    def _focus_library_control(self, selector: str) -> None:
+        """Focus one stable Library control if it is currently mounted."""
         try:
             self.query_one(selector, Widget).focus()
         except (NoMatches, QueryError):
             return
+
+    def _focus_library_choice_strip_active(
+        self, choice_selector: str, active_value: str
+    ) -> None:
+        """Move focus into a just-opened choice strip (task-14902 keyboard
+        model): land on the active option so the strip is immediately
+        traversable, falling back to the first option.
+
+        Args:
+            choice_selector: The strip's per-site option class selector.
+            active_value: The currently active option's ``choice_value``.
+        """
+        buttons = list(self.query(choice_selector))
+        if not buttons:
+            return
+        for button in buttons:
+            if str(getattr(button, "choice_value", "")) == active_value:
+                button.focus()
+                return
+        buttons[0].focus()
 
     def _restore_library_note_delete_origin(self) -> None:
         """Leave confirmation and restore its stable source presentation."""

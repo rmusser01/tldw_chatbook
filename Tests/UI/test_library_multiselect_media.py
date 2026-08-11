@@ -643,20 +643,44 @@ def test_select_toggle_on_does_not_notify():
     assert fake._notified == []
 
 
-def test_type_filter_cycle_exits_select_mode_and_notifies_discard():
-    """The type-filter cycle also silently reset select mode before
-    task-2853 -- it now goes through the same shared exit path, so it
-    cannot strand ``confirming_bulk_delete`` either."""
+def test_type_filter_change_exits_select_mode_and_notifies_discard():
+    """The type-filter change also silently reset select mode before
+    task-2853 -- it goes through the same shared exit path, so it cannot
+    strand ``confirming_bulk_delete`` either.
+
+    (rebase note: task-14902 retired the per-press cycle -- the chooser
+    press now only opens the choice strip and is inert while the
+    bulk-delete confirmation is armed (task-2853 AC3), and the actual
+    filter change moved to the strip's pick handler. The pinned outcome
+    is unchanged; it is asserted at the pick seam, the one place the
+    filter can change now.)"""
     fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    fake.call_after_refresh = lambda *a, **k: None
+    fake._focus_library_control = lambda *a, **k: None
     fake._library_media_row_selection.select_all(["9"])
     fake._library_media_type_filter = "All"
+    fake._library_media_type_choices_visible = False
     fake._build_library_media_state = lambda: SimpleNamespace(
         type_options=("All", "video")
     )
-    event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_type_filter_pressed(fake, event)
+    # Pressing the chooser under an armed confirm is inert: no strip, no
+    # filter drift, the confirmation stays exactly as armed.
+    press = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_media_type_filter_pressed(fake, press)
+    assert fake._library_media_type_choices_visible is False
+    assert fake._library_media_type_filter == "All"
+    assert fake._library_media_confirming_bulk_delete is True
+    # A strip pick applies the value and routes through the shared exit
+    # helper -- the original task-2853 pin, one seam over.
+    fake._library_media_type_choices_visible = True
+    pick = SimpleNamespace(
+        stop=lambda: None,
+        button=SimpleNamespace(choice_value="video"),
+    )
+    LibraryScreen.handle_library_media_type_choice(fake, pick)
     assert fake._library_media_type_filter == "video"
+    assert fake._library_media_type_choices_visible is False
     assert fake._library_media_select_mode is False
     assert fake._library_media_confirming_bulk_delete is False
     assert fake._library_media_row_selection.count == 0

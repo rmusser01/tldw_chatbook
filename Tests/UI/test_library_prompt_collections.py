@@ -1491,7 +1491,7 @@ async def test_prompt_canvas_starts_with_visible_literal_collection_control():
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         collection = app.screen.query_one("#library-prompts-collection", Button)
-        assert str(collection.label) == "collection: [bold] · #7 ⇄"
+        assert str(collection.label) == "collection: [bold] · #7"
         focus_ids = [widget.id for widget in app.screen.focus_chain]
         assert focus_ids.index("library-prompts-collection") < focus_ids.index(
             "library-prompts-sort"
@@ -1700,7 +1700,7 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
         await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == "collection: All prompts ⇄"
+            == "collection: All prompts"
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -1731,7 +1731,7 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
         assert screen._library_prompt_browse_controller.scope.page == 1
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == "collection: [bold] ⇄"
+            == "collection: [bold]"
         )
 
 
@@ -1925,7 +1925,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name} ⇄"
+            == f"collection: {renamed_name}"
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -1956,7 +1956,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name} ⇄"
+            == f"collection: {renamed_name}"
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -1981,7 +1981,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             pilot,
             lambda: (
                 str(screen.query_one("#library-prompts-collection", Button).label)
-                == "collection: All prompts ⇄"
+                == "collection: All prompts"
             ),
             message="All prompts label did not refresh",
         )

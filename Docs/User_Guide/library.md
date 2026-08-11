@@ -373,3 +373,13 @@ shows one pane at a time); Escape now works on Export (back to the
 canvas that opened it, or the hub), Collections (focus rail), and the
 Study staging canvases (back to hub); the staging rows' second line
 reads "see what carries over".)*
+*Verified against feat/library-queue-batch @ 6b4b4ec5f — 2026-08-11
+(task-14902: the value-cycle buttons converged on the Notes Sort chooser
+pattern — pressing "type: All" / "sort: Newest" / "quality: thumbnail"
+opens a one-row choice strip with a "✓" on the active option and a direct
+pick (Escape cancels; the footer/F1 read "enter choose … / esc cancel"
+while a strip is open), so the trailing "⇄" now appears only on the
+surviving genuine two-option toggles, sitting between the two enumerated
+options with "✓" on the active one ("mode: ✓ Search ⇄ RAG Answer", the
+skill editor's switches); the prompt collection control — a chooser that
+opens the collection manager — dropped the glyph outright.)*
