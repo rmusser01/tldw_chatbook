@@ -5980,10 +5980,32 @@ class TldwCli(
 
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
+        # task-15463: ONE SubscriptionsDB for this whole wiring. `db_factory`
+        # used to be `lambda: SubscriptionsDB(...)`, and `LocalWatchlistsService.
+        # _db()` called it on every service method -- so nearly every watchlists
+        # read rebuilt the database object, paying a ~52-statement schema
+        # `executescript` plus migration probes each time (3.4 ms against
+        # 0.04 ms on a held instance; 35 ms for the first build; five-plus per
+        # screen refresh). The same instance is handed to the projections, the
+        # scheduled-check handler and the bundle service below, which already
+        # shared one eager instance among themselves.
+        #
+        # Safe to share across threads: `SubscriptionsDB` connections are
+        # thread-local (`DB/Subscriptions_DB.py`'s `conn` property), so each
+        # `asyncio.to_thread` worker that touches this instance opens its own
+        # connection to the same file. `db_factory` stays a callable because it
+        # is the injectable seam tests repoint (`Tests/UI/
+        # test_watchlists_inspector.py`).
+        subscriptions_db = SubscriptionsDB(
+            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
+        )
+        # Held on the app so the FTS-backfill worker can reuse it instead of
+        # constructing a second one -- see `_backfill_subscription_items_fts`,
+        # where a concurrent second `_initialize_schema` was measured
+        # poisoning a live connection's schema view.
+        self.subscriptions_db = subscriptions_db
         self.local_watchlists_service = LocalWatchlistsService(
-            db_factory=lambda: SubscriptionsDB(
-                get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-            )
+            db_factory=lambda: subscriptions_db
         )
         try:
             self.server_watchlists_service = ServerWatchlistsService.from_config(
@@ -6032,9 +6054,9 @@ class TldwCli(
         )
         server_client = SchedulingServerClient(self.server_notifications_service)
 
-        subscriptions_db = SubscriptionsDB(
-            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-        )
+        # `subscriptions_db` is the single instance built at the top of this
+        # method (task-15463); it used to be constructed here, separately from
+        # the service's own per-call construction.
         watchlist_projection = WatchlistProjection(subscriptions_db)
 
         # `briefing_projection` is built here, BEFORE `SchedulingService`, so
@@ -6699,14 +6721,35 @@ class TldwCli(
         """Worker body: index subscription_items rows that predate the FTS
         index (task-688). Started from ``on_mount`` via
         ``run_worker(thread=True)`` so a large backlog never blocks app
-        startup or screen mount. Builds its own ``SubscriptionsDB`` instance
-        rather than reusing one built on another thread, since SQLite
-        connections in this codebase are thread-local and not shared.
+        startup or screen mount.
+
+        Uses the app's single ``SubscriptionsDB`` (task-15463). It used to
+        construct its own, on the theory that a thread-local connection
+        cannot be shared -- but thread-locality is exactly what makes sharing
+        the INSTANCE safe: this worker thread gets its own connection from it.
+        Constructing a second instance re-ran ``_initialize_schema`` -- a
+        ~52-statement ``executescript`` plus migrations, measured at 238 ms --
+        on a worker thread *while the app was already serving screens*, and
+        any connection opened during that window cached a schema view without
+        the tables it was rewriting. That is not theoretical: with per-call
+        database construction it showed up as the intermittent
+        ``OperationalError: no such table: subscription_items`` documented in
+        ``Tests/UI/test_watchlists_inspector.py``, self-healing on retry
+        because the next call built a new connection; against a held instance
+        the poisoned connection survives, and the write that lands on it just
+        fails. One instance, one schema initialization, no window.
+
+        ``close()`` below stays: it closes only the calling thread's
+        connection (``SubscriptionsDB.close``), so it releases this worker's
+        connection without touching anyone else's.
         """
         db = None
         db_path = get_subscriptions_db_path()
         try:
-            db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
+            db = getattr(self, "subscriptions_db", None)
+            if db is None:
+                # Only a harness that skipped service wiring gets here.
+                db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
             backfill_subscription_items_fts(db)
         except FTSBackfillError as exc:
             logger.opt(exception=True).error(

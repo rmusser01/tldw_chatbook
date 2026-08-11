@@ -19,6 +19,7 @@ from ..Utils.egress import (
     guarded_fetch_httpx_async,
     origin_set,
 )
+from .db_offload import run_db_off_loop
 from .item_persist import (
     CONTENT_FORMAT_TEXT,
     CONTENT_KIND_ARTICLE,
@@ -310,15 +311,61 @@ class LocalWatchlistsService:
         filter_service: WatchlistFilterService | None = None,
         content_alert_service: WatchlistContentAlertService | None = None,
     ):
-        self.db_factory = db_factory
+        self._db_factory = db_factory
+        self._db_instance: SubscriptionsDB | None = None
         self.notification_dispatcher = notification_dispatcher
         self.notification_app = notification_app
         self.run_executor = run_executor
         self.filter_service = filter_service or WatchlistFilterService()
         self.content_alert_service = content_alert_service or WatchlistContentAlertService()
 
+    @property
+    def db_factory(self) -> Callable[[], SubscriptionsDB]:
+        """How this service obtains its database. Resolved once; see `_db`."""
+        return self._db_factory
+
+    @db_factory.setter
+    def db_factory(self, factory: Callable[[], SubscriptionsDB]) -> None:
+        """Repoint the service, dropping whatever the old factory produced.
+
+        A property purely so the cache cannot outlive the factory that filled
+        it: assigning `db_factory` is a live test seam (`Tests/UI/
+        test_watchlists_inspector.py` repoints a running app's service at a
+        spied database mid-test), and a stale cached instance would leave that
+        assignment silently inert.
+        """
+        self._db_factory = factory
+        self._db_instance = None
+
     def _db(self) -> SubscriptionsDB:
-        return self.db_factory()
+        """The service's database, constructed at most once.
+
+        task-15463. This used to be `return self.db_factory()`, and the
+        production factory (`app.py`'s `_wire_watchlists_and_notifications_
+        services`) constructed a whole new `SubscriptionsDB` on every call:
+        a ~52-statement `executescript` plus migration probes for each of the
+        five-plus loads a single Watchlists refresh fires -- measured at
+        3.4 ms against 0.04 ms for the same query on a held instance (~85x),
+        and 35 ms for the first construction.
+
+        One instance shared across threads is safe: `SubscriptionsDB` keeps
+        **thread-local** connections (`DB/Subscriptions_DB.py`'s `conn`
+        property), so each `asyncio.to_thread` worker that touches this
+        instance opens and reuses its own connection to the same file. That
+        is what lets the check path in this module hop threads (see
+        `db_offload.run_db_off_loop`) while still holding one instance. It is
+        also why an in-memory database must NOT hop -- each connection would
+        be a private empty database -- which that helper enforces.
+
+        The cache itself needs no lock: it is always primed from the caller's
+        thread (every hop is handed the database as an argument), so the one
+        hop body that calls this again on a worker thread --
+        `_evaluate_alert_rules_for_run`, reached from `record_run_result`
+        after that method has already resolved it -- only ever reads it.
+        """
+        if self._db_instance is None:
+            self._db_instance = self._db_factory()
+        return self._db_instance
 
     async def list_sources(
         self, *, limit: int = 100, offset: int = 0, q: str | None = None
@@ -804,9 +851,22 @@ class LocalWatchlistsService:
     ) -> dict[str, Any]:
         resolved_source_id = int(source_id if source_id is not None else job_id)
         db = self._db()
-        if db.get_subscription(resolved_source_id) is None:
+        # task-15463: both statements hop to a worker thread. The KeyError is
+        # still raised here, on the caller's thread, so its traceback and its
+        # position relative to the INSERT are unchanged.
+        subscription = await run_db_off_loop(
+            db, db.get_subscription, resolved_source_id
+        )
+        if subscription is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
-        now = self._utc_now()
+        run_id = await run_db_off_loop(
+            db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
+        )
+        return await self.get_run(run_id)
+
+    @staticmethod
+    def _insert_queued_run(db: SubscriptionsDB, source_id: int, now: str) -> int:
+        """Insert one `queued` run row and return its id (task-15463 hop body)."""
         with db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -817,27 +877,33 @@ class LocalWatchlistsService:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    resolved_source_id,
-                    resolved_source_id,
+                    source_id,
+                    source_id,
                     "queued",
-                    json.dumps({"source_id": resolved_source_id}),
+                    json.dumps({"source_id": source_id}),
                     now,
                     now,
                 ),
             )
-            run_id = cursor.lastrowid
-        return await self.get_run(run_id)
+            return cursor.lastrowid
 
     async def execute_run(self, run_id: Any) -> dict[str, Any]:
-        """Execute a queued local watchlist run and persist its observed result."""
+        """Execute a queued local watchlist run and persist its observed result.
+
+        task-15463: every synchronous sqlite call below goes through
+        `run_db_off_loop`, one awaited hop each, in the order they were
+        already in -- a scheduled check is dispatched straight onto the event
+        loop (`SchedulerLoop`), so this bookkeeping used to run on it. The
+        fetch itself was already async and is untouched.
+        """
         db = self._db()
         current = await self.get_run(run_id)
         source_id = int(current.get("source_id") or current.get("job_id"))
-        subscription = db.get_subscription(source_id)
+        subscription = await run_db_off_loop(db, db.get_subscription, source_id)
         if subscription is None:
             raise KeyError(f"Subscription not found: {source_id}")
 
-        self._mark_run_started(db, int(run_id))
+        await run_db_off_loop(db, self._mark_run_started, db, int(run_id))
         start_time = time.time()
         try:
             result = await self._execute_subscription(subscription, db)
@@ -846,8 +912,12 @@ class LocalWatchlistsService:
             stats.setdefault("items_found", len(raw_items))
             stats.setdefault("response_time_ms", int((time.time() - start_time) * 1000))
 
-            filters = self._load_source_filters(db, source_id)
-            content_alert_rules = self._load_content_alert_rules(db, source_id)
+            filters = await run_db_off_loop(
+                db, self._load_source_filters, db, source_id
+            )
+            content_alert_rules = await run_db_off_loop(
+                db, self._load_content_alert_rules, db, source_id
+            )
             kept_items = self._apply_filters_and_alerts(
                 raw_items, filters, content_alert_rules, int(run_id)
             )
@@ -866,7 +936,14 @@ class LocalWatchlistsService:
             # shape nothing emits), the derivation is the single answer until
             # an executor actually diverges.
 
-            self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
+            await run_db_off_loop(
+                db,
+                self._upsert_subscription_items,
+                db,
+                source_id,
+                int(run_id),
+                kept_items,
+            )
             # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`
             # run where every URL errored still needs its own failure to
             # reach the subscription's auto-pause breaker, or a permanently
@@ -875,8 +952,13 @@ class LocalWatchlistsService:
             all_error_message = _all_error_check_message(
                 stats.get("dispositions"), len(raw_items)
             )
-            db.record_check_result(
-                source_id, items=None, stats=stats, error=all_error_message
+            await run_db_off_loop(
+                db,
+                db.record_check_result,
+                source_id,
+                items=None,
+                stats=stats,
+                error=all_error_message,
             )
 
             status = str(result.get("status") or "completed")
@@ -988,7 +1070,9 @@ class LocalWatchlistsService:
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
         if source_id is not None:
-            db.record_check_error(int(source_id), error_msg)
+            await run_db_off_loop(
+                db, db.record_check_error, int(source_id), error_msg
+            )
         return await self.record_run_result(
             run_id,
             status="failed",
@@ -1048,12 +1132,51 @@ class LocalWatchlistsService:
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
-        cursor = db.conn.cursor()
-        cursor.execute(f"{self._RUN_SELECT} WHERE r.id = ?", (int(run_id),))
-        row = cursor.fetchone()
+        # task-15463: on the scheduled path this runs three times per check
+        # (launch, execute, record), so it hops like the writes around it.
+        # The row is fully materialized by `fetchone` inside the hop; only
+        # pure normalization happens back on the caller's thread.
+        row = await run_db_off_loop(db, self._select_run_row, db, int(run_id))
         if row is None:
             raise KeyError(f"Watchlist run not found: {run_id}")
         return self._normalize_run_row(row)
+
+    def _select_run_row(self, db: SubscriptionsDB, run_id: int) -> Any:
+        """Read one run row, source title and watchlist names included."""
+        cursor = db.conn.cursor()
+        cursor.execute(f"{self._RUN_SELECT} WHERE r.id = ?", (run_id,))
+        return cursor.fetchone()
+
+    @staticmethod
+    def _write_run_result(
+        db: SubscriptionsDB,
+        run_id: int,
+        status: str,
+        now: str,
+        stats_json: str,
+        error_msg: str | None,
+        log_text: str | None,
+    ) -> int:
+        """Write one run's terminal state; returns rows updated (task-15463 hop body).
+
+        The caller raises the missing-run `KeyError` instead of this method,
+        which is why the count comes back rather than the exception. That
+        moves the raise from inside the transaction (where it rolled back) to
+        after its commit -- provably equivalent, because the only way to get
+        here with zero rows updated is an UPDATE that matched nothing, so
+        there is nothing for either path to undo.
+        """
+        with db.transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE local_watchlist_runs
+                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, stats_json, error_msg, log_text, now, run_id),
+            )
+            return cursor.rowcount
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1085,35 +1208,41 @@ class LocalWatchlistsService:
         log_text: str | None = None,
         dispatch_notifications: bool = True,
     ) -> dict[str, Any]:
-        """Persist a completed local run and emit notifications for matching alert rules."""
+        """Persist a completed local run and emit notifications for matching alert rules.
+
+        task-15463: the UPDATE and the alert-rule read each take one
+        `run_db_off_loop` hop, in their existing order; the notification
+        dispatch after them is unchanged and still runs on the caller's
+        thread.
+        """
         db = self._db()
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
         if error_msg and "error_msg" not in stats_payload:
             stats_payload["error_msg"] = error_msg
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    str(status),
-                    now,
-                    json.dumps(stats_payload, sort_keys=True),
-                    error_msg,
-                    log_text,
-                    now,
-                    int(run_id),
-                ),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist run not found: {run_id}")
+        updated_rows = await run_db_off_loop(
+            db,
+            self._write_run_result,
+            db,
+            int(run_id),
+            str(status),
+            now,
+            json.dumps(stats_payload, sort_keys=True),
+            error_msg,
+            log_text,
+        )
+        if updated_rows == 0:
+            # Raised on the caller's thread, after the hop, so the missing-run
+            # KeyError reads exactly as it did when the UPDATE was inline.
+            raise KeyError(f"Watchlist run not found: {run_id}")
 
-        triggered_alerts = self._evaluate_alert_rules_for_run(
+        # Reads `local_watchlist_alert_rules`; the dispatch below does not
+        # touch sqlite and stays on the caller's thread, where the
+        # notification dispatcher expects to be called.
+        triggered_alerts = await run_db_off_loop(
+            db,
+            self._evaluate_alert_rules_for_run,
             run_id=int(run_id),
             job_id=int(current.get("job_id") or current.get("source_id")),
             stats=stats_payload,

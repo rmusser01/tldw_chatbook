@@ -803,9 +803,10 @@ async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
     source_id = db.add_subscription(
         name="Summit Route", type="rss", source="https://summitroute.com/blog/feed.xml"
     )
+    seeded_ids: dict[str, int] = {}
     with db.transaction() as conn:
         for index, title in enumerate(["Keep alpha", "Hide me", "Keep beta"]):
-            persist_subscription_item(
+            seeded_ids[title] = persist_subscription_item(
                 conn,
                 source_id,
                 {
@@ -849,13 +850,32 @@ async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
 
         # The filtered-out item must never have been opened, and therefore
         # never marked read.
-        hidden_raw_id = next(
-            item["item_id"] for item in screen._loaded_items if item["title"] == "Hide me"
-        )
+        #
+        # The id comes from the seed, not from `screen._loaded_items`
+        # (task-15463). A non-blank search is part of the QUERY, not a
+        # client-side filter -- `_load_items` re-reads with `search="Keep"`
+        # and rewrites `_loaded_items` with just the matches -- so reading
+        # the hidden item's id out of screen state only ever worked while
+        # that reload had not landed within the pause above. Caching the
+        # `SubscriptionsDB` instance made the reload land in time and the
+        # lookup raised `StopIteration`. The seeded id is the same row, with
+        # no dependence on when a background load finishes, and it keeps the
+        # assertion honest in the failure case too: an id read back from the
+        # `new` bucket would vanish exactly when the bug being guarded
+        # against occurred.
+        hidden_raw_id = seeded_ids["Hide me"]
         reviewed_raw_ids = {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}
         assert hidden_raw_id not in reviewed_raw_ids, (
             "j must never open -- and therefore never mark read -- an item "
             "hidden by the active filter"
+        )
+        # Positive half, so a wrong/absent id cannot make the check above
+        # pass vacuously: the row is real and still sitting unread.
+        unread_raw_ids = {row["id"] for row in db.get_new_items(status="new", limit=10)}
+        assert hidden_raw_id in unread_raw_ids, (
+            "the hidden item must still be in the unread bucket -- if this "
+            "id does not name a real, still-new row, the assertion above "
+            "proves nothing"
         )
 
 
