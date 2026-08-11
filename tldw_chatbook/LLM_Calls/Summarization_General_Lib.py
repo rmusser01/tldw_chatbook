@@ -1904,9 +1904,7 @@ def summarize_with_huggingface(
             logging.error("HuggingFace: No valid API key available")
             raise ValueError("No valid Anthropic API key available")
 
-        logging.debug(
-            f"HuggingFace: Using API Key: {huggingface_api_key[:5]}...{huggingface_api_key[-5:]}"
-        )
+        logging.debug("HuggingFace: Credential configured")
 
         logging.debug("HuggingFace: Using provided string data for summarization")
         data = input_data
@@ -1937,7 +1935,10 @@ def summarize_with_huggingface(
             temp = 0.1
         temp = float(temp)
         huggingface_prompt = f"{custom_prompt_arg}\n\n\n{text}"
-        logging.debug(f"HuggingFace: Prompt being sent is {huggingface_prompt}")
+        logging.debug(
+            "HuggingFace: Prompt prepared; character_count=%s",
+            len(huggingface_prompt),
+        )
         data_payload = {
             "inputs": huggingface_prompt,
             "max_tokens": 4096,
@@ -1991,12 +1992,10 @@ def summarize_with_huggingface(
                                     yield generated_text
                                 else:
                                     logging.debug(
-                                        f"HuggingFace: Unhandled streaming data: {data_json}"
+                                        "HuggingFace Stream: Response event rejected"
                                     )
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"HuggingFace: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("HuggingFace Stream: JSON decode failed")
                                 continue
                 # Optionally, yield the final collected text
                 # yield collected_text
@@ -2027,7 +2026,7 @@ def summarize_with_huggingface(
 
             if response.status_code == 200:
                 response_json = response.json()
-                logging.debug(f"HuggingFace: Response JSON: {response_json}")
+                logging.debug("HuggingFace: API response received")
                 if (
                     isinstance(response_json, dict)
                     and "generated_text" in response_json
@@ -2047,12 +2046,16 @@ def summarize_with_huggingface(
                 return chat_response
             else:
                 logging.error(
-                    f"HuggingFace: Summarization failed with status code {response.status_code}: {response.text}"
+                    "HuggingFace: Summarization failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"HuggingFace: Failed to process summary. Status code: {response.status_code}"
 
     except Exception as e:
-        logging.error(f"HuggingFace: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "HuggingFace: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"HuggingFace: Error occurred while processing summary with HuggingFace: {str(e)}"
 
 
@@ -2084,9 +2087,7 @@ def summarize_with_deepseek(
             logging.error("DeepSeek: No valid API key available")
             return "DeepSeek: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"DeepSeek: Using API Key: {deepseek_api_key[:5]}...{deepseek_api_key[-5:]}"
-        )
+        logging.debug("DeepSeek: Credential configured")
 
         # Input data handling
         logging.debug("DeepSeek: Using provided string data for summarization")
@@ -2123,9 +2124,6 @@ def summarize_with_deepseek(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"DeepSeek API Key: {deepseek_api_key[:5]}...{deepseek_api_key[-5:] if deepseek_api_key else None}"
-        )
         logging.debug("DeepSeek: Preparing data + prompt for submission")
         deepseek_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         data = {
@@ -2187,13 +2185,11 @@ def summarize_with_deepseek(
                                 collected_text += delta_content
                                 yield delta_content
                             except json.JSONDecodeError:
-                                logging.error(
-                                    f"DeepSeek: Error decoding JSON from line: {decoded_line}"
-                                )
+                                logging.error("DeepSeek Stream: JSON decode failed")
                                 continue
-                            except KeyError as e:
+                            except KeyError:
                                 logging.error(
-                                    f"DeepSeek: Key error: {str(e)} in line: {decoded_line}"
+                                    "DeepSeek Stream: Response event missing required field"
                                 )
                                 continue
                 yield collected_text
@@ -2238,10 +2234,12 @@ def summarize_with_deepseek(
                 logging.error(
                     f"DeepSeek: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"DeepSeek: Error response: {response.text}")
                 return f"DeepSeek: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
-        logging.error(f"DeepSeek: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "DeepSeek: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"DeepSeek: Error occurred while processing summary: {str(e)}"
 
 
@@ -2273,9 +2271,7 @@ def summarize_with_mistral(
             logging.error("Mistral: No valid API key available")
             return "Mistral: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Mistral: Using API Key: {mistral_api_key[:5]}...{mistral_api_key[-5:]}"
-        )
+        logging.debug("Mistral: Credential configured")
 
         # Input data handling
         logging.debug("Mistral: Using provided string data for summarization")
@@ -2312,9 +2308,6 @@ def summarize_with_mistral(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"Mistral API Key: {mistral_api_key[:5]}...{mistral_api_key[-5:] if mistral_api_key else None}"
-        )
         logging.debug("Mistral: Preparing data + prompt for submission")
         mistral_prompt = f"{custom_prompt_arg}\n\n\n\n{text} "
         data = {
@@ -2385,20 +2378,18 @@ def summarize_with_mistral(
                                     yield delta_content
                                 else:
                                     logging.error(
-                                        f"Mistral: Unexpected data format: {data_json}"
+                                        "Mistral Stream: Response event rejected"
                                     )
                                     continue
                             else:
                                 # Handle other event types if necessary
                                 continue
                         except json.JSONDecodeError:
-                            logging.error(
-                                f"Mistral: Error decoding JSON from line: {decoded_line}"
-                            )
+                            logging.error("Mistral Stream: JSON decode failed")
                             continue
-                        except KeyError as e:
+                        except KeyError:
                             logging.error(
-                                f"Mistral: Key error: {str(e)} in line: {decoded_line}"
+                                "Mistral Stream: Response event missing required field"
                             )
                             continue
                 # Optionally, you can return the full collected text at the end
@@ -2444,10 +2435,12 @@ def summarize_with_mistral(
                 logging.error(
                     f"Mistral: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Mistral: Error response: {response.text}")
                 return f"Mistral: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
-        logging.error(f"Mistral: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Mistral: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Mistral: Error occurred while processing summary: {str(e)}"
 
 

@@ -372,6 +372,22 @@ OPENROUTER_RESPONSE_CANARY = "OPENROUTER_RESPONSE_CANARY_3796"
 OPENROUTER_STREAM_CANARY = "OPENROUTER_STREAM_CANARY_3796"
 OPENROUTER_EXCEPTION_CANARY = "OPENROUTER_EXCEPTION_CANARY_3796"
 OPENROUTER_PRIVATE_STREAMING_VALUE = "OPENROUTER_PRIVATE_STREAMING_VALUE_3796"
+HUGGINGFACE_CREDENTIAL_CANARY = "HUGG1NGFACE_K3Y_3796"
+HUGGINGFACE_PROMPT_CANARY = "HUGGINGFACE_PROMPT_CANARY_3796"
+HUGGINGFACE_RESPONSE_CANARY = "HUGGINGFACE_RESPONSE_CANARY_3796"
+HUGGINGFACE_STREAM_CANARY = "HUGGINGFACE_STREAM_CANARY_3796"
+HUGGINGFACE_EXCEPTION_CANARY = "HUGGINGFACE_EXCEPTION_CANARY_3796"
+HUGGINGFACE_PRIVATE_STREAMING_VALUE = "HUGGINGFACE_PRIVATE_STREAMING_VALUE_3796"
+DEEPSEEK_CREDENTIAL_CANARY = "D33PSEEK_K3Y_3796"
+DEEPSEEK_RESPONSE_CANARY = "DEEPSEEK_RESPONSE_CANARY_3796"
+DEEPSEEK_STREAM_CANARY = "DEEPSEEK_STREAM_CANARY_3796"
+DEEPSEEK_EXCEPTION_CANARY = "DEEPSEEK_EXCEPTION_CANARY_3796"
+DEEPSEEK_PRIVATE_STREAMING_VALUE = "DEEPSEEK_PRIVATE_STREAMING_VALUE_3796"
+MISTRAL_CREDENTIAL_CANARY = "M1STRAL_K3Y_3796"
+MISTRAL_RESPONSE_CANARY = "MISTRAL_RESPONSE_CANARY_3796"
+MISTRAL_STREAM_CANARY = "MISTRAL_STREAM_CANARY_3796"
+MISTRAL_EXCEPTION_CANARY = "MISTRAL_EXCEPTION_CANARY_3796"
+MISTRAL_PRIVATE_STREAMING_VALUE = "MISTRAL_PRIVATE_STREAMING_VALUE_3796"
 
 
 @dataclass(frozen=True)
@@ -672,6 +688,23 @@ def _general_mid_provider_settings() -> dict[tuple[str, str], object]:
         ("openrouter_api", "model"): "fixed-openrouter-model",
         ("openrouter_api", "api_retries"): 0,
         ("openrouter_api", "api_retry_delay"): 0,
+    }
+
+
+def _general_streaming_provider_settings() -> dict[tuple[str, str], object]:
+    return {
+        ("huggingface_api", "api_key"): "fixed-huggingface-key",
+        ("huggingface_api", "model"): "fixed-huggingface-model",
+        ("huggingface_api", "api_retries"): 0,
+        ("huggingface_api", "api_retry_delay"): 0,
+        ("deepseek_api", "api_key"): "fixed-deepseek-key",
+        ("deepseek_api", "model"): "fixed-deepseek-model",
+        ("deepseek_api", "api_retries"): 0,
+        ("deepseek_api", "api_retry_delay"): 0,
+        ("mistral_api", "api_key"): "fixed-mistral-key",
+        ("mistral_api", "model"): "fixed-mistral-model",
+        ("mistral_api", "api_retries"): 0,
+        ("mistral_api", "api_retry_delay"): 0,
     }
 
 
@@ -4913,3 +4946,385 @@ def test_openrouter_missing_config_credential_does_not_claim_configuration(
     assert config_calls == [((), {})]
     assert post_calls == []
     assert "OpenRouter: Credential configured" not in captured.text
+
+
+def test_no_pending_general_streaming_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "general_streaming"
+        and site["starting_classification"] == "private"
+        and site["outcome"] == "pending"
+    ]
+
+    assert len(pending) == 0, (
+        f"general_streaming has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
+def test_huggingface_success_hides_credential_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class PromptValue:
+        calls = 0
+
+        def __str__(self) -> str:
+            self.calls += 1
+            return HUGGINGFACE_PROMPT_CANARY
+
+    prompt = PromptValue()
+    config_calls = _install_signature_bound_general_config_loader(monkeypatch)
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(json_data={"generated_text": HUGGINGFACE_RESPONSE_CANARY})
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_huggingface(
+            HUGGINGFACE_CREDENTIAL_CANARY,
+            "fixed input",
+            prompt,
+        )
+
+    assert result == HUGGINGFACE_RESPONSE_CANARY
+    assert prompt.calls == 1
+    assert config_calls == [((), {})]
+    assert settings_calls == [
+        (("huggingface_api", "model", "mistralai/Mistral-7B-Instruct-v0.2"), {}),
+        (("huggingface_api", "api_retries", 3), {}),
+        (("huggingface_api", "api_retry_delay", 5), {}),
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == (
+        "https://api-inference.huggingface.co/models/fixed-huggingface-model",
+    )
+    assert post_kwargs["headers"]["Authorization"] == (
+        f"Bearer {HUGGINGFACE_CREDENTIAL_CANARY}"
+    )
+    assert post_kwargs["json"]["inputs"] == (
+        f"{HUGGINGFACE_PROMPT_CANARY}\n\n\nfixed input"
+    )
+    for canary in (
+        HUGGINGFACE_CREDENTIAL_CANARY,
+        HUGGINGFACE_PROMPT_CANARY,
+        HUGGINGFACE_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "HuggingFace: Credential configured" in captured.text
+    assert "HuggingFace: Prompt prepared; character_count=" in captured.text
+    assert "HuggingFace: API response received" in captured.text
+
+
+def test_huggingface_stream_is_lazy_and_hides_rejected_events(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"data: {json.dumps({'private': HUGGINGFACE_STREAM_CANARY})}".encode(),
+            f"data: {{{HUGGINGFACE_STREAM_CANARY}".encode(),
+            b'data: {"token":{"text":"fixed huggingface token"}}',
+            b'data: {"generated_text":"fixed huggingface generated"}',
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_huggingface(
+            "fixed-huggingface-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=HUGGINGFACE_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed huggingface token", "fixed huggingface generated"]
+    assert response.iter_lines_started is True
+    assert response.closed is False
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == (HUGGINGFACE_PRIVATE_STREAMING_VALUE)
+    assert post_calls[0][1]["stream"] is True
+    assert HUGGINGFACE_STREAM_CANARY not in captured.text
+    assert HUGGINGFACE_PRIVATE_STREAMING_VALUE not in captured.text
+    assert "HuggingFace Stream: Response event rejected" in captured.text
+    assert "HuggingFace Stream: JSON decode failed" in captured.text
+
+
+def test_deepseek_stream_preserves_yields_and_hides_decode_and_key_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"data: {{{DEEPSEEK_STREAM_CANARY}".encode(),
+            f"data: {json.dumps({'choices': [{}], 'private': DEEPSEEK_STREAM_CANARY})}".encode(),
+            b'data: {"choices":[{"delta":{"content":"fixed deepseek chunk"}}]}',
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_deepseek(
+            DEEPSEEK_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+            streaming=DEEPSEEK_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed deepseek chunk", "fixed deepseek chunk"]
+    assert response.iter_lines_started is True
+    assert response.closed is False
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == DEEPSEEK_PRIVATE_STREAMING_VALUE
+    assert post_calls[0][1]["stream"] is True
+    for canary in (
+        DEEPSEEK_CREDENTIAL_CANARY,
+        DEEPSEEK_STREAM_CANARY,
+        DEEPSEEK_PRIVATE_STREAMING_VALUE,
+    ):
+        assert canary not in captured.text
+    assert "DeepSeek: Credential configured" in captured.text
+    assert "DeepSeek Stream: JSON decode failed" in captured.text
+    assert "DeepSeek Stream: Response event missing required field" in captured.text
+
+
+def test_mistral_stream_preserves_yields_and_hides_rejected_events(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"data: {json.dumps({'private': MISTRAL_STREAM_CANARY})}".encode(),
+            f"data: {{{MISTRAL_STREAM_CANARY}".encode(),
+            f"data: {json.dumps({'choices': [{}], 'private': MISTRAL_STREAM_CANARY})}".encode(),
+            b'data: {"choices":[{"delta":{"content":"fixed mistral chunk"}}]}',
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_mistral(
+            MISTRAL_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+            streaming=MISTRAL_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed mistral chunk"]
+    assert response.iter_lines_started is True
+    assert response.closed is False
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == MISTRAL_PRIVATE_STREAMING_VALUE
+    assert post_calls[0][1]["stream"] is True
+    for canary in (
+        MISTRAL_CREDENTIAL_CANARY,
+        MISTRAL_STREAM_CANARY,
+        MISTRAL_PRIVATE_STREAMING_VALUE,
+    ):
+        assert canary not in captured.text
+    assert "Mistral: Credential configured" in captured.text
+    assert "Mistral Stream: Response event rejected" in captured.text
+    assert "Mistral Stream: JSON decode failed" in captured.text
+    assert "Mistral Stream: Response event missing required field" in captured.text
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "summarizer", "api_key", "response_canary", "expected"),
+    [
+        (
+            "HuggingFace",
+            general_summarization.summarize_with_huggingface,
+            "fixed-huggingface-key",
+            HUGGINGFACE_RESPONSE_CANARY,
+            "HuggingFace: Failed to process summary. Status code: 503",
+        ),
+        (
+            "DeepSeek",
+            general_summarization.summarize_with_deepseek,
+            "fixed-deepseek-key",
+            DEEPSEEK_RESPONSE_CANARY,
+            "DeepSeek: Failed to process summary. Status code: 503",
+        ),
+        (
+            "Mistral",
+            general_summarization.summarize_with_mistral,
+            "fixed-mistral-key",
+            MISTRAL_RESPONSE_CANARY,
+            "Mistral: Failed to process summary. Status code: 503",
+        ),
+    ],
+    ids=["huggingface", "deepseek", "mistral"],
+)
+def test_general_streaming_provider_status_failure_hides_response_body(
+    provider_name: str,
+    summarizer: Callable[..., object],
+    api_key: str,
+    response_canary: str,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(status_code=503, text=response_canary)
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = summarizer(api_key, "fixed input", "fixed prompt")
+
+    assert result == expected
+    assert response_canary not in captured.text
+    if provider_name == "HuggingFace":
+        assert "HuggingFace: Summarization failed; status_code=503" in captured.text
+    else:
+        assert (
+            f"{provider_name}: Summarization failed with status code 503"
+            in captured.text
+        )
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "summarizer", "api_key", "exception_canary", "expected"),
+    [
+        (
+            "HuggingFace",
+            general_summarization.summarize_with_huggingface,
+            "fixed-huggingface-key",
+            HUGGINGFACE_EXCEPTION_CANARY,
+            "HuggingFace: Error occurred while processing summary with HuggingFace: "
+            f"{HUGGINGFACE_EXCEPTION_CANARY}",
+        ),
+        (
+            "DeepSeek",
+            general_summarization.summarize_with_deepseek,
+            "fixed-deepseek-key",
+            DEEPSEEK_EXCEPTION_CANARY,
+            "DeepSeek: Error occurred while processing summary: "
+            f"{DEEPSEEK_EXCEPTION_CANARY}",
+        ),
+        (
+            "Mistral",
+            general_summarization.summarize_with_mistral,
+            "fixed-mistral-key",
+            MISTRAL_EXCEPTION_CANARY,
+            "Mistral: Error occurred while processing summary: "
+            f"{MISTRAL_EXCEPTION_CANARY}",
+        ),
+    ],
+    ids=["huggingface", "deepseek", "mistral"],
+)
+def test_general_streaming_provider_exception_hides_message_and_traceback(
+    provider_name: str,
+    summarizer: Callable[..., object],
+    api_key: str,
+    exception_canary: str,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        RuntimeError(exception_canary),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = summarizer(api_key, "fixed input", "fixed prompt")
+
+    assert result == expected
+    assert exception_canary not in captured.text
+    assert (
+        f"{provider_name}: Processing failed; exception_type=RuntimeError"
+        in captured.text
+    )
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "summarizer", "settings_key", "expected"),
+    [
+        (
+            "HuggingFace",
+            general_summarization.summarize_with_huggingface,
+            ("huggingface_api", "api_key"),
+            "HuggingFace: Error occurred while processing summary with HuggingFace: "
+            "No valid Anthropic API key available",
+        ),
+        (
+            "DeepSeek",
+            general_summarization.summarize_with_deepseek,
+            ("deepseek_api", "api_key"),
+            "DeepSeek: API Key Not Provided/Found in Config file or is empty",
+        ),
+        (
+            "Mistral",
+            general_summarization.summarize_with_mistral,
+            ("mistral_api", "api_key"),
+            "Mistral: API Key Not Provided/Found in Config file or is empty",
+        ),
+    ],
+    ids=["huggingface", "deepseek", "mistral"],
+)
+def test_general_streaming_provider_missing_config_credential_is_truthful(
+    provider_name: str,
+    summarizer: Callable[..., object],
+    settings_key: tuple[str, str],
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _general_streaming_provider_settings()
+    settings[settings_key] = ""
+    _install_signature_bound_general_config_loader(monkeypatch)
+    settings_calls = _install_signature_bound_general_settings(monkeypatch, settings)
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = summarizer("", "fixed input", "fixed prompt")
+
+    assert result == expected
+    assert settings_calls == [((settings_key[0], settings_key[1]), {})]
+    assert post_calls == []
+    assert f"{provider_name}: Credential configured" not in captured.text
