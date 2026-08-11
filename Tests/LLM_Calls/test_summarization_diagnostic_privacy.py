@@ -372,18 +372,18 @@ OPENROUTER_RESPONSE_CANARY = "OPENROUTER_RESPONSE_CANARY_3796"
 OPENROUTER_STREAM_CANARY = "OPENROUTER_STREAM_CANARY_3796"
 OPENROUTER_EXCEPTION_CANARY = "OPENROUTER_EXCEPTION_CANARY_3796"
 OPENROUTER_PRIVATE_STREAMING_VALUE = "OPENROUTER_PRIVATE_STREAMING_VALUE_3796"
-HUGGINGFACE_CREDENTIAL_CANARY = "HUGG1NGFACE_K3Y_3796"
+HUGGINGFACE_CREDENTIAL_CANARY = "HUGG1NGFACE_K3Y_HFEND"
 HUGGINGFACE_PROMPT_CANARY = "HUGGINGFACE_PROMPT_CANARY_3796"
 HUGGINGFACE_RESPONSE_CANARY = "HUGGINGFACE_RESPONSE_CANARY_3796"
 HUGGINGFACE_STREAM_CANARY = "HUGGINGFACE_STREAM_CANARY_3796"
 HUGGINGFACE_EXCEPTION_CANARY = "HUGGINGFACE_EXCEPTION_CANARY_3796"
 HUGGINGFACE_PRIVATE_STREAMING_VALUE = "HUGGINGFACE_PRIVATE_STREAMING_VALUE_3796"
-DEEPSEEK_CREDENTIAL_CANARY = "D33PSEEK_K3Y_3796"
+DEEPSEEK_CREDENTIAL_CANARY = "D33PSEEK_K3Y_DSEND"
 DEEPSEEK_RESPONSE_CANARY = "DEEPSEEK_RESPONSE_CANARY_3796"
 DEEPSEEK_STREAM_CANARY = "DEEPSEEK_STREAM_CANARY_3796"
 DEEPSEEK_EXCEPTION_CANARY = "DEEPSEEK_EXCEPTION_CANARY_3796"
 DEEPSEEK_PRIVATE_STREAMING_VALUE = "DEEPSEEK_PRIVATE_STREAMING_VALUE_3796"
-MISTRAL_CREDENTIAL_CANARY = "M1STRAL_K3Y_3796"
+MISTRAL_CREDENTIAL_CANARY = "M1STRAL_K3Y_MSEND"
 MISTRAL_RESPONSE_CANARY = "MISTRAL_RESPONSE_CANARY_3796"
 MISTRAL_STREAM_CANARY = "MISTRAL_STREAM_CANARY_3796"
 MISTRAL_EXCEPTION_CANARY = "MISTRAL_EXCEPTION_CANARY_3796"
@@ -4961,6 +4961,95 @@ def test_no_pending_general_streaming_sites() -> None:
         f"general_streaming has {len(pending)} pending private diagnostics: "
         f"{[site['site_id'] for site in pending]}"
     )
+
+
+def test_huggingface_credential_fragments_do_not_reach_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(json_data={"generated_text": "fixed summary"})
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_huggingface(
+            HUGGINGFACE_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "fixed summary"
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["headers"]["Authorization"] == (
+        f"Bearer {HUGGINGFACE_CREDENTIAL_CANARY}"
+    )
+    assert HUGGINGFACE_CREDENTIAL_CANARY[:5] not in captured.text
+    assert HUGGINGFACE_CREDENTIAL_CANARY[-5:] not in captured.text
+    assert "HuggingFace: Credential configured" in captured.text
+
+
+def test_deepseek_credential_fragments_do_not_reach_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": "fixed summary"}}]}
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_deepseek(
+            DEEPSEEK_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "fixed summary"
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["headers"]["Authorization"] == (
+        f"Bearer {DEEPSEEK_CREDENTIAL_CANARY}"
+    )
+    assert DEEPSEEK_CREDENTIAL_CANARY[:5] not in captured.text
+    assert DEEPSEEK_CREDENTIAL_CANARY[-5:] not in captured.text
+    assert "DeepSeek: Credential configured" in captured.text
+
+
+def test_mistral_credential_fragments_do_not_reach_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_streaming_provider_settings(),
+    )
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": "fixed summary"}}]}
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_mistral(
+            MISTRAL_CREDENTIAL_CANARY,
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "fixed summary"
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["headers"]["Authorization"] == (
+        f"Bearer {MISTRAL_CREDENTIAL_CANARY}"
+    )
+    assert MISTRAL_CREDENTIAL_CANARY[:5] not in captured.text
+    assert MISTRAL_CREDENTIAL_CANARY[-5:] not in captured.text
+    assert "Mistral: Credential configured" in captured.text
 
 
 def test_huggingface_success_hides_credential_prompt_and_response(
