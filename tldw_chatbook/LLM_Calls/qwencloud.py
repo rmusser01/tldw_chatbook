@@ -1172,10 +1172,6 @@ def chat_with_qwencloud(
         else "qwen3.8-max"
     )
     final_streaming = False if streaming is None else streaming
-    if final_streaming:
-        raise _configuration_error(
-            "QwenCloud streaming transport is not available in this adapter version."
-        )
 
     payload = build_qwencloud_payload(
         api_mode=final_mode,
@@ -1216,7 +1212,9 @@ def chat_with_qwencloud(
         "Content-Type": "application/json",
     }
 
-    with requests.Session() as session:
+    session = requests.Session()
+    stream_owns_session = False
+    try:
         session.mount("https://", adapter)
         session.mount("http://", adapter)
         for attempt_index in range(retries + 1):
@@ -1239,6 +1237,19 @@ def chat_with_qwencloud(
                     )
                 else:
                     response.raise_for_status()
+                    if final_streaming:
+                        from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
+                            QwenCloudStream,
+                        )
+
+                        stream = QwenCloudStream(
+                            response=response,
+                            session=session,
+                            api_mode=final_mode,
+                        )
+                        response = None
+                        stream_owns_session = True
+                        return stream
                     result = response.json()
                     if not isinstance(result, Mapping):
                         raise _provider_error(
@@ -1321,5 +1332,8 @@ def chat_with_qwencloud(
                 raise _provider_error("QwenCloud retry state was incomplete.")
             if retry_sleep > 0:
                 time.sleep(retry_sleep)
+    finally:
+        if not stream_owns_session:
+            session.close()
 
     raise _provider_error("QwenCloud request attempts were exhausted.")

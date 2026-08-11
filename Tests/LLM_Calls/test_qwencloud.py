@@ -42,12 +42,15 @@ class _TransportResponse:
         status_code: int = 200,
         text: str = "",
         headers: dict[str, str] | None = None,
+        chunks: list[bytes] | None = None,
     ) -> None:
         self._payload = payload
         self.status_code = status_code
         self.text = text
         self.headers = headers or {}
+        self.chunks = chunks or []
         self.closed = False
+        self.close_calls = 0
 
     def json(self) -> dict[str, Any]:
         return deepcopy(self._payload)
@@ -57,7 +60,12 @@ class _TransportResponse:
             raise requests.exceptions.HTTPError(response=self)  # type: ignore[arg-type]
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+        assert chunk_size > 0
+        yield from self.chunks
 
 
 class _RecordingSession:
@@ -1884,6 +1892,53 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     assert request["json"]["stream"] is False
     assert session.closed is True
     assert response.closed is True
+
+
+def test_streaming_transport_transfers_response_and_session_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _TransportResponse(
+        {},
+        chunks=[
+            b'data: {"choices":[{"delta":{"content":"owned"},'
+            b'"finish_reason":null}]}\n\n',
+            b"data: [DONE]\n\n",
+        ],
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {"timeout": 9, "retries": 0, "retry_delay": 0}
+                }
+            }
+        ),
+    )
+
+    stream = chat_with_qwencloud(
+        input_data=[{"role": "user", "content": "hello"}],
+        model="qwen3.8-max",
+        api_key="qwen-secret",
+        streaming=True,
+        api_base_url="https://qwen.example/compatible-mode/v1",
+        api_mode="chat_completions",
+    )
+
+    assert not isinstance(stream, dict)
+    assert session.closed is False
+    assert response.closed is False
+    assert next(stream)["choices"][0]["delta"]["content"] == "owned"
+    assert list(stream) == []
+    assert session.closed is True
+    assert response.close_calls == 1
 
 
 def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
