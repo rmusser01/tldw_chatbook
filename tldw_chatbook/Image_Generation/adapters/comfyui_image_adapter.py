@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 
 import httpx
@@ -1058,11 +1058,8 @@ class ComfyUIImageAdapter:
         self,
         *,
         config: Any | None = None,
-        transport: Any | None = None,
-        client: httpx.Client | None = None,
+        client_factory: Callable[[], httpx.Client] | None = None,
     ) -> None:
-        if transport is not None and client is not None:
-            raise ValueError("transport and client are mutually exclusive")
         self.config = config or get_image_generation_config()
         self.origin = normalize_comfyui_image_origin(
             self.config.comfyui_image_base_url
@@ -1070,8 +1067,7 @@ class ComfyUIImageAdapter:
         self._trusted_host = host_of(self.origin)
         if not self._trusted_host:
             raise ValueError("invalid ComfyUI origin")
-        self._transport = transport
-        self._injected_client = client
+        self._client_factory = client_factory or httpx.Client
 
     def _endpoint(self, path: str) -> str:
         if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
@@ -1399,10 +1395,8 @@ class ComfyUIImageAdapter:
         ).warning("ComfyUI image edit phase failed")
 
     def generate(self, request: ImageGenRequest) -> ImageGenResult:
-        """Execute with a call-owned client unless the caller injected one."""
-        if self._injected_client is not None:
-            return self._generate_with_client(request, self._injected_client)
-        client = httpx.Client(transport=self._transport)
+        """Execute with one factory-created client owned by this call."""
+        client = self._client_factory()
         try:
             return self._generate_with_client(request, client)
         finally:

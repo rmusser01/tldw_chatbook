@@ -552,14 +552,16 @@ class ScriptTransport(httpx.BaseTransport):
 
 
 def _make_adapter(script, *, config=None):
-    transport = httpx.MockTransport(script)
-    return adapter_module.ComfyUIImageAdapter(config=config or _config(), transport=transport)
+    return adapter_module.ComfyUIImageAdapter(
+        config=config or _config(),
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(script)),
+    )
 
 
 def _make_adapter_with_transport(transport, *, config=None):
     return adapter_module.ComfyUIImageAdapter(
         config=config or _config(),
-        transport=transport,
+        client_factory=lambda: httpx.Client(transport=transport),
     )
 
 
@@ -1202,7 +1204,7 @@ def test_cross_origin_private_request_is_rejected_before_transport(monkeypatch) 
     client = httpx.Client(
         transport=httpx.MockTransport(lambda request: calls.append(str(request.url)))
     )
-    image_adapter = adapter_module.ComfyUIImageAdapter(config=_config(), client=client)
+    image_adapter = adapter_module.ComfyUIImageAdapter(config=_config())
 
     try:
         monkeypatch.setattr(adapter_module, "same_origin", lambda _a, _b: False)
@@ -1220,13 +1222,12 @@ def test_cross_origin_private_request_is_rejected_before_transport(monkeypatch) 
 
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
 def test_locally_owned_httpx_client_closes_for_every_outcome(
-    monkeypatch,
     outcome: str,
 ) -> None:
-    real_client = httpx.Client
-    instances: list[object] = []
+    instances: list[httpx.Client] = []
+    base = SuccessfulScript()
 
-    class TrackingClient(real_client):
+    class TrackingClient(httpx.Client):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.close_calls = 0
@@ -1236,18 +1237,21 @@ def test_locally_owned_httpx_client_closes_for_every_outcome(
             self.close_calls += 1
             super().close()
 
-    monkeypatch.setattr(adapter_module.httpx, "Client", TrackingClient)
-    base = SuccessfulScript()
-
     def script(request: httpx.Request) -> httpx.Response:
         if outcome == "error" and request.url.path == "/object_info":
             return _json_response({}, status=500)
         return base(request)
 
+    def client_factory() -> httpx.Client:
+        return TrackingClient(transport=httpx.MockTransport(script))
+
     event = threading.Event()
     if outcome == "cancel":
         event.set()
-    image_adapter = _make_adapter(script)
+    image_adapter = adapter_module.ComfyUIImageAdapter(
+        config=_config(),
+        client_factory=client_factory,
+    )
 
     if outcome == "success":
         image_adapter.generate(_request(cancel_event=event))
@@ -1262,29 +1266,35 @@ def test_locally_owned_httpx_client_closes_for_every_outcome(
     assert instances[0].close_calls == 1
 
 
-def test_explicitly_injected_httpx_client_remains_caller_owned() -> None:
-    class TrackingClient(httpx.Client):
-        def __init__(self, *args, **kwargs) -> None:
-            super().__init__(*args, **kwargs)
-            self.close_calls = 0
-
-        def close(self) -> None:
-            self.close_calls += 1
-            super().close()
-
-    script = SuccessfulScript()
-    client = TrackingClient(transport=httpx.MockTransport(script))
+def test_caller_owned_httpx_client_injection_is_not_supported() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(SuccessfulScript()))
     try:
-        image_adapter = adapter_module.ComfyUIImageAdapter(
-            config=_config(),
-            client=client,
-        )
-
-        image_adapter.generate(_request())
-
-        assert client.close_calls == 0
+        with pytest.raises(TypeError):
+            adapter_module.ComfyUIImageAdapter(config=_config(), client=client)
     finally:
         client.close()
+
+
+def test_two_generations_use_distinct_usable_factory_clients() -> None:
+    clients: list[httpx.Client] = []
+
+    def client_factory() -> httpx.Client:
+        client = httpx.Client(transport=httpx.MockTransport(SuccessfulScript()))
+        clients.append(client)
+        return client
+
+    image_adapter = adapter_module.ComfyUIImageAdapter(
+        config=_config(),
+        client_factory=client_factory,
+    )
+
+    first = image_adapter.generate(_request())
+    second = image_adapter.generate(_request())
+
+    assert first.content_type == second.content_type == "image/png"
+    assert len(clients) == 2
+    assert clients[0] is not clients[1]
+    assert all(client.is_closed for client in clients)
 
 
 def test_multipart_request_stream_is_closed_after_send(monkeypatch) -> None:
@@ -1353,6 +1363,72 @@ def test_blocked_response_headers_obey_hard_deadline_and_close_late_response(
     assert transport.late_response_created.wait(0.1)
     assert transport.late_stream.closed.wait(0.1)
     assert base.calls.count(("POST", "/queue")) == queue_deletes
+
+
+def test_factory_clients_close_blocked_sends_without_thread_accumulation() -> None:
+    records: list[tuple[httpx.Client, BlockingResponseTransport]] = []
+    baseline_threads = {
+        thread.ident
+        for thread in threading.enumerate()
+        if thread.name == "comfyui-request-send"
+    }
+
+    class TrackingClient(httpx.Client):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            super().close()
+
+    def client_factory() -> httpx.Client:
+        transport = BlockingResponseTransport(
+            SuccessfulScript(),
+            "/object_info",
+        )
+        client = TrackingClient(transport=transport)
+        records.append((client, transport))
+        return client
+
+    image_adapter = adapter_module.ComfyUIImageAdapter(
+        config=_config(
+            comfyui_image_request_timeout_seconds=5.0,
+            comfyui_image_total_deadline_seconds=0.08,
+        ),
+        client_factory=client_factory,
+    )
+
+    for attempt in range(3):
+        started = time.perf_counter()
+        with pytest.raises(ComfyUIImageEditError) as exc:
+            image_adapter.generate(_request())
+        elapsed = time.perf_counter() - started
+
+        _assert_phase(exc, "remote_schema_preflight")
+        assert elapsed < 0.25
+        client, transport = records[attempt]
+        assert client.close_calls == 1
+        assert client.is_closed
+        assert transport.closed.is_set()
+        assert transport.late_response_created.wait(0.1)
+        assert transport.late_stream.closed.wait(0.1)
+
+        thread_deadline = time.perf_counter() + 0.1
+        while time.perf_counter() < thread_deadline:
+            leaked = [
+                thread
+                for thread in threading.enumerate()
+                if thread.name == "comfyui-request-send"
+                and thread.ident not in baseline_threads
+            ]
+            if not leaked:
+                break
+            time.sleep(0.005)
+        assert leaked == []
+
+    assert len(records) == 3
+    assert len({id(client) for client, _transport in records}) == 3
 
 
 def test_blocked_response_headers_recheck_cancellation_and_delete_known_prompt() -> None:
