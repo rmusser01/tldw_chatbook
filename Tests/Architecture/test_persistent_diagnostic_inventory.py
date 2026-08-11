@@ -1253,6 +1253,10 @@ def _task_15103_assert_group_provenance(
                 f"{group['id']} semantic multiset reconciliation has wrong "
                 f"multiplicity for {digest}"
             )
+        else:
+            raise AssertionError(
+                f"{group['id']} removed atom {digest} is absent from claimed Git delta"
+            )
     for atom in group["proposed_surviving"]:
         digest = atom["semantic_digest"]
         multiplicity = atom["multiplicity_delta"]
@@ -1264,7 +1268,9 @@ def _task_15103_assert_group_provenance(
                 f"multiplicity for {digest}"
             )
         elif disposition != "metadata-repair":
-            continue
+            raise AssertionError(
+                f"{group['id']} proposed atom {digest} is absent from claimed Git delta"
+            )
     assert actual_positive or actual_negative, (
         f"{group['id']} provenance does not introduce or remove its owned atom(s)"
     )
@@ -1824,7 +1830,7 @@ def test_task_15103_review_ledger_rejects_unrelated_existing_ancestor() -> None:
         "exact_commit": TASK_15103_RECORDED_BASE
     }
 
-    with pytest.raises(AssertionError, match="does not introduce or remove"):
+    with pytest.raises(AssertionError, match="absent from claimed Git delta"):
         _task_15103_validate_canonical_reconciliation(ledger)
 
 
@@ -1859,6 +1865,25 @@ def test_task_15103_review_ledger_rejects_contract_digest_mismatch() -> None:
     ledger["change_groups"][0]["fixed_event"] += " altered"
 
     with pytest.raises(AssertionError, match="semantic contract digest mismatch"):
+        _task_15103_validate_canonical_reconciliation(ledger)
+
+
+def test_task_15103_review_ledger_rejects_fabricated_intermediate_chain() -> None:
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    intermediate = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G091"
+    )
+    successor = next(
+        group for group in ledger["change_groups"] if group["id"] == "TASK-15103-G062"
+    )
+    intermediate["fixed_event"] = "Fabricated intermediate database failure."
+    fabricated_digest = _task_15103_semantic_digest(
+        _task_15103_synthetic_contract(intermediate)
+    )
+    intermediate["proposed_surviving"][0]["semantic_digest"] = fabricated_digest
+    successor["removed"][0]["semantic_digest"] = fabricated_digest
+
+    with pytest.raises(AssertionError, match="absent from claimed Git delta"):
         _task_15103_validate_canonical_reconciliation(ledger)
 
 
