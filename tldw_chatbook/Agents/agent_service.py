@@ -2975,6 +2975,36 @@ class AgentService:
         fleet = self._fleet
         return fleet.snapshot() if fleet is not None else []
 
+    def live_subagent_handles(self) -> list[FleetHandle]:
+        """The children THIS service started that are still running.
+
+        PR3a-1 Task 6a. ``fleet_snapshot()`` answers "what does this
+        conversation's fleet look like", which since Task 6a can include
+        handles another service spawned -- the coordinator is shared
+        across the turns of one conversation. This answers the narrower
+        question its owner actually needs: "is anything I am responsible
+        for still running?" Responsibility is what matters because a
+        child's cancel Event lives in the service that spawned it and
+        nowhere else, so the bridge keeps THIS service alive exactly as
+        long as this list is non-empty (see ``ConsoleAgentBridge.
+        _teardown_fleet_service``) -- retaining it for another service's
+        children would pile up one dead object per turn for as long as
+        any survivor runs.
+
+        Returns:
+            Copies of this service's own not-yet-terminal handles, in
+            coordinator order; ``[]`` when there is no fleet.
+        """
+        fleet = self._fleet
+        if fleet is None:
+            return []
+        return [
+            handle
+            for handle in fleet.snapshot()
+            if handle.handle_id in self._fleet_cancels
+            and handle.status not in TERMINAL_RUN_STATUSES
+        ]
+
     def cancel_subagent(self, handle_id: str) -> bool:
         """Cooperatively cancel ONE live child, on demand (PR2b Task 5).
 

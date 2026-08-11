@@ -2844,29 +2844,12 @@ class ConsoleAgentBridge:
         # lazily, off the read paths below. Retained on the identity-miss
         # path too (a stale teardown from an overtaken run still owns its
         # own children) -- `service` is this call's own object either way.
-        if self._live_handles(service):
+        if service.live_subagent_handles():
             retained = self._fleet_survivor_services.setdefault(
                 conversation_id, []
             )
             if service not in retained:
                 retained.append(service)
-
-    @staticmethod
-    def _live_handles(service: AgentService) -> list[FleetHandle]:
-        """This service's not-yet-terminal fleet handles (PR3a-1 Task 6a).
-
-        Args:
-            service: The service to read. Any object exposing
-                ``fleet_snapshot()`` works (the test doubles do).
-
-        Returns:
-            The handles still running, in coordinator order.
-        """
-        return [
-            handle
-            for handle in service.fleet_snapshot()
-            if handle.status not in TERMINAL_RUN_STATUSES
-        ]
 
     def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
         """Forget retained services whose last child has settled.
@@ -2887,7 +2870,9 @@ class ConsoleAgentBridge:
         if not retained:
             return
         still_live = [
-            service for service in retained if self._live_handles(service)
+            service
+            for service in retained
+            if service.live_subagent_handles()
         ]
         if still_live:
             self._fleet_survivor_services[conversation_id] = still_live
@@ -3061,7 +3046,7 @@ class ConsoleAgentBridge:
         handles: list[FleetHandle] = []
         seen: set[str] = set()
         for survivor in self._fleet_survivor_services.get(conversation_id, ()):
-            for handle in self._live_handles(survivor):
+            for handle in survivor.live_subagent_handles():
                 if handle.handle_id in seen:
                     continue
                 seen.add(handle.handle_id)

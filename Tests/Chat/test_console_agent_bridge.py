@@ -43,6 +43,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
+    TERMINAL_RUN_STATUSES,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
@@ -3986,13 +3987,24 @@ class _FakeFleetService:
     """Stands in for `AgentService` for `_teardown_fleet_service` tests --
     only needs to be a distinct object (for `is` identity) with a
     `fleet_snapshot()` method (what `ConsoleAgentBridge.fleet_snapshot`
-    actually calls)."""
+    actually calls) and, since PR3a-1 Task 6a,
+    `live_subagent_handles()` (what decides whether this service is
+    retained past its own run as the owner of a still-running child).
+    The double owns everything it can see, which is the single-service
+    case these tests are about."""
 
     def __init__(self, handles):
         self._handles = list(handles)
 
     def fleet_snapshot(self):
         return list(self._handles)
+
+    def live_subagent_handles(self):
+        return [
+            handle
+            for handle in self._handles
+            if handle.status not in TERMINAL_RUN_STATUSES
+        ]
 
 
 def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
@@ -4433,6 +4445,337 @@ def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
     assert subagents[0].status == "running"
     assert subagents[0].run_id == ""
     assert subagents[0].handle_id == ""
+
+
+# -- PR3a-1 Task 6a: the fleet outlives the turn --------------------------
+
+
+class _CancelDuringParentTurnGateway(_FleetTwoChildGateway):
+    """`_FleetTwoChildGateway` plus a callback fired inside one PARENT
+    turn, counted across every ``run_reply`` this gateway serves.
+
+    Firing from inside a model call is what makes the moment real: the
+    run is genuinely in flight, so ``_fleet_services`` holds THAT run's
+    service, which is the state a panel click during a streaming reply
+    actually meets. Doing it from the test thread after the call returned
+    would test a different (easier) state.
+    """
+
+    def __init__(self, *args, on_parent_turn, callback, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_parent_turn = on_parent_turn
+        self._callback = callback
+        self.parent_calls = 0
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+            self.parent_calls += 1
+            if self.parent_calls == self._on_parent_turn:
+                self._callback()
+        async for chunk in super().stream_chat(
+            resolution, messages, tools=tools, **kwargs
+        ):
+            yield chunk
+
+
+def _second_turn_message(store, session):
+    """Append the next user/assistant pair, as a real second Send does."""
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="again")
+    return store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    ).id
+
+
+def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
+    """PR3a-1 Task 6a, the headline: `run_reply` returns while a child is
+    still working (Task 2), and that child must remain on every
+    supervision surface rather than becoming an invisible, unkillable
+    thread.
+
+    Before this task the bridge published its `AgentService` into
+    `_fleet_services` for exactly the duration of one `run_reply` call,
+    so the instant the turn returned `fleet_snapshot` went to `[]` (the
+    panel showed nothing to cancel) and `cancel_subagent` returned
+    `False` (there was nothing to cancel it through) -- with no error
+    anywhere, the failure class this PR's audit ranked most dangerous.
+
+    Asserts the stop actually STOPPED it (the child's run row ends
+    `cancelled`), not merely that the call returned `True`.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["parent final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    try:
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-survivor"
+        )
+        # The turn is genuinely OVER -- this is not a mid-run peek.
+        assert outcome.status == "done"
+        assert outcome.final_text == "parent final"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        live = bridge.fleet_snapshot("conv-survivor")
+        assert len(live) == 1, live
+        assert live[0].status == "running"
+        assert live[0].task == "long job"
+        # ... and on the rail, with a real handle id to press Cancel on.
+        rows = bridge.live_snapshot("conv-survivor").subagents
+        assert len(rows) == 1, rows
+        assert rows[0].status == "running"
+        assert rows[0].handle_id == live[0].handle_id
+
+        assert bridge.cancel_subagent("conv-survivor", live[0].handle_id) is True
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child = next(
+        row
+        for row in db.list_runs("conv-survivor")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "cancelled", child["status"]
+    # Settled: the conversation's live fleet is empty again and the
+    # retained owner has been dropped.
+    assert bridge.fleet_snapshot("conv-survivor") == []
+    assert bridge._fleet_survivor_services.get("conv-survivor") is None
+    assert bridge.live_snapshot("conv-survivor").subagents[0].status == "cancelled"
+
+
+def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
+    """PR3a-1 Task 6a: the NEXT message must not blind or disarm the
+    panel.
+
+    Turn 2 publishes its own `AgentService` over turn 1's entry, so a
+    single-tier lookup would find turn 2's service -- which shares the
+    conversation's coordinator (it can SEE the survivor) but holds none
+    of its cancel Events (it cannot STOP it). `AgentService.cancel_
+    subagent` refuses a handle it does not own precisely so that miss
+    cannot be reported as a success, and the bridge falls through to the
+    survivor's real owner.
+    """
+    gate = threading.Event()
+    cancels: list = []
+    gateway = _CancelDuringParentTurnGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+            ["turn 2 final"],  # turn 2 spawns nothing
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+        # Fires DURING turn 2's own model call -- the one moment turn 2's
+        # service is the published one, which is exactly when a user
+        # presses Cancel on a survivor's panel row while the next reply
+        # is streaming.
+        on_parent_turn=3,
+        callback=lambda: cancels.append(
+            bridge.cancel_subagent("conv-survivor", handle_box["id"])
+        ),
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    handle_box: dict = {}
+    try:
+        _run(bridge, store, session, assistant.id, conversation_id="conv-survivor")
+        assert gateway.entered_event.wait(5), "the child never started"
+        handle_id = bridge.fleet_snapshot("conv-survivor")[0].handle_id
+        handle_box["id"] = handle_id
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(
+            bridge, store, session, second, conversation_id="conv-survivor"
+        )
+        assert outcome_2.status == "done"
+        assert outcome_2.final_text == "turn 2 final"
+
+        # The Cancel pressed mid-turn-2 reached the survivor's real owner
+        # -- turn 2's service can see the handle in the shared
+        # coordinator but holds none of its cancel Events, and it is the
+        # PUBLISHED service at that moment, so a single-tier lookup
+        # would have answered from it.
+        assert cancels == [True], cancels
+
+        # Still there, after a whole second turn published over it.
+        live = bridge.fleet_snapshot("conv-survivor")
+        assert [h.handle_id for h in live] == [handle_id], live
+        assert live[0].status == "running"
+        assert bridge.live_snapshot("conv-survivor").subagents[0].handle_id == (
+            handle_id
+        )
+        # Exactly ONE retained owner: turn 2's service shares the
+        # conversation's coordinator and can SEE the survivor, but owns
+        # no live child of its own, so it is not kept -- otherwise a
+        # chatty conversation would pile up one dead service per message
+        # for as long as any survivor runs. (That turn 2's service
+        # cannot cancel what it does not own is pinned directly at the
+        # service level: `Tests/Agents/test_fleet_runtime.py::test_only_
+        # the_service_that_spawned_a_child_can_cancel_it`.)
+        assert len(bridge._fleet_survivor_services["conv-survivor"]) == 1
+        # NOTE: no second cancel here, deliberately. The mid-turn-2 press
+        # above must be the ONE that stops this child, or the terminal
+        # status below proves nothing about it -- a later press from a
+        # state with no run in flight (which
+        # `test_a_survivor_is_visible_and_stoppable_after_its_turn_
+        # returns` already covers) would mask a mid-turn press that
+        # returned True and did nothing.
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child = next(
+        row
+        for row in db.list_runs("conv-survivor")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "cancelled", child["status"]
+
+
+def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
+    tmp_path,
+):
+    """PR3a-1 Task 6a: a coordinator that now lives as long as the
+    CONVERSATION must not accumulate every child the conversation ever
+    ran.
+
+    `FleetCoordinator` was built to never forget a handle -- free when it
+    lived for one turn, unbounded now. So the bridge prunes terminal
+    handles at the START of each turn (not mid-turn: `_settle_fleet`,
+    `wait_agents` and `check_agents` all resolve ids through the
+    coordinator and this turn's own finished children must stay
+    resolvable until it ends). The visible consequence is the rail
+    behaviour it already had: turn 2's sub-agent rows are turn 2's, not
+    turn 1's plus turn 2's, growing forever.
+    """
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-prune")
+    _join_fleet_threads()
+    first_rows = bridge.live_snapshot("conv-prune").subagents
+    assert [row.text for row in first_rows] == ["first job"], first_rows
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-prune")
+    _join_fleet_threads()
+
+    rows = bridge.live_snapshot("conv-prune").subagents
+    assert [row.text for row in rows] == ["second job"], rows
+    assert len(bridge._fleet_coordinators["conv-prune"].snapshot()) == 1
+
+
+def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
+    """PR3a-1 Task 6a: `[agents] max_live_subagents` is a bound on the
+    CONVERSATION, not on one message.
+
+    Task 5's review disproved the opposite claim by execution: a fresh
+    `FleetCoordinator` per `run_turn`, plus a fresh `AgentService` per
+    `run_reply` with no coordinator injected, meant aggregate live
+    children scaled with messages sent and were bounded by nothing. This
+    is the same scenario at the level where production actually runs it
+    -- two `run_reply` calls on one conversation -- and the counterpart
+    of `Tests/Agents/test_fleet_runtime.py::test_live_children_are_
+    capped_across_turns`, which pins the service-level half.
+    """
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            2 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],
+            [_fence("spawn_subagent", {"task": "task B"})],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "task C"})],
+            ["turn 2 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    try:
+        _run(bridge, store, session, assistant.id, conversation_id="conv-cap")
+        assert gateway.entered_event.wait(5), "turn 1's children never started"
+        assert len(bridge.fleet_snapshot("conv-cap")) == 2
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(
+            bridge, store, session, second, conversation_id="conv-cap"
+        )
+        assert outcome_2.status == "done"
+
+        # The cap held: turn 2's spawn was refused, and refused
+        # RETRYABLY -- the supervisor is told why rather than handed a
+        # silent no-op.
+        live = bridge.fleet_snapshot("conv-cap")
+        assert len(live) == 2, live
+        assert sorted(h.task for h in live) == ["task A", "task B"]
+        refusals = [
+            step.text
+            for step in bridge.live_snapshot("conv-cap").steps
+            if "live sub-agent limit reached" in step.text
+        ]
+        assert refusals, bridge.live_snapshot("conv-cap").steps
+        # No third child was ever created -- the refusal happens before
+        # any run row or thread exists.
+        child_rows = [
+            row
+            for row in db.list_runs("conv-cap")
+            if row["agent_kind"] == "subagent"
+        ]
+        assert len(child_rows) == 2, [row["task"] for row in child_rows]
+    finally:
+        gate.set()
+    _join_fleet_threads()
 
 
 # -- PR2b Task 2 round 2 (review correction): all-or-nothing is right ---

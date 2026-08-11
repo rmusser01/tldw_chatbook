@@ -149,3 +149,73 @@ def test_finish_guard_survives_a_status_outside_the_terminal_vocabulary():
     assert c.get(h.handle_id).status == "timeout"
     assert c.get(h.handle_id).result == ""
     assert c.live_count() == 0
+
+
+# -- PR3a-1 Task 6a: what a CROSS-TURN owner needs ------------------------
+
+
+def test_prune_terminal_forgets_finished_handles_and_keeps_live_ones():
+    """A per-conversation coordinator lives for the whole process, so
+    "never forget a handle" (fine for a one-turn object) would grow
+    `_handles` without bound and hand the fleet panel every child the
+    conversation ever ran. Pruning drops only the terminal ones."""
+    c = _coord()
+    done = c.reserve(task="finished", agent=None)
+    live = c.reserve(task="still going", agent=None)
+    c.finish(done.handle_id, RUN_DONE, result="answer")
+
+    assert c.prune_terminal() == 1
+    assert [h.handle_id for h in c.snapshot()] == [live.handle_id]
+    assert c.get(done.handle_id) is None
+    assert c.live_count() == 1
+    # Idempotent: a second prune with nothing terminal left is a no-op.
+    assert c.prune_terminal() == 0
+
+
+def test_prune_terminal_frees_no_slots_because_terminal_handles_held_none():
+    """Pruning must not be mistaken for a cap release: a terminal handle
+    was already out of `_live_ids`, so the cap is unchanged either way."""
+    c = _coord(max_live=2)
+    first = c.reserve(task="a", agent=None)
+    c.reserve(task="b", agent=None)
+    assert c.reserve(task="c", agent=None) is None  # at cap
+    c.finish(first.handle_id, RUN_DONE)
+    c.prune_terminal()
+    assert c.live_count() == 1
+    assert c.reserve(task="c", agent=None) is not None
+
+
+def test_set_max_live_resizes_in_place_without_dropping_live_handles():
+    """`[agents] max_live_subagents` can change mid-conversation. Replacing
+    the coordinator would drop every live handle from the only surface that
+    can see or stop it -- a silent loss of exactly the survivors PR3a-1
+    exists to keep -- so the owner re-sizes instead."""
+    c = _coord(max_live=1)
+    live = c.reserve(task="a", agent=None)
+    assert c.max_live == 1
+    assert c.reserve(task="b", agent=None) is None
+
+    c.set_max_live(3)
+
+    assert c.max_live == 3
+    assert [h.handle_id for h in c.snapshot()] == [live.handle_id]
+    assert c.reserve(task="b", agent=None) is not None
+
+
+def test_lowering_max_live_below_the_live_count_refuses_rather_than_kills():
+    """Back-pressure, not a cull: shrinking the cap while children are
+    running must never terminate one -- it just refuses the next
+    reservation until enough of them finish."""
+    c = _coord(max_live=3)
+    a = c.reserve(task="a", agent=None)
+    b = c.reserve(task="b", agent=None)
+
+    c.set_max_live(1)
+
+    assert c.live_count() == 2
+    assert {h.status for h in c.snapshot()} == {"running"}
+    assert c.reserve(task="c", agent=None) is None
+    c.finish(a.handle_id, RUN_DONE)
+    assert c.reserve(task="c", agent=None) is None  # still 1 live, cap 1
+    c.finish(b.handle_id, RUN_DONE)
+    assert c.reserve(task="c", agent=None) is not None
