@@ -337,6 +337,12 @@ def _declared_length(response: httpx.Response) -> int | None:
     return parsed
 
 
+def _require_identity_content_encoding(response: httpx.Response) -> None:
+    encoding = (response.headers.get("content-encoding") or "").strip().lower()
+    if encoding not in {"", "identity"}:
+        raise ValueError("encoded response is not supported")
+
+
 def _read_bounded_json(
     response: httpx.Response,
     *,
@@ -363,6 +369,7 @@ def _read_bounded_json(
     recovered = check_control()
     if recovered is not None:
         return recovered
+    _require_identity_content_encoding(response)
     declared = _declared_length(response)
     if declared is not None and declared > COMFYUI_MAX_JSON_BYTES:
         raise ValueError("JSON response exceeds limit")
@@ -380,9 +387,9 @@ def _read_bounded_json(
             break
         if not capture_prompt_id_on_control:
             _check_stream_control(cancel_event, deadline, phase)
-        collected.extend(chunk)
-        if len(collected) > COMFYUI_MAX_JSON_BYTES:
+        if len(chunk) > COMFYUI_MAX_JSON_BYTES - len(collected):
             raise ValueError("JSON response exceeds limit")
+        collected.extend(chunk)
         recovered = check_control()
         if recovered is not None:
             return recovered
@@ -428,6 +435,22 @@ def _validate_literal_against_schema(value: Any, input_schema: Any) -> None:
         if value not in input_type:
             raise ValueError
         return
+    if not isinstance(input_type, str) or not input_type:
+        raise ValueError
+    if input_type == "COMBO":
+        options = input_schema[1] if len(input_schema) > 1 else None
+        choices = options.get("options") if isinstance(options, dict) else None
+        if (
+            not isinstance(choices, list)
+            or not choices
+            or any(not isinstance(choice, (str, int)) for choice in choices)
+            or value not in choices
+        ):
+            raise ValueError
+        return
+    if input_type == "COMFY_DYNAMICCOMBO_V3":
+        _selected_dynamic_inputs(input_schema, value)
+        return
     if input_type == "INT":
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError
@@ -445,6 +468,8 @@ def _validate_literal_against_schema(value: Any, input_schema: Any) -> None:
         raise ValueError
     elif input_type == "STRING" and not isinstance(value, str):
         raise ValueError
+    elif input_type not in {"INT", "FLOAT", "BOOLEAN", "STRING"}:
+        raise ValueError
 
 
 def _validate_load_image_upload_schema(input_schema: Any) -> None:
@@ -460,15 +485,172 @@ def _validate_load_image_upload_schema(input_schema: Any) -> None:
         raise ValueError
 
 
-def _concrete_input_type(input_schema: Any) -> str:
+def _match_type_template(input_schema: Any) -> tuple[str, frozenset[str]]:
     if (
         not isinstance(input_schema, list)
-        or not input_schema
-        or not isinstance(input_schema[0], str)
-        or not input_schema[0]
+        or len(input_schema) < 2
+        or input_schema[0] != "COMFY_MATCHTYPE_V3"
+        or not isinstance(input_schema[1], dict)
     ):
         raise ValueError
-    return input_schema[0]
+    template = input_schema[1].get("template")
+    if not isinstance(template, dict):
+        raise ValueError
+    template_id = template.get("template_id")
+    allowed = template.get("allowed_types")
+    if not isinstance(template_id, str) or not template_id or not isinstance(allowed, str):
+        raise ValueError
+    allowed_types = allowed.split(",")
+    if (
+        not allowed_types
+        or any(not item or item.strip() != item for item in allowed_types)
+        or not set(allowed_types).issubset({"IMAGE", "MASK"})
+    ):
+        raise ValueError
+    return template_id, frozenset(allowed_types)
+
+
+def _accepted_link_types(input_schema: Any) -> frozenset[str]:
+    if not isinstance(input_schema, list) or not input_schema:
+        raise ValueError
+    input_type = input_schema[0]
+    if input_type == "COMFY_MATCHTYPE_V3":
+        return _match_type_template(input_schema)[1]
+    if (
+        not isinstance(input_type, str)
+        or not input_type
+        or input_type.startswith("COMFY_")
+    ):
+        raise ValueError
+    return frozenset({input_type})
+
+
+def _selected_dynamic_inputs(input_schema: Any, selected: Any) -> dict[str, Any]:
+    if (
+        not isinstance(selected, str)
+        or not isinstance(input_schema, list)
+        or len(input_schema) < 2
+        or input_schema[0] != "COMFY_DYNAMICCOMBO_V3"
+        or not isinstance(input_schema[1], dict)
+    ):
+        raise ValueError
+    options = input_schema[1].get("options")
+    if not isinstance(options, list) or not options:
+        raise ValueError
+    selected_inputs: dict[str, Any] | None = None
+    seen_keys: set[str] = set()
+    for option in options:
+        if not isinstance(option, dict):
+            raise ValueError
+        key = option.get("key")
+        option_inputs = option.get("inputs")
+        if (
+            not isinstance(key, str)
+            or not key
+            or key in seen_keys
+            or not isinstance(option_inputs, dict)
+        ):
+            raise ValueError
+        seen_keys.add(key)
+        required = option_inputs.get("required", {})
+        optional = option_inputs.get("optional", {})
+        if not isinstance(required, dict) or not isinstance(optional, dict):
+            raise ValueError
+        combined = {**optional, **required}
+        if any(not isinstance(name, str) or not name for name in combined):
+            raise ValueError
+        if key == selected:
+            selected_inputs = combined
+    if selected_inputs is None:
+        raise ValueError
+    return selected_inputs
+
+
+def _expanded_schema_inputs(
+    class_schema: dict[str, Any],
+    node_inputs: dict[str, Any],
+) -> dict[str, Any]:
+    accepted = _schema_inputs(class_schema)
+    expanded = dict(accepted)
+    for input_name, input_schema in accepted.items():
+        if (
+            isinstance(input_schema, list)
+            and input_schema
+            and input_schema[0] == "COMFY_DYNAMICCOMBO_V3"
+        ):
+            selected = node_inputs.get(input_name)
+            nested = _selected_dynamic_inputs(input_schema, selected)
+            for nested_name, nested_schema in nested.items():
+                dotted_name = f"{input_name}.{nested_name}"
+                if dotted_name in expanded:
+                    raise ValueError
+                expanded[dotted_name] = nested_schema
+    return expanded
+
+
+def _resolved_output_type(
+    prepared: _PreparedWorkflow,
+    schema: dict[str, Any],
+    source_id: str,
+    output_index: int,
+    resolving: frozenset[tuple[str, int]] = frozenset(),
+) -> str:
+    marker = (source_id, output_index)
+    if marker in resolving:
+        raise ValueError
+    source_node = prepared.graph[source_id]
+    source_schema = schema.get(source_node["class_type"])
+    if not isinstance(source_schema, dict):
+        raise ValueError
+    output_types = source_schema.get("output")
+    if (
+        not isinstance(output_types, list)
+        or output_index < 0
+        or output_index >= len(output_types)
+    ):
+        raise ValueError
+    output_type = output_types[output_index]
+    if not isinstance(output_type, str) or not output_type:
+        raise ValueError
+    if output_type != "COMFY_MATCHTYPE_V3":
+        if output_type.startswith("COMFY_"):
+            raise ValueError
+        return output_type
+
+    output_matchtypes = source_schema.get("output_matchtypes")
+    if (
+        not isinstance(output_matchtypes, list)
+        or output_index >= len(output_matchtypes)
+        or not isinstance(output_matchtypes[output_index], str)
+    ):
+        raise ValueError
+    template_id = output_matchtypes[output_index]
+    matched_inputs: list[tuple[str, frozenset[str]]] = []
+    for input_name, input_schema in _schema_inputs(source_schema).items():
+        if (
+            isinstance(input_schema, list)
+            and input_schema
+            and input_schema[0] == "COMFY_MATCHTYPE_V3"
+        ):
+            candidate_id, allowed_types = _match_type_template(input_schema)
+            if candidate_id == template_id:
+                matched_inputs.append((input_name, allowed_types))
+    if len(matched_inputs) != 1:
+        raise ValueError
+    input_name, allowed_types = matched_inputs[0]
+    source_link = source_node["inputs"].get(input_name)
+    if not _is_link(source_link):
+        raise ValueError
+    upstream_type = _resolved_output_type(
+        prepared,
+        schema,
+        source_link[0],
+        source_link[1],
+        resolving | {marker},
+    )
+    if upstream_type not in allowed_types:
+        raise ValueError
+    return upstream_type
 
 
 def _validate_object_info(prepared: _PreparedWorkflow, schema: Any) -> None:
@@ -481,25 +663,20 @@ def _validate_object_info(prepared: _PreparedWorkflow, schema: Any) -> None:
             class_schema = schema.get(class_type)
             if not isinstance(class_schema, dict):
                 raise ValueError
-            accepted_inputs = _schema_inputs(class_schema)
+            accepted_inputs = _expanded_schema_inputs(class_schema, node["inputs"])
             for input_name, value in node["inputs"].items():
                 if input_name not in accepted_inputs:
                     raise ValueError
                 input_schema = accepted_inputs[input_name]
                 if _is_link(value):
                     source_id, output_index = value
-                    source_class = prepared.graph[source_id]["class_type"]
-                    source_schema = schema.get(source_class)
-                    if not isinstance(source_schema, dict):
-                        raise ValueError
-                    output_types = source_schema.get("output")
-                    if (
-                        not isinstance(output_types, list)
-                        or output_index < 0
-                        or output_index >= len(output_types)
-                        or output_types[output_index]
-                        != _concrete_input_type(input_schema)
-                    ):
+                    source_type = _resolved_output_type(
+                        prepared,
+                        schema,
+                        source_id,
+                        output_index,
+                    )
+                    if source_type not in _accepted_link_types(input_schema):
                         raise ValueError
                 elif node_id == "114" and input_name == "image":
                     _validate_load_image_upload_schema(input_schema)
@@ -588,6 +765,7 @@ def _stream_png(
     _check_stream_control(cancel_event, deadline, phase)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
         raise ValueError("invalid PNG limit")
+    _require_identity_content_encoding(response)
     declared = _declared_length(response)
     if declared is not None and declared > max_bytes:
         raise ValueError("PNG response exceeds limit")
@@ -604,9 +782,9 @@ def _stream_png(
             _check_stream_control(cancel_event, deadline, phase)
             break
         _check_stream_control(cancel_event, deadline, phase)
-        collected.extend(chunk)
-        if len(collected) > max_bytes:
+        if len(chunk) > max_bytes - len(collected):
             raise ValueError("PNG response exceeds limit")
+        collected.extend(chunk)
         _check_stream_control(cancel_event, deadline, phase)
     data = bytes(collected)
     if not data.startswith(_PNG_SIGNATURE):
@@ -620,7 +798,15 @@ class ComfyUIImageAdapter:
     name = "comfyui"
     supported_formats = {"png"}
 
-    def __init__(self, *, config: Any | None = None, transport: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: Any | None = None,
+        transport: Any | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        if transport is not None and client is not None:
+            raise ValueError("transport and client are mutually exclusive")
         self.config = config or get_image_generation_config()
         self.origin = normalize_comfyui_image_origin(
             self.config.comfyui_image_base_url
@@ -628,7 +814,8 @@ class ComfyUIImageAdapter:
         self._trusted_host = host_of(self.origin)
         if not self._trusted_host:
             raise ValueError("invalid ComfyUI origin")
-        self._client = httpx.Client(transport=transport)
+        self._transport = transport
+        self._injected_client = client
 
     def _endpoint(self, path: str) -> str:
         if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
@@ -659,6 +846,7 @@ class ComfyUIImageAdapter:
 
     def _send(
         self,
+        client: httpx.Client,
         url: str,
         *,
         method: str,
@@ -676,7 +864,7 @@ class ComfyUIImageAdapter:
             raise ValueError("cross-origin ComfyUI request")
         check_url_or_raise(url, trusted_origins=frozenset({self._trusted_host}))
         remaining = self._remaining(deadline, phase)
-        request = self._client.build_request(
+        request = client.build_request(
             method,
             url,
             json=json_body,
@@ -684,7 +872,17 @@ class ComfyUIImageAdapter:
             params=params,
             timeout=self._timeout(remaining),
         )
-        response = self._client.send(request, stream=True, follow_redirects=False)
+        request_stream = request.stream
+        try:
+            response = client.send(request, stream=True, follow_redirects=False)
+        except httpx.TransportError:
+            if time.monotonic() >= deadline:
+                raise _DeadlineExpired(phase) from None
+            raise
+        finally:
+            close_stream = getattr(request_stream, "close", None)
+            if close_stream is not None:
+                close_stream()
         if response.status_code < 200 or response.status_code >= 300:
             response.close()
             raise ValueError("ComfyUI request failed")
@@ -692,6 +890,7 @@ class ComfyUIImageAdapter:
 
     def _request_json(
         self,
+        client: httpx.Client,
         url: str,
         *,
         method: str,
@@ -708,6 +907,7 @@ class ComfyUIImageAdapter:
                 self.config.comfyui_image_total_deadline_seconds
             )
         response = self._send(
+            client,
             url,
             method=method,
             deadline=deadline,
@@ -730,6 +930,7 @@ class ComfyUIImageAdapter:
 
     def _upload_reference(
         self,
+        client: httpx.Client,
         request: ImageGenRequest,
         *,
         deadline: float,
@@ -740,6 +941,7 @@ class ComfyUIImageAdapter:
         extension = _REFERENCE_EXTENSION[reference.mime_type]
         opaque_name = f"{secrets.token_hex(16)}{extension}"
         payload = self._request_json(
+            client,
             self._endpoint("/upload/image"),
             method="POST",
             deadline=deadline,
@@ -759,12 +961,14 @@ class ComfyUIImageAdapter:
 
     def _submit_prompt(
         self,
+        client: httpx.Client,
         graph: dict[str, Any],
         request: ImageGenRequest,
         *,
         deadline: float,
     ) -> str:
         response = self._send(
+            client,
             self._endpoint("/prompt"),
             method="POST",
             deadline=deadline,
@@ -822,6 +1026,7 @@ class ComfyUIImageAdapter:
 
     def _poll_history(
         self,
+        client: httpx.Client,
         prompt_id: str,
         request: ImageGenRequest,
         *,
@@ -830,6 +1035,7 @@ class ComfyUIImageAdapter:
         history_url = self._endpoint(f"/history/{quote(prompt_id, safe='')}")
         while True:
             history = self._request_json(
+                client,
                 history_url,
                 method="GET",
                 deadline=deadline,
@@ -852,6 +1058,7 @@ class ComfyUIImageAdapter:
 
     def _download_output(
         self,
+        client: httpx.Client,
         descriptor: dict[str, str],
         request: ImageGenRequest,
         *,
@@ -860,6 +1067,7 @@ class ComfyUIImageAdapter:
         height: int,
     ) -> bytes:
         response = self._send(
+            client,
             self._endpoint("/view"),
             method="GET",
             deadline=deadline,
@@ -900,12 +1108,17 @@ class ComfyUIImageAdapter:
             raise ValueError("invalid PNG payload") from None
         return data
 
-    def _delete_pending_prompt_once(self, prompt_id: str) -> None:
+    def _delete_pending_prompt_once(
+        self,
+        client: httpx.Client,
+        prompt_id: str,
+    ) -> None:
         cleanup_deadline = time.monotonic() + min(
             float(self.config.comfyui_image_request_timeout_seconds), 1.0
         )
         try:
             self._request_json(
+                client,
                 self._endpoint("/queue"),
                 method="POST",
                 deadline=cleanup_deadline,
@@ -926,6 +1139,20 @@ class ComfyUIImageAdapter:
         ).warning("ComfyUI image edit phase failed")
 
     def generate(self, request: ImageGenRequest) -> ImageGenResult:
+        """Execute with a call-owned client unless the caller injected one."""
+        if self._injected_client is not None:
+            return self._generate_with_client(request, self._injected_client)
+        client = httpx.Client(transport=self._transport)
+        try:
+            return self._generate_with_client(request, client)
+        finally:
+            client.close()
+
+    def _generate_with_client(
+        self,
+        request: ImageGenRequest,
+        client: httpx.Client,
+    ) -> ImageGenResult:
         """Execute one edit with pre-upload preflight and prompt-scoped cleanup."""
         prompt_id: str | None = None
         phase: ComfyUIImageEditPhase = "request_validation"
@@ -938,6 +1165,7 @@ class ComfyUIImageAdapter:
 
             phase = "remote_schema_preflight"
             schema = self._request_json(
+                client,
                 self._endpoint("/object_info"),
                 method="GET",
                 deadline=deadline,
@@ -947,7 +1175,11 @@ class ComfyUIImageAdapter:
             _validate_object_info(prepared, schema)
 
             phase = "source_upload"
-            upload_reference = self._upload_reference(request, deadline=deadline)
+            upload_reference = self._upload_reference(
+                client,
+                request,
+                deadline=deadline,
+            )
             queued_graph = deepcopy(prepared.graph)
             queued_graph["114"]["inputs"]["image"] = upload_reference
             prepared = _PreparedWorkflow(
@@ -961,16 +1193,25 @@ class ComfyUIImageAdapter:
 
             phase = "prompt_submission"
             prompt_id = self._submit_prompt(
-                prepared.graph, request, deadline=deadline
+                client,
+                prepared.graph,
+                request,
+                deadline=deadline,
             )
             self._check_cancelled(request.cancel_event)
             self._remaining(deadline, phase)
 
             phase = "history_polling"
-            descriptor = self._poll_history(prompt_id, request, deadline=deadline)
+            descriptor = self._poll_history(
+                client,
+                prompt_id,
+                request,
+                deadline=deadline,
+            )
 
             phase = "output_download"
             data = self._download_output(
+                client,
                 descriptor,
                 request,
                 deadline=deadline,
@@ -996,11 +1237,11 @@ class ComfyUIImageAdapter:
             )
         except ImageGenerationCancelled:
             if prompt_id is not None:
-                self._delete_pending_prompt_once(prompt_id)
+                self._delete_pending_prompt_once(client, prompt_id)
             raise
         except _DeadlineExpired as exc:
             if prompt_id is not None:
-                self._delete_pending_prompt_once(prompt_id)
+                self._delete_pending_prompt_once(client, prompt_id)
             error = ComfyUIImageEditError(exc.phase)
             self._log_failure(error, exc)
             raise error from None

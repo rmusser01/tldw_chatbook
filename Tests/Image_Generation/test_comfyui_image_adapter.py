@@ -51,6 +51,16 @@ class ControlledChunkStream(httpx.SyncByteStream):
             yield chunk
 
 
+class GuardedChunkStream(httpx.SyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.iterated = False
+
+    def __iter__(self):
+        self.iterated = True
+        yield from self.chunks
+
+
 class AdvancingClock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -221,7 +231,11 @@ def _input_spec(class_type: str, input_name: str) -> list[Any]:
     return [expected_type]
 
 
-def _object_info(graph: dict[str, Any] | None = None) -> dict[str, Any]:
+def _object_info(
+    graph: dict[str, Any] | None = None,
+    *,
+    resize_v3: bool = True,
+) -> dict[str, Any]:
     graph = graph or adapter_module._load_packaged_workflow()
     result: dict[str, Any] = {}
     for node in graph.values():
@@ -263,6 +277,72 @@ def _object_info(graph: dict[str, Any] | None = None) -> dict[str, Any]:
                 ]
     result["SaveImage"]["input"]["required"]["images"] = ["IMAGE"]
     result["SaveImage"]["input"]["required"]["filename_prefix"] = ["STRING"]
+    if resize_v3:
+        result["ResizeImageMaskNode"]["input"] = {
+            "required": {
+                "input": [
+                    "COMFY_MATCHTYPE_V3",
+                    {
+                        "template": {
+                            "template_id": "input_type",
+                            "allowed_types": "IMAGE,MASK",
+                        }
+                    },
+                ],
+                "resize_type": [
+                    "COMFY_DYNAMICCOMBO_V3",
+                    {
+                        "options": [
+                            {
+                                "key": "scale dimensions",
+                                "inputs": {
+                                    "required": {
+                                        "width": ["INT", {"min": 0, "max": 16384}],
+                                        "height": ["INT", {"min": 0, "max": 16384}],
+                                        "crop": [
+                                            "COMBO",
+                                            {
+                                                "options": ["disabled", "center"],
+                                                "default": "center",
+                                            },
+                                        ],
+                                    }
+                                },
+                            },
+                            {
+                                "key": "scale by",
+                                "inputs": {
+                                    "required": {
+                                        "multiplier": [
+                                            "FLOAT",
+                                            {"min": 0.01, "max": 8.0},
+                                        ]
+                                    }
+                                },
+                            },
+                        ]
+                    },
+                ],
+                "scale_method": [
+                    "COMBO",
+                    {
+                        "options": [
+                            "nearest-exact",
+                            "bilinear",
+                            "area",
+                            "bicubic",
+                            "lanczos",
+                        ],
+                        "default": "area",
+                    },
+                ],
+            }
+        }
+        result["ResizeImageMaskNode"]["input_order"] = {
+            "required": ["input", "resize_type", "scale_method"]
+        }
+        result["ResizeImageMaskNode"]["output"] = ["COMFY_MATCHTYPE_V3"]
+        result["ResizeImageMaskNode"]["output_matchtypes"] = ["input_type"]
     return result
 
 
@@ -531,6 +611,62 @@ def test_object_info_accepts_real_load_image_upload_schema_without_placeholder_c
     adapter_module._validate_object_info(prepared, schema)
 
 
+def test_object_info_accepts_legacy_resize_schema_for_supported_servers() -> None:
+    prepared = adapter_module._prepare_workflow(_request(), config=_config())
+
+    adapter_module._validate_object_info(
+        prepared,
+        _object_info(prepared.graph, resize_v3=False),
+    )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "match-union",
+        "unsupported-match-type",
+        "dynamic-option",
+        "dynamic-field",
+        "unsupported-dynamic-field",
+        "output-match-link",
+    ],
+)
+def test_object_info_v3_resize_schema_fails_closed_before_upload(damage: str) -> None:
+    schema = _object_info()
+    resize = schema["ResizeImageMaskNode"]
+    if damage == "match-union":
+        resize["input"]["required"]["input"][1]["template"]["allowed_types"] = "MASK"
+    elif damage == "unsupported-match-type":
+        resize["input"]["required"]["input"][1]["template"]["allowed_types"] = (
+            "IMAGE,UNSUPPORTED"
+        )
+    elif damage == "dynamic-option":
+        resize["input"]["required"]["resize_type"][1]["options"][0]["key"] = (
+            "different option"
+        )
+    elif damage == "dynamic-field":
+        resize["input"]["required"]["resize_type"][1]["options"][0]["inputs"][
+            "required"
+        ].pop("height")
+    elif damage == "unsupported-dynamic-field":
+        resize["input"]["required"]["resize_type"][1]["options"][0]["inputs"][
+            "required"
+        ]["width"] = ["UNSUPPORTED"]
+    else:
+        resize["output_matchtypes"] = ["different_template"]
+    calls: list[str] = []
+
+    def script(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _json_response(schema)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(_request())
+
+    _assert_phase(exc, "remote_schema_preflight")
+    assert calls == ["/object_info"]
+
+
 @pytest.mark.parametrize(
     "upload_schema",
     [
@@ -631,6 +767,54 @@ def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(monkey
     with pytest.raises(ValueError):
         adapter_module._read_bounded_json(streamed)
 
+    assert loads_calls == []
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br"])
+def test_json_rejects_non_identity_content_encoding_before_iteration_or_parse(
+    monkeypatch,
+    encoding: str,
+) -> None:
+    stream = GuardedChunkStream([b"{}"])
+    loads_calls: list[object] = []
+    monkeypatch.setattr(adapter_module.json, "loads", lambda value: loads_calls.append(value))
+    response = httpx.Response(
+        200,
+        stream=stream,
+        headers={"content-encoding": encoding},
+    )
+
+    with pytest.raises(ValueError):
+        adapter_module._read_bounded_json(response)
+
+    assert stream.iterated is False
+    assert loads_calls == []
+
+
+def test_json_oversized_single_chunk_never_extends_bounded_buffer_or_parses(
+    monkeypatch,
+) -> None:
+    max_buffer_len = 0
+    loads_calls: list[object] = []
+    real_bytearray = bytearray
+
+    class TrackingBytearray(real_bytearray):
+        def extend(self, value) -> None:
+            nonlocal max_buffer_len
+            super().extend(value)
+            max_buffer_len = max(max_buffer_len, len(self))
+
+    monkeypatch.setattr(adapter_module, "bytearray", TrackingBytearray, raising=False)
+    monkeypatch.setattr(adapter_module.json, "loads", lambda value: loads_calls.append(value))
+    response = httpx.Response(
+        200,
+        stream=ChunkStream([b"x" * (adapter_module.COMFYUI_MAX_JSON_BYTES + 1)]),
+    )
+
+    with pytest.raises(ValueError):
+        adapter_module._read_bounded_json(response)
+
+    assert max_buffer_len == 0
     assert loads_calls == []
 
 
@@ -775,13 +959,125 @@ def test_redirects_are_not_followed() -> None:
 
 def test_cross_origin_private_request_is_rejected_before_transport(monkeypatch) -> None:
     calls: list[str] = []
-    image_adapter = _make_adapter(lambda request: calls.append(str(request.url)))
-    monkeypatch.setattr(adapter_module, "same_origin", lambda _a, _b: False)
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: calls.append(str(request.url)))
+    )
+    image_adapter = adapter_module.ComfyUIImageAdapter(config=_config(), client=client)
 
-    with pytest.raises(ValueError):
-        image_adapter._request_json("http://127.0.0.1:8288/object_info", method="GET")
+    try:
+        monkeypatch.setattr(adapter_module, "same_origin", lambda _a, _b: False)
+        with pytest.raises(ValueError):
+            image_adapter._request_json(
+                client,
+                "http://127.0.0.1:8288/object_info",
+                method="GET",
+            )
+    finally:
+        client.close()
 
     assert calls == []
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+def test_locally_owned_httpx_client_closes_for_every_outcome(
+    monkeypatch,
+    outcome: str,
+) -> None:
+    real_client = httpx.Client
+    instances: list[object] = []
+
+    class TrackingClient(real_client):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.close_calls = 0
+            instances.append(self)
+
+        def close(self) -> None:
+            self.close_calls += 1
+            super().close()
+
+    monkeypatch.setattr(adapter_module.httpx, "Client", TrackingClient)
+    base = SuccessfulScript()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if outcome == "error" and request.url.path == "/object_info":
+            return _json_response({}, status=500)
+        return base(request)
+
+    event = threading.Event()
+    if outcome == "cancel":
+        event.set()
+    image_adapter = _make_adapter(script)
+
+    if outcome == "success":
+        image_adapter.generate(_request(cancel_event=event))
+    elif outcome == "cancel":
+        with pytest.raises(ImageGenerationCancelled):
+            image_adapter.generate(_request(cancel_event=event))
+    else:
+        with pytest.raises(ComfyUIImageEditError):
+            image_adapter.generate(_request(cancel_event=event))
+
+    assert len(instances) == 1
+    assert instances[0].close_calls == 1
+
+
+def test_explicitly_injected_httpx_client_remains_caller_owned() -> None:
+    class TrackingClient(httpx.Client):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            super().close()
+
+    script = SuccessfulScript()
+    client = TrackingClient(transport=httpx.MockTransport(script))
+    try:
+        image_adapter = adapter_module.ComfyUIImageAdapter(
+            config=_config(),
+            client=client,
+        )
+
+        image_adapter.generate(_request())
+
+        assert client.close_calls == 0
+    finally:
+        client.close()
+
+
+def test_multipart_request_stream_is_closed_after_send(monkeypatch) -> None:
+    real_client = httpx.Client
+    wrapped_streams: list[object] = []
+
+    class ClosingStream(httpx.SyncByteStream):
+        def __init__(self, inner) -> None:
+            self.inner = inner
+            self.closed = False
+
+        def __iter__(self):
+            yield from self.inner
+
+        def close(self) -> None:
+            self.closed = True
+            self.inner.close()
+
+    class TrackingClient(real_client):
+        def build_request(self, *args, **kwargs) -> httpx.Request:
+            request = super().build_request(*args, **kwargs)
+            if request.url.path == "/upload/image":
+                wrapped = ClosingStream(request.stream)
+                request.stream = wrapped
+                wrapped_streams.append(wrapped)
+            return request
+
+    monkeypatch.setattr(adapter_module.httpx, "Client", TrackingClient)
+
+    _make_adapter(SuccessfulScript()).generate(_request())
+
+    assert len(wrapped_streams) == 1
+    assert wrapped_streams[0].closed is True
 
 
 @pytest.mark.parametrize(
@@ -878,6 +1174,74 @@ def test_png_download_is_bounded_and_validated(kind) -> None:
         _make_adapter(script, config=_config(inline_max_bytes=byte_limit)).generate(_request())
 
     _assert_phase(exc, "output_download")
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br"])
+def test_png_rejects_non_identity_content_encoding_before_iteration_or_pillow(
+    monkeypatch,
+    encoding: str,
+) -> None:
+    stream = GuardedChunkStream([_png()])
+    pillow_calls: list[object] = []
+    monkeypatch.setattr(
+        adapter_module.Image,
+        "open",
+        lambda value: pillow_calls.append(value),
+    )
+    base = SuccessfulScript()
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/view":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            return httpx.Response(
+                200,
+                stream=stream,
+                headers={
+                    "content-type": "image/png",
+                    "content-encoding": encoding,
+                },
+            )
+        return base(request)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(script).generate(_request())
+
+    _assert_phase(exc, "output_download")
+    assert stream.iterated is False
+    assert pillow_calls == []
+
+
+def test_png_oversized_single_chunk_never_extends_bounded_buffer_or_parses(
+    monkeypatch,
+) -> None:
+    max_buffer_len = 0
+    pillow_calls: list[object] = []
+    real_bytearray = bytearray
+
+    class TrackingBytearray(real_bytearray):
+        def extend(self, value) -> None:
+            nonlocal max_buffer_len
+            super().extend(value)
+            max_buffer_len = max(max_buffer_len, len(self))
+
+    monkeypatch.setattr(adapter_module, "bytearray", TrackingBytearray, raising=False)
+    monkeypatch.setattr(
+        adapter_module.Image,
+        "open",
+        lambda value: pillow_calls.append(value),
+    )
+    response = httpx.Response(
+        200,
+        stream=ChunkStream([PNG_SIGNATURE + b"x" * 64]),
+        headers={"content-type": "image/png"},
+    )
+
+    with pytest.raises(ValueError):
+        adapter_module._stream_png(response, max_bytes=16)
+
+    assert max_buffer_len == 0
+    assert pillow_calls == []
 
 
 def test_png_drip_stream_hits_absolute_deadline_and_deletes_prompt_once(
@@ -1191,6 +1555,33 @@ def test_timeout_uses_monotonic_remaining_time_and_deletes_once(monkeypatch) -> 
         timeout = request.extensions.get("timeout")
         if timeout:
             assert max(value for value in timeout.values() if value is not None) <= 1.0
+
+
+def test_history_read_timeout_after_deadline_deletes_once_and_stays_sanitized(
+    monkeypatch,
+) -> None:
+    clock = AdvancingClock()
+    monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
+    base = SuccessfulScript()
+    private_detail = "sentinel-private-read-timeout-detail"
+
+    def script(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/history/opaque-prompt-id":
+            base.calls.append((request.method, request.url.path))
+            base.requests.append(request)
+            clock.value = 1.1
+            raise httpx.ReadTimeout(private_detail, request=request)
+        return base(request)
+
+    with pytest.raises(ComfyUIImageEditError) as exc:
+        _make_adapter(
+            script,
+            config=_config(comfyui_image_total_deadline_seconds=1.0),
+        ).generate(_request())
+
+    _assert_phase(exc, "history_polling")
+    assert private_detail not in str(exc.value)
+    assert base.calls.count(("POST", "/queue")) == 1
 
 
 def test_final_event_check_after_validated_png_makes_cancellation_win() -> None:
