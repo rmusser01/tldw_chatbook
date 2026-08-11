@@ -34,7 +34,8 @@ class FileNotesReplica:
                 replica.
         """
         path = os.fspath(db_path)
-        if path != ":memory:":
+        is_memory_db = path == ":memory:"
+        if not is_memory_db:
             path = os.fspath(Path(path).expanduser())
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
@@ -46,6 +47,15 @@ class FileNotesReplica:
                 check_same_thread=False,
             )
             self._connection.row_factory = sqlite3.Row
+            if not is_memory_db:
+                self._connection.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+            # crash can lose the last commit, acceptable for this local File
+            # Notes replica/recovery cache -- the notes' file-authority copy
+            # is the source of truth) and avoids an fsync per commit. Held
+            # for the lifetime of this instance, so this is the only site
+            # that needs it (task-15465).
+            self._connection.execute("PRAGMA synchronous = NORMAL")
         self._initialize_schema()
 
     def close(self) -> None:

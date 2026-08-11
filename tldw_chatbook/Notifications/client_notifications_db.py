@@ -44,8 +44,21 @@ class ClientNotificationsDB(BaseDB):
                     ":memory:",
                 )
                 self._memory_conn.row_factory = sqlite3.Row
+                # synchronous is harmless (and a no-op performance-wise) on an
+                # in-memory database; set for uniformity with the file-backed
+                # branch below rather than special-casing it away (task-15465).
+                self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        return super()._get_connection()
+        conn = super()._get_connection()
+        conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local notification inbox)
+        # and avoids an fsync per commit. Currently the app only ever
+        # constructs this DB as :memory: (see the owner policy in
+        # private_sqlite.py), but the file-backed branch is a real, tested
+        # code path -- keep it paired identically (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
 
     def close(self) -> None:
         if self._memory_conn is not None:

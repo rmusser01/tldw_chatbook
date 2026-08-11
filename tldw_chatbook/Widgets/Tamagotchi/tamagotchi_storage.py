@@ -336,15 +336,34 @@ class SQLiteStorage(StorageAdapter):
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        """Open this storage's registered private SQLite target."""
+        """Open this storage's registered private SQLite target.
+
+        No import site outside this module was found for `SQLiteStorage`
+        (only `private_sqlite.py`'s owner-policy registry references
+        "tamagotchi.sqlite") -- this class appears dormant/unmounted. Paired
+        WAL+NORMAL here anyway per task-15465: mechanical, harmless, and
+        correct if it is ever wired up.
+        """
         if str(self.db_path) == ":memory:":
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
                     "tamagotchi.sqlite",
                     self.db_path,
                 )
+                # synchronous is harmless (and a no-op performance-wise) on
+                # an in-memory database; set for uniformity with the
+                # file-backed branch below (task-15465).
+                self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        return connect_private_sqlite("tamagotchi.sqlite", self.db_path)
+        conn = connect_private_sqlite("tamagotchi.sqlite", self.db_path)
+        conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        # can lose the last commit, acceptable for this local pet-state
+        # store) and avoids an fsync per commit. This DB opens a fresh
+        # connection per operation, so synchronous must be re-applied on
+        # every open, not just the first (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
 
     def close(self) -> None:
         """Close the persistent in-memory connection, when present."""

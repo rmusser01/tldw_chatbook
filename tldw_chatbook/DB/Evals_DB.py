@@ -190,6 +190,13 @@ class EvalsDB:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+            # can lose the last commit or two, acceptable for this local eval
+            # results store) and avoids an fsync on every commit -- the
+            # default FULL was fsyncing the WAL on every commit despite WAL
+            # already being enabled. See Library_Ingest_Jobs_DB.py:57-61 for
+            # the original template (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
             self._local.connection = conn
         return self._local.connection
 

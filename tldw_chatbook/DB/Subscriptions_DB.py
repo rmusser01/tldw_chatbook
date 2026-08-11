@@ -145,6 +145,16 @@ def ensure_site_configs_schema(db_path) -> None:
     # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
     # caught this when the helper was first written.
     with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
+        if str(db_path) != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local watchlist/feed
+        # cache) and avoids an fsync per commit -- this connection is
+        # short-lived (one DDL script, one commit, close), but it can be the
+        # first connection this file ever sees, so it must not leave the
+        # file on DELETE+FULL for whichever connection opens it next
+        # (task-15465).
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(SITE_CONFIGS_DDL)
         conn.commit()
 
@@ -193,6 +203,16 @@ class SubscriptionsDB(BaseDB):
         """
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON;")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL;")
+        # NORMAL is safe under WAL (SQLite-documented pairing: app-crash-safe,
+        # only an OS/power crash can lose the last commit or two -- acceptable
+        # for this local watchlist/feed cache) and avoids an fsync on every
+        # commit; DELETE mode's default FULL previously made every writer
+        # exclusive-lock readers too, a multi-second-stall candidate on slow
+        # disks (task-15465). Unconditional: synchronous is per-connection,
+        # so every connection this DB opens needs it, not just the first.
+        conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
 
     def _initialize_schema(self):

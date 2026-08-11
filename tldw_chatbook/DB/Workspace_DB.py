@@ -37,6 +37,15 @@ class WorkspaceDB(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        # lose the last commit, acceptable for this local registry cache) and
+        # avoids an fsync per commit -- DELETE+FULL's writer-exclusive-locks-
+        # readers behavior was a stall candidate on this held-connection,
+        # query-heavy path (task-15465). Unconditional: synchronous is
+        # per-connection, so every held connection needs it re-applied.
+        conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     def _held_connection(self) -> sqlite3.Connection:
