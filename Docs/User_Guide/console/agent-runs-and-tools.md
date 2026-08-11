@@ -401,4 +401,12 @@ once, both appeared in the Agent rail with their own handle ids and
 results, the reply incorporated both, `sqlite3` showed two terminal child
 run rows, and Stop mid-fleet cancelled two live children with zero rows
 left `running`; the rest of this page's content unchanged from the prior
-stamp).*
+stamp). Fleet panel (three states, per-row drill-in and cancel, token
+spend) added @ 41cfc5ca4 — 2026-08-11 (fleet PR2b Task 6: driven live —
+the collapsed summary showed `2 working, 0 done`, expanding gave one
+two-line row per child, a row flipped `● -> ✓` while the turn banner still
+read Running, and clicking the second row drilled straight into that
+child. Two checks NOT confirmed live and reported as such: Delete-to-cancel
+(lost the race against child completion across ~7 attempts; covered by
+passing tests) and a durable token figure on a finished row — which
+surfaced the transience now documented under Known gaps).*
