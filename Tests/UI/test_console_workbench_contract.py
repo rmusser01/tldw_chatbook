@@ -739,6 +739,12 @@ async def test_console_composer_keeps_disabled_reason_outside_input_row():
 @pytest.mark.asyncio
 async def test_console_empty_transcript_exposes_beginner_activation_actions():
     app = _build_test_app()
+    # Arrange "no provider selected at all" -- the state this test names.
+    # It used to come free from the old empty test config; the real one
+    # (task-15270) ships `[chat_defaults] provider = "OpenAI"`, which is a
+    # DIFFERENT branch of `_console_provider_recovery_action` ("Set up
+    # provider": chosen provider, missing key).
+    app.app_config.setdefault("chat_defaults", {})["provider"] = ""
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:

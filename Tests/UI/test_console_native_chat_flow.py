@@ -17,6 +17,7 @@ from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from Tests.fixtures.required_doubles import exploding_double
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -2530,6 +2531,13 @@ def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "configured-model"
+    # The builder reads the SESSION's provider (derived from
+    # `[chat_defaults] provider`), never `chat_api_provider_value`. These
+    # three used to reach the llama.cpp branch only via
+    # `provider_config_key(...) or "llama_cpp"` -- the fallback an empty test
+    # config left them on. The shipped template sets provider = "OpenAI"
+    # (task-15270), so select llama.cpp the way a user does.
+    app.app_config.setdefault("chat_defaults", {})["provider"] = "llama_cpp"
     app.app_config["console"] = {
         "llama_cpp_base_url_override": "http://127.0.0.1:9099/v1",
     }
@@ -2551,6 +2559,13 @@ def test_console_llamacpp_api_base_url_wins_over_merged_provider_api_url(monkeyp
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "configured-model"
+    # The builder reads the SESSION's provider (derived from
+    # `[chat_defaults] provider`), never `chat_api_provider_value`. These
+    # three used to reach the llama.cpp branch only via
+    # `provider_config_key(...) or "llama_cpp"` -- the fallback an empty test
+    # config left them on. The shipped template sets provider = "OpenAI"
+    # (task-15270), so select llama.cpp the way a user does.
+    app.app_config.setdefault("chat_defaults", {})["provider"] = "llama_cpp"
     app.app_config["api_settings"] = {
         "llama_cpp": {
             "api_url": "http://localhost:8080/v1",
@@ -2570,6 +2585,13 @@ def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "configured-model"
+    # The builder reads the SESSION's provider (derived from
+    # `[chat_defaults] provider`), never `chat_api_provider_value`. These
+    # three used to reach the llama.cpp branch only via
+    # `provider_config_key(...) or "llama_cpp"` -- the fallback an empty test
+    # config left them on. The shipped template sets provider = "OpenAI"
+    # (task-15270), so select llama.cpp the way a user does.
+    app.app_config.setdefault("chat_defaults", {})["provider"] = "llama_cpp"
     app.app_config["api_settings"] = {
         "llama_cpp": {
             "api_url": "http://localhost:8080/v1",
@@ -6018,7 +6040,11 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
     app = _build_test_app()
     _install_console_save_service_fakes(app)
     app.media_db = SimpleNamespace(
-        add_media_with_keywords=Mock(side_effect=RuntimeError("disk full"))
+        add_media_with_keywords=exploding_double(
+            RuntimeError("disk full"),
+            reason="the failing media write must actually be attempted",
+            awaitable=False,
+        )
     )
     host = ConsoleHarness(app)
 
@@ -11087,7 +11113,11 @@ def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
         persisted_message_id="msg-123",
     )
     screen.app_instance.chachanotes_db = Mock(
-        get_message_by_id=Mock(side_effect=Exception("db offline"))
+        get_message_by_id=exploding_double(
+            Exception("db offline"),
+            reason="the DB read must be attempted before it can degrade",
+            awaitable=False,
+        )
     )
 
     screen._rehydrate_console_message_image(message)  # must not raise

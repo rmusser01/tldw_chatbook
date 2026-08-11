@@ -284,6 +284,34 @@ def drain_test_app_user_data_dirs() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
+def required_doubles_are_called(request) -> "Iterator[None]":
+    """Fail a test that never called a double it declared it must call.
+
+    task-15270. A test whose subject is "X still works when Y fails" passes
+    for the wrong reason the moment Y stops being reached -- which is exactly
+    how `test_send_proceeds_when_auto_retrieve_fails` stayed green for two
+    months without ever calling its exploding backend (task-15210). Doubles
+    built through ``Tests.fixtures.required_doubles`` register themselves, so
+    the check cannot be forgotten at the assertion site; see that module for
+    why the detection of UNregistered ones is a separate, reporting-only
+    audit.
+
+    Yields:
+        None. The check runs in teardown, after the test's own assertions.
+    """
+    from Tests.fixtures import required_doubles
+
+    required_doubles.reset_required_doubles()
+    yield
+    unmet = required_doubles.uncalled_required_doubles()
+    audited = required_doubles.audited_uncalled_doubles()
+    required_doubles.write_audit_report(request.node.nodeid, audited)
+    required_doubles.reset_required_doubles()
+    if unmet:
+        pytest.fail("\n".join(unmet), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
 def restore_sys_path():
     """Automatically restore sys.path after each test."""
     original_path = sys.path.copy()
@@ -749,6 +777,10 @@ def pytest_configure(config):
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
+    # Off unless TLDW_AUDIT_UNCALLED_DOUBLES names a report file (task-15270).
+    from Tests.fixtures import required_doubles
+
+    required_doubles.install_uncalled_double_audit()
 
 
 @pytest.hookimpl(trylast=True)

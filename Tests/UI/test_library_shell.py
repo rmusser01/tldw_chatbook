@@ -2196,6 +2196,11 @@ async def test_library_shell_search_history_loads_from_cli_config_fallback(monke
     the screen must fall back to ``get_cli_setting`` to recover history.
     """
     app = _build_test_app()
+    # Arrange the shape under test rather than inheriting it: the factory's
+    # config is the real sandbox config now (task-15270), which HAS a
+    # `[library]` section. The gap this test pins is a snapshot that came
+    # back without one while the CLI config still has it, so drop it here.
+    app.app_config.pop("library", None)
     assert "library" not in app.app_config
     _seed_conversations(app, _two_conversations())
 
@@ -2278,6 +2283,11 @@ async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(
     the returned ``rail_state`` dict).
     """
     app = _build_test_app()
+    # Arrange the shape under test rather than inheriting it: the factory's
+    # config is the real sandbox config now (task-15270), which HAS a
+    # `[library]` section. The gap this test pins is a snapshot that came
+    # back without one while the CLI config still has it, so drop it here.
+    app.app_config.pop("library", None)
     assert "library" not in app.app_config
     _seed_conversations(app, _two_conversations())
 

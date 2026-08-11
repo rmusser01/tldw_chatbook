@@ -134,7 +134,15 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
         await pilot.pause()
 
         # The keys typed into the field; none of the s/r/t actions fired.
-        assert model_input.value == before + "srt"
+        # Not `before + "srt"`: Textual's `Input` ships `select_on_focus=True`,
+        # so focusing a NON-EMPTY field selects its contents and the first
+        # keystroke replaces them. That only became visible once the test
+        # config stopped being empty (task-15270) -- the shipping app has
+        # `[chat_defaults] model` set from the config template, so this is
+        # the behaviour a real user gets, and the claim under test (printable
+        # keys reach the field, not the screen bindings) is unchanged.
+        assert model_input.value.endswith("srt")
+        assert model_input.value != before
         assert not isinstance(host.screen, ConfirmationDialog)
         assert not toasts, f"no action toasts must fire, got {toasts}"
 

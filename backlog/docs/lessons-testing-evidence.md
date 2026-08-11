@@ -2957,3 +2957,44 @@ Two things follow, and the second matters more than the first:
 **What to do.** Treat every "deliberately reverted / do not reintroduce" comment as an
 experiment with a date on it. Re-run its named witnesses first; record the result in
 the task either way. Then keep the diagnosis even when the symptom is gone.
+## A synthetic test config lets tests pin states no user can reach (TASK-15270, 2026-08-11)
+
+**The trap.** A test-app factory that hands the app a small hand-written config is not a
+neutral simplification. Every default the real config file carries is *absent*, so the
+code under test takes fallback branches, and assertions written against those branches
+look like product contracts while pinning states the shipped template never produces.
+
+**What happened.** `Tests/UI/app_factory._build_test_app` patched `load_settings` to a
+three-key dict. `ChatScreen._provider_readiness_app_config` re-sources from
+`load_settings()` only when the snapshot it was handed carries the sections a real load
+always emits (`_CONSOLE_LIVE_CONFIG_MARKER_SECTIONS`: `general`, `logging`) — a
+deliberate guard so an injected test config is never overwritten by the developer's real
+one. The synthetic dict carried neither marker and no `[chat_defaults]`/`[console]`
+section, so every mounted Console test read a `ConsoleTurnExecutionContext` frozen at
+defaults. `test_send_proceeds_when_auto_retrieve_fails` was green for two months without
+once calling the exploding backend it existed to exercise (task-15210).
+
+Sourcing the factory's config from the real (per-test sandboxed) `load_settings()` turned
+**31 green tests red across 6,016**, and the interesting part is *why* — almost none were
+product regressions:
+
+- **Arranged through a seam production does not read.** `console_image_view.
+  _chat_images_config` prefers the raw TOML nested under `COMPREHENSIVE_CONFIG_RAW`
+  whenever the snapshot has it. Four avatar tests set `app_config["chat"]` instead, which
+  the shipping app would have ignored — they were pinning the fallback shape.
+- **Passing on a fallback the template removes.** Three llama.cpp URL tests reached that
+  branch only via `provider_config_key(...) or "llama_cpp"`; the template ships
+  `[chat_defaults] provider = "OpenAI"`, so the fallback never fires for a real user.
+- **Absence as arrangement.** Two "cli config fallback" tests asserted `"library" not in
+  app_config` rather than arranging the absence they needed.
+- **Copy for an unreachable state.** Several first-run/UAT replays assert "Choose
+  provider" — the branch for *no provider selected*. A genuinely fresh install has
+  `provider = "OpenAI"` and no key, so the product says "Set up provider". The tests
+  described a clean run no user has.
+
+**What to do.** Give the test app the same config source the app uses, sandboxed per
+test (the root conftest already re-points `TLDW_CONFIG_PATH`/`HOME`/`XDG_*`), so what a
+test persists is what the app reads. And when a test needs a state — no provider, no
+`[library]` section, a feature off — **arrange it explicitly**; a state you inherited
+from an empty fixture is a state you never chose, and the day the fixture gets honest you
+cannot tell which of your assertions were ever real.

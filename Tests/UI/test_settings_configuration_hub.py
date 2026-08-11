@@ -4020,6 +4020,14 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
         assert field.restrict == r"^[0-9]*$"
         assert field.value == "160"  # DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
 
+        # "Untouched" has to be measured, not inferred from absence: the
+        # test config is the real sandbox config now (task-15270), and the
+        # shipped template already carries `[console]
+        # tool_result_display_chars`, so the key is present before any save.
+        stored_before = app.app_config.get("console", {}).get(
+            "tool_result_display_chars"
+        )
+
         # Out of range (MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS is 2000).
         field.value = "999999"
         screen.handle_console_tool_result_display_chars_changed(
@@ -4031,7 +4039,10 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
             screen
         )
         assert saved == []
-        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+        assert (
+            app.app_config.get("console", {}).get("tool_result_display_chars")
+            == stored_before
+        )
 
         # Non-numeric (bypasses the Input's own `restrict` -- e.g. a paste
         # or a programmatic set -- so the handler's own guard is what's
@@ -4046,7 +4057,10 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
             screen
         )
         assert saved == []
-        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+        assert (
+            app.app_config.get("console", {}).get("tool_result_display_chars")
+            == stored_before
+        )
 
         # Empty.
         field.value = ""
@@ -4059,7 +4073,10 @@ async def test_settings_console_behavior_rejects_invalid_tool_result_display_cha
             screen
         )
         assert saved == []
-        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+        assert (
+            app.app_config.get("console", {}).get("tool_result_display_chars")
+            == stored_before
+        )
 
         # A valid value still saves normally after the rejected attempts.
         field.value = "500"
