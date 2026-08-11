@@ -8,11 +8,13 @@ from tldw_chatbook.Library import library_local_rag_search_service as _semantic_
 from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_FALLBACK_TOP_K,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
+    LIBRARY_RAG_TOP_K_MAX,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
@@ -21,6 +23,7 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_coverage_note,
     library_rag_empty_state_quiet_copy,
     library_rag_paid_mode_notice,
+    library_rag_profile_top_k,
     library_rag_results_count_line,
     library_rag_score_suffix,
     library_rag_scope_summary,
@@ -164,7 +167,7 @@ class TestLibraryRagScopeSummary:
         assert library_rag_scope_summary(scope) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
-def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
+def test_query_state_blocks_empty_query_and_runtime_blockers(monkeypatch) -> None:
     empty_query = LibraryRagQueryState.from_values(query="", mode="rag")
 
     assert empty_query.mode == "rag"
@@ -188,6 +191,10 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
         "Index selected Library sources before querying."
     )
 
+    # An unparseable count resolves to the ACTIVE PROFILE's depth since
+    # TASK-15020/B3 (it was the literal 5 before); pinned against a patched
+    # profile so this stays about coercion, not about which profile ships.
+    _patch_profile_depth(monkeypatch, 15)
     ready_query = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="unknown",
@@ -196,7 +203,7 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     )
 
     assert ready_query.mode == "rag"
-    assert ready_query.top_k == 5
+    assert ready_query.top_k == 15
     assert ready_query.status == "ready"
     assert ready_query.run_action.enabled is True
 
@@ -419,7 +426,10 @@ def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
     assert ready.blocked_is_no_scope is False
 
 
-def test_query_state_validates_and_sanitizes_external_values() -> None:
+def test_query_state_validates_and_sanitizes_external_values(monkeypatch) -> None:
+    # 500 is out of `LIBRARY_RAG_TOP_K_MAX` range, so it falls back -- to the
+    # active profile's depth since TASK-15020/B3, not the old literal 5.
+    _patch_profile_depth(monkeypatch, 15)
     unsafe_query = LibraryRagQueryState.from_values(
         query="<script>alert('x')</script>",
         mode="<b>rag</b>",
@@ -432,7 +442,7 @@ def test_query_state_validates_and_sanitizes_external_values() -> None:
         "Enter a safe question or search query."
     )
     assert unsafe_query.mode == "rag"
-    assert unsafe_query.top_k == 5
+    assert unsafe_query.top_k == 15
 
     bounded_query = LibraryRagQueryState.from_values(
         query="Find policy evidence",
@@ -1770,6 +1780,85 @@ class TestLibraryRagCoverageNote:
             "Semantic search found nothing from: Notes."
         )
 
+    # --- TASK-14752: keyword-sourced evidence is not "found nothing" -------
+
+    def test_keyword_only_types_render_their_own_sentence(self):
+        """(TASK-14752 AC#1/#2) A type whose rows came from the FTS leg has
+        evidence ON SCREEN; the bare "Semantic search found nothing from:
+        Notes." sentence, while literally true of the semantic leg, reads as
+        "Notes produced nothing" to a user looking at note rows."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": ["media"],
+                "uncovered": [],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Notes."
+        )
+
+    def test_keyword_only_and_absent_types_are_two_separate_sentences(self):
+        """The mixed case is the whole point: one type matched on keywords
+        alone, another produced nothing at all, and collapsing them into one
+        list is what made the old sentence ambiguous."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["conversations"],
+                "keyword_only": ["notes", "media"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "Semantic search found nothing from: Conversations. "
+            "Keyword matches only from: Notes, Media."
+        )
+
+    def test_keyword_only_labels_route_through_the_display_label_table(self):
+        """Same vocabulary rule as the uncovered sentence -- and the same
+        escaping, since these labels are service-supplied and reach a
+        `Static`."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": [],
+                "keyword_only": ["media", "mystery_source"],
+            }
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Keyword matches only from: Media, mystery_source."
+        )
+
+    def test_absent_keyword_only_key_leaves_the_note_exactly_as_before(self):
+        """(TASK-14752 AC#3) The semantic and plain profiles never produce
+        this key; their copy must be byte-identical to what it was."""
+        rows = (self._row(0.6),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["media"], "uncovered": ["notes"]}
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Semantic search found nothing from: Notes."
+        )
+
+    def test_keyword_only_claims_stay_suppressed_at_zero_rows(self):
+        """A "Keyword matches only from: X" sentence is a claim about rows on
+        screen; with no rows it would be self-contradicting, so it obeys the
+        same zero-row suppression the uncovered sentence does."""
+        diagnostics = {
+            "semantic_scope_coverage": {
+                "covered": [],
+                "uncovered": ["media"],
+                "keyword_only": ["notes"],
+            }
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == ""
+
     def test_empty_rows_never_render_a_coverage_note(self):
         """Edge case (c): zero results overall is the no-match state's
         territory (Task 11), not a coverage note listing every requested
@@ -1782,10 +1871,12 @@ class TestLibraryRagCoverageNote:
 
     # (RAG-port P0, Workstream A) The service now also reports how the
     # retrieval was ROUTED when it could not run the active profile's
-    # configured mode -- a hybrid profile forced onto the semantic path by
-    # an active scope, a plain profile routed to the keyword seams. Those
-    # disclosures share this one quiet line rather than opening a second
-    # note channel on the same screen.
+    # configured mode -- a hybrid profile diverted to semantic because no
+    # selected source has a keyword leg, a plain profile routed to the
+    # keyword seams. Those disclosures share this one quiet line rather than
+    # opening a second note channel on the same screen. (The scope divert
+    # that used to head this list retired with TASK-15020/B1: a scoped
+    # hybrid search now runs hybrid, so there is nothing to disclose.)
 
     def test_route_note_renders_as_a_sentence_when_nothing_else_to_say(self):
         rows = (self._row(0.6),)
@@ -1820,13 +1911,13 @@ class TestLibraryRagCoverageNote:
         diagnostics = {
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]},
             LIBRARY_RAG_ROUTE_NOTES_KEY: [
-                "scope active — semantic only until scope-aware hybrid lands"
+                "no keyword leg for the selected sources — semantic only"
             ],
         }
         assert library_rag_coverage_note(diagnostics, rows) == (
             "No strong semantic matches — results below are weak. "
             "Semantic search found nothing from: Notes. "
-            "Scope active — semantic only until scope-aware hybrid lands."
+            "No keyword leg for the selected sources — semantic only."
         )
 
     def test_route_notes_survive_the_zero_row_outcome(self):
@@ -1852,11 +1943,11 @@ class TestLibraryRagCoverageNote:
         diagnostics = {
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]},
             LIBRARY_RAG_ROUTE_NOTES_KEY: [
-                "scope active — semantic only until scope-aware hybrid lands"
+                "no keyword leg for the selected sources — semantic only"
             ],
         }
         assert library_rag_coverage_note(diagnostics, ()) == (
-            "Scope active — semantic only until scope-aware hybrid lands."
+            "No keyword leg for the selected sources — semantic only."
         )
 
     def test_blank_route_notes_render_nothing(self):
@@ -2151,3 +2242,223 @@ def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
     )
 
     assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason
+
+
+# --------------------------------------------------------------------------
+# B3 (TASK-15020): the Search/RAG window's DEPTH follows the active profile.
+#
+# Before B3 the window's evidence depth was the literal
+# `LIBRARY_RAG_DEFAULT_TOP_K = 5` -- a number nothing in Settings could move,
+# while the Console's own Library RAG entry points had already been taught to
+# read the active RAG profile's `search.default_top_k` (TASK-406/TASK-3170,
+# `_console_library_rag_profile_top_k`). Two surfaces over the same retrieval
+# stack disagreed about how deep "a search" goes, and only one of them could
+# be configured. B3 makes the DEFAULT profile-resolved on both; an explicit
+# caller-supplied count still wins, unchanged.
+# --------------------------------------------------------------------------
+
+
+class _CountingResolver:
+    """A stand-in for `resolve_active_rag_top_k` that records its calls."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __call__(self) -> int:
+        self.calls += 1
+        return self.value
+
+
+def _patch_profile_depth(monkeypatch, value: int) -> _CountingResolver:
+    """Patch what `library_rag_profile_top_k` actually reads, not the seam.
+
+    Mirrors the Console suite's discipline: patching the resolver the seam
+    calls (imported lazily inside it, so the module attribute is what gets
+    read at call time) exercises the real seam -- including its try/except
+    and its own non-positive guard -- instead of mocking it away.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    resolver = _CountingResolver(value)
+    monkeypatch.setattr(active_config, "resolve_active_rag_top_k", resolver)
+    return resolver
+
+
+def test_query_state_depth_defaults_to_the_active_profile_top_k(monkeypatch) -> None:
+    """Unset depth resolves to the profile, not to the literal 5."""
+    _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == 15
+    assert state.status == "ready"
+
+
+def test_panel_state_depth_defaults_to_the_active_profile_top_k(monkeypatch) -> None:
+    """The screen builds the PANEL state, so the default has to survive that
+    layer too -- and the Evidence heading is where a user reads it.
+    """
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        results_heading_text,
+    )
+
+    _patch_profile_depth(monkeypatch, 15)
+
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 2},
+        query="summarize the policy",
+        mode="rag",
+        provider_name="openai",
+    )
+
+    assert panel.query_state.top_k == 15
+    assert results_heading_text(panel) == "Evidence · top 15"
+
+
+def test_query_state_depth_keeps_an_explicit_caller_value(monkeypatch) -> None:
+    """B3 changes the DEFAULT only. An explicit in-range count still wins --
+    and the profile is not even consulted, so "the user wins" holds by
+    construction rather than by the two numbers happening to match.
+    """
+    resolver = _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", top_k=7, provider_name="openai"
+    )
+
+    assert state.top_k == 7
+    assert resolver.calls == 0
+
+
+@pytest.mark.parametrize("bad_value", ["bad", "", None, 0, -3, 51, 500])
+def test_query_state_depth_falls_back_to_the_profile_for_invalid_values(
+    monkeypatch, bad_value
+) -> None:
+    """Out-of-range/unparseable counts resolve to the profile, not to 5."""
+    _patch_profile_depth(monkeypatch, 15)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", top_k=bad_value, provider_name="openai"
+    )
+
+    assert state.top_k == 15
+
+
+def test_query_state_depth_falls_back_to_five_when_the_profile_is_unresolvable(
+    monkeypatch,
+) -> None:
+    """A broken/absent profile must degrade to searching, never to raising
+    inside a render -- the same contract the Console seam carries.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable() -> int:
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == LIBRARY_RAG_FALLBACK_TOP_K == 5
+
+
+@pytest.mark.parametrize("profile_value", [0, -1])
+def test_profile_depth_seam_rejects_a_non_positive_profile_value(
+    monkeypatch, profile_value
+) -> None:
+    """A profile that resolves to a useless count is treated as unresolvable."""
+    _patch_profile_depth(monkeypatch, profile_value)
+
+    assert library_rag_profile_top_k() == LIBRARY_RAG_FALLBACK_TOP_K
+
+
+def test_query_state_clamps_a_profile_deeper_than_the_window_bound(
+    monkeypatch,
+) -> None:
+    """Settings accepts a profile depth up to 100; this window's own bound is
+    `LIBRARY_RAG_TOP_K_MAX` (50). Clamp rather than discard: a 100-deep
+    profile means "as deep as you can", and falling back to 5 -- the pre-B3
+    coercion's answer for an out-of-range value -- would invert it.
+    """
+    _patch_profile_depth(monkeypatch, 100)
+
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+
+    assert state.top_k == LIBRARY_RAG_TOP_K_MAX == 50
+
+
+def test_console_and_library_share_one_profile_depth_seam(monkeypatch) -> None:
+    """The coupling pin: the Console chip and this window must never drift.
+
+    `chat_screen._console_library_rag_profile_top_k` is a thin delegation to
+    `library_rag_profile_top_k` (one definition, three call sites), so this
+    asserts they agree on BOTH branches -- resolved and unresolvable -- and
+    that the two fallback constants are the same number.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    _patch_profile_depth(monkeypatch, 23)
+    assert (
+        chat_screen_module._console_library_rag_profile_top_k()
+        == library_rag_profile_top_k()
+        == 23
+    )
+
+    def _raise_profile_unavailable() -> int:
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+    assert (
+        chat_screen_module._console_library_rag_profile_top_k()
+        == library_rag_profile_top_k()
+        == LIBRARY_RAG_FALLBACK_TOP_K
+    )
+    assert (
+        chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
+        == LIBRARY_RAG_FALLBACK_TOP_K
+    )
+
+
+def test_clamp_divergence_is_pinned_as_a_pair(monkeypatch) -> None:
+    """The window clamps a >50 profile; the Console seam deliberately does NOT.
+
+    Task-8 review, minor 1: the clamp was only half-pinned. The window arm
+    (profile 100 -> 50) had a test, but nothing exercised the UNCAPPED
+    direction, so silently capping the SHARED seam -- `min(value,
+    LIBRARY_RAG_TOP_K_MAX)` inside `library_rag_profile_top_k` -- left 199
+    tests green while erasing a divergence that had been declared
+    deliberate. A declared difference that no test can tell from its own
+    removal is not a decision, it is a comment.
+
+    Both arms live in ONE test on purpose: they are a pair, and the whole
+    claim is that the same profile reads differently on the two surfaces.
+    `LIBRARY_RAG_TOP_K_MAX` is this window's bound (the evidence list's own
+    limit); the Console chip's request has no such list and honors whatever
+    depth the user configured, up to Settings' own 100 ceiling.
+    """
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    _patch_profile_depth(monkeypatch, 100)
+
+    # Uncapped arm: the shared seam and its Console delegation report the
+    # profile's real depth.
+    assert library_rag_profile_top_k() == 100
+    assert chat_screen_module._console_library_rag_profile_top_k() == 100
+
+    # Capped arm: the Library window's own display state trims to its bound.
+    window = LibraryRagQueryState.from_values(
+        query="summarize the policy", provider_name="openai"
+    )
+    assert window.top_k == LIBRARY_RAG_TOP_K_MAX == 50

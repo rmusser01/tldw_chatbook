@@ -75,9 +75,21 @@ _PROFILE_SEARCH_MODES = ("plain", "semantic", "hybrid")
 # `_route_note_sentence` renders them as sentences on the Evidence
 # region's one quiet coverage line.
 ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE = "{profile}: keyword search (no vectors)"
-ROUTE_NOTE_HYBRID_SCOPED = (
-    "scope active — semantic only until scope-aware hybrid lands"
-)
+# (TASK-15020/B1) `ROUTE_NOTE_HYBRID_SCOPED` ("scope active — semantic only
+# until scope-aware hybrid lands") lived here. That landing is done: scope
+# allowlists now reach BOTH engine legs, so a scoped query under a hybrid
+# profile runs the profile's own fused search and has no divert to disclose.
+# The constant is deliberately not kept as an alias -- a disclosure nothing
+# can emit is prose that outlives its fact.
+# (TASK-15020/B2) NARROWED, not retired. Until B2 this fired for any
+# selection that was prompts-only, since prompts had no sub-leg; the engine's
+# keyword leg now serves all FOUR of the Search canvas's source types, so no
+# combination of real toggles can reach it any more. What remains reachable
+# is a selection carrying nothing the leg knows -- an empty selection, or one
+# built from identifiers this build does not recognize. The wording still
+# describes exactly that case, so it stays as the disclosure for it rather
+# than becoming a sentence nothing can emit (`ROUTE_NOTE_HYBRID_SCOPED`'s
+# fate, above).
 ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
     "no keyword leg for the selected sources — semantic only"
 )
@@ -93,42 +105,58 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
     "conversation": "conversations",
     "conversations": "conversations",
     "chat": "conversations",
+    # TASK-15020/B2. The engine's keyword leg now emits `prompt` rows, and
+    # this map is what the source-type POST-FILTER canonicalizes with: an
+    # unrecognized provenance value passes the filter untouched
+    # (`_semantic_row_matches_scope` returns True), so without this entry a
+    # prompt row would survive a selection that had Prompts turned OFF.
+    "prompt": "prompts",
+    "prompts": "prompts",
 }
-# The canonical source types `_SEMANTIC_SOURCE_TYPE_MAP` can ever produce
+# The canonical source types the SEMANTIC leg can structurally speak to
 # (task-15 finding I2): `prompts` (and `workspaces`/`collections`) has no
-# semantic-index seam at all -- no provenance `source_type` a semantic
-# search row carries will ever canonicalize to it. `selected_source_types`
-# reaching `_search_semantic` is the Search canvas's full scope, which
-# includes `prompts` under its default (all four toggles on, the common
-# case whenever a workspace has >=1 prompt) -- diffing that raw scope
-# against `present` in `_semantic_scope_coverage` would flag `prompts`
-# "uncovered" on every single non-empty rag-mode query, forever, turning a
-# per-query signal ("semantic search looked at X and found nothing") into a
-# permanent false nag with the wrong implicature (prompts are structurally
-# absent from the semantic leg, not "searched and empty"). Used to filter
-# `source_types` down to only what the semantic leg can structurally speak
-# to before computing coverage.
-_SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())
+# semantic-index seam at all -- no vector row will ever carry it.
+# `selected_source_types` reaching `_search_semantic` is the Search canvas's
+# full scope, which includes `prompts` under its default (all four toggles
+# on, the common case whenever a workspace has >=1 prompt) -- diffing that
+# raw scope against `present` in `_semantic_scope_coverage` would flag
+# `prompts` "uncovered" on every single non-empty rag-mode query, forever,
+# turning a per-query signal ("semantic search looked at X and found
+# nothing") into a permanent false nag with the wrong implicature (prompts
+# are structurally absent from the semantic leg, not "searched and empty").
+#
+# **Written out, not derived.** This used to read
+# `frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())`, which was correct only
+# while that map's domain happened to be exactly the vector-indexed types.
+# TASK-15020/B2 added `prompt`/`prompts` to it for the post-filter, and the
+# derivation would have silently re-admitted `prompts` to the coverage
+# partition -- reinstating the exact false nag I2 removed, with every test
+# green. The two sets answer different questions; only one of them is about
+# the vector index.
+_SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
 # The Library scope identifiers the ENGINE's keyword (FTS5) leg can serve --
-# `media_fts` plus, since TASK-3996, `notes_fts` and `messages_fts`. Kept
-# separate from `_SEMANTICALLY_COVERABLE_SOURCE_TYPES` (currently the same
-# members) because they answer different questions and can diverge: one is
-# "does the vector index hold this type", the other "does the FTS leg query
-# it". `prompts` is in neither -- it has no engine-side seam at all, which
-# is why a prompts-only selection is the one case that still cannot use
-# hybrid.
-_FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
+# `media_fts`, plus `notes_fts`/`messages_fts` since TASK-3996 and
+# `prompts_fts` since TASK-15020/B2. Kept separate from
+# `_SEMANTICALLY_COVERABLE_SOURCE_TYPES` because they answer different
+# questions, and since B2 they genuinely DIVERGE: `prompts` is FTS-servable
+# and has no vector index at all, so a prompt reaches hybrid results through
+# this leg alone (rescued by the fusion weighting) and must never appear in
+# a semantic-coverage claim.
+_FTS_SERVABLE_SOURCE_TYPES = frozenset(
+    {"media", "notes", "conversations", "prompts"}
+)
 # Library scope identifier -> the ENGINE's keyword-leg vocabulary
 # (`rag_service.SOURCE_TYPE_*`, singular). The Library speaks plurals
 # (`notes`, `conversations`); the engine's FTS sub-legs are selected -- and
 # its rows stamped -- with the singular ingestion spelling, and a plural
 # handed to `keyword_source_types` is simply dropped as unknown, which would
 # leave the keyword leg empty rather than scoped. Domain: exactly
-# `_FTS_SERVABLE_SOURCE_TYPES` (`prompts` has no engine-side seam at all).
+# `_FTS_SERVABLE_SOURCE_TYPES`.
 _ENGINE_KEYWORD_SOURCE_TYPES = {
     "media": "media",
     "notes": "note",
     "conversations": "conversation",
+    "prompts": "prompt",
 }
 
 
@@ -261,20 +289,20 @@ class LibraryLocalRagSearchService:
           path is scope-aware and also searches prompts, so a BM25 profile
           must not get a strictly worse search in `rag` mode than `search`
           mode already gives it.
-        - `hybrid`, unscoped, with at least one selected source the engine's
-          FTS leg can serve -> the engine's fused hybrid.
-        - `hybrid`, scoped -> semantic. `RAGService.search` RAISES for a
-          non-empty `metadata_allowlist` with any non-semantic search type
-          (allowlist pushdown is semantic-only), so this is a hard engine
-          constraint, not a preference. Extending allowlists to the FTS leg
-          is P2.
+        - `hybrid`, with at least one selected source the engine's FTS leg
+          can serve -> the engine's fused hybrid, scoped or not. A scope
+          used to divert this arm to semantic, because `RAGService.search`
+          raised for a non-empty `metadata_allowlist` with any non-semantic
+          search type; TASK-15020/B1 pushed allowlists into the FTS
+          sub-legs, so the scope now travels with the query instead of
+          costing the user their profile's retrieval mode.
         - `hybrid`, no FTS-servable source selected (in practice: prompts
           only) -> semantic. The engine's FTS leg covers media, notes and
           conversations (TASK-3996 added the latter two; before it, this arm
           fired whenever media was deselected); rows from a source outside
           the selection could only be dropped by the source-type
           post-filter, so running the leg would spend a query to produce
-          nothing.
+          nothing. Any scope still travels with the diverted search.
         - `semantic` (and any unknown mode) -> today's exact behavior.
 
         Args:
@@ -282,8 +310,9 @@ class LibraryLocalRagSearchService:
             source_types: Selected Library source type identifiers.
             top_k: Result cap.
             kwargs: Backend options (`include_citations`).
-            scope: Optional resolved retrieval scope; `state == "scoped"`
-                is what forces the semantic path under a hybrid profile.
+            scope: Optional resolved retrieval scope. It no longer decides
+                the route (TASK-15020/B1) -- it is threaded into whichever
+                path runs, as the allowlists both engine legs now honor.
 
         Returns:
             The chosen path's own return shape (mapping or
@@ -312,16 +341,6 @@ class LibraryLocalRagSearchService:
             )
 
         if profile_mode == "hybrid":
-            if scope is not None and scope.state == "scoped":
-                return await self._search_semantic(
-                    query,
-                    source_types,
-                    top_k,
-                    kwargs,
-                    scope=scope,
-                    rag_service=rag_service,
-                    route_notes=(ROUTE_NOTE_HYBRID_SCOPED,),
-                )
             if not _FTS_SERVABLE_SOURCE_TYPES.intersection(source_types):
                 return await self._search_semantic(
                     query,
@@ -333,7 +352,12 @@ class LibraryLocalRagSearchService:
                     route_notes=(ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES,),
                 )
             return await self._search_hybrid(
-                query, source_types, top_k, kwargs, rag_service=rag_service
+                query,
+                source_types,
+                top_k,
+                kwargs,
+                scope=scope,
+                rag_service=rag_service,
             )
 
         return await self._search_semantic(
@@ -684,19 +708,27 @@ class LibraryLocalRagSearchService:
         top_k: int,
         kwargs: Mapping[str, Any],
         *,
+        scope: Optional[EffectiveScope] = None,
         rag_service: Any,
     ) -> Any:
-        """Run the engine's RRF-fused hybrid search (unscoped, FTS-servable).
+        """Run the engine's RRF-fused hybrid search (FTS-servable, any scope).
 
         Only `_search_rag` calls this, and only once it has established the
-        two conditions the engine imposes: no scope allowlist (the pushdown
-        is semantic-only) and at least one selected source type the FTS leg
-        can actually serve (`_FTS_SERVABLE_SOURCE_TYPES`), otherwise its rows
-        would all be dropped by the source-type post-filter. That second
-        condition used to read "media selected", because the engine's FTS leg
-        was media-only; TASK-3996 gave it notes and conversation sub-legs, so
-        media-off + notes-on now runs hybrid instead of being diverted to
-        semantic in exactly the case the FTS leg was extended for.
+        one condition the engine imposes: at least one selected source type
+        the FTS leg can actually serve (`_FTS_SERVABLE_SOURCE_TYPES`),
+        otherwise its rows would all be dropped by the source-type
+        post-filter. That condition used to read "media selected", because
+        the engine's FTS leg was media-only; TASK-3996 gave it notes and
+        conversation sub-legs and TASK-15020/B2 gave it prompts, so every one
+        of the Search canvas's four toggles now keeps the query on the hybrid
+        path -- including a prompts-only selection, whose rows can ONLY come
+        from this leg (prompts have no vector index, so they reach the fused
+        output as FTS-only rows). There used to be a SECOND condition -- no scope --
+        because allowlist pushdown was semantic-only; TASK-15020/B1 removed
+        it at the engine (each FTS sub-leg takes its entry's ids as a
+        parameterized filter, and a sub-leg the scope never names is skipped
+        rather than run unfiltered), which is what this method's `scope`
+        argument now carries.
 
         The selection is also pushed INTO the engine's keyword leg
         (TASK-14751). Before that, the leg split one fixed `top_k` FTS budget
@@ -721,11 +753,19 @@ class LibraryLocalRagSearchService:
             top_k: Result cap (the fused cap; each leg is over-fetched by
                 the engine).
             kwargs: Backend options (`include_citations`).
+            scope: Optional resolved retrieval scope. A scoped value is
+                translated by `build_semantic_allowlists` into the union of
+                per-source-type AND-groups the engine expects (a flat dict
+                cannot express "media in A OR note in B") and passed as ONE
+                `metadata_allowlist` -- unlike `_search_semantic`, which
+                predates the engine's multi-entry support and still issues
+                one store query per entry itself. Both legs honor it.
             rag_service: The resolved runtime.
 
         Returns:
             A mapping with `results`/`runtime_backend` (`rag-hybrid`) plus
-            diagnostics, or the "Index empty" recovery outcome.
+            diagnostics, or the "Index empty" / scoped-zero-results recovery
+            outcome.
         """
         # `_search_rag` has already established this is non-empty, so the
         # keyword leg is never asked to serve nothing.
@@ -734,18 +774,39 @@ class LibraryLocalRagSearchService:
             for source_type in source_types
             if source_type in _ENGINE_KEYWORD_SOURCE_TYPES
         }
+        allowlists = build_semantic_allowlists(scope) if scope is not None else None
+        # Forwarded only when there IS a scope, so an unscoped hybrid search
+        # calls the engine with exactly the arguments it did before B1 (and
+        # every pre-existing runtime double keeps working unchanged).
+        allowlist_kwargs = (
+            {"metadata_allowlist": allowlists} if allowlists is not None else {}
+        )
         raw_results = await rag_service.search(
             query=query,
             top_k=top_k,
             search_type="hybrid",
             include_citations=bool(kwargs.get("include_citations", True)),
             keyword_source_types=keyword_source_types,
+            **allowlist_kwargs,
         )
         rows = _filtered_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
             return LibraryRagSearchOutcome(
                 status="empty",
                 recovery_state=_rag_index_empty_recovery_state(),
+                runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
+            )
+        if scope is not None and scope.state == "scoped" and not rows:
+            # The same distinction the scoped semantic path draws (task-6):
+            # "nothing matched among the N items you scoped to" is a
+            # scope-shaped dead end with a scope-shaped next action, and
+            # routing scoped queries to hybrid must not quietly demote it to
+            # the generic no-match state.
+            return LibraryRagSearchOutcome(
+                status="empty",
+                recovery_state=_scope_zero_results_recovery_state(
+                    _scope_item_count(scope, source_types)
+                ),
                 runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
             )
         route_notes: list[str] = []
@@ -851,8 +912,11 @@ def _resolve_profile_search_mode(rag_service: Any) -> str:
 
     "plain" deliberately routes to the four-seam scope-aware keyword path,
     NOT the engine's keyword leg (spec: plain-profile routing) -- the
-    four-seam path is scope-aware and covers prompts, neither of which the
-    engine's leg does even now that it spans media, notes and conversations.
+    engine's ``search_type="keyword"`` still refuses a
+    ``metadata_allowlist`` (it has no semantic leg to scope), so a scoped
+    plain search needs the four-seam path regardless of which source types
+    the engine's leg now spans; the four-seam path remains the product
+    surface for plain mode.
     Unknown values -- and any runtime without a profile config at all, which
     includes every pre-profile test fake -- fall back to "semantic", the
     behavior this path had before profiles were honored.
@@ -950,24 +1014,36 @@ def _filtered_semantic_rows(
     return [row for row in rows if _semantic_row_matches_scope(row, source_types)]
 
 
-def _rows_are_keyword_only(rows: Sequence[Mapping[str, Any]]) -> bool:
-    """True when every row came from hybrid's FTS leg with no vector leg.
+def _row_is_keyword_only(row: Mapping[str, Any]) -> bool:
+    """True when this ONE row reached the results with no vector-leg score.
 
     Reads the fusion block's `vector_score` (preserved by
     `_fuse_hybrid_results`): `None` means the chunk was never returned by
     the vector leg. A row with no fusion block at all cannot be judged, so
-    it makes the whole set non-keyword-only rather than being assumed.
+    it is NOT called keyword-only. That default is load-bearing twice over:
+    a semantic-path row never carries a fusion block, which is how the whole
+    pre-hybrid world keeps its coverage answer byte-identical, and inventing
+    a "keyword matches only" claim out of absent provenance would be the
+    same defect TASK-14752 exists to remove, pointed the other way.
+    """
+    provenance = row.get("provenance")
+    fusion = (
+        provenance.get("hybrid_fusion") if isinstance(provenance, Mapping) else None
+    )
+    return isinstance(fusion, Mapping) and fusion.get("vector_score") is None
+
+
+def _rows_are_keyword_only(rows: Sequence[Mapping[str, Any]]) -> bool:
+    """True when every row came from hybrid's FTS leg with no vector leg.
+
+    The per-row judgement (and its "un-judgeable rows are not keyword-only"
+    default) lives in `_row_is_keyword_only`, so this whole-set claim and
+    the per-source-type one `_semantic_scope_coverage` makes cannot drift
+    apart into two different readings of the same fusion block.
     """
     if not rows:
         return False
-    for row in rows:
-        provenance = row.get("provenance")
-        fusion = (
-            provenance.get("hybrid_fusion") if isinstance(provenance, Mapping) else None
-        )
-        if not isinstance(fusion, Mapping) or fusion.get("vector_score") is not None:
-            return False
-    return True
+    return all(_row_is_keyword_only(row) for row in rows)
 
 
 def _retrieval_payload(
@@ -988,13 +1064,11 @@ def _retrieval_payload(
     The hybrid arm shares this, and TASK-3996 is the change the old note
     here anticipated ("revisit when the keyword leg goes four-seam"): the
     engine's FTS leg now serves notes and conversations too, so a type CAN
-    be covered by the FTS leg alone. The coverage claim stays accurate
-    because `_semantic_scope_coverage` reads the rows that survive fusion
-    and the wording is about the semantic leg specifically -- but under a
-    hybrid profile "Semantic search found nothing from X" can now be true of
-    a type whose evidence on screen came from the keyword leg. A
-    hybrid-aware wording variant is a UI-copy follow-up, not a retrieval
-    defect; it is deliberately not bundled into the retrieval fix.
+    be covered by the FTS leg alone. TASK-14752 is the follow-up this docstring
+    used to defer -- `_semantic_scope_coverage` now separates that case out
+    as `keyword_only`, and `library_rag_state.library_rag_coverage_note`
+    gives it its own sentence, so "Semantic search found nothing from X" is
+    never rendered over a type whose rows are on screen.
     """
     result: dict[str, Any] = {"results": rows, "runtime_backend": runtime_backend}
     if rows and source_types:
@@ -1143,6 +1217,15 @@ def _semantic_scope_coverage(
     tells a user "semantic search never looked at your notes" versus "your
     notes have nothing relevant" (live UAT, RAG-29/Task 8).
 
+    Under a HYBRID profile a third state exists, and TASK-14752 is it: a
+    type can be on screen entirely from the engine's FTS leg. Before
+    TASK-3996 that leg served media only, so "no semantic hits for this
+    type" and "no evidence at all for this type" were the same fact and one
+    `uncovered` list said everything; with notes and conversation sub-legs,
+    folding keyword-sourced types into `covered` hides that the semantic leg
+    never matched them, while folding them into `uncovered` would tell a
+    user that a type produced nothing while its rows are in front of them.
+
     Args:
         source_types: The caller's requested Library source type
             identifiers (e.g. `notes`, `media`) -- never empty; the caller
@@ -1151,19 +1234,31 @@ def _semantic_scope_coverage(
             (i.e. what will actually be shown as evidence).
 
     Returns:
-        `{"covered": [...], "uncovered": [...]}`, both in `source_types`
-        order and both restricted to types the semantic leg can
-        structurally speak to (`_SEMANTICALLY_COVERABLE_SOURCE_TYPES`,
-        task-15 finding I2) -- a requested type with no semantic-index seam
-        at all (`prompts`) never appears in either list, since it was never
-        "searched" in any sense this note can honestly claim. A row whose
-        provenance is missing or unrecognized (edge case: it survives the
-        scope post-filter because it cannot be attributed to any toggle)
-        contributes to neither list -- it cannot prove any specific
-        requested type was actually searched-and-found, so it must not mask
-        a genuinely uncovered type.
+        `{"covered": [...], "uncovered": [...]}` plus `"keyword_only": [...]`
+        when (and only when) that third list is non-empty -- so the semantic
+        and plain profiles, which cannot produce it, keep a byte-identical
+        payload. All lists are in `source_types` order, they PARTITION the
+        requested types the semantic leg can structurally speak to
+        (`_SEMANTICALLY_COVERABLE_SOURCE_TYPES`, task-15 finding I2), and a
+        requested type with no semantic-index seam at all (`prompts`) never
+        appears in any of them, since it was never "searched" in any sense
+        this note can honestly claim. Membership:
+
+        * `covered` -- at least one row of that type carried a vector-leg
+          contribution (or came from a path that has no fusion provenance to
+          judge, i.e. every non-hybrid search).
+        * `keyword_only` -- rows of that type are present, but every one of
+          them is FTS-only (`_row_is_keyword_only`).
+        * `uncovered` -- no rows of that type at all.
+
+        A row whose provenance is missing or unrecognized (edge case: it
+        survives the scope post-filter because it cannot be attributed to
+        any toggle) contributes to none of them -- it cannot prove any
+        specific requested type was actually searched-and-found, so it must
+        not mask a genuinely uncovered type.
     """
-    present: set[str] = set()
+    semantic_present: set[str] = set()
+    keyword_present: set[str] = set()
     for row in rows:
         provenance = row.get("provenance")
         raw_source_type = (
@@ -1172,23 +1267,38 @@ def _semantic_scope_coverage(
         canonical = _SEMANTIC_SOURCE_TYPE_MAP.get(
             str(raw_source_type or "").strip().lower()
         )
-        if canonical:
-            present.add(canonical)
+        if not canonical:
+            continue
+        if _row_is_keyword_only(row):
+            keyword_present.add(canonical)
+        else:
+            semantic_present.add(canonical)
     coverable_source_types = [
         source_type
         for source_type in source_types
         if source_type in _SEMANTICALLY_COVERABLE_SOURCE_TYPES
     ]
-    return {
+    keyword_only = [
+        source_type
+        for source_type in coverable_source_types
+        if source_type not in semantic_present and source_type in keyword_present
+    ]
+    coverage = {
         "covered": [
-            source_type for source_type in coverable_source_types if source_type in present
+            source_type
+            for source_type in coverable_source_types
+            if source_type in semantic_present
         ],
         "uncovered": [
             source_type
             for source_type in coverable_source_types
-            if source_type not in present
+            if source_type not in semantic_present
+            and source_type not in keyword_present
         ],
     }
+    if keyword_only:
+        coverage["keyword_only"] = keyword_only
+    return coverage
 
 
 def _semantic_citation(citation: Any) -> dict[str, Any]:

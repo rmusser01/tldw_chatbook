@@ -195,8 +195,9 @@ task-4011.)
 
 1. **Find anything you've saved.** Type into the **Search Library…** box
    and press Enter — you land on the Search / RAG canvas with results
-   grouped as "Evidence · top 5 per source". Narrow with the **Sources**
-   scope toggles ([Search & RAG](library/search-and-rag.md)).
+   grouped as "Evidence · top 15 per source" (the number follows Settings ▸
+   RAG's Default results; 15 on the shipped default profile). Narrow with
+   the **Sources** scope toggles ([Search & RAG](library/search-and-rag.md)).
 2. **Add your first file.** Click **Import…**, enter a file
    path or URL (or **Browse…**), review the pre-flight summary and
    options, then press **Start import**. The item appears under
@@ -383,3 +384,9 @@ surviving genuine two-option toggles, sitting between the two enumerated
 options with "✓" on the active one ("mode: ✓ Search ⇄ RAG Answer", the
 skill editor's switches); the prompt collection control — a chooser that
 opens the collection manager — dropped the glyph outright.)*
+*Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
+2026-08-11 (TASK-15020 final review wave, doc-only: correcting the "Find
+anything you've saved" step above to match B3's already-shipped
+behavior — the Search / RAG canvas's per-source count follows Settings ▸
+RAG's Default results, 15 on the shipped default profile, not a fixed 5;
+no code changed here).*

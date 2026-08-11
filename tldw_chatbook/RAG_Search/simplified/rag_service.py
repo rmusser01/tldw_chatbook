@@ -6,10 +6,12 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
+import json
 import re
 import sqlite3
 import time
 import uuid
+from collections import abc
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -23,6 +25,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
     Union,
 )
@@ -122,13 +125,26 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
 SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 SOURCE_TYPE_CONVERSATION = "conversation"
+# TASK-15020/B2. Unlike the three above, this one has no vector-leg twin to
+# agree with: nothing indexes prompts semantically. It is the singular
+# spelling anyway, because the OTHER consumers of this string are shared with
+# the three that do -- `_fusion_doc_key`, the Library's provenance
+# canonicalization (`_prompt_row` already stamps `prompt`) and the eval
+# harness's `SOURCE_TYPE_ALIASES`. A plural here would leave prompt rows
+# present but unable to merge or to be post-filtered by the Prompts toggle.
+SOURCE_TYPE_PROMPT = "prompt"
 
 # Every source type the keyword (FTS5) leg has a sub-leg for, and the two of
 # those that live in the ChaChaNotes database. A caller's
 # ``keyword_source_types`` selection is expressed in THIS vocabulary (the
 # engine's singular spelling), never in a UI's plural scope identifiers.
 KEYWORD_LEG_SOURCE_TYPES = frozenset(
-    {SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION}
+    {
+        SOURCE_TYPE_MEDIA,
+        SOURCE_TYPE_NOTE,
+        SOURCE_TYPE_CONVERSATION,
+        SOURCE_TYPE_PROMPT,
+    }
 )
 CHACHA_KEYWORD_SOURCE_TYPES = frozenset({SOURCE_TYPE_NOTE, SOURCE_TYPE_CONVERSATION})
 
@@ -180,6 +196,264 @@ async def _no_keyword_rows() -> List[Any]:
     while an unselected sub-leg never touches a database.
     """
     return []
+
+
+#: The two metadata dimensions the FTS sub-legs can actually enforce. They
+#: are exactly the keys `rag_scope.build_semantic_allowlists` produces, and
+#: an entry carrying anything else is a scoping request no sub-leg can honor
+#: (see `_keyword_allowlist_ids`).
+ALLOWLIST_SOURCE_TYPE_KEY = "source_type"
+ALLOWLIST_SOURCE_ID_KEY = "source_id"
+ENFORCEABLE_ALLOWLIST_KEYS = frozenset(
+    {ALLOWLIST_SOURCE_TYPE_KEY, ALLOWLIST_SOURCE_ID_KEY}
+)
+
+#: One allowlist entry (its keys AND-ed together), or a union of them.
+MetadataAllowlist = Union[
+    Mapping[str, Collection[str]], Sequence[Mapping[str, Collection[str]]]
+]
+
+
+def _rereadable_entry(
+    entry: Mapping[str, Collection[str]],
+) -> Mapping[str, Collection[str]]:
+    """Freeze an entry's one-shot values, leaving re-readable ones alone.
+
+    Same hazard as ``_allowlist_entries``' own, one level down: a generator
+    passed as ``source_id`` is drained by whoever reads it first (the cache
+    key, in ``RAGService.search``) and every later reader sees an EMPTY set
+    of allowed ids. ``abc.Collection`` is exactly the "can be read again"
+    test -- a set/frozenset/list/tuple/str is one, a generator is not.
+
+    Args:
+        entry: One AND-group.
+
+    Returns:
+        The entry with any non-re-readable value materialized. Re-readable
+        values are passed through untouched, so the common case allocates
+        nothing new beyond the dict.
+    """
+    return {
+        key: values if isinstance(values, abc.Collection) else tuple(values)
+        for key, values in entry.items()
+    }
+
+
+def _allowlist_entries(
+    metadata_allowlist: Optional[MetadataAllowlist],
+) -> Tuple[Mapping[str, Collection[str]], ...]:
+    """Normalize either allowlist shape into a tuple of AND-group entries.
+
+    ``RAGService.search`` accepts ONE mapping (every key AND-ed -- the shape
+    every pre-TASK-15020 caller passes, one per store query) or a SEQUENCE of
+    them (a union of AND-groups -- what
+    ``rag_scope.build_semantic_allowlists`` returns, deliberately one entry
+    per source type because a flat dict cannot express "media in A OR note in
+    B"). Both reduce to the same thing here.
+
+    **The result is re-readable.** A scope is read at least three times per
+    search (the cache key, then each leg), so a one-shot iterable would be
+    drained by the first reader and reach the legs EMPTY -- which fails OPEN:
+    an empty allowlist is "no scoping request", so both legs would run
+    unscoped and the unscoped rows would then be cached under the SCOPED key.
+    Reproduced with a generator expression during review; materializing here
+    (and in ``_rereadable_entry``, for the values) is what makes the shape
+    safe for the new seams Tasks 5/7 thread allowlists through.
+
+    Args:
+        metadata_allowlist: The caller's allowlist, in either shape.
+
+    Returns:
+        One entry per AND-group; empty for ``None``, an empty mapping, or an
+        empty sequence (all of which mean "no scoping request").
+
+    Raises:
+        ValueError: If a SEQUENCE contains an empty entry. An empty
+            AND-group restricts nothing, so silently dropping it would let
+            ``[{}]`` read as "no allowlist" (fail-open) while ``[{media},
+            {}]`` reads as "media only" -- two different answers to the same
+            malformed input. ``EffectiveScope`` carries only non-empty
+            entries, so this is unreachable from ``build_semantic_allowlists``
+            and is a caller defect wherever it appears.
+    """
+    if not metadata_allowlist:
+        return ()
+    if isinstance(metadata_allowlist, abc.Mapping):
+        return (_rereadable_entry(metadata_allowlist),)
+    entries = tuple(metadata_allowlist)
+    if any(not entry for entry in entries):
+        raise ValueError(
+            "metadata_allowlist entries must each be a non-empty mapping; an "
+            "empty entry restricts nothing and would silently widen the scope"
+        )
+    return tuple(_rereadable_entry(entry) for entry in entries)
+
+
+def _keyword_allowlist_ids(
+    metadata_allowlist: Optional[MetadataAllowlist],
+) -> Optional[Dict[str, Optional[List[str]]]]:
+    """Translate an allowlist into per-sub-leg id filters for the FTS leg.
+
+    The translation is the whole of B1: each entry names one or more source
+    types and the ids allowed for them, and each FTS sub-leg is the keyword
+    half of exactly one of those types. A type the allowlist never names has
+    no entry to run under, so its sub-leg is SKIPPED -- fail-closed, matching
+    the semantic side, where a store query AND-scoped on ``source_type``
+    simply cannot return rows of a type it does not name. "Skip" and "run
+    unfiltered" produce identical row sets on a single-type corpus and wildly
+    different ones on a real corpus, which is why the direction is pinned by
+    spies rather than by row counts alone.
+
+    Args:
+        metadata_allowlist: The caller's allowlist, in either shape.
+
+    Returns:
+        ``None`` when there is no allowlist -- the leg runs exactly as it did
+        before this parameter existed. Otherwise a mapping from source type
+        to that sub-leg's allowed ids (stringified and sorted, ready for
+        ``json_each``), or to ``None`` when the entry restricts the type but
+        not the ids. **A source type ABSENT from the mapping must not be
+        queried at all**; an empty mapping therefore means "no sub-leg may
+        run", which is the caller's own degrade path.
+    """
+    entries = _allowlist_entries(metadata_allowlist)
+    if not entries:
+        return None
+
+    ids_by_type: Dict[str, Optional[set]] = {}
+    unservable_types: set = set()
+    for entry in entries:
+        unenforceable = set(entry) - ENFORCEABLE_ALLOWLIST_KEYS
+        if unenforceable:
+            # Honoring the enforceable half of a scoping request would run an
+            # UNDER-restricted query and return rows the caller asked to
+            # exclude. The keyword leg contributes nothing for this entry
+            # instead; the semantic leg still applies the whole entry.
+            logger.warning(
+                "Keyword leg cannot enforce allowlist key(s) {}; this scope "
+                "entry contributes no keyword sub-leg (the semantic leg "
+                "still applies it in full).",
+                sorted(str(key) for key in unenforceable),
+            )
+            continue
+
+        raw_types = entry.get(ALLOWLIST_SOURCE_TYPE_KEY)
+        if raw_types is None:
+            # No type restriction: the entry's ids apply to every sub-leg.
+            source_types: Collection[str] = KEYWORD_LEG_SOURCE_TYPES
+        else:
+            source_types = {str(value) for value in raw_types}
+
+        raw_ids = entry.get(ALLOWLIST_SOURCE_ID_KEY)
+        entry_ids = (
+            None if raw_ids is None else {str(value) for value in raw_ids}
+        )
+
+        for source_type in source_types:
+            if source_type not in KEYWORD_LEG_SOURCE_TYPES:
+                unservable_types.add(source_type)
+                continue  # No sub-leg serves this type (e.g. a vector-only type).
+            if source_type not in ids_by_type:
+                ids_by_type[source_type] = (
+                    None if entry_ids is None else set(entry_ids)
+                )
+            elif ids_by_type[source_type] is not None and entry_ids is not None:
+                # Two entries naming one type are a union, not an
+                # intersection: each is an independent AND-group.
+                ids_by_type[source_type].update(entry_ids)
+            else:
+                # One of them restricts nothing, so their union restricts
+                # nothing.
+                ids_by_type[source_type] = None
+
+    if unservable_types:
+        # Named, not swallowed. The two sibling paths
+        # (`_resolve_keyword_source_types`, the Library's translation map)
+        # both say which values they dropped, and this one matters MORE: a
+        # plural typo ("notes") or a source type that reaches the scope
+        # vocabulary before it has an FTS sub-leg (exactly B2's prompt
+        # sequencing) empties the keyword leg for that type with no other
+        # symptom than missing rows.
+        logger.warning(
+            "Allowlist names source type(s) {} that no keyword sub-leg "
+            "serves; the leg serves {}. Items of those types are reachable "
+            "through the vector leg only.",
+            sorted(str(value) for value in unservable_types),
+            sorted(KEYWORD_LEG_SOURCE_TYPES),
+        )
+
+    return {
+        # An entry that names a type with ZERO ids can only match nothing --
+        # the same answer the semantic leg gives (`str(id) in set()` is False
+        # for every candidate), reached without a query. Dropping it here is
+        # what makes that skip, rather than an empty `json_each` round trip.
+        source_type: (None if ids is None else sorted(ids))
+        for source_type, ids in ids_by_type.items()
+        if ids is None or ids
+    }
+
+
+def _json_id_param(allowed_ids: Collection[str]) -> str:
+    """Bind an id allowlist as ONE parameter, the way the ORM already does.
+
+    ``ChaChaNotes_DB.search_notes``' ``id_allowlist`` and
+    ``Client_Media_DB_v2``'s large-``media_ids_filter`` branch both encode
+    the ids as a single JSON array consumed by ``json_each``, so a ~1k-item
+    scope (an ordinary collection) cannot hit SQLite's bound-parameter cap.
+    The ids are stringified to match the scope's own type
+    (``EffectiveScope`` carries ``str`` ids) and the vector store's
+    comparison (``str(metadata[key]) in values``); SQLite applies the left
+    operand's NUMERIC affinity for an INTEGER id column (``Media.id``), the
+    same reliance both precedents already have.
+
+    Args:
+        allowed_ids: The ids this sub-leg may return.
+
+    Returns:
+        A JSON array literal, sorted for a deterministic query.
+    """
+    return json.dumps(sorted(str(value) for value in allowed_ids))
+
+
+#: The ``prompts_fts`` columns that make up a prompt's DOCUMENT, in the
+#: order the ORM and the Prompts UI present them. The other two indexed
+#: columns are this row's metadata, not its text: ``name`` becomes the
+#: title and ``author`` the author field, exactly as the media sub-leg
+#: treats them.
+PROMPT_DOCUMENT_COLUMNS = ("details", "system_prompt", "user_prompt")
+
+
+def _prompt_document_text(row: Any) -> str:
+    """Render a prompt row's body as this sub-leg's document text.
+
+    A saved prompt is not one text field: `prompts_fts` indexes five
+    columns, and a query can match any of them. Concatenating the three
+    BODY columns (skipping the empty ones -- the writer stores ``""`` for a
+    missing field, so most prompts have two of the three blank) is the
+    honest answer to "show me what matched", and it is also the text the
+    citation/snippet builders then search for the query's tokens.
+
+    A match on ``name`` or ``author`` alone therefore yields a row whose
+    document does not contain the query term. That is not a defect and is
+    not special-cased: the media sub-leg has had exactly that property
+    since it existed (a title match returns the body), and the title is on
+    the row for the user to see.
+
+    Args:
+        row: A ``sqlite3.Row``/mapping carrying the body columns.
+
+    Returns:
+        The non-empty body columns joined by a blank line, in
+        ``PROMPT_DOCUMENT_COLUMNS`` order; ``""`` when all three are empty
+        (a prompt with only a name), which the row processing renders as an
+        empty document rather than dropping the row.
+    """
+    parts = []
+    for column in PROMPT_DOCUMENT_COLUMNS:
+        value = row[column]
+        if value and str(value).strip():
+            parts.append(str(value).strip())
+    return "\n\n".join(parts)
 
 
 # Sanity ceiling for _resolve_hybrid_pool_multiplier (TASK-4110 review,
@@ -267,7 +541,12 @@ def _fusion_doc_key(result: Any) -> Hashable:
 
     ``source_type`` is compared as the raw string the indexers write (the
     singular ``ITEM_TYPE_*`` vocabulary: ``media`` / ``note`` /
-    ``conversation``); it keeps note 15 and media 15 apart.
+    ``conversation``); it keeps note 15 and media 15 apart. The keyword leg
+    adds a fourth value, ``prompt`` (TASK-15020/B2), which no indexer writes
+    -- prompts have no vector twin to merge with, so a prompt row is always
+    an unmerged FTS-only row. It still has to be in this key's vocabulary:
+    without ``source_type``, prompt 15 and note 15 would collide on
+    ``source_id`` alone and fusion would merge two different documents.
 
     Args:
         result: A leg result (``SearchResult`` / ``SearchResultWithCitations``).
@@ -758,7 +1037,7 @@ class RAGService:
         include_citations: Optional[bool] = None,
         score_threshold: Optional[float] = None,
         *,
-        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
@@ -774,17 +1053,38 @@ class RAGService:
             include_citations: Whether to include citations (default from config)
             score_threshold: Minimum score threshold (default from config)
             metadata_allowlist: Metadata key -> allowed values, pushed down
-                into the vector store's own candidate selection instead of
-                filtered afterward. Only supported for
-                ``search_type="semantic"``; see ``_semantic_search``. Passing
-                a non-empty allowlist with ``search_type="hybrid"`` or
-                ``search_type="keyword"`` raises ``ValueError`` rather than
-                silently ignoring the scoping request.
+                into each leg's own candidate selection instead of filtered
+                afterward. Accepts ONE mapping (its keys AND-ed) or a
+                SEQUENCE of them (a union of AND-groups -- what
+                ``rag_scope.build_semantic_allowlists`` returns, one entry
+                per source type, because a flat dict cannot express "media
+                in A OR note in B").
+
+                Supported for ``search_type="semantic"`` (the vector store
+                filters candidates before ranking; a multi-entry allowlist
+                runs one store query per entry and merges by score, the
+                convention its callers already follow) and, since
+                TASK-15020/B1, for ``search_type="hybrid"``, where it reaches
+                BOTH legs: the semantic leg exactly as above, and the FTS leg
+                as a per-sub-leg ``id IN (SELECT value FROM json_each(?))``
+                restriction (see ``_keyword_allowlist_ids``). A sub-leg whose
+                source type the allowlist never names is SKIPPED rather than
+                run unfiltered, and an allowlist that leaves no sub-leg
+                runnable degrades the keyword leg to ``[]`` -- hybrid then
+                falls back to its semantic leg through the same path an empty
+                FTS result already takes.
+
+                ``search_type="keyword"`` still raises ``ValueError`` rather
+                than silently ignoring the scoping request: it has no
+                semantic leg to scope, and the app's scoped plain-profile
+                search runs through the Library's own four-seam path, which
+                is scope-aware at each database.
             keyword_source_types: Source types the keyword (FTS5) leg should
                 budget for, in the engine's vocabulary
-                (``media``/``note``/``conversation``). ``None`` -- the
-                default, and every pre-TASK-14751 caller -- serves all three.
-                The mirror image of ``metadata_allowlist``: it scopes the
+                (``media``/``note``/``conversation``/``prompt``). ``None``
+                -- the default, and every pre-TASK-14751 caller -- serves
+                all four. The mirror image of ``metadata_allowlist``: it
+                scopes the
                 KEYWORD leg only, so passing it with
                 ``search_type="semantic"`` raises ``ValueError`` rather than
                 silently ignoring the scoping request. It is part of the
@@ -795,14 +1095,23 @@ class RAGService:
             List of search results (with or without citations)
 
         Raises:
-            ValueError: If ``metadata_allowlist`` is provided with a
-                ``search_type`` other than ``"semantic"``, or if
-                ``keyword_source_types`` is provided with
-                ``search_type="semantic"``.
+            ValueError: If ``metadata_allowlist`` is provided with
+                ``search_type="keyword"``, or if ``keyword_source_types`` is
+                provided with ``search_type="semantic"``.
         """
-        if metadata_allowlist and search_type != "semantic":
+        # Freeze the scope BEFORE anything reads it. This method reads it
+        # twice (the cache key, then the legs) and hybrid reads it twice
+        # more, so a one-shot iterable would reach the legs drained -- i.e.
+        # unscoped -- and the unscoped rows would be stored under the SCOPED
+        # cache key. `_allowlist_entries` also rejects malformed entries, so
+        # both happen once, here, before any guard reads a value.
+        metadata_allowlist = _allowlist_entries(metadata_allowlist) or None
+
+        if metadata_allowlist and search_type == "keyword":
             raise ValueError(
-                "metadata_allowlist is only supported for search_type='semantic'"
+                "metadata_allowlist is not supported for search_type='keyword' "
+                "(use search_type='hybrid' for a scoped search that keeps the "
+                "keyword leg, or the scope-aware per-database search path)"
             )
         if keyword_source_types is not None and search_type == "semantic":
             raise ValueError(
@@ -880,7 +1189,7 @@ class RAGService:
             )
 
             if search_type == "semantic":
-                results = await self._semantic_search(
+                results = await self._semantic_search_scoped(
                     query,
                     top_k,
                     filter_metadata,
@@ -895,6 +1204,7 @@ class RAGService:
                     filter_metadata,
                     include_citations,
                     score_threshold,
+                    metadata_allowlist=metadata_allowlist,
                     keyword_source_types=keyword_source_types,
                 )
             elif search_type == "keyword":
@@ -974,6 +1284,75 @@ class RAGService:
         """Synchronous version of search."""
         return asyncio.run(self.search(query, **kwargs))
 
+    async def _semantic_search_scoped(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+        score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
+    ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """The semantic leg under an allowlist of either shape.
+
+        A union allowlist cannot be one store query -- every key inside one
+        ``metadata_allowlist`` is AND-ed, and a media id and a note id are
+        not guaranteed distinct -- so each entry is its own query and the
+        results merge by score, which is exactly what
+        ``library_local_rag_search_service`` and
+        ``pipeline_functions_simple`` already do for scoped semantic search.
+        Moving that convention in here is what lets HYBRID scope its semantic
+        leg the same way, with one fusion over the union rather than one
+        fusion per source type.
+
+        Zero or one entry takes the single-call path unchanged, so every
+        pre-TASK-15020 caller (all of which pass one mapping) behaves exactly
+        as before -- same store call, same arguments, same trimming.
+
+        Args:
+            query: Search query text.
+            top_k: Number of results to return.
+            filter_metadata: Metadata equality filters applied after the
+                store call.
+            include_citations: Whether to fetch citations from the store.
+            score_threshold: Minimum similarity score to keep.
+            metadata_allowlist: One AND-group, or a union of them.
+
+        Returns:
+            Up to ``top_k`` results, most similar first.
+        """
+        entries = _allowlist_entries(metadata_allowlist)
+        if len(entries) <= 1:
+            return await self._semantic_search(
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                score_threshold,
+                metadata_allowlist=entries[0] if entries else None,
+            )
+
+        merged: List[Any] = []
+        for entry in entries:
+            merged.extend(
+                await self._semantic_search(
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    metadata_allowlist=entry,
+                )
+            )
+        # No cross-entry dedup, deliberately: `build_semantic_allowlists`
+        # emits ONE entry per source_type, so the entries are disjoint and no
+        # chunk can appear in two of them. (The FTS side does dedup, via
+        # `_fusion_doc_key`, because its sub-legs can genuinely overlap.) A
+        # future allowlist whose entries are NOT disjoint would need one here.
+        merged.sort(key=lambda result: result.score, reverse=True)
+        return merged[:top_k]
+
     async def _semantic_search(
         self,
         query: str,
@@ -1046,26 +1425,37 @@ class RAGService:
         include_citations: bool = True,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
-        Perform keyword (FTS5) search across media, notes and conversations.
+        Perform keyword (FTS5) search across media, notes, conversations and
+        saved prompts.
 
         TASK-3996: this leg used to join ``media_fts`` and nothing else, so
         the keyword half of hybrid search could only ever return media rows
         -- notes and conversations were structurally unreachable through it
         no matter what the query said (29 of the P1 fixture corpus's 49
-        documents). It is now three sub-legs over two databases:
+        documents). It is now four sub-legs over three databases:
 
         * media -- ``media_fts`` in the media DB, via the connection pool;
         * notes -- ``notes_fts`` in the ChaChaNotes DB;
         * conversations -- ``messages_fts`` in the ChaChaNotes DB, one row
-          per matching conversation.
+          per matching conversation;
+        * prompts -- ``prompts_fts`` in the Prompts DB (TASK-15020/B2).
 
-        The two ChaChaNotes sub-legs run over a READ-ONLY raw connection
-        (never ``CharactersRAGDB``, whose constructor does schema work), and
-        each sub-leg degrades independently: a missing chacha DB costs the
-        notes/conversation rows and leaves media untouched, and vice versa.
-        The leg is empty only when every sub-leg is empty or unavailable.
+        The ChaChaNotes and Prompts sub-legs run over READ-ONLY raw
+        connections (never ``CharactersRAGDB``/``PromptsDatabase``, whose
+        constructors do schema work), and each sub-leg degrades
+        independently: a missing chacha DB costs the notes/conversation rows
+        and leaves media and prompts untouched, and so on. The leg is empty
+        only when every sub-leg is empty or unavailable.
+
+        **Prompts are the one type with no other path.** Media, notes and
+        conversations are all indexed semantically, so a hybrid search can
+        reach them through either leg; nothing indexes prompts, so this
+        sub-leg is the ONLY way a prompt ever enters hybrid results, and it
+        gets there as an FTS-only row rescued by the fusion weighting
+        (``config.DEFAULT_HYBRID_RRF_K``).
 
         The sub-legs are merged rank-fairly (``interleave_rankings``, round
         robin by rank position) rather than concatenated: FTS5 scores from
@@ -1074,7 +1464,7 @@ class RAGService:
 
         TASK-14751 narrows *which* sub-legs run without touching that
         merge. ``keyword_source_types`` names the types the caller will
-        actually keep (``None`` = all three, i.e. unchanged for every caller
+        actually keep (``None`` = all four, i.e. unchanged for every caller
         that predates it); the unnamed sub-legs are never queried, so the
         whole ``top_k`` budget goes to the ones that were asked for. A
         single-type selection therefore gets that sub-leg's full natural
@@ -1088,23 +1478,39 @@ class RAGService:
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
             keyword_source_types: Source types to serve, in the engine's
-                vocabulary (``media``/``note``/``conversation``). ``None``
-                serves all three; an empty collection serves none and
+                vocabulary (``media``/``note``/``conversation``/``prompt``).
+                ``None`` serves all four; an empty collection serves none and
                 returns ``[]`` without a database lookup; unrecognized
                 values are dropped (see ``_resolve_keyword_source_types``).
+            metadata_allowlist: A retrieval scope (TASK-15020/B1). Each
+                sub-leg the allowlist names runs with its entry's ids bound
+                as ``id IN (SELECT value FROM json_each(?))``; a sub-leg the
+                allowlist does NOT name is skipped rather than run
+                unfiltered, so the scope fails closed exactly as the semantic
+                leg's does. It composes with ``keyword_source_types`` by
+                intersection -- both narrow, neither widens. ``None`` (every
+                caller that predates it) leaves the leg untouched.
 
         Returns:
             The merged leg, best first, capped at ``top_k``.
         """
+        allowlist_ids = _keyword_allowlist_ids(metadata_allowlist)
         selected = _resolve_keyword_source_types(keyword_source_types)
+        if allowlist_ids is not None:
+            selected = selected & frozenset(allowlist_ids)
         if not selected:
             # An explicitly empty selection is "no keyword leg" -- an
-            # answer, not a failure. Hybrid degrades to its semantic leg
-            # through the same disclosed path an empty FTS result already
-            # takes.
+            # answer, not a failure. So is a scope that leaves no selected
+            # sub-leg runnable. Hybrid degrades to its semantic leg through
+            # the same disclosed path an empty FTS result already takes.
             logger.debug(
-                "Keyword search asked for no source types; returning no "
-                "results without a database lookup."
+                "Keyword search has no runnable sub-legs (selection={}, "
+                "scoped types={}); returning no results without a database "
+                "lookup.",
+                "all" if keyword_source_types is None else sorted(
+                    str(value) for value in keyword_source_types
+                ),
+                None if allowlist_ids is None else sorted(allowlist_ids),
             )
             return []
 
@@ -1120,9 +1526,16 @@ class RAGService:
             return []
 
         chacha_types = selected & CHACHA_KEYWORD_SOURCE_TYPES
-        media_ranking, chacha_rankings = await asyncio.gather(
+        media_ranking, chacha_rankings, prompts_ranking = await asyncio.gather(
             self._media_keyword_subleg(
-                query, top_k, filter_metadata, include_citations
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else allowlist_ids.get(SOURCE_TYPE_MEDIA)
+                ),
             )
             if SOURCE_TYPE_MEDIA in selected
             else _no_keyword_rows(),
@@ -1132,13 +1545,34 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 source_types=chacha_types,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else {
+                        source_type: allowlist_ids.get(source_type)
+                        for source_type in chacha_types
+                    }
+                ),
             )
             if chacha_types
+            else _no_keyword_rows(),
+            self._prompts_keyword_subleg(
+                query,
+                top_k,
+                filter_metadata,
+                include_citations,
+                allowed_ids=(
+                    None if allowlist_ids is None
+                    else allowlist_ids.get(SOURCE_TYPE_PROMPT)
+                ),
+            )
+            if SOURCE_TYPE_PROMPT in selected
             else _no_keyword_rows(),
         )
 
         rankings = [
-            ranking for ranking in (media_ranking, *chacha_rankings) if ranking
+            ranking
+            for ranking in (media_ranking, *chacha_rankings, prompts_ranking)
+            if ranking
         ]
         if not rankings:
             return []
@@ -1159,6 +1593,8 @@ class RAGService:
         top_k: int,
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
+        *,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """The media sub-leg of the keyword search: FTS5 over the media DB.
 
@@ -1167,6 +1603,10 @@ class RAGService:
             top_k: Maximum rows this sub-leg contributes.
             filter_metadata: Optional metadata equality filters.
             include_citations: Whether to build citation-carrying rows.
+            allowed_ids: Media ids this sub-leg may return (TASK-15020/B1).
+                ``None`` is unrestricted -- today's behavior for every caller
+                without a scope. The caller decides whether this sub-leg runs
+                at all; reaching here means the scope named the media type.
 
         Returns:
             Media rows, best first; ``[]`` on any failure (this sub-leg
@@ -1238,6 +1678,7 @@ class RAGService:
                         pool,
                         query,
                         top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                        allowed_ids,
                     )
                     break  # Success, exit retry loop
                 except Exception as e:
@@ -1286,6 +1727,7 @@ class RAGService:
         include_citations: bool = True,
         *,
         source_types: Optional[Collection[str]] = None,
+        allowed_ids: Optional[Mapping[str, Optional[Collection[str]]]] = None,
     ) -> List[Union[List[SearchResult], List[SearchResultWithCitations]]]:
         """The notes and conversation sub-legs, over a read-only chacha DB.
 
@@ -1298,6 +1740,11 @@ class RAGService:
                 (TASK-14751). ``None`` runs both. An unselected sub-query is
                 never issued, and when neither is selected the database is
                 not even opened.
+            allowed_ids: Per-source-type id restrictions (TASK-15020/B1),
+                e.g. ``{"note": [...]}``. ``None`` -- or a type mapped to
+                ``None`` -- leaves that sub-query unrestricted. Which
+                sub-legs run at all is ``source_types``' decision; the
+                caller has already intersected it with the scope.
 
         Returns:
             One ranking per non-empty sub-leg (notes, then conversations),
@@ -1329,6 +1776,7 @@ class RAGService:
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
                 selected,
+                allowed_ids,
             )
 
             rankings: List[Any] = []
@@ -1475,6 +1923,7 @@ class RAGService:
         query: str,
         limit: int,
         source_types: Optional[Collection[str]] = None,
+        allowed_ids: Optional[Mapping[str, Optional[Collection[str]]]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Run the selected ChaChaNotes FTS sub-queries on one connection.
 
@@ -1485,6 +1934,8 @@ class RAGService:
             source_types: Which of ``note``/``conversation`` to query
                 (TASK-14751); ``None`` queries both. An unselected sub-query
                 is never issued and its key stays empty.
+            allowed_ids: Per-source-type id restrictions (TASK-15020/B1);
+                ``None``, or a type mapped to ``None``, is unrestricted.
 
         Returns:
             ``{"note": [...], "conversation": [...]}`` -- an unopenable
@@ -1528,17 +1979,28 @@ class RAGService:
         with closing(conn):
             if SOURCE_TYPE_NOTE in selected:
                 rows[SOURCE_TYPE_NOTE] = self._chacha_notes_fts(
-                    conn, escaped_query, limit
+                    conn,
+                    escaped_query,
+                    limit,
+                    None if allowed_ids is None else allowed_ids.get(SOURCE_TYPE_NOTE),
                 )
             if SOURCE_TYPE_CONVERSATION in selected:
                 rows[SOURCE_TYPE_CONVERSATION] = self._chacha_conversations_fts(
-                    conn, escaped_query, limit
+                    conn,
+                    escaped_query,
+                    limit,
+                    None
+                    if allowed_ids is None
+                    else allowed_ids.get(SOURCE_TYPE_CONVERSATION),
                 )
         return rows
 
     @staticmethod
     def _chacha_notes_fts(
-        conn: sqlite3.Connection, escaped_query: str, limit: int
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Notes sub-query: mirrors ``CharactersRAGDB.search_notes``.
 
@@ -1553,15 +2015,28 @@ class RAGService:
         both indexes; without the rebuild, dropping this line changed
         nothing).
 
+        The id filter mirrors ``search_notes``' own ``id_allowlist`` clause,
+        json_each and all -- the ORM's scoped notes search and this leg must
+        restrict the same table the same way.
+
         Args:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
             limit: Maximum rows.
+            allowed_ids: Optional note ids this sub-leg may return
+                (TASK-15020/B1); ``None`` is unrestricted.
 
         Returns:
             Row dicts (``id``/``title``/``content``), best match first.
         """
-        sql = """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND main.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
         SELECT
             main.id AS id,
             main.title AS title,
@@ -1570,11 +2045,12 @@ class RAGService:
         JOIN notes main ON fts.rowid = main.rowid
         WHERE fts.notes_fts MATCH ?
           AND main.deleted = 0
+          {id_filter_sql}
         ORDER BY rank
         LIMIT ?
         """
         try:
-            with closing(conn.execute(sql, (escaped_query, limit))) as cursor:
+            with closing(conn.execute(sql, tuple(params))) as cursor:
                 return [
                     {
                         "id": row["id"],
@@ -1592,7 +2068,10 @@ class RAGService:
 
     @staticmethod
     def _chacha_conversations_fts(
-        conn: sqlite3.Connection, escaped_query: str, limit: int
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Conversations sub-query: mirrors
         ``CharactersRAGDB.search_conversations_by_content``.
@@ -1632,11 +2111,23 @@ class RAGService:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
             limit: Maximum conversations.
+            allowed_ids: Optional conversation ids this sub-leg may return
+                (TASK-15020/B1); ``None`` is unrestricted. It restricts the
+                CONVERSATION, which is this sub-leg's unit of retrieval and
+                the id the vector leg carries -- the second statement below
+                is already restricted to whatever conversations survive here.
 
         Returns:
             Row dicts (``id``/``title``/``content``), best match first.
         """
-        conversations_sql = """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND c.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        conversations_sql = f"""
         SELECT
             c.id AS id,
             c.title AS title,
@@ -1647,13 +2138,14 @@ class RAGService:
         WHERE fts.messages_fts MATCH ?
           AND m.deleted = 0
           AND c.deleted = 0
+          {id_filter_sql}
         GROUP BY c.id
         ORDER BY best_rank
         LIMIT ?
         """
         try:
             with closing(
-                conn.execute(conversations_sql, (escaped_query, limit))
+                conn.execute(conversations_sql, tuple(params))
             ) as cursor:
                 conversations = [
                     {
@@ -1701,6 +2193,319 @@ class RAGService:
             )
             return []
 
+    async def _prompts_keyword_subleg(
+        self,
+        query: str,
+        top_k: int,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        include_citations: bool = True,
+        *,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """The saved-prompts sub-leg, over a read-only Prompts DB.
+
+        TASK-15020/B2, built to the chacha sub-legs' pattern exactly (path
+        resolution -> read-only private-SQLite open -> one FTS query ->
+        the shared row processing). What is NOT the same is the stake:
+        prompts have no vector index anywhere, so this sub-leg is the only
+        retrieval path a saved prompt has in the engine, and the fused
+        result it produces is always an FTS-only row.
+
+        Args:
+            query: Raw user query (escaped for FTS5 downstream).
+            top_k: Maximum rows this sub-leg contributes.
+            filter_metadata: Optional metadata equality filters.
+            include_citations: Whether to build citation-carrying rows.
+            allowed_ids: Prompt ids this sub-leg may return
+                (TASK-15020/B1's shape). Always ``None`` in practice today:
+                the retrieval scope's vocabulary is media/note only (spec
+                D5), so no allowlist can NAME prompts and a scoped search
+                skips this sub-leg entirely before reaching here. The
+                parameter exists so the day the scope vocabulary grows a
+                prompt dimension, the filter is already pushed down rather
+                than bolted on -- and so this sub-leg cannot accidentally
+                become the one that runs unfiltered under a scope.
+
+        Returns:
+            Prompt rows, best first; ``[]`` on any failure (this sub-leg
+            never breaks the other three).
+        """
+        # Nothing below may raise: `_hybrid_search` gathers this leg with the
+        # semantic one without `return_exceptions`, so an escaping exception
+        # would fail the whole search rather than degrade one sub-leg.
+        try:
+            db_path = self._resolve_prompts_db_path()
+            if db_path is None:
+                return []
+
+            loop = asyncio.get_event_loop()
+            items = await loop.run_in_executor(
+                None,
+                self._prompts_fts_rows,
+                db_path,
+                query,
+                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                allowed_ids,
+            )
+            if not items:
+                return []
+
+            if include_citations:
+                rows = await self._process_keyword_results_with_citations(
+                    items, query, filter_metadata, top_k, source_type=SOURCE_TYPE_PROMPT
+                )
+            else:
+                rows = self._process_keyword_results_basic(
+                    items, filter_metadata, top_k, source_type=SOURCE_TYPE_PROMPT
+                )
+            logger.debug("Prompts keyword sub-leg found {} results", len(rows))
+            return rows
+        except Exception as e:
+            logger.warning(
+                "Prompts keyword sub-leg failed; the other sub-legs are "
+                "unaffected (error_type={})",
+                type(e).__name__,
+            )
+            return []
+
+    def _resolve_prompts_db_path(self) -> Optional[Path]:
+        """Resolve (and validate) the Prompts DB path for the FTS leg.
+
+        Mirrors ``_resolve_chachanotes_db_path`` exactly: an explicit config
+        override wins, otherwise the single authoritative resolver
+        (``get_prompts_db_path``) decides -- no guessing across candidate
+        filenames, and never a create-on-miss. The config-sourced override
+        is run through ``path_validation``'s traversal/injection screen plus
+        lexical normalization before it reaches a filesystem check.
+
+        Returns:
+            The validated, existing path, or ``None`` (with one logged
+            warning naming the reason) when the prompts sub-leg is skipped.
+        """
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+        from tldw_chatbook.Utils.private_paths import lexical_path
+
+        try:
+            from tldw_chatbook.config import get_prompts_db_path
+
+            db_path_raw = (
+                self.config.search.prompts_db_path or get_prompts_db_path()
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not resolve the Prompts database path; the prompts "
+                "keyword sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return None
+
+        try:
+            db_path = lexical_path(
+                validate_path_simple(
+                    Path(str(db_path_raw)).expanduser(),
+                    require_exists=False,
+                    probe_existing=False,
+                )
+            )
+        except ValueError as e:
+            logger.warning(
+                "Rejected prompts_db_path from config; the prompts keyword "
+                "sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return None
+
+        # Existence only. Every other filesystem question -- symlinked
+        # components, untrusted parent directories, a no-follow open of the
+        # file itself -- belongs to the private SQLite seam this leg opens
+        # through (see `_connect_prompts_readonly`).
+        if not db_path.exists() or not db_path.is_file():
+            logger.warning(
+                "Prompts database not found; the prompts keyword sub-leg "
+                "returns no results (a search never creates a database)."
+            )
+            return None
+
+        return db_path
+
+    def _connect_prompts_readonly(
+        self, db_path: Union[str, Path]
+    ) -> sqlite3.Connection:
+        """Open the Prompts database read-only, without the ORM.
+
+        The same three properties ``_connect_chacha_readonly`` documents,
+        for the same reasons: a ``mode=ro`` URI built by the seam (so a
+        write raises rather than being trusted not to happen);
+        ``PromptsDatabase``'s constructor-time schema creation, migration
+        and integrity work never runs on a search path; and
+        ``connect_private_sqlite`` (owner ``rag.prompts_keyword_leg``)
+        walks every path component with ``O_NOFOLLOW`` and opens the file
+        itself no-follow, which a final-component ``is_symlink()`` check
+        would not. ``preserve_read_only_source_mode`` keeps this reader from
+        reasserting permissions on a file ``db.prompts.primary`` owns.
+
+        Args:
+            db_path: An absolute database path (existence already checked).
+
+        Returns:
+            A read-only connection with ``sqlite3.Row`` rows. The caller
+            owns closing it.
+
+        Raises:
+            PrivatePathError / sqlite3.Error / OSError / ValueError: when
+            the path or the file fails the seam's checks. Callers degrade
+            (warn + no rows); they never let it reach the search.
+        """
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        conn = connect_private_sqlite(
+            "rag.prompts_keyword_leg",
+            Path(db_path),
+            read_only=True,
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _prompts_fts_rows(
+        self,
+        db_path: Path,
+        query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Run the prompts FTS sub-query on one read-only connection.
+
+        Args:
+            db_path: Validated path to the Prompts database.
+            query: Raw user query.
+            limit: Maximum rows.
+            allowed_ids: Optional prompt-id restriction; ``None`` is
+                unrestricted.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``/``author``), best match
+            first -- an unopenable database or a failing sub-query yields
+            ``[]`` plus one logged warning, never an exception.
+        """
+        escaped_query = self._escape_fts5_query(query)
+        if not escaped_query:
+            return []
+
+        if not isinstance(limit, int) or limit < 1:
+            limit = DEFAULT_FTS5_LIMIT
+        limit = min(limit, MAX_FTS5_LIMIT)
+
+        try:
+            conn = self._connect_prompts_readonly(db_path)
+        except (sqlite3.Error, ValueError, OSError) as e:
+            # `PrivatePathError` is an `OSError`, so a path the seam refuses
+            # (symlinked component, untrusted parent) lands here alongside a
+            # genuinely unopenable file -- both degrade this sub-leg only.
+            logger.warning(
+                "Could not open the Prompts database read-only; the prompts "
+                "keyword sub-leg returns no results (error_type={})",
+                type(e).__name__,
+            )
+            return []
+
+        with closing(conn):
+            return self._prompts_fts(conn, escaped_query, limit, allowed_ids)
+
+    @staticmethod
+    def _prompts_fts(
+        conn: sqlite3.Connection,
+        escaped_query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Prompts sub-query: mirrors ``PromptsDatabase``'s own prompt search.
+
+        ``search_prompts`` and ``search_prompts_by_text`` both resolve
+        ``prompts_fts`` rowids and then read ``Prompts`` with
+        ``deleted = 0``; this is that pair of statements collapsed into one
+        join, with the ORM's ``deleted`` filter kept verbatim.
+
+        Two deliberate departures from the ORM, both because this is a
+        RETRIEVAL leg rather than a list view:
+
+        * **``ORDER BY rank``**, not ``last_modified DESC`` /
+          ``name COLLATE NOCASE``. The other three sub-legs hand fusion a
+          relevance ranking, and RRF fuses *positions* -- feeding it a
+          recency order would make a prompt's fused score a function of when
+          it was last edited.
+        * **``prompt_keywords_fts`` is not consulted.** ``search_prompts``
+          unions keyword matches in when the caller asks for the ``keywords``
+          field; the keyword table is a separate index with its own rowid
+          space (``PromptKeywordsTable``), so a union would need a second
+          query and a merge with no comparable rank. Out of scope by the
+          spec, and named here so its absence is a decision rather than an
+          oversight.
+
+        The ``deleted = 0`` predicate reads as redundant -- ``_delete_fts_
+        prompt`` evicts the row from the index on soft delete -- and is not:
+        an external-content ``'rebuild'`` re-indexes the content table,
+        deleted rows included, and this predicate is then the only thing
+        keeping a deleted prompt out of search results (pinned by
+        ``test_deleted_prompts_are_excluded``, which rebuilds the index
+        first; without the rebuild, dropping this line changes nothing).
+
+        The join reads ``fts.rowid = main.id`` because ``prompts_fts``
+        declares ``content_rowid='id'`` -- the id is the FTS rowid by
+        construction, which is also why ``source_id`` below is directly
+        comparable with the id every other prompt surface uses.
+
+        Args:
+            conn: Read-only Prompts connection.
+            escaped_query: A per-token-quoted FTS5 MATCH expression.
+            limit: Maximum rows.
+            allowed_ids: Optional prompt ids this sub-leg may return; the
+                filter mirrors the notes sub-leg's ``json_each`` clause.
+
+        Returns:
+            Row dicts (``id``/``title``/``content``/``author``), best first.
+        """
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND main.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
+        SELECT
+            main.id AS id,
+            main.name AS name,
+            main.author AS author,
+            main.details AS details,
+            main.system_prompt AS system_prompt,
+            main.user_prompt AS user_prompt
+        FROM prompts_fts fts
+        JOIN Prompts main ON fts.rowid = main.id
+        WHERE fts.prompts_fts MATCH ?
+          AND main.deleted = 0
+          {id_filter_sql}
+        ORDER BY rank
+        LIMIT ?
+        """
+        try:
+            with closing(conn.execute(sql, tuple(params))) as cursor:
+                return [
+                    {
+                        "id": row["id"],
+                        "title": row["name"] or f"Prompt {row['id']}",
+                        "content": _prompt_document_text(row),
+                        "author": row["author"] or None,
+                    }
+                    for row in cursor
+                ]
+        except sqlite3.Error as e:
+            logger.warning(
+                "Prompts keyword sub-leg failed; returning no prompt rows "
+                "(error_type={})",
+                type(e).__name__,
+            )
+            return []
+
     async def _hybrid_search(
         self,
         query: str,
@@ -1709,6 +2514,7 @@ class RAGService:
         include_citations: bool = True,
         score_threshold: float = 0.0,
         *,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
@@ -1728,9 +2534,24 @@ class RAGService:
         ``keyword_source_types`` (TASK-14751) narrows the FTS leg to the
         types the caller will keep, so its budget is not spent on rows a
         downstream source-type filter would discard; ``None`` leaves the leg
-        exactly as it was. It does not scope the semantic leg -- that is
-        ``metadata_allowlist``'s job, and it is semantic-only.
+        exactly as it was. It does not scope the semantic leg.
+
+        ``metadata_allowlist`` (TASK-15020/B1) is the retrieval SCOPE, and it
+        reaches BOTH legs: the vector store filters its candidates by it (one
+        store query per entry, merged by score) and each FTS sub-leg the
+        allowlist names restricts its ids to that entry's. A sub-leg the
+        allowlist does not name is skipped, so a scoped hybrid can never
+        return an out-of-scope keyword row -- before B1 this whole
+        combination raised, which is why every scoped query in the app was
+        diverted to a semantic-only search and the keyword leg was
+        structurally unreachable under a scope.
         """
+        # One scope, two legs: freeze it here as well as in `search`, so a
+        # direct caller cannot hand this method a one-shot iterable that the
+        # semantic leg drains before the keyword leg ever reads it (which
+        # would leave the FTS leg unscoped -- failing OPEN).
+        metadata_allowlist = _allowlist_entries(metadata_allowlist) or None
+
         # Get results from both search types. The pool multiplier widens
         # ONLY these two leg fetches -- `_semantic_search`'s own internal
         # over-fetch (its raw vector-store call) still uses the module
@@ -1739,12 +2560,13 @@ class RAGService:
         pool_multiplier = _resolve_hybrid_pool_multiplier(
             self.config.search.hybrid_pool_multiplier
         )
-        semantic_task = self._semantic_search(
+        semantic_task = self._semantic_search_scoped(
             query,
             top_k * pool_multiplier,
             filter_metadata,
             include_citations,
             score_threshold,
+            metadata_allowlist=metadata_allowlist,
         )
         keyword_task = self._keyword_search(
             query,
@@ -1752,6 +2574,7 @@ class RAGService:
             filter_metadata,
             include_citations,
             keyword_source_types=keyword_source_types,
+            metadata_allowlist=metadata_allowlist,
         )
 
         # Run both searches in parallel
@@ -2291,6 +3114,23 @@ class RAGService:
         rather than run a MATCH expression that can only ever match
         nothing.
 
+        **This construction is under review -- TASK-15400.** The implicit
+        AND means a document must contain literally every token the user
+        typed. Measured on the RAG_Eval golden set (TASK-15020/B2,
+        2026-08-11): this leg returns ZERO rows for 40 of 60 golden
+        queries, firing only where the query is keyword-shaped. The
+        dominant cause is AND-strictness over CONTENT words -- trimming
+        function words rescues 1 of those 40, and reusing the Library
+        four-seam path's ``build_fts_match_query`` also rescues 1;
+        OR-of-tokens rescues 34 (but loses the golden set's one
+        vector-blind fixture, whose design rests on AND uniqueness). For
+        media/notes/conversations the semantic leg hides this entirely;
+        prompts have no semantic leg, which is where it surfaced. Do not
+        change the join here without TASK-15400's before/after matrix --
+        and whatever changes, keep each token individually quoted (the
+        injection property above, pinned by
+        ``Tests/RAG_Search/test_fts5_query_escaping.py``).
+
         Args:
             query: Raw search query
 
@@ -2392,7 +3232,11 @@ class RAGService:
         return [(start, end, frozenset(covered)) for start, end, covered in merged]
 
     def _perform_fts5_search(
-        self, pool, query: str, limit: int
+        self,
+        pool,
+        query: str,
+        limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform FTS5 search using connection pool with proper SQL injection prevention.
@@ -2401,6 +3245,11 @@ class RAGService:
             pool: Connection pool instance
             query: Search query
             limit: Maximum number of results
+            allowed_ids: Optional media ids this query may return
+                (TASK-15020/B1). Bound as ONE json_each parameter, never a
+                placeholder per id -- see ``_json_id_param``. ``None`` leaves
+                the query shape byte-identical to what it was before scopes
+                reached this leg.
 
         Returns:
             List of search results
@@ -2428,7 +3277,16 @@ class RAGService:
         # read from the result rows anywhere downstream (keyword results use
         # a fixed KEYWORD_SEARCH_SCORE, not a rank-derived score), so it does
         # not need to be selected at all, only ordered on.
-        sql = """
+        # Only "?" placeholders are interpolated into the SQL; every value,
+        # including the whole id allowlist, is bound.
+        params: List[Any] = [escaped_query]
+        id_filter_sql = ""
+        if allowed_ids is not None:
+            id_filter_sql = "AND m.id IN (SELECT value FROM json_each(?))"
+            params.append(_json_id_param(allowed_ids))
+        params.append(limit)
+
+        sql = f"""
         SELECT
             m.id,
             m.title,
@@ -2441,6 +3299,7 @@ class RAGService:
         JOIN media_fts ON m.id = media_fts.rowid
         WHERE media_fts MATCH ?
         AND m.is_trash = 0
+        {id_filter_sql}
         ORDER BY media_fts.rank
         LIMIT ?
         """
@@ -2451,7 +3310,7 @@ class RAGService:
             with pool.transaction() as conn:
                 cursor = conn.cursor()
                 # Use parameterized query - the escaped_query is already safe
-                cursor.execute(sql, (escaped_query, limit))
+                cursor.execute(sql, tuple(params))
 
                 for row in cursor:
                     results.append(

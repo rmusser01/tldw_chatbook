@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-09 05:17'
+updated_date: '2026-08-11 18:06'
 labels:
   - rag
   - retrieval
@@ -26,3 +27,9 @@ Found by the P1 eval harness (TASK-3894). build_fts_match_query (Library/library
 - [ ] #2 At least one alternative (for example OR-with-ranking, or configurable strictness) is proposed with its precision-versus-recall tradeoffs for the four-seam keyword path.
 - [ ] #3 A product decision on whether and how to change the AND-join behavior is recorded, in this task or a follow-up task.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cross-reference (2026-08-11, TASK-15020/B2): TASK-15400 is the ENGINE-leg half of this same AND-strictness question. This task covers the Library's four-seam path (build_fts_match_query); 15400 covers RAGService._escape_fts5_query, where the effect is far larger (zero rows for 40 of 60 golden queries). 15400's AC#8 overlaps this task's AC#3 — the product decision on AND-join behaviour should be taken once for both paths, or one should explicitly defer to the other. 15400 also carries the measured comparison table and two constraints (the vector-blind fixture kw-plant-maintenance-record, which OR-of-tokens loses; and the load-bearing per-token quoting).
+<!-- SECTION:NOTES:END -->

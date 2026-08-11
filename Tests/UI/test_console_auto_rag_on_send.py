@@ -368,14 +368,18 @@ async def test_retrieval_requests_the_active_profile_top_k(monkeypatch):
 
 
 def test_profile_top_k_reads_the_active_rag_config(monkeypatch):
-    """The helper's source of truth is the resolved active profile."""
+    """The helper's source of truth is the resolved active profile.
+
+    TASK-15020/B3 moved the read onto `resolve_active_rag_top_k` -- the
+    depth-only resolution shared with the Library window, which reads the
+    same profile without building (and torch-importing) the whole config.
+    So this patches THAT function, which is what the helper now actually
+    reads; `Tests/RAG/test_active_config_resolution.py` pins that the two
+    resolutions report the same number.
+    """
     from tldw_chatbook.RAG_Search.simplified import active_config
 
-    monkeypatch.setattr(
-        active_config,
-        "resolve_active_rag_config",
-        lambda: SimpleNamespace(search=SimpleNamespace(default_top_k=11)),
-    )
+    monkeypatch.setattr(active_config, "resolve_active_rag_top_k", lambda: 11)
 
     assert chat_screen_module._console_library_rag_profile_top_k() == 11
 

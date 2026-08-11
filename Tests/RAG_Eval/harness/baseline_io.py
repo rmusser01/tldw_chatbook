@@ -353,7 +353,11 @@ def _report_only(report: Any, mode_report: Any) -> dict[str, Any]:
         "mean_docs_at_k": round(float(mode_report.mean_docs_at_k), 3),
         "num_queries": int(mode_report.overall.get("num_queries", 0)),
         "num_golden_queries": int(report.num_queries),
+        # The two exclusions from every average, recorded separately so a
+        # committed baseline can account for its own scored count:
+        # golden - negative - scoped == scored.
         "num_negative": int(report.num_negative),
+        "num_scoped": int(report.num_scoped),
         "runtime_backends": list(mode_report.runtime_backends),
         "errors": [list(error) for error in mode_report.errors],
         "negatives": {

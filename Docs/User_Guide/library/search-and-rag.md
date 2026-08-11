@@ -46,10 +46,12 @@ Top to bottom on the main canvas:
   evidence rows. Nothing renders here in Search mode, or before a RAG
   Answer query has run (see [The generated answer](#the-generated-answer)
   below).
-- **"Evidence · top 5 per source"** (Search mode) / **"Evidence · top 5"**
+- **"Evidence · top 15 per source"** (Search mode) / **"Evidence · top 15"**
   (RAG Answer mode) — the result rows (anatomy below). RAG Answer mode
   drops "per source" because it runs one merged semantic query, not one
-  query per source the way Search mode does.
+  query per source the way Search mode does. The number is your active RAG
+  profile's result count, not a fixed 5 — see
+  [How deep the search goes](#how-deep-the-search-goes) below.
 - **"N results for 'query'."** (task-2859) — a headline right above the
   evidence cards once results land, naming the count actually on screen
   and the query that produced it. Absent while there are no results yet
@@ -105,19 +107,25 @@ follows whichever **search mode** your active RAG profile
   similarity band on the resulting rows (they read `| keyword match`
   instead — see [Evidence rows](#evidence-rows) below).
 - **Semantic** profiles run vector retrieval, same as before.
-- **Hybrid** profiles blend keyword and vector retrieval when the query
-  is unscoped and at least one **keyword-indexed source** is selected —
-  Media, Notes or Conversations, all three of which the keyword leg now
-  searches. A query narrowed by a RAG scope falls back to semantic-only
-  retrieval for now (scope-aware hybrid retrieval is later work), as does
-  a selection of Prompts alone, which the keyword leg cannot search. Both
-  fallbacks are disclosed rather than silent.
+- **Hybrid** profiles blend keyword and vector retrieval whenever at least
+  one **keyword-indexed source** is selected — which is now all four of
+  Media, Notes, Conversations and Prompts. A query narrowed by a RAG scope
+  stays on the hybrid path: the scope is pushed into *both* legs, so
+  keyword matches from inside your scope reach the results and nothing from
+  outside it can. (A scope can only name media and notes, so an active
+  scope excludes conversations and prompts from retrieval entirely rather
+  than searching them unrestricted.)
+- **Prompts are keyword-only.** Nothing builds a vector index over your
+  saved prompts, so a prompt reaches hybrid results through the keyword leg
+  alone. In practice that means prompts answer *keyword-shaped* queries —
+  the words you type have to appear in the prompt's name or body. A long
+  natural-language question that would find a note by meaning will not find
+  a prompt.
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
 nothing from…" lines described below, when the route taken is worth
 naming: `Profile 'BM25 Only': keyword search (no vectors).`,
-`Scope active — semantic only until scope-aware hybrid lands.`,
 `No keyword leg for the selected sources — semantic only.`, or
 `Semantic leg empty — keyword-only results.` (shown when a hybrid
 profile's vector leg came back empty but its keyword leg still found
@@ -128,6 +136,33 @@ RAG Answer mode still needs embeddings support installed regardless of
 which mode the active profile resolves to, and generating the answer
 itself still calls your configured LLM provider either way — only the
 *retrieval* step's behavior depends on the profile.
+
+### How deep the search goes
+
+The Evidence heading names the depth — **"Evidence · top 15"** — and that
+number is your active RAG profile's **result count**
+([Settings ▸ RAG](../settings/rag.md), the **"Default results"** field),
+the same setting the Console's Library RAG chip already followed. On the
+shipped default profile ("Hybrid Basic") it is 15; "Fast Search" and "Long
+Context" ship 5, "High Accuracy" and "BM25 Only" ship 20. Change the
+profile — or that field — and the next search on this canvas runs at the
+new depth; no restart. (Built-in profiles are read-only, so editing the
+number means cloning one first, which Settings ▸ RAG says on the spot.)
+
+Two details worth knowing:
+
+- In **Search** (keyword) mode the count is *per selected source*, so four
+  selected sources can produce up to four times as many rows; **RAG
+  Answer** mode merges one query across sources and caps the total. That
+  is the whole reason the heading says "per source" in one mode and not the
+  other.
+- Depths above 50 are trimmed to 50 on this canvas. Nothing stops you
+  setting a profile to 100 for other surfaces; the evidence list just
+  stops there.
+
+A deep list is a scrolling list: the evidence region scrolls, and the
+"N results for '…'" headline directly above the rows always names how many
+are actually on screen right now.
 
 ### Sources scope
 
@@ -295,9 +330,15 @@ actually touch one of your selected sources (or every hit's match is weak),
 a quiet line appears above the rows, e.g. "Semantic search found nothing
 from: Notes, Conversations." or "No strong semantic matches — results
 below are weak." — telling you *why* a source is missing instead of leaving
-you to guess whether it has nothing relevant or was never searched. Search
-mode never shows this line; its keyword leg always queries every selected
-source.
+you to guess whether it has nothing relevant or was never searched. Under a
+**hybrid** profile a source can also be on screen purely from the keyword
+leg; that reads "Keyword matches only from: Notes." rather than claiming
+the search found nothing from a source whose rows you are looking at.
+Prompts never appear in any of these lines, in either direction: the line
+is a statement about the *semantic* leg, and prompts are outside it
+entirely, so saying "semantic search found nothing from Prompts" would
+blame a search that was never run. Search mode never shows this line; its
+keyword leg always queries every selected source.
 
 ### Recent searches
 
@@ -386,8 +427,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 ## Quirks & troubleshooting
 
-- **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
-  change this canvas. "Per source" only appears in Search mode — RAG
+- **The evidence window follows your active profile.** "Evidence · top N
+  per source" reads the active RAG profile's **Default results** setting
+  (Settings ▸ RAG), clamped at 50 — it falls back to a fixed top 5 only
+  when no profile resolves. "Per source" only appears in Search mode — RAG
   Answer mode runs one merged query across sources (semantic, keyword, or
   hybrid depending on the active profile — see [Retrieval mode follows
   your RAG profile](#retrieval-mode-follows-your-rag-profile)), not one
@@ -462,10 +505,14 @@ only." Every one of those route notes rendered on zero-row outcomes too.*
 > holds: the keyword leg now covers notes and conversations as well as
 > media, so turning Media off while Notes or Conversations stay selected
 > runs the fused hybrid path instead of falling back to semantic, and the
-> "Media excluded — semantic only." disclosure no longer exists. Semantic
-> fallback under a hybrid profile now happens only for a scoped query or a
-> Prompts-only selection, the latter disclosed as "No keyword leg for the
-> selected sources — semantic only." The rest of that walkthrough stands.
+> "Media excluded — semantic only." disclosure no longer exists. Two later
+> changes finished the job: TASK-15020/B1 pushed scope allowlists into both
+> legs, so a scoped query stays on the hybrid path, and TASK-15020/B2 gave
+> the keyword leg a prompts sub-leg, so a **Prompts-only** selection runs
+> hybrid too. No combination of the four source toggles now falls back to
+> semantic-only, and the "No keyword leg for the selected sources —
+> semantic only." disclosure survives only for a selection with nothing in
+> it this build recognizes. The rest of that walkthrough stands.
 
 *Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
 scratch profile holding a copy of the real Library DBs and vector index,
@@ -513,3 +560,32 @@ views of it; the mode button reads "mode: Search ⇄".)*
 two-state flip earns its single press — but its full option set moved
 onto the label: "mode: ✓ Search ⇄ RAG Answer", ✓ marking the active mode,
 so the option space is on screen instead of only in the tooltip.)*
+*Verified against feat/rag-p2a-instrument-renewal @ 08c9fe294 — 2026-08-11
+(TASK-15020 live check; scratch profile holding a copy of the real Library
+DBs and vector index — 453 vectors, 4 media — plus 24 of this repo's own
+User Guide pages seeded as notes and 3 prompts, because the untouched
+library had 8 notes and no prompts, too little to tell a 5-deep list from
+a 15-deep one or to have a prompt to find at all).*
+
+- ***Depth follows the profile, both ways.*** On the shipped default
+  profile the Evidence heading read **"Evidence · top 15 per source"** and
+  the keyword query "settings" returned **16 results** — its 15-note
+  per-source cap plus one conversation — with the list scrolling normally
+  through all 16 cards. Cloning that profile, setting the clone's **Default
+  results** to 5 in Settings ▸ RAG (one constant apart, nothing else
+  changed) and re-running the *same query on the same data* gave
+  **"Evidence · top 5 per source"** and **6 results**, with no restart. Both
+  numbers came from the profile; neither is reachable from any control on
+  the canvas, which has none.
+- ***A scoped hybrid query keeps its keyword leg.*** With a Console RAG
+  scope narrowed to a single note (`Scope: 1`) and the hybrid profile
+  active, "zircaloy flange torque" staged that note as evidence — a note
+  seeded after the vector index was copied and never indexed during the
+  session, so the keyword leg is what produced it, and the pre-B1 scoped
+  divert to semantic-only could not have. No "semantic only" text appeared
+  anywhere on that screen.
+- ***A prompt can now be found.*** In RAG Answer mode on the hybrid
+  profile, "shift log summary supervisor" returned the saved prompt *Shift
+  log summary for a supervisor* as evidence row 4, typed `prompt` and
+  banded **`| keyword match`** — the first time a prompt has appeared in
+  these results at all.

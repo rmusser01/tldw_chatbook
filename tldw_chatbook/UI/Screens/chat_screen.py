@@ -407,7 +407,11 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
     scope_empty_recovery_state,
 )
-from ...Library.library_rag_state import library_rag_source_scope_summary
+from ...Library.library_rag_state import (
+    LIBRARY_RAG_FALLBACK_TOP_K,
+    library_rag_profile_top_k,
+    library_rag_source_scope_summary,
+)
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -1462,7 +1466,11 @@ AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH
 AUTO_RAG_TIMEOUT_SECONDS = 5.0
 #: TASK-406: result count used when the active RAG profile's own `default_
 #: top_k` cannot be resolved. Matches the Console chip's historical literal.
-CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = 5
+#: TASK-15020/B3 made the Library window read the same profile through the
+#: same seam, so this is now an alias of that seam's fallback rather than a
+#: second literal 5 -- two surfaces degrading to different depths would be a
+#: silent disagreement about how deep "a search" goes.
+CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = LIBRARY_RAG_FALLBACK_TOP_K
 #: TASK-406: the two auto-retrieve degradation notices. Both are toasts on an
 #: otherwise-successful send, so they say what the user LOSES (evidence), not
 #: what to click -- the send is already gone by the time either fires.
@@ -1524,8 +1532,14 @@ def _console_library_rag_profile_top_k() -> int:
     honor its search mode -- a hardcoded count would silently ignore a
     profile tuned for more (or fewer) results. This is the one place both
     call sites read that count from, so they can never drift apart again.
-    Imported lazily: ``active_config`` pulls in the profile manager, which
-    this module has no other reason to load at import time.
+
+    TASK-15020/B3 gave the Library window the same behavior, and this is now
+    a DELEGATION to that seam (`library_rag_state.library_rag_profile_top_k`)
+    rather than a second copy of the resolution: the Console chip and the
+    Library window are two views of one retrieval stack, and a twin would be
+    free to drift the moment either side changed. The delegation is kept as
+    a named function because both Console call sites (and their tests) reach
+    the profile through this name.
 
     Returns:
         The profile's ``search.default_top_k`` when it resolves to a
@@ -1533,18 +1547,7 @@ def _console_library_rag_profile_top_k() -> int:
         broken/absent profile must degrade to retrieving, not to raising
         inside a send.
     """
-    try:
-        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
-
-        value = int(resolve_active_rag_config().search.default_top_k)
-    except Exception as exc:
-        logger.debug(
-            "Console Library RAG could not read the active RAG profile's "
-            "top_k (exception_category={}); using the fallback.",
-            type(exc).__name__,
-        )
-        return CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
-    return value if value > 0 else CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
+    return library_rag_profile_top_k()
 
 
 def _console_draft_looks_like_rag_query(draft: Any) -> bool:

@@ -9,7 +9,18 @@ import hashlib
 import json
 import time
 import threading
-from typing import Collection, Dict, Any, List, Optional, Tuple
+from collections import abc
+from typing import (
+    Any,
+    Collection,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from loguru import logger
@@ -25,24 +36,46 @@ from tldw_chatbook.Metrics.metrics_logger import (
 
 
 def _canonicalize_metadata_allowlist(
-    metadata_allowlist: Optional[Dict[str, Any]],
-) -> Optional[frozenset]:
+    metadata_allowlist: Optional[Any],
+) -> Optional[Tuple[frozenset, ...]]:
     """Canonicalize a metadata allowlist into a stable, hashable form.
 
-    ``None`` (or an empty mapping) stays ``None`` so cache keys built
-    without an allowlist are byte-identical to keys built before this
+    ``None`` (or an empty mapping/sequence) stays ``None`` so cache keys
+    built without an allowlist are byte-identical to keys built before this
     parameter existed -- no behavior change for existing callers.
 
-    Otherwise, returns a ``frozenset`` of ``(key, sorted_values_tuple)``
-    pairs so that dict key order and value iteration order (values are
-    commonly passed as ``set``, whose iteration order is not guaranteed)
-    do not affect equality.
+    Two shapes are accepted, matching ``RAGService.search``: ONE mapping
+    (every key AND-ed), or a SEQUENCE of mappings (a union of AND-groups --
+    what ``rag_scope.build_semantic_allowlists`` returns, one entry per
+    source type, because a flat dict cannot express "media in A OR note in
+    B"). A single mapping canonicalizes to a one-element tuple, so the bare
+    mapping and the one-element list are the same request and share a key.
+
+    Each entry becomes a ``frozenset`` of ``(key, sorted_values_tuple)``
+    pairs so dict key order and value iteration order (values are commonly
+    passed as ``set``, whose iteration order is not guaranteed) do not
+    affect equality; the entries are then sorted so two orderings of the
+    same union agree. Entry BOUNDARIES survive, because ``[{a}, {b}]`` (a
+    union) and ``{a, b}`` (an intersection) are different searches.
     """
     if not metadata_allowlist:
         return None
-    return frozenset(
-        (k, tuple(sorted(str(x) for x in v))) for k, v in metadata_allowlist.items()
-    )
+    if isinstance(metadata_allowlist, abc.Mapping):
+        entries: List[Any] = [metadata_allowlist]
+    else:
+        # Empty entries are NOT filtered out: an entry that restricts nothing
+        # makes a different request from one that is absent, and dropping it
+        # here would let `[{a}, {}]` share a key with `[{a}]`. The engine
+        # rejects that shape outright (`_allowlist_entries`), so this is the
+        # key function agreeing with the guard rather than second-guessing it.
+        entries = list(metadata_allowlist)
+        if not entries:
+            return None
+    canonical = [
+        frozenset((k, tuple(sorted(str(x) for x in v))) for k, v in entry.items())
+        for entry in entries
+    ]
+    return tuple(sorted(canonical, key=sorted))
 
 
 @dataclass
@@ -132,7 +165,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
     ) -> str:
@@ -147,12 +180,16 @@ class SimpleRAGCache:
             top_k: Number of results
             filters: Optional metadata filters
             metadata_allowlist: Optional metadata key -> allowed-values
-                scoping filter. Included in the key so two searches that
-                are identical except for their allowlist never share a
-                cached entry. Defaults to ``None``, which produces a key
-                identical to what this method returned before this
-                parameter existed -- no behavior change for existing
-                callers.
+                scoping filter -- ONE mapping (keys AND-ed) or a SEQUENCE
+                of mappings (a union of AND-groups, the shape
+                ``rag_scope.build_semantic_allowlists`` returns). Included
+                in the key so two searches that are identical except for
+                their scope never share a cached entry: a shared key is how
+                a scoped search silently serves an unscoped one's rows.
+                Defaults to ``None``, which produces a key identical to
+                what this method returned before this parameter existed --
+                and a ONE-entry allowlist keeps its pre-union rendering, so
+                no existing caller's key moved either.
             keyword_source_types: Optional keyword-leg source-type selection
                 (TASK-14751). Two searches identical except for which
                 source types the FTS leg budgets for return DIFFERENT rows,
@@ -198,7 +235,18 @@ class SimpleRAGCache:
             # iteration order is not guaranteed (and is hash-seed
             # dependent for strings), but sorting the (key, values) tuples
             # is stable.
-            key_parts.append(json.dumps(sorted(canonical_allowlist)))
+            if len(canonical_allowlist) == 1:
+                # One AND-group: rendered exactly as it was before the union
+                # shape existed, so every pre-B1 key stays byte-identical.
+                key_parts.append(json.dumps(sorted(canonical_allowlist[0])))
+            else:
+                # A union of AND-groups. The extra nesting level is what
+                # keeps `[{a}, {b}]` from colliding with `{a, b}` -- two
+                # different searches over the same values.
+                key_parts.append(
+                    "allowlists:"
+                    + json.dumps([sorted(entry) for entry in canonical_allowlist])
+                )
 
         if keyword_source_types is not None:
             # Prefixed so this part can never be confused with the
@@ -239,7 +287,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
@@ -339,7 +387,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Thread-safe synchronous cache get.
@@ -381,7 +429,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
@@ -445,7 +493,7 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
@@ -568,7 +616,7 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
     ) -> None:
         """
         Thread-safe synchronous cache put.
@@ -612,7 +660,7 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
     ) -> None:
         """Internal synchronous implementation using threading lock."""
         with self._lock:

@@ -289,6 +289,46 @@ def test_update_keeps_latency_out_of_the_gated_metrics(tmp_path):
     )
 
 
+def test_update_records_both_unaveraged_counts_so_num_scored_reconciles(tmp_path):
+    """``num_scored`` is smaller than the golden set for TWO reasons now.
+
+    Negatives were the only exclusion when this payload was designed;
+    P2ab added scoped queries as a second one (a 100-document scope is a
+    different denominator from the 172-document corpus, so those cells are
+    reported and never averaged). A committed baseline that records only
+    the negative count leaves a reader unable to account for the scored
+    count at all — the arithmetic below is the whole point of the field.
+    """
+    baselines_dir = tmp_path / "baselines"
+    report = EvalReport(
+        k=K,
+        modes=_report().modes,
+        num_queries=60,
+        num_scored=46,
+        num_negative=7,
+        num_scoped=7,
+    )
+    _stamp(baselines_dir, report, _fingerprint())
+
+    for mode in ("semantic", "plain", "hybrid"):
+        payload = json.loads((baselines_dir / f"{mode}.json").read_text())
+        report_only = payload["metadata"]["report_only"]
+
+        assert report_only["num_golden_queries"] == 60
+        assert report_only["num_negative"] == 7
+        assert report_only["num_scoped"] == 7, (
+            f"{mode}: the scoped exclusion must be recorded alongside the "
+            "negative one, or a committed baseline cannot explain its own "
+            f"scored count: {sorted(report_only)}"
+        )
+        assert (
+            report_only["num_golden_queries"]
+            - report_only["num_negative"]
+            - report_only["num_scoped"]
+            == report.num_scored
+        ), "the two recorded exclusions must account for the whole gap"
+
+
 def test_update_returns_and_prints_every_metric_old_to_new(tmp_path):
     baselines_dir = tmp_path / "baselines"
     _stamp(baselines_dir, _report(), _fingerprint())

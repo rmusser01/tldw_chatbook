@@ -237,9 +237,9 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   preview a built-in and fails with "Couldn't delete profile: `<reason>`".
   (backlog task-2707)
 - **Search-group defaults are persisted, not live.** Saving them changes what
-  the next Library query does, not anything already rendered. Library Search's
-  "top 5 per source" ignores **Default results** entirely — see
-  [Library Search/RAG](../library/search-and-rag.md).
+  the next Library query does, not anything already rendered. **Default
+  results** now drives the Library window's "Evidence · top N per source"
+  cap (clamped at 50) — see [Library Search/RAG](../library/search-and-rag.md).
 - **Reranking is not free.** The default (pointwise) strategy scores every
   candidate result with a separate provider call, so a profile with
   **Rerank results** at 15 can spend up to 15 calls on a single search —
@@ -264,3 +264,9 @@ profile with a different embedding model immediately reads "Index: absent —
 will be created on next backfill" plus "Semantic index not built — Hybrid
 search is keyword-only until you Backfill" — which is exactly what the
 subsequent search then disclosed.*
+
+*Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
+2026-08-11 (TASK-15020 final review wave, doc-only: correcting the
+Quirks bullet above to match B3's already-shipped behavior — **Default
+results** drives the Library window's per-source cap, clamped at 50; no
+code changed here).*

@@ -29,10 +29,26 @@ known, expensive to rediscover. Every entry states the incident that produced it
   was in flight. The ceiling moved from **13,212 to 14,826 in a few hours** of concurrent
   work — an ID scanned at the start of a long PR is not safe at the end of it.
 
+- **2026-08-11, RAG P2ab arc (TASK-15020).** Three collisions in ONE arc, and the gap
+  widened each time. Task 1: the CLI offered `14913` against a true max of `14920`.
+  Task 5: the CLI offered `15021` while the global max was `15270` — the brief had
+  carried a "next safe id" estimate of ~15021 derived hours earlier, and it was **249
+  short**. Task 9: the CLI offered `15401` against a true max of **15482**, swept live
+  across 166 worktrees and 39 remote refs. Every offer was plausible; every one was
+  wrong, by 7, then 249, then 81. The Task-5 lesson bears repeating on its own:
+  **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
+  instant it is derived, so re-derive it at filing time.
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
 fix and renumbering is actively wrong.
+
+**Cheap habit that makes the collision visible before it costs anything:** create one
+throwaway task FIRST and read which ID the CLI assigned it. That is the CLI's answer,
+exposed before it is attached to anything real — delete the probe, then leapfrog past
+the swept maximum. All three P2ab collisions were caught this way, and no file ever
+carried a bad number.
 
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.

@@ -199,3 +199,109 @@ def test_set_active_profile_round_trip_write_matches_read(monkeypatch, tmp_path)
     from tldw_chatbook.RAG_Search.simplified.active_config import set_active_profile
     set_active_profile("some_profile_xyz")
     assert get_cli_setting("rag", "service", {}).get("profile") == "some_profile_xyz"
+
+
+# --------------------------------------------------------------------------
+# The search-depth-only resolution (B3 / TASK-15020).
+#
+# `resolve_active_rag_config()` builds the WHOLE config, and its env layer
+# probes the embedding device -- which imports torch (measured: ~0.9s and a
+# torch import on the first call in a warm app process). The Library Search/RAG
+# panel's display state is rebuilt on every render and is documented as a path
+# that "never imports torch (or any other optional Search/RAG dependency)"
+# (`library_screen._library_rag_panel_state`), so the window's depth default
+# cannot be read through the full resolution. `resolve_active_rag_top_k()` is
+# the narrow read for it: same profile, same RAG_TOP_K override rule (one
+# definition, shared with `_apply_env_overrides`), no device probe.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "profile_top_k, env_top_k, expected",
+    [
+        (15, None, 15),
+        (15, "13", 13),
+        (5, None, 5),
+        (20, "1", 1),
+    ],
+)
+def test_top_k_only_resolution_agrees_with_the_full_config_resolution(
+    active, monkeypatch, profile_top_k, env_top_k, expected
+):
+    """The coupling pin: two readers of one number must never disagree."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        resolve_active_rag_config,
+        resolve_active_rag_top_k,
+    )
+    from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
+
+    mgr, state = active
+    p = ProfileConfig(
+        name="Depth profile",
+        description="d",
+        profile_type="custom",
+        rag_config=RAGConfig(
+            search=SearchConfig(default_top_k=profile_top_k),
+            vector_store=VectorStoreConfig(type="memory"),
+        ),
+    )
+    mgr.save_profile(p)
+    state["active"] = p.id
+    monkeypatch.delenv("RAG_TOP_K", raising=False)
+    if env_top_k is not None:
+        monkeypatch.setenv("RAG_TOP_K", env_top_k)
+
+    assert resolve_active_rag_top_k() == expected
+    assert resolve_active_rag_config().search.default_top_k == expected
+
+
+def test_top_k_only_resolution_reports_the_shipped_default_profile_depth(active):
+    """The number B3's live check reads off the screen: the default profile
+    (`hybrid_basic`, the pointer's own fallback) ships `default_top_k = 15`.
+    """
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        DEFAULT_PROFILE,
+        resolve_active_rag_top_k,
+    )
+
+    _mgr, state = active
+    state["active"] = DEFAULT_PROFILE
+
+    assert resolve_active_rag_top_k() == 15
+
+
+def test_top_k_only_resolution_does_not_import_torch():
+    """The load-bearing property, checked the only way it can be: in a fresh
+    interpreter. A UI render path calls this; `resolve_active_rag_config()`'s
+    `device == "auto"` branch imports torch, so a "simplification" back onto
+    the full resolution would put a ~1s optional-dependency import on the
+    Library panel's render. Subprocess, because `torch` is already in
+    `sys.modules` for most of this suite.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import tldw_chatbook
+
+    repo_root = Path(tldw_chatbook.__file__).resolve().parent.parent
+    script = (
+        "import sys\n"
+        "from tldw_chatbook.RAG_Search.simplified.active_config import "
+        "resolve_active_rag_top_k\n"
+        "resolve_active_rag_top_k()\n"
+        "print('TORCH_IMPORTED' if 'torch' in sys.modules else 'NO_TORCH')\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(repo_root)
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(repo_root),
+    )
+
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert completed.stdout.strip().splitlines()[-1] == "NO_TORCH"

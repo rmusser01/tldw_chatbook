@@ -27,7 +27,10 @@ row builder          provenance["source_type"]       source_id
                      ``source_type`` /``item_type``  ["document_id"]`` or
                      /``type`` (the app's indexers   ``SearchResult.id``
                      write ITEM_TYPE_* : ``media`` /
-                     ``note`` / ``conversation``)
+                     ``note`` / ``conversation``;
+                     the engine's KEYWORD leg also
+                     stamps ``prompt``, which no
+                     indexer writes — TASK-15020/B2)
 ===================  ==============================  ======================
 
 Two consequences, both load-bearing:
@@ -51,9 +54,16 @@ Two consequences, both load-bearing:
 ``"unknown:<source_type>:<source_id>"``). A canonicalizer that dropped them
 would make precision answer "of the documents I recognized, how many were
 right" — a number that *improves* when retrieval returns more garbage. A
-prompt hit, a stray row from another source, a row whose id no fixture
-claims: all of them occupy a top-k slot in the product, so they occupy one
-here.
+stray row from another source, a row whose id no fixture claims: both occupy
+a top-k slot in the product, so they occupy one here.
+
+A **prompt** hit used to be the standing example of that (nothing wrote
+prompts, so any prompt row was by definition unclaimed). TASK-15020/B2 gave
+prompts a writer and a keyword sub-leg, so a prompt row now resolves to its
+fixture slug like any other and is SCORED rather than counted as noise. The
+alias table below already carried ``prompt``/``prompts``, which is why this
+module needed no behavioural change for B2 — only this sentence, which had
+become false.
 """
 from __future__ import annotations
 

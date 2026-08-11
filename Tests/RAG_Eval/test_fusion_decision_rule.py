@@ -636,6 +636,42 @@ def _fake_run_eval(seen: list[tuple]):
     return run_eval
 
 
+def test_the_sweep_counts_scored_queries_the_way_run_eval_does(monkeypatch):
+    """The sweep's header must label the row `run_eval` actually averaged.
+
+    These were two implementations of one rule, agreeing only by coincidence:
+    the sweep subtracted negatives, `run_eval` subtracts negatives AND scoped.
+    The moment a scoped fixture existed the header would have over-counted —
+    silently, because nothing compared the two numbers. They now share one
+    function, and this is the test that reds if a local copy comes back.
+    """
+    from Tests.RAG_Eval.harness.runner import count_scored
+
+    golden = (
+        *GOLDEN,  # one keyword query — the only averaged one here
+        GoldenQuery(
+            id="neg-nothing", query="nothing", category="negative", relevant_slugs=()
+        ),
+        GoldenQuery(
+            id="sc-scoped",
+            query="scoped",
+            category="scoped",
+            relevant_slugs=("note-saltmarsh-hide",),
+            scope_slugs=("note-saltmarsh-hide",),
+        ),
+    )
+    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
+
+    report = run_fusion_sweep(FakeRuntime(), golden, BASE_STRATEGIES, k=K, seam=FakeSeam([TARGET_ROW]))
+
+    # Stated independently of both implementations: three queries, one of
+    # which is averaged (negative and scoped are each excluded, for their own
+    # reasons).
+    assert report.num_queries == 3
+    assert report.num_scored == 1
+    assert count_scored(golden) == 1
+
+
 def test_the_sweep_applies_every_strategy_clears_the_cache_and_restores_config(
     monkeypatch,
 ):

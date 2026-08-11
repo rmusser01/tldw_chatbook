@@ -20,9 +20,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat.rag_scope import EffectiveScope
 from tldw_chatbook.Library import library_local_rag_search_service as seam_module
+from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_ROUTE_NOTES_KEY
 
-from Tests.RAG_Eval.harness.goldenset import GoldenQuery
+from Tests.RAG_Eval.harness.goldenset import SCOPED_CATEGORY, GoldenQuery
 from Tests.RAG_Eval.harness.runner import MODES, run_eval
 
 SLUG_TO_SOURCE = {"doc-a": ("note", "1"), "doc-b": ("media", "7")}
@@ -221,6 +223,217 @@ def test_summary_and_to_dict_survive_errored_queries(report):
         [UNRECOGNIZED, "unrecognized seam result shape: list"],
     ]
     assert "keyword (plain) vs hybrid" in report.format_summary()
+
+
+# --------------------------------------------------------------------------
+# scoped queries: a real EffectiveScope at the seam, and their own cell
+#
+# Same reasoning as the error-path section above, one level up: the scoped
+# category changes what every averaged number covers, and it does so
+# invisibly. Pinned here with a fake seam so the rule is checked on every
+# machine, not only where the env-gated harness can run.
+# --------------------------------------------------------------------------
+
+SCOPED = "q-scoped"
+SCOPED_GOLDEN = [
+    GoldenQuery(id=HIT, query=HIT, category="keyword", relevant_slugs=("doc-a",)),
+    GoldenQuery(
+        id=SCOPED,
+        query=SCOPED,
+        category=SCOPED_CATEGORY,
+        relevant_slugs=("doc-b",),
+        scope_slugs=("doc-b",),
+    ),
+    GoldenQuery(id=NEGATIVE, query=NEGATIVE, category="negative", relevant_slugs=()),
+]
+
+#: A route disclosure for the fake seam to emit, carried through verbatim.
+#: Deliberately NOT a quotation of any production note: what these tests pin
+#: is that the runner records whatever the seam disclosed, per query, without
+#: interpreting it. This constant used to quote the scope divert ("A hybrid
+#: profile ran semantic because a scope is active.") alongside a
+#: `rag-semantic` backend for the scoped query — a sentence production
+#: stopped emitting when TASK-15020/B1 made scoped queries run the fused
+#: path. A fake seam quoting a retired disclosure reads, to the next person,
+#: as documentation of a live behaviour.
+SCOPED_ROUTE_NOTE = "fake seam: a routing disclosure, recorded verbatim"
+
+
+class _ScopeRecordingSeam:
+    """Records the `scope=` every query arrives with, and answers each one."""
+
+    calls: list[tuple[str, object]] = []
+
+    def __init__(self, app):
+        self.app = app
+
+    async def search(self, query, source_types, mode, **kwargs):
+        type(self).calls.append((query, kwargs.get("scope")))
+        if query == SCOPED:
+            # Same backend as the unscoped answer below — after B1 a scope
+            # does not change the route, and a double that said otherwise
+            # would teach the reader a behaviour production no longer has.
+            # The per-query attribution these tests check is carried by the
+            # disclosure, which only this query gets.
+            return {
+                "results": [_MEDIA_ROW],
+                "runtime_backend": "rag-hybrid",
+                "diagnostics": {
+                    LIBRARY_RAG_ROUTE_NOTES_KEY: [SCOPED_ROUTE_NOTE]
+                },
+            }
+        return {"results": [_NOTE_ROW, _MEDIA_ROW], "runtime_backend": "rag-hybrid"}
+
+
+@pytest.fixture
+def scoped_report(monkeypatch):
+    _ScopeRecordingSeam.calls = []
+    monkeypatch.setattr(
+        seam_module, "LibraryLocalRagSearchService", _ScopeRecordingSeam
+    )
+    return run_eval(_FakeRuntime(), SCOPED_GOLDEN, k=10)
+
+
+def test_a_scoped_query_reaches_the_seam_as_a_real_effective_scope(scoped_report):
+    """Not a slug list, not a source-type filter: the production scope object,
+    with the runtime's own ids, exactly as `EffectiveScope` requires."""
+    scoped_calls = [scope for query, scope in _ScopeRecordingSeam.calls if query == SCOPED]
+    assert scoped_calls, "the scoped query never reached the seam"
+    for scope in scoped_calls:
+        assert isinstance(scope, EffectiveScope)
+        assert scope.state == "scoped"
+        assert scope.cause is None
+        # `doc-b` is media id 7 in this runtime's slug map; the allowlist
+        # carries runtime ids, never slugs, and only non-empty entries.
+        assert scope.allowlist == {"media": frozenset({"7"})}
+
+
+def test_unscoped_queries_still_reach_the_seam_with_no_scope(scoped_report):
+    """The scope must be per query, not per run: a scope leaking onto the
+    other queries would silently restrict the whole report."""
+    for query, scope in _ScopeRecordingSeam.calls:
+        if query != SCOPED:
+            assert scope is None, f"{query} was searched under a scope"
+
+
+def test_scoped_queries_are_excluded_from_the_averages_but_keep_their_own_cell(
+    scoped_report,
+):
+    """The negatives mechanism, applied to scoped.
+
+    A scoped query is asked over its scope; every other query is asked over
+    the whole corpus. Folding it into the overall row would average two
+    different haystacks into one number, so it is kept out — and still
+    measured, in its own cell. (The reason this rule was FIRST written was
+    routing: a scope diverted a hybrid profile to semantic, making two
+    columns one measurement. TASK-15020/B1 ended that; the rule outlived its
+    original reason because the haystack reason never depended on it.)
+    """
+    for mode in MODES:
+        mode_report = scoped_report.modes[mode]
+        assert mode_report.overall["num_queries"] == 1, (
+            f"{mode}: the overall row averaged "
+            f"{mode_report.overall['num_queries']} queries; only the keyword "
+            "query is scorable (negative and scoped are both excluded)"
+        )
+        assert sorted(mode_report.per_category) == ["keyword", SCOPED_CATEGORY]
+        assert mode_report.per_category[SCOPED_CATEGORY]["num_queries"] == 1
+        # The scoped query returned exactly its one relevant document.
+        assert mode_report.per_category[SCOPED_CATEGORY]["recall"] == pytest.approx(1.0)
+
+    assert scoped_report.num_queries == 3
+    assert scoped_report.num_scored == 1
+    assert scoped_report.num_negative == 1
+    assert scoped_report.num_scoped == 1
+
+
+def test_the_executed_route_is_recorded_per_scoped_query(scoped_report):
+    """P2b's before/after reads this: which route a scoped query actually
+    took, in the report, rather than inferred from the profile."""
+    for mode in MODES:
+        outcome = next(
+            q for q in scoped_report.modes[mode].queries if q.query_id == SCOPED
+        )
+        assert outcome.runtime_backend == "rag-hybrid"
+        assert outcome.route_notes == (SCOPED_ROUTE_NOTE,)
+        assert outcome.to_dict()["route_notes"] == [SCOPED_ROUTE_NOTE]
+
+    # A query that carried no disclosure records none, rather than "".
+    keyword = next(q for q in scoped_report.modes["hybrid"].queries if q.query_id == HIT)
+    assert keyword.route_notes == ()
+
+
+def test_the_summary_names_the_scoped_exclusion(scoped_report):
+    summary = scoped_report.format_summary()
+    assert SCOPED_CATEGORY in summary
+    # The route, per scoped query, on the face of the report. Asserted
+    # through the arrow the scoped section draws and the disclosure only that
+    # section renders — a bare "rag-hybrid" would also match the mode table's
+    # backend column and prove nothing about this section existing.
+    assert SCOPED in summary
+    assert "-> rag-hybrid" in summary, (
+        "the scoped section must show which route each scoped query took"
+    )
+    assert SCOPED_ROUTE_NOTE in summary, (
+        "the scoped section must show the seam's own disclosure, not only the "
+        "backend label: the label says which path ran, the disclosure why"
+    )
+
+
+def test_a_scope_slug_the_runtime_never_ingested_fails_loudly(monkeypatch):
+    """Silently dropping an unknown slug would produce a narrower scope than
+    the fixture asks for — a smaller haystack, and a better-looking score."""
+    monkeypatch.setattr(
+        seam_module, "LibraryLocalRagSearchService", _ScopeRecordingSeam
+    )
+    golden = [
+        GoldenQuery(
+            id=SCOPED,
+            query=SCOPED,
+            category=SCOPED_CATEGORY,
+            relevant_slugs=("doc-b",),
+            scope_slugs=("doc-b", "doc-ghost"),
+        )
+    ]
+    with pytest.raises(ValueError, match="doc-ghost"):
+        run_eval(_FakeRuntime(), golden, k=10)
+
+
+def test_a_scoped_query_with_no_scope_slugs_fails_loudly(monkeypatch):
+    """`validate()` rejects this in a fixture file, but `run_eval` also takes
+    hand-built queries (the gated probes do); running one unscoped would
+    report an unscoped measurement in a scoped cell."""
+    monkeypatch.setattr(
+        seam_module, "LibraryLocalRagSearchService", _ScopeRecordingSeam
+    )
+    golden = [
+        GoldenQuery(
+            id=SCOPED, query=SCOPED, category=SCOPED_CATEGORY, relevant_slugs=("doc-b",)
+        )
+    ]
+    with pytest.raises(ValueError, match="scope_slugs"):
+        run_eval(_FakeRuntime(), golden, k=10)
+
+
+def test_a_scope_slug_naming_an_unscopeable_source_type_fails_loudly(monkeypatch):
+    """Conversations are outside the scope vocabulary (rag_scope spec D5), so
+    an allowlist entry for one could never be honoured by the seam."""
+    monkeypatch.setattr(
+        seam_module, "LibraryLocalRagSearchService", _ScopeRecordingSeam
+    )
+    runtime = _FakeRuntime()
+    runtime.slug_to_source["doc-c"] = ("conversation", "3")
+    golden = [
+        GoldenQuery(
+            id=SCOPED,
+            query=SCOPED,
+            category=SCOPED_CATEGORY,
+            relevant_slugs=("doc-b",),
+            scope_slugs=("doc-c",),
+        )
+    ]
+    with pytest.raises(ValueError, match="conversation"):
+        run_eval(runtime, golden, k=10)
 
 
 def test_empty_inputs_are_refused_rather_than_reported_as_zeros():

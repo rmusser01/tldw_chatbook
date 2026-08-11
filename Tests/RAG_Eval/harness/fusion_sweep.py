@@ -56,7 +56,7 @@ from typing import Any, Collection, Iterable, Mapping, Optional, Sequence
 from loguru import logger
 
 from Tests.RAG_Eval.harness.canonicalize import rows_to_doc_ids, slug_lookup_from
-from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, GoldenQuery
+from Tests.RAG_Eval.harness.goldenset import GoldenQuery
 from Tests.RAG_Eval.harness.runner import (
     SOURCE_TYPES,
     ModeReport,
@@ -65,6 +65,7 @@ from Tests.RAG_Eval.harness.runner import (
     # with the seam, and a second copy of it in this module would drift the
     # first time the seam grows a third shape.
     _extract_rows,
+    count_scored,
     run_eval,
 )
 
@@ -776,9 +777,11 @@ def run_fusion_sweep(
         for field, value in saved.items():
             setattr(search_config, field, value)
 
-    # Same predicate `run_eval` averages by, so the header's "scored" count
-    # and the per-category cells below it can never disagree.
-    negatives = sum(1 for query in golden if query.category == NEGATIVE_CATEGORY)
+    # Literally the function `run_eval` counts with, not a second predicate
+    # that happens to agree: the sweep's header labels the same averaged row
+    # `run_eval` produced, and a local copy of the rule silently over-counted
+    # the moment a second unaveraged category (scoped) existed. Pinned by
+    # `test_fusion_decision_rule.test_the_sweep_counts_scored_queries_the_way_run_eval_does`.
     return SweepReport(
         k=k,
         entries=tuple(entries),
@@ -786,7 +789,7 @@ def run_fusion_sweep(
         target_slug=target_slug,
         source_types=scope,
         num_queries=len(golden),
-        num_scored=len(golden) - negatives,
+        num_scored=count_scored(golden),
     )
 
 
