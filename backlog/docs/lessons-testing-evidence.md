@@ -2341,3 +2341,22 @@ those two went red while the boolean did not.
    discriminate between them.
 3. Run the test before the fix and READ which assertion fails. "It failed" is not
    enough when the boolean can fail for free.
+
+---
+
+## Owner state is not evidence that retained rows are mounted (TASK-14904, 2026-08-10)
+
+**Incident.** Session Git workspace tests waited until the owner-published row tuple
+had two entries, then programmatically pressed Stage or Unstage. The retained
+`ListView` was still clearing and mounting that generation. A second status render
+could cancel the row worker mid-clear, leaving `Pilot.pause()` waiting 30 seconds on
+pruned child message pumps even though the action service and owner state were
+correct. Adding one disclosure control changed timing enough to make the latent race
+repeatable.
+
+**What to do.** Treat the immutable model projection and the mounted row generation
+as separate readiness boundaries. Disable row-derived mutations while rows are being
+replaced, and make tests wait for model count, mounted count, and list visibility to
+agree before pressing a row action. While a `ListView.clear()`/extend cycle is in
+flight, poll service state with `asyncio.sleep`; `Pilot.pause()` deliberately waits on
+every message pump and can turn transient child teardown into a harness deadlock.

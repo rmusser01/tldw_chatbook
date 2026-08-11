@@ -468,15 +468,43 @@ async def test_push_panel_availability_is_a_separate_stable_list_action() -> Non
         assert not review.disabled
 
         panel.set_mutating(True, "Staging in progress…")
-        assert review.display
-        assert review.disabled
+        assert not review.display
         panel.set_mutating(False)
+        assert review.display
         assert not review.disabled
 
         panel.mark_stale("Later session edits changed ordinary status rows.")
         await pilot.pause()
         assert review.display
         assert str(review.label) == "Review push (1 commit)…"
+
+
+@pytest.mark.asyncio
+async def test_push_return_during_mutation_focuses_visible_list_fallback() -> None:
+    """A hidden Push action must not strand focus in the closed workflow."""
+    panel = git_panel_module.LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_push_availability(_push_availability_projection())
+        panel.render_push_progress("checking_remote", operation_id=63)
+        cancel = panel.query_one("#file-notes-git-push-cancel", Button)
+        cancel.focus()
+        await _until(pilot, lambda: cancel.has_focus, "Push cancel did not focus")
+
+        panel.set_mutating(True, "Checking remote…")
+        panel.return_to_push_list()
+        back = panel.query_one("#file-notes-git-back", Button)
+        await _until(
+            pilot,
+            lambda: back.has_focus,
+            "Push return did not focus a visible list fallback",
+        )
+
+        assert not panel.query_one("#file-notes-git-push-review", Button).display
+        assert panel.query_one("#file-notes-git-refresh", Button).disabled
+        assert back.display
+        assert not back.disabled
 
 
 @pytest.mark.asyncio
@@ -817,7 +845,7 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         details = panel.query_one("#file-notes-git-push-review-details", Button)
         back = panel.query_one("#file-notes-git-push-back", Button)
         push = panel.query_one("#file-notes-git-push-confirm", Button)
-        assert back.has_focus
+        await _until(pilot, lambda: back.has_focus, "push Back did not receive focus")
         assert not push.has_focus
         assert tuple(button.id for button in back.parent.query(Button) if button.display) == (
             "file-notes-git-push-back",
@@ -910,7 +938,11 @@ async def test_push_panel_progress_is_compact_and_phase_safe(
         control = panel.query_one(f"#{control_id}", Button)
         assert control.display
         assert str(control.label) == control_label
-        assert control.has_focus
+        await _until(
+            pilot,
+            lambda: control.has_focus,
+            "push progress control did not receive focus",
+        )
         assert body.region.x == footer.region.x == panel.content_region.x
         assert body.region.width == footer.region.width == panel.content_region.width
         assert body.region.bottom == footer.region.y
@@ -1047,7 +1079,11 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             else (back_id, primary_id)
         )
         assert visible_buttons == expected_buttons
-        assert back.has_focus
+        await _until(
+            pilot,
+            lambda: back.has_focus,
+            "compact push Back did not receive focus",
+        )
         assert str(primary.label) == primary_label
         assert primary.region.width >= len(primary_label) + 2
         assert body.region.x == footer.region.x == panel.content_region.x
@@ -1936,7 +1972,11 @@ async def test_workspace_push_review_admission_failure_has_safe_back(
             Button,
         )
         assert back.display
-        assert back.has_focus
+        await _until(
+            pilot,
+            lambda: back.has_focus,
+            "admission failure Back did not receive focus",
+        )
         back.press()
         await _until(
             pilot,
