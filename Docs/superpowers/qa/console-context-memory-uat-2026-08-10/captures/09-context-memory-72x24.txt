@@ -1,0 +1,25 @@
+╭────────────╮
+tldw chatbook
+ ⌃╭──────────────────────────────────────────────────────────────────╮
+──││──
+│Console Settings│
+┌─││─┐
+││││
+││ Model and generation  Context and memory ││
+││││
+││llama_cpp is ready. No API key is required.││
+││Save applies to this session only. Save provider defaults also││
+││writes provider + streaming defaults to config.││
+││█││
+││││
+││││
+││Model capacity││
+└─│Model window        4,096 tokens│─┘
+│Response max        0 tokens│r
+│Safety margin       unknown tokens│
+┌─││─┐
+││ Cancel  Save provider defaults  Save ││
+││││
+│╰──────────────────────────────────────────────────────────────────╯│
+└──────────────────────────────────────────────────────────────────────┘
+… F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

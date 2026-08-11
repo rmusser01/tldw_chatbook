@@ -1003,8 +1003,9 @@ async def test_known_overflow_still_blocks_when_compaction_is_unavailable() -> N
     )
 
     assert result is not None
-    assert "cannot run safely" in result.visible_copy
+    assert "cannot fit the selected model" in result.visible_copy
     assert "Mandatory request material" in result.visible_copy
+    assert "Summarizing older turns cannot make enough room" in result.visible_copy
     assert gateway.calls == 0
 
 

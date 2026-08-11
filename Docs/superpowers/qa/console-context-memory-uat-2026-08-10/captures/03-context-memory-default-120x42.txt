@@ -1,0 +1,43 @@
+╭────────────╮
+tldw chatbook
+ ⌃1 Home │ ⌃2 Console │ ⌃3 Library  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M More ▾
+──────────────╭──────────────────────────────────────────────────────────────────────────────────────────╮──────────────
+Console— Cha││Ready
+ New tab │Console Settings│
+┌─────────────││─────────────┐
+│┌───────────││────────────│
+│││ Model and generation  Context and memory ││
+││Console co│││
+││──────────│llama_cpp is ready. No API key is required.│────────────│
+││Sessions│Save applies to this session only. Save provider defaults also writes provider +││
+││Conversat│streaming defaults to config.││
+││Chat 1│█││
+│││││
+│││││
+││──────────│Model capacity│────────────│
+││Workspaces│Model window        4,096 tokens││
+││Workspace│Response max        0 tokens││
+││ Switch │Safety margin       unknown tokens││
+││ RAG Scop│Safe input ceiling  4,096 tokens││
+││Add anoth│Capacity is verified for the selected model.││
+│││││
+│││Conversation budget││
+││──────────│Budget modeAutomatic▼│────────────│
+││Conversati│││
+││ New conv│Custom tokens▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎││
+││▊▔▔▔▔▔▔▔▔│▊Required in Custom mode▎│▔▔▔▔▔▔▔▔▔▔▔▔│
+││▊Search│▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎││
+││▊▁▁▁▁▁▁▁▁│Effective           4,096 tokens│▁▁▁▁▁▁▁▁▁▁▁▁│
+│││Next request        0 tokens││
+││Local sta│Request overhead    unknown tokens││
+│││││
+│└───────────│Compaction│────────────│
+└─────────────│BehaviorAsk▼│─────────────┘
+Provider: L││Library sea
+││
+┌─────────────│ Cancel  Save provider defaults  Save │─────────────┐
+││││
+│Composer ▾╰──────────────────────────────────────────────────────────────────────────────────────────╯tate │
+││
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+… F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

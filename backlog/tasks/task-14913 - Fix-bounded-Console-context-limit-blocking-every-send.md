@@ -14,6 +14,8 @@ modified_files:
   - Tests/Chat/test_console_context_compaction.py
   - backlog/docs/lessons-testing-evidence.md
   - backlog/tasks/task-14914 - Add-deterministic-visual-transcript-compaction.md
+  - Docs/superpowers/qa/console-context-memory-uat-2026-08-10/README.md
+  - Docs/superpowers/qa/console-context-memory-uat-2026-08-10/uat_context_memory.py
 priority: high
 type: bug
 ---
@@ -42,7 +44,7 @@ Restore Console message sending when a user has configured a valid bounded conve
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Separated compaction availability from provider send admission. UNKNOWN_WINDOW and NON_COMPACTABLE now pass through when the exact immutable prepared request has no known overflow; known overflow remains blocked, and the recovery copy identifies mandatory material or the absence of older complete turns. Added regressions for the default inherited automatic budget on an unknown model, bounded custom compaction on an unknown model, bounded active memory with no older eligible unit, and genuine mandatory-material overflow. Filed TASK-14914 for deterministic visual-transcript compaction. Verification: 42 compaction tests passed; the 221-test policy/lifecycle/preparation/gateway/UI matrix passed; 172 controller tests passed; scoped Ruff checks and git diff whitespace checks passed. Two repository-baseline E721 findings outside this diff were confirmed to predate the branch and were not changed. ADR required: no; ADR-052 already defines this separation and the fix restores that contract.
+Separated compaction availability from provider send admission. UNKNOWN_WINDOW and NON_COMPACTABLE now pass through when the exact immutable prepared request has no known overflow; known overflow remains blocked, and the recovery copy now leads with the request-fit failure, identifies mandatory material or the absence of older complete turns, and explains why summarizing cannot help. Added regressions for the default inherited automatic budget on an unknown model, bounded custom compaction on an unknown model, bounded active memory with no older eligible unit, and genuine mandatory-material overflow. Filed TASK-14914 for deterministic visual-transcript compaction. Completed an isolated full-app new-user UAT and senior UX/HCI review with a persistent nine-finding register, wide/narrow captures, keyboard focus evidence, invalid-save validation, global Settings inspection, and a deterministic fake-provider send. Verification: 42 compaction tests passed; the 221-test policy/lifecycle/preparation/gateway/UI matrix passed; 172 controller tests passed; the final 61-test compaction/context-controls/settings matrix passed; the full-app bounded-send UAT passed; scoped Ruff checks and git diff whitespace checks passed. Two repository-baseline E721 findings outside this diff were confirmed to predate the branch and were not changed. ADR required: no; ADR-052 already defines this separation and the fix restores that contract.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

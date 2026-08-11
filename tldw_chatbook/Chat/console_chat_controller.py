@@ -7955,8 +7955,9 @@ class ConsoleChatController:
                 )
             result = blocked(
                 (
-                    "Conversation compaction cannot run safely for this request. "
-                    f"{limiting_reason} {recovery}"
+                    "This request cannot fit the selected model. "
+                    f"{limiting_reason} Summarizing older turns cannot make "
+                    f"enough room. {recovery}"
                 )
             )
             return provider_messages, result
