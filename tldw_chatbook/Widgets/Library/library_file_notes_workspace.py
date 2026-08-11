@@ -1264,8 +1264,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
 
     def _render_projection(
         self,
@@ -1309,8 +1308,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = new_entries
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,

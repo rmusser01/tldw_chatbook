@@ -5,22 +5,23 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 19:38'
-updated_date: '2026-08-11 19:57'
+updated_date: '2026-08-11 20:19'
 labels:
   - notes
   - library
   - ux
   - accessibility
 dependencies: []
-priority: medium
-type: enhancement
 references:
-  - .impeccable/critique/2026-08-11T06-03-15Z__ok-widgets-library-library-file-notes-workspace-py.md
+  - >-
+    .impeccable/critique/2026-08-11T06-03-15Z__ok-widgets-library-library-file-notes-workspace-py.md
 documentation:
   - backlog/decisions/011-chatbook-workbench-ui-system.md
   - backlog/decisions/029-file-notes-disk-authority.md
   - backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
   - backlog/decisions/035-file-notes-session-git-index-controls.md
+priority: medium
+type: enhancement
 ---
 
 ## Description
@@ -62,4 +63,6 @@ The reported medium-width commit-review focus failure reproduced only when the t
 Verification: 52 File Notes workspace tests passed; 5 focused Session Git tests passed; 100 shared non-obscuring focus-contract tests passed; 9 CSS integrity tests passed. Warning-state, navigation-copy, and review-focus guards were mutation-checked and failed when their production behavior was removed. Targeted Ruff, Python compilation, and `git diff --check` passed. Only existing dependency, SQLite privacy, and pytest-asyncio warnings were reported.
 
 ADR required: no. The implementation conforms to ADR-011, ADR-029, ADR-031, and ADR-035. Modified the File Notes workspace plus its workspace and Session Git mounted regression suites. No new lessons entry was warranted; the autofocus distinction is recorded in the regression comment and this task note.
+
+Qodo follow-up identified that a clean scan or reconcile result did not clear a warning retained from the preceding result. Both service-result adoption paths now replace the warning state unconditionally, and regressions cover warning-to-clean transitions in the unmounted state path and the mounted root-status surface. The focused state regression and direct mounted warning regression pass; targeted Ruff, Python compilation, and diff checks pass.
 <!-- SECTION:NOTES:END -->
