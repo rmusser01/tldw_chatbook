@@ -249,7 +249,10 @@ if not result['success']:
 
 - The functions use the existing `MediaDatabase.add_media_with_keywords()` method
 - Content is deduplicated by URL and content hash
-- Use `overwrite=True` to update existing content
+- Use `overwrite=True` to update existing content — this governs **live** rows only.
+  A match that is sitting in Trash (`is_trash = 1`) is never modified by
+  `overwrite`; restoring it requires the explicit `restore_trashed=True` opt-in
+  (task-4026; the Library ingest writer `persist_parsed_media` passes it)
 - All operations are transactional
 
 ## See Also

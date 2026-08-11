@@ -1833,6 +1833,15 @@ class LocalMediaReadingService:
         if author is not None:
             author = str(author)
         keywords = self._merge_keyword_values(tags, article.get("keywords"))
+        # task-4026: ``restore_trashed=True`` is deliberate. Saving a
+        # reading item is an explicit user action naming ONE exact URL;
+        # re-saving something previously moved to Trash is an explicit
+        # restore decision (same reasoning as the Library ingest writer,
+        # ``persist_parsed_media``). Without it the DB layer now skips
+        # trashed matches even with ``overwrite=True`` and this method
+        # would fail with no remedy. This is NOT the bulk-import path
+        # (``_materialize_reading_import_row``), which stays
+        # non-restoring by design (task-4022 I1).
         media_id, _, _ = db.add_media_with_keywords(
             url=str(article.get("url") or normalized_url),
             title=final_title,
@@ -1842,6 +1851,7 @@ class LocalMediaReadingService:
             analysis_content=summary,
             author=author,
             overwrite=True,
+            restore_trashed=True,
         )
         if media_id is None:
             raise ValueError(
