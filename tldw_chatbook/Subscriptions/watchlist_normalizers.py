@@ -561,10 +561,14 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "url": row.get("url") or row.get("canonical_url"),
         "status": row.get("status") or "new",
         # TASK-2306: which run produced this item, and how many content-alert
-        # rules it matched. Both columns are already on the row (`SELECT i.*`)
-        # and both are what the Runs tab's Items sub-region displays -- its
-        # "Alerts" column had no source at all before this, so it rendered
-        # `0` over every item however many alerts had fired.
+        # rules it matched. Both columns are on the row (`get_new_items`
+        # selected `i.*` at the time this was written; TASK-15464 narrowed
+        # that to an explicit column list, `SubscriptionsDB._LIST_ITEM_
+        # COLUMNS`, which still names `run_id`/`alert_matches` -- both are
+        # small scalars, not the large-payload columns that narrowing
+        # dropped) and both are what the Runs tab's Items sub-region
+        # displays -- its "Alerts" column had no source at all before this,
+        # so it rendered `0` over every item however many alerts had fired.
         "run_id": row.get("run_id"),
         "alert_count": _alert_match_count(row.get("alert_matches")),
         "author": row.get("author"),

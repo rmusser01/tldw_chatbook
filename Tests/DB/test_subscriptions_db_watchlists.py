@@ -1071,7 +1071,7 @@ def test_get_new_items_content_preview_is_a_cheap_prefix_not_the_full_body(db):
     underlying body is much longer.
     """
     source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
-    long_body = "word " * 10_000  # 50,000 bytes, far past the 2000-byte cap.
+    long_body = "word " * 10_000  # 50,000 characters, far past the 2000-character cap.
     with db.transaction() as conn:
         persist_subscription_item(
             conn,

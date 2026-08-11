@@ -1915,24 +1915,33 @@ class SubscriptionsDB(BaseDB):
     #:   it into its output dict at all, on this query or any other. Nothing
     #:   downstream of `get_new_items` has ever read it.
     #:
-    #: Every other column below IS read somewhere downstream of this query
+    #: Most of the columns below ARE read somewhere downstream of this query
     #: today (`watchlist_normalizers.normalize_watchlist_item`, the reader's
     #: `item_dates` sort, or `WatchlistsCollectionsScreen` directly) --
-    #: traced column-by-column in task-15464's Implementation Notes.
+    #: traced column-by-column in task-15464's Implementation Notes. Two
+    #: kept anyway despite tracing to no reader at all: `categories` and
+    #: `enclosures`. Unlike `content`/`extracted_data` above, neither is a
+    #: large-payload column (small scalar/short-JSON fields), so cutting
+    #: them would not have served the projection's actual goal -- narrowing
+    #: away unbounded-size columns -- and would have been scope creep past
+    #: what this task's ACs asked for. They stay, unread, until a future
+    #: reader needs them or a separate cleanup task removes them on its own
+    #: evidence.
     #:
     #: One exception traced the OTHER way: `article_list._render_row` (the
     #: Read tab's row renderer) DOES read `content` on the list path, for a
     #: 160-char preview snippet under the title (`html_text.body_snippet`).
     #: Rather than let that one reader drag the full column back in,
-    #: `content_preview` is a CHEAP projected expression -- a raw 2000-byte
-    #: prefix, not the whole (possibly many-KB) body -- comfortably enough
-    #: raw text for `body_snippet` to find its 160 plain-text characters
-    #: after HTML-tag-stripping in every realistic case; a snippet cut a few
-    #: characters short on some pathological markup-to-text ratio is an
-    #: acceptable soft failure for a preview, unlike truncating the reader's
-    #: actual body. `article_list.py` prefers this column and falls back to
-    #: `content` only for a hand-built dict that never went through this
-    #: query at all (tests; a future non-DB source).
+    #: `content_preview` is a CHEAP projected expression -- a 2000-character
+    #: prefix (`substr` counts characters, not bytes), not the whole
+    #: (possibly many-KB) body -- comfortably enough text for `body_snippet`
+    #: to find its 160 plain-text characters after HTML-tag-stripping in
+    #: every realistic case; a snippet cut a few characters short on some
+    #: pathological markup-to-text ratio is an acceptable soft failure for a
+    #: preview, unlike truncating the reader's actual body. `article_list.py`
+    #: prefers this column and falls back to `content` only for a hand-built
+    #: dict that never went through this query at all (tests; a future
+    #: non-DB source).
     _LIST_ITEM_COLUMNS = (
         "i.id, i.subscription_id, i.url, i.title, i.content_hash, "
         "i.published_date, i.author, i.categories, i.enclosures, i.status, "
