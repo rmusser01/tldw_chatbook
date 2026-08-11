@@ -29,6 +29,7 @@ from urllib3 import Retry
 #
 # Import Local Libraries
 from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
@@ -45,7 +46,6 @@ def summarize_with_local_llm(
         logging.debug("openai: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Local LLM: Loaded data: {data}")
         logging.debug(f"Local LLM: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -111,7 +111,9 @@ def summarize_with_local_llm(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        f"Local LLM: Error decoding JSON from line: {decoded_line}"
+                                        "Local LLM: Failed to decode streamed JSON; "
+                                        "line_length=%s",
+                                        len(decoded_line),
                                     )
                                     continue
 
@@ -133,7 +135,10 @@ def summarize_with_local_llm(
             )
             return f"Local LLM: Failed to process summary, status code {response.status_code}"
     except Exception as e:
-        logging.error(f"Local LLM: Error in processing: {str(e)}")
+        logging.error(
+            "Local LLM: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Local LLM: Error occurred while processing summary: {str(e)}"
 
 
@@ -166,13 +171,12 @@ def summarize_with_llama(
 
         logging.info("llama.cpp: Attempting to use API URL from config file")
         api_url = loaded_config_data["llama_api"]["api_ip"]
-        logging.debug(f"Llama: Using API URL: {api_url}")
+        logging.debug("Llama: API endpoint configured")
 
         # Load transcript
         logging.debug("Llama.cpp: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Llama.cpp Summarize: Loaded data: {data}")
         logging.debug(f"Llama.cpp Summarize: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -202,14 +206,17 @@ def summarize_with_llama(
         # Prepare system message and prompt
         if system_message is None:
             system_message = "You are a helpful AI assistant."
-        logging.debug(f"Llama Summarize: System Prompt being sent is {system_message}")
+        logging.debug("Llama Summarize: System prompt prepared")
 
         if custom_prompt is None:
             llama_prompt = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n{text}"
         else:
             llama_prompt = f"{custom_prompt}\n\n{text}"
 
-        logging.debug(f"Llama Summarize: Prompt being sent is {llama_prompt[:500]}...")
+        logging.debug(
+            "Llama Summarize: Prompt prepared; character_count=%s",
+            len(llama_prompt),
+        )
 
         # Temperature handling
         if temp is None:
@@ -294,7 +301,9 @@ def summarize_with_llama(
                                             yield content
                                 except json.JSONDecodeError:
                                     logging.error(
-                                        f"Llama: Error decoding JSON from line: {decoded_line}"
+                                        "Llama: Failed to decode streamed JSON; "
+                                        "line_length=%s",
+                                        len(decoded_line),
                                     )
                                     continue
 
@@ -303,7 +312,6 @@ def summarize_with_llama(
                 logging.debug("Llama.cpp Summarizer: Processing non-streaming response")
                 response_data = response.json()
                 if "content" in response_data and len(response_data["content"]) > 0:
-                    logging.debug(response_data)
                     summary = response_data["content"].strip()
                     logging.debug("llama: Summarization successful")
                     logging.info("Summarization successful.")
@@ -313,12 +321,16 @@ def summarize_with_llama(
                     return "Llama: No choices in response data"
         else:
             logging.error(
-                f"Llama: API request failed with status code {response.status_code}: {response.text}"
+                "Llama: API request failed; status_code=%s",
+                response.status_code,
             )
             return f"Llama: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Llama: Error in processing: {str(e)}")
+        logging.error(
+            "Llama: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Llama: Error occurred while processing summary with Llama: {str(e)}"
 
 
@@ -354,14 +366,13 @@ def summarize_with_kobold(
             # Get the Streaming API IP from the config
             kobold_openai_api_IP = loaded_config_data["local_api_ip"]["kobold_openai"]
 
-        logging.debug(
-            f"Kobold: Using API Key: {kobold_api_key[:5]}...{kobold_api_key[-5:]}"
-        )
+        if kobold_api_key is None:
+            raise TypeError("'NoneType' object is not subscriptable")
+        logging.debug("Kobold: Credential state resolved")
 
         logging.debug("Kobold.cpp: Using provided string data for summarization")
         data = input_data
 
-        logging.debug(f"Kobold.cpp: Loaded data: {data}")
         logging.debug(f"Kobold.cpp: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -387,7 +398,10 @@ def summarize_with_kobold(
         else:
             kobold_prompt = f"{custom_prompt_input}\n\n\n\n{text}"
 
-        logging.debug(f"Kobold summarization: Prompt being sent is {kobold_prompt}")
+        logging.debug(
+            "Kobold summarization: Prompt prepared; character_count=%s",
+            len(kobold_prompt),
+        )
 
         # Construct the data payload
         data_payload = {
@@ -446,9 +460,6 @@ def summarize_with_kobold(
                     for line in response.iter_lines():
                         if line:
                             decoded_line = line.decode("utf-8")
-                            logging.debug(
-                                "Kobold: Received streamed data: %s", decoded_line
-                            )
                             # OpenAI API streams data prefixed with 'data: '
                             if decoded_line.startswith("data: "):
                                 content = decoded_line[len("data: ") :].strip()
@@ -472,18 +483,20 @@ def summarize_with_kobold(
                                         )
                                 except json.JSONDecodeError as e:
                                     logging.error(
-                                        "Kobold: Error decoding streamed JSON: %s",
-                                        str(e),
+                                        "Kobold: Failed to decode streamed JSON; exception_type=%s",
+                                        safe_metadata_token(type(e).__name__),
                                     )
-                            else:
-                                logging.debug("Kobold: Ignoring line: %s", decoded_line)
                 else:
                     logging.error(
-                        f"Kobold: API request failed with status code {response.status_code}: {response.text}"
+                        "Kobold: API request failed; status_code=%s",
+                        response.status_code,
                     )
                     yield f"Kobold: API request failed: {response.text}"
             except Exception as e:
-                logging.error("Kobold: Error in processing: %s", str(e))
+                logging.error(
+                    "Kobold: Processing failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
         else:
             try:
@@ -518,7 +531,6 @@ def summarize_with_kobold(
                 if response.status_code == 200:
                     try:
                         response_data = response.json()
-                        logging.debug("Kobold: API Response Data: %s", response_data)
 
                         if (
                             response_data
@@ -532,18 +544,28 @@ def summarize_with_kobold(
                             logging.error("Expected data not found in API response.")
                             return "Expected data not found in API response."
                     except ValueError as e:
-                        logging.error("Kobold: Error parsing JSON response: %s", str(e))
+                        logging.error(
+                            "Kobold: Failed to parse JSON response; exception_type=%s",
+                            safe_metadata_token(type(e).__name__),
+                        )
                         return f"Error parsing JSON response: {str(e)}"
                 else:
                     logging.error(
-                        f"Kobold: API request failed with status code {response.status_code}: {response.text}"
+                        "Kobold: API request failed; status_code=%s",
+                        response.status_code,
                     )
                     return f"Kobold: API request failed: {response.text}"
             except Exception as e:
-                logging.error("Kobold: Error in processing: %s", str(e))
+                logging.error(
+                    "Kobold: Processing failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
     except Exception as e:
-        logging.error("Kobold: Error in processing: %s", str(e))
+        logging.error(
+            "Kobold: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Kobold: Error occurred while processing summary with Kobold: {str(e)}"
 
 
@@ -580,12 +602,12 @@ def summarize_with_oobabooga(
 
         if not api_url:
             api_url = loaded_config_data["ooba_api"]["api_ip"]
-            logging.debug(f"Oobabooga: Using API URL from config file: {api_url}")
+            logging.debug("Oobabooga: API endpoint configured")
 
         if not isinstance(api_url, str) or not api_url.startswith(
             ("http://", "https://")
         ):
-            logging.error(f"Invalid API URL configured: {api_url}")
+            logging.error("Oobabooga: Invalid API URL configured")
             return "Oobabooga: Invalid API URL configured"
         headers = {
             "accept": "application/json",
@@ -593,9 +615,7 @@ def summarize_with_oobabooga(
         }
         if ooba_api_key:
             headers["Authorization"] = f"Bearer {ooba_api_key}"
-            logging.debug(
-                f"Oobabooga: Using API Key: {ooba_api_key[:5]}...{ooba_api_key[-5:]}"
-            )
+            logging.debug("Oobabooga: Credential configured")
         else:
             logging.debug("Oobabooga: No API key provided")
 
@@ -606,7 +626,10 @@ def summarize_with_oobabooga(
                     data = json.loads(input_data)
                     logging.debug("Oobabooga: Parsed JSON string input")
                 except json.JSONDecodeError as e:
-                    logging.error(f"Oobabooga: Error parsing JSON string: {str(e)}")
+                    logging.error(
+                        "Oobabooga: Failed to parse JSON input; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
+                    )
                     return f"Oobabooga: Error parsing JSON input: {str(e)}"
             else:
                 data = input_data
@@ -641,7 +664,9 @@ def summarize_with_oobabooga(
         if custom_prompt is None:
             custom_prompt = summarizer_prompt
         ooba_prompt = f"{text}\n\n\n\n{custom_prompt}"
-        logging.debug(f"Oobabooga: Prompt being sent is {ooba_prompt[:500]}...")
+        logging.debug(
+            "Oobabooga: Prompt prepared; character_count=%s", len(ooba_prompt)
+        )
 
         # System message handling
         if system_message is None:
@@ -716,12 +741,20 @@ def summarize_with_oobabooga(
                                             collected_messages += chunk
                                             yield chunk
                                 except json.JSONDecodeError as e:
-                                    logging.error(f"JSON decode error: {str(e)}")
+                                    logging.error(
+                                        "Oobabooga: Failed to decode streamed JSON; "
+                                        "exception_type=%s; line_length=%s",
+                                        safe_metadata_token(type(e).__name__),
+                                        len(content),
+                                    )
                                     continue
 
                 return stream_generator()
             except requests.RequestException as e:
-                logging.error(f"Error streaming summary with Oobabooga: {e}")
+                logging.error(
+                    "Oobabooga: Streaming request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Error summarizing with Oobabooga: {str(e)}"
         else:
             # Create a session
@@ -750,32 +783,43 @@ def summarize_with_oobabooga(
             if response.status_code == 200:
                 response_data = response.json()
                 logging.debug("Ooba API request successful")
-                logging.debug(response_data)
                 if "choices" in response_data and response_data["choices"]:
                     logging.debug("Ooba API: Summarization successful")
                     summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug(
-                        f"Ooba API: Summary (first 500 chars): {summary[:500]}..."
-                    )
                     return summary
                 else:
                     error_msg = f"Ooba API request failed: {response.status_code} - {response.text}"
-                    logging.error(error_msg)
+                    logging.error(
+                        "Ooba API: Response missing choices; status_code=%s",
+                        response.status_code,
+                    )
                     return error_msg
             else:
                 logging.error(
                     f"Ooba API: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"Ooba API: Error response: {response.text}")
+                logging.error(
+                    "Ooba API: Error response received; status_code=%s",
+                    response.status_code,
+                )
                 return f"Ooba API: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
-        logging.error(f"Ooba API: Error decoding JSON: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: Failed to decode JSON; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
-        logging.error(f"Ooba API: Error making API request: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Ooba API: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Ooba API: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ooba API: Unexpected error occurred: {str(e)}"
 
 
@@ -814,15 +858,15 @@ def summarize_with_tabbyapi(
         if temp is None:
             temp = 0.7
 
-        logging.debug(
-            f"TabbyAPI: Using API Key: {tabby_api_key[:5]}...{tabby_api_key[-5:] if tabby_api_key else 'None'}"
-        )
+        if tabby_api_key is None:
+            raise TypeError("'NoneType' object is not subscriptable")
+        logging.debug("TabbyAPI: Credential state resolved")
 
         # Process input data
         logging.debug("TabbyAPI: Using provided data for summarization")
         data = input_data
 
-        logging.debug(f"TabbyAPI: Loaded data: {data}")
+        logging.debug("TabbyAPI: Input received")
         logging.debug(f"TabbyAPI: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -914,17 +958,27 @@ def summarize_with_tabbyapi(
                                         yield content
                             except json.JSONDecodeError as e:
                                 logging.error(
-                                    f"TabbyAPI: Failed to parse JSON streamed data: {str(e)}"
+                                    "TabbyAPI: Failed to parse streamed JSON; "
+                                    "exception_type=%s; line_length=%s",
+                                    safe_metadata_token(type(e).__name__),
+                                    len(data_line),
                                 )
                         else:
                             logging.debug(
-                                f"TabbyAPI: Received non-data line: {decoded_line}"
+                                "TabbyAPI: Ignored non-data stream line; line_length=%s",
+                                len(decoded_line),
                             )
             except requests.exceptions.RequestException as e:
-                logging.error(f"Error summarizing with TabbyAPI: {e}")
+                logging.error(
+                    "TabbyAPI: Streaming request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Error summarizing with TabbyAPI: {str(e)}"
             except Exception as e:
-                logging.error(f"Unexpected error in summarize_with_tabbyapi: {e}")
+                logging.error(
+                    "TabbyAPI: Streaming failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 yield f"Unexpected error in summarization process: {str(e)}"
         else:
             try:
@@ -973,7 +1027,10 @@ def summarize_with_tabbyapi(
                     )
 
             except requests.exceptions.RequestException as e:
-                logging.error(f"Error summarizing with TabbyAPI: {e}")
+                logging.error(
+                    "TabbyAPI: Request failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"Error summarizing with TabbyAPI: {str(e)}"
             except json.JSONDecodeError:
                 logging.error("TabbyAPI: Received an invalid JSON response")
@@ -981,11 +1038,17 @@ def summarize_with_tabbyapi(
                     "TabbyAPI: Error: Received an invalid JSON response from TabbyAPI."
                 )
             except Exception as e:
-                logging.error(f"Unexpected error in summarize_with_tabbyapi: {e}")
+                logging.error(
+                    "TabbyAPI: Summarization failed; exception_type=%s",
+                    safe_metadata_token(type(e).__name__),
+                )
                 return f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
 
     except Exception as e:
-        logging.error(f"TabbyAPI: Unexpected error in summarize_with_tabbyapi: {e}")
+        logging.error(
+            "TabbyAPI: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         if streaming:
             yield f"TabbyAPI: Unexpected error in summarization process: {str(e)}"
         else:
@@ -1007,9 +1070,7 @@ def summarize_with_vllm(
             logging.info("vLLM Summarize: Attempting to use API key from config file")
             loaded_config_data = load_settings()
             api_key = loaded_config_data.get("vllm_api", {}).get("api_key", "")
-            logging.debug(
-                f"vLLM Summarize: Using API key from config file: {api_key[:5]}...{api_key[-5:]}"
-            )
+            logging.debug("vLLM Summarize: Credential config lookup completed")
 
         if not api_key or api_key.strip() == "":
             logging.error("vLLM Summarize: API key not found or is empty")
@@ -1017,13 +1078,11 @@ def summarize_with_vllm(
                 "vLLM Summarize: API Key Not Provided/Found in Config file or is empty"
             )
 
-        logging.debug(f"vLLM Summarize: Using API Key: {api_key[:5]}...{api_key[-5:]}")
+        logging.debug("vLLM Summarize: Credential state resolved")
 
         # Input data handling
         logging.debug(f"vLLM Summarize: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"vLLM Summarize: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("vLLM Summarize: Raw input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1035,7 +1094,8 @@ def summarize_with_vllm(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"vLLM Summarize: Error parsing JSON string: {str(e)}"
+                        "vLLM Summarize: JSON input parsing failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     return f"vLLM Summarize: Error parsing JSON input: {str(e)}"
             else:
@@ -1047,9 +1107,7 @@ def summarize_with_vllm(
             data = input_data
 
         logging.debug(f"vLLM Summarize: Processed data type: {type(data)}")
-        logging.debug(
-            f"vLLM Summarize: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("vLLM Summarize: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1069,10 +1127,8 @@ def summarize_with_vllm(
         else:
             raise ValueError(f"vLLM Summarize: Invalid input data format: {type(data)}")
 
-        logging.debug(
-            f"vLLM Summarize: Extracted text (first 500 chars): {text[:500]}..."
-        )
-        logging.debug(f"vLLM Summarize: Custom prompt: {custom_prompt_arg}")
+        logging.debug("vLLM Summarize: Text extraction completed")
+        logging.debug("vLLM Summarize: Custom prompt received")
 
         config_settings = load_settings()
         vllm_model = config_settings["vllm_api"]["model"]
@@ -1083,9 +1139,7 @@ def summarize_with_vllm(
             "Content-Type": "application/json",
         }
 
-        logging.debug(
-            f"vLLM API Key: {api_key[:5]}...{api_key[-5:] if api_key else None}"
-        )
+        logging.debug("vLLM Summarize: Authorization header prepared")
         logging.debug("vLLM Summarize: Preparing data + prompt for submittal")
         user_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         if temp is None:
@@ -1160,7 +1214,9 @@ def summarize_with_vllm(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"OpenAI: Error decoding JSON from line: {line}"
+                                "vLLM Summarize: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(line),
                             )
                             continue
 
@@ -1196,7 +1252,8 @@ def summarize_with_vllm(
                     summary = response_data["choices"][0]["message"]["content"].strip()
                     logging.debug("vLLM Summarization: Summarization successful")
                     logging.debug(
-                        f"vLLM Summarization: Summary (first 500 chars): {summary[:500]}..."
+                        "vLLM Summarization: Summary produced; character_count=%s",
+                        len(summary),
                     )
                     return summary
                 else:
@@ -1208,20 +1265,25 @@ def summarize_with_vllm(
                 logging.error(
                     f"vLLM Summarization: Summarization failed with status code {response.status_code}"
                 )
-                logging.error(f"vLLM Summarization: Error response: {response.text}")
+                logging.error("vLLM Summarization: Error response received")
                 return f"vLLM Summarization: Failed to process summary. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"vLLM Summarization: Error decoding JSON: {str(e)}", exc_info=True
+            "vLLM Summarization: JSON decoding failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"vLLM Summarization: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"vLLM Summarization: Error making API request: {str(e)}", exc_info=True
+            "vLLM Summarization: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"vLLM Summarization: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"vLLM Summarization: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "vLLM Summarization: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"vLLM Summarization: Unexpected error occurred: {str(e)}"
 
 
@@ -1254,7 +1316,10 @@ def summarize_with_ollama(
 
         ollama_config = loaded_config_data.get("ollama_api", {})
     except Exception as e:
-        logging.error(f"summarize_with_ollama: Error loading config: {e}")
+        logging.error(
+            "summarize_with_ollama: Config loading failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ollama: Error loading config: {str(e)}"
 
     # 2) Determine API Key
@@ -1335,7 +1400,10 @@ def summarize_with_ollama(
 
         # 10) Build final prompt
         ollama_prompt = f"{custom_prompt}\n\n{text_content}"
-        logging.debug(f"Ollama: Summarization prompt:\n{ollama_prompt}")
+        logging.debug(
+            "Ollama: Summarization prompt prepared; character_count=%s",
+            len(ollama_prompt),
+        )
 
         # 11) Prepare request
         max_tokens = int(ollama_config.get("max_tokens", 500))
@@ -1400,13 +1468,22 @@ def summarize_with_ollama(
             logging.error("Ollama: Request timed out.")
             return "Ollama: Request timed out."
         except requests.exceptions.HTTPError as http_err:
-            logging.error(f"Ollama: HTTP error occurred: {http_err}")
+            logging.error(
+                "Ollama: HTTP request failed; exception_type=%s",
+                safe_metadata_token(type(http_err).__name__),
+            )
             return f"Ollama: HTTP error: {http_err}"
         except requests.exceptions.RequestException as req_err:
-            logging.error(f"Ollama: Request exception: {req_err}")
+            logging.error(
+                "Ollama: Request failed; exception_type=%s",
+                safe_metadata_token(type(req_err).__name__),
+            )
             return f"Ollama: Request exception: {req_err}"
         except Exception as e:
-            logging.error(f"Ollama: Unexpected error: {str(e)}")
+            logging.error(
+                "Ollama: Request setup failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return f"Ollama: Unexpected error: {str(e)}"
 
         # 13) Handle streaming or non-streaming
@@ -1433,7 +1510,8 @@ def summarize_with_ollama(
                             break
                     except json.JSONDecodeError:
                         logging.error(
-                            f"Ollama: JSON decode error on line: {decoded_line}"
+                            "Ollama: Failed to decode streamed JSON; line_length=%s",
+                            len(decoded_line),
                         )
                         continue
 
@@ -1466,7 +1544,7 @@ def summarize_with_ollama(
                 logging.error("Ollama: Failed to parse JSON response.")
                 return "Ollama: JSON parse error from summarization API."
 
-            logging.debug(f"Ollama: Full JSON response: {response_data}")
+            logging.debug("Ollama: Response parsed")
             # Attempt to retrieve final summary
             summary = None
             if "response" in response_data and response_data["response"]:
@@ -1485,7 +1563,10 @@ def summarize_with_ollama(
                 return "Ollama: Summarization API response missing text."
 
     except Exception as e:
-        logging.error(f"Ollama Summarize: Exception: {str(e)}")
+        logging.error(
+            "Ollama Summarize: Summarization failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Ollama: Error occurred while summarizing: {str(e)}"
 
 
@@ -1512,15 +1593,11 @@ def summarize_with_custom_openai(
             logging.error("Custom OpenAI API: API key not found or is empty")
             return "Custom OpenAI API: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Custom OpenAI API: Using API Key: {custom_openai_api_key[:5]}...{custom_openai_api_key[-5:]}"
-        )
+        logging.debug("Custom OpenAI API: Credential configured")
 
         # Input data handling
         logging.debug(f"Custom OpenAI API: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Custom OpenAI API: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API: Input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1532,7 +1609,8 @@ def summarize_with_custom_openai(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"Custom OpenAI API: Error parsing JSON string: {str(e)}"
+                        "Custom OpenAI API: Input JSON parse failed; exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     data = input_data
                     pass
@@ -1545,9 +1623,7 @@ def summarize_with_custom_openai(
             data = input_data
 
         logging.debug(f"Custom OpenAI API: Processed data type: {type(data)}")
-        logging.debug(
-            f"Custom OpenAI API: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1569,10 +1645,11 @@ def summarize_with_custom_openai(
                 f"Custom OpenAI API: Invalid input data format: {type(data)}"
             )
 
+        logging.debug("Custom OpenAI API: Text extraction completed")
         logging.debug(
-            f"Custom OpenAI API: Extracted text (first 500 chars): {text[:500]}..."
+            "Custom OpenAI API: Prompt prepared; character_count=%s",
+            len(f"{custom_prompt_arg}"),
         )
-        logging.debug(f"Custom OpenAI API: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
             input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
@@ -1605,7 +1682,7 @@ def summarize_with_custom_openai(
 
         # Set API URL
         custom_openai_api_url = loaded_config_data["custom_openai_api"]["api_ip"]
-        logging.debug(f"Custom OpenAI API: Using API URL: {custom_openai_api_url}")
+        logging.debug("Custom OpenAI API: API endpoint configured")
 
         logging.debug("Custom OpenAI API: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
@@ -1673,7 +1750,9 @@ def summarize_with_custom_openai(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"OpenAI: Error decoding JSON from line: {line}"
+                                "Custom OpenAI API: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(data_str),
                             )
                             continue
                 yield collected_messages
@@ -1702,16 +1781,21 @@ def summarize_with_custom_openai(
             session.mount("https://", adapter)
             logging.debug("Custom OpenAI API: Posting request")
             response = session.post(custom_openai_api_url, headers=headers, json=data)
-            logging.debug(f"Custom OpenAI API full API response data: {response}")
+            logging.debug(
+                "Custom OpenAI API: Response received; status_code=%s",
+                response.status_code,
+            )
             if response.status_code == 200:
                 response_data = response.json()
-                logging.debug(response_data)
                 if "choices" in response_data and len(response_data["choices"]) > 0:
                     chat_response = response_data["choices"][0]["message"][
                         "content"
                     ].strip()
                     logging.debug("Custom OpenAI API: Chat Sent successfully")
-                    logging.debug(f"Custom OpenAI API: Chat response: {chat_response}")
+                    logging.debug(
+                        "Custom OpenAI API: Chat response received; character_count=%s",
+                        len(chat_response),
+                    )
                     return chat_response
                 else:
                     logging.warning(
@@ -1722,20 +1806,24 @@ def summarize_with_custom_openai(
                 logging.error(
                     f"Custom OpenAI API: Chat request failed with status code {response.status_code}"
                 )
-                logging.error(f"Custom OpenAI API: Error response: {response.text}")
                 return f"OpenAI: Failed to process chat response. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"Custom OpenAI API: Error decoding JSON: {str(e)}", exc_info=True
+            "Custom OpenAI API: Response JSON decode failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"Custom OpenAI API: Error making API request: {str(e)}", exc_info=True
+            "Custom OpenAI API: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Custom OpenAI API: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Custom OpenAI API: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Custom OpenAI API: Unexpected error occurred: {str(e)}"
 
 
@@ -1762,15 +1850,11 @@ def summarize_with_custom_openai_2(
             logging.error("Custom OpenAI API-2: API key not found or is empty")
             return "Custom OpenAI API-2: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(
-            f"Custom OpenAI API: Using API Key: {custom_openai_api_key[:5]}...{custom_openai_api_key[-5:]}"
-        )
+        logging.debug("Custom OpenAI API-2: Credential configured")
 
         # Input data handling
         logging.debug(f"Custom OpenAI API-2: Raw input data type: {type(input_data)}")
-        logging.debug(
-            f"Custom OpenAI API-2: Raw input data (first 500 chars): {str(input_data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API-2: Input received")
 
         if isinstance(input_data, str):
             if input_data.strip().startswith("{"):
@@ -1782,7 +1866,9 @@ def summarize_with_custom_openai_2(
                     data = json.loads(input_data)
                 except json.JSONDecodeError as e:
                     logging.error(
-                        f"Custom OpenAI API-2: Error parsing JSON string: {str(e)}"
+                        "Custom OpenAI API-2: Input JSON parse failed; "
+                        "exception_type=%s",
+                        safe_metadata_token(type(e).__name__),
                     )
                     data = input_data
                     pass
@@ -1795,9 +1881,7 @@ def summarize_with_custom_openai_2(
             data = input_data
 
         logging.debug(f"Custom OpenAI API-2: Processed data type: {type(data)}")
-        logging.debug(
-            f"Custom OpenAI API-2: Processed data (first 500 chars): {str(data)[:500]}..."
-        )
+        logging.debug("Custom OpenAI API-2: Input processing completed")
 
         # Text extraction
         if isinstance(data, dict):
@@ -1819,10 +1903,11 @@ def summarize_with_custom_openai_2(
                 f"Custom OpenAI API-2: Invalid input data format: {type(data)}"
             )
 
+        logging.debug("Custom OpenAI API-2: Text extraction completed")
         logging.debug(
-            f"Custom OpenAI API-2: Extracted text (first 500 chars): {text[:500]}..."
+            "Custom OpenAI API-2: Prompt prepared; character_count=%s",
+            len(f"{custom_prompt_arg}"),
         )
-        logging.debug(f"Custom OpenAI API-2: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
             input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
@@ -1855,7 +1940,7 @@ def summarize_with_custom_openai_2(
 
         # Set API URL
         custom_openai_api_url = loaded_config_data["custom_openai_api_2"]["api_ip"]
-        logging.debug(f"Custom OpenAI API-2: Using API URL: {custom_openai_api_url}")
+        logging.debug("Custom OpenAI API-2: API endpoint configured")
 
         logging.debug("Custom OpenAI API-2: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
@@ -1923,7 +2008,9 @@ def summarize_with_custom_openai_2(
                             yield chunk
                         except json.JSONDecodeError:
                             logging.error(
-                                f"Custom OpenAI API-2: Error decoding JSON from line: {line}"
+                                "Custom OpenAI API-2: Failed to decode streamed JSON; "
+                                "line_length=%s",
+                                len(data_str),
                             )
                             continue
                 yield collected_messages
@@ -1952,17 +2039,21 @@ def summarize_with_custom_openai_2(
             session.mount("https://", adapter)
             logging.debug("Custom OpenAI API-2: Posting request")
             response = session.post(custom_openai_api_url, headers=headers, json=data)
-            logging.debug(f"Custom OpenAI API-2 full API response data: {response}")
+            logging.debug(
+                "Custom OpenAI API-2: Response received; status_code=%s",
+                response.status_code,
+            )
             if response.status_code == 200:
                 response_data = response.json()
-                logging.debug(response_data)
                 if "choices" in response_data and len(response_data["choices"]) > 0:
                     chat_response = response_data["choices"][0]["message"][
                         "content"
                     ].strip()
                     logging.debug("Custom OpenAI API-2: Chat Sent successfully")
                     logging.debug(
-                        f"Custom OpenAI API-2: Chat response: {chat_response}"
+                        "Custom OpenAI API-2: Chat response received; "
+                        "character_count=%s",
+                        len(chat_response),
                     )
                     return chat_response
                 else:
@@ -1974,20 +2065,24 @@ def summarize_with_custom_openai_2(
                 logging.error(
                     f"Custom OpenAI API-2: Chat request failed with status code {response.status_code}"
                 )
-                logging.error(f"Custom OpenAI API-2: Error response: {response.text}")
                 return f"OpenAI: Failed to process chat response. Status code: {response.status_code}"
     except json.JSONDecodeError as e:
         logging.error(
-            f"Custom OpenAI API-2: Error decoding JSON: {str(e)}", exc_info=True
+            "Custom OpenAI API-2: Response JSON decode failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API-2: Error decoding JSON input: {str(e)}"
     except requests.RequestException as e:
         logging.error(
-            f"Custom OpenAI API-2: Error making API request: {str(e)}", exc_info=True
+            "Custom OpenAI API-2: API request failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
         )
         return f"Custom OpenAI API-2: Error making API request: {str(e)}"
     except Exception as e:
-        logging.error(f"Custom OpenAI API-2: Unexpected error: {str(e)}", exc_info=True)
+        logging.error(
+            "Custom OpenAI API-2: Unexpected failure; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Custom OpenAI API-2: Unexpected error occurred: {str(e)}"
 
 
@@ -2001,7 +2096,7 @@ def save_summary_to_file(summary, file_path):
     logging.debug("Opening summary file for writing, *segments.json with *_summary.txt")
     with open(summary_file_path, "w") as file:
         file.write(summary)
-    logging.info(f"Summary saved to file: {summary_file_path}")
+    logging.info("Summary saved to file")
 
 
 #

@@ -1,5 +1,5 @@
 ---
-id: TASK-14913
+id: TASK-15104
 title: Repair hanging Library source-transition test
 status: Done
 assignee: []
@@ -45,4 +45,8 @@ Corrected the stale Files-to-Collections navigation-test stub to return the curr
 Evidence: the unchanged stub timed out at 300 seconds on both the TASK-2512 branch and clean origin/dev 8d764c03, and a safe local mutation reproduced the timeout in 3 seconds. After restoration, the exact node passed in 1.08 seconds; the eight-node adjacent transition and typed-flush group passed in 2.18 seconds. Ruff check passed, the changed range is Ruff-formatted, and git diff --check passed.
 
 Modified files: Tests/UI/test_screen_navigation.py and this task record.
+
+Integration note: this later claimant moved from TASK-14913 to TASK-15104 after
+the exact add-commit audit showed that the Console context-limit task had already
+claimed TASK-14913 on dev.
 <!-- SECTION:NOTES:END -->

@@ -1,9 +1,11 @@
 ---
 id: TASK-3796
 title: Remove private summarization values from diagnostics
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-09 14:49'
+updated_date: '2026-08-11 06:02'
 labels:
   - llm-calls
   - observability
@@ -15,12 +17,16 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-TASK-2118's final review found that its identifier-filtered candidate list had been incorrectly promoted into a complete summarization follow-up. A fresh review of every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` verified a broader boundary: raw/processed/extracted input, custom/system/combined prompts, response and generated-output content, credential fragments, private endpoint or local-path values, and exception/error details are written to diagnostics. These sites are not raw provider request-payload dictionaries or tool definitions, so they remain outside TASK-2118 acceptance criterion 4, but they violate ADR-029's metadata-only persistent-log boundary and need one atomic containment repair.
+TASK-2118's final review found that its identifier-filtered candidate list had been incorrectly promoted into a complete summarization follow-up. A fresh review of every logger call in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` verified a broader boundary: raw/processed/extracted input, custom/system/combined prompts, response and generated-output content, credential fragments, private endpoint or local-path values, and exception/error details are written to diagnostics. These sites are not raw provider request-payload dictionaries or tool definitions, so they remain outside TASK-2118 acceptance criterion 4. The current persistent sink rejects these ordinary records, but their private values are still formatted and submitted to logging, remain observable by non-persistent handlers, and could be admitted by a later sink change. Applying ADR-029's metadata-only allowlist at these call sites requires one atomic containment repair.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Design Reference
+
+- [TASK-3796 summarization diagnostic privacy design](../../Docs/superpowers/specs/2026-08-10-task-3796-summarization-diagnostic-privacy-design.md)
 
 ## Verified Diagnostic Inventory
 
-The stable owner is the module plus enclosing function plus diagnostic label/category; current line numbers are navigation aids only. The complete all-call audit reviewed 523 logger calls and classified 199 direct private diagnostics. Safe constant, type, length, status, count, and provider/model metadata calls are intentionally absent. Exception messages are included because ADR-029 permits exception type metadata but expressly excludes exception messages.
+The stable owner is the module plus enclosing function plus diagnostic label/category; current line numbers are navigation aids only. The complete all-call audit reviewed 523 logger calls and classified 200 direct private diagnostics. Safe constant, type, length, status, count, and provider/model metadata calls are intentionally absent. Exception messages are included because ADR-029 permits exception type metadata but expressly excludes exception messages.
 
 ### `Local_Summarization_Lib.py` — 100 sites
 
@@ -78,7 +84,7 @@ The stable owner is the module plus enclosing function plus diagnostic label/cat
 
 Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credential fragments, 6 private endpoint/path values, 29 response/output-content sites, and 36 exception/error-detail sites.
 
-### `Summarization_General_Lib.py` — 99 sites
+### `Summarization_General_Lib.py` — 100 sites
 
 | Enclosing function | Category | Diagnostic labels (current lines) |
 | --- | --- | --- |
@@ -109,7 +115,7 @@ Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credentia
 | `summarize_with_cohere` | credential fragment | `Using API Key` (1224) |
 | `summarize_with_cohere` | response/output content | `request failed ... response.text` (1312, 1431); `API Response Data` (1414) |
 | `summarize_with_cohere` | exception/error detail | `Error in processing` (1437) |
-| `summarize_with_cohere._stream_events` | response/output content | `Skipping non-JSON stream line` (1348); `Error decoding JSON from line` (1357); `Skipping non-object stream event` (1364) |
+| `summarize_with_cohere._stream_events` | response/output content | `Skipping non-JSON stream line` (1348); `Error decoding JSON from line` (1357); `Skipping non-object stream event` (1364); `Unhandled streaming event type` (1380) |
 | `summarize_with_groq` | raw/processed/extracted input | `Loaded data` (1477) |
 | `summarize_with_groq` | prompt content | `Prompt being sent` (1512) |
 | `summarize_with_groq` | credential fragment | `Using API Key` (1470) |
@@ -143,12 +149,99 @@ Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credentia
 | `summarize_chunk` | response/output content | `Streaming error` (2739); `Summarization ... failed` (2749) |
 | `summarize_chunk` | exception/error detail | `Error in summarize_chunk` (2760) |
 
-Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credential fragments, 5 private endpoint/path values, 42 response/output-content sites, and 22 exception/error-detail sites.
+Category totals: 8 raw/processed/extracted input, 9 prompt content, 13 credential fragments, 5 private endpoint/path values, 43 response/output-content sites, and 22 exception/error-detail sites.
+
+## Final Review Audit Correction (2026-08-10)
+
+The original implementation record classified 199 calls as private and 324 as reviewed-safe. Independent final review found that stable site `general-2efc909241862caf` in `summarize_with_cohere._stream_events` renders provider-controlled `event.get("type")`; it is response/output content, not bounded status metadata. The approved misclassification procedure therefore corrects the authoritative starting arithmetic to `200 private + 323 reviewed-safe = 523`, with General `100 private + 181 reviewed-safe`, `general_mid = 24`, and response/output content `72` overall. Earlier commits and verification transcripts that report `199/324` remain historical evidence of the audit state before this correction; they are not the final inventory.
+
+Final verification also reproduced an unrelated 17-owner persistent-diagnostic
+inventory drift on detached exact latest dev. That baseline incident has separate
+backlog ownership and is not accepted into TASK-3796's manifest. This task names
+the ownership generically because repository task hygiene prohibits a lower task
+from forward-referencing a later, higher-numbered task.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every verified raw/processed/extracted input, prompt, response/output, credential-fragment, private endpoint/path, and exception/error-detail diagnostic in the inventory emits metadata only
-- [ ] #2 Sentinel tests capture representative real paths for every inventory category in both modules and prove distinctive private strings never reach diagnostics
-- [ ] #3 A fresh all-call sweep of both summarization modules finds no equivalent direct private diagnostic outside an explicit metadata-only helper
-- [ ] #4 The production diagnostic inventory is reconciled without changing unrelated owners, reasons, counts, or sink topology
+- [x] #1 Every verified raw/processed/extracted input, prompt, response/output, credential-fragment, private endpoint/path, and exception/error-detail diagnostic in the inventory emits metadata only
+- [x] #2 Sentinel tests capture representative real paths for every inventory category in both modules and prove distinctive private strings never reach diagnostics
+- [x] #3 A fresh all-call sweep of both summarization modules finds no equivalent direct private diagnostic outside an explicit metadata-only helper
+- [x] #4 The production diagnostic inventory is reconciled without changing unrelated owners, reasons, counts, or sink topology
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+
+ADR path: `backlog/decisions/029-local-private-data-boundary.md`
+
+Reason: ADR-029 already owns the metadata-only persistent-log boundary; this task applies a narrower call-site containment rule without changing sink admission or another system contract.
+
+Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026-08-10-task-3796-summarization-diagnostic-privacy.md)
+
+1. Rebase onto current `origin/dev`, recheck in-flight ownership, and reproduce the focused behavioral, inventory, lint, and formatter baselines.
+2. Add a test-only stable-identity ledger covering all 523 starting calls: 200 private sites pending repair and 323 exact reviewed-safe calls.
+3. Repair the 100 Local-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
+4. Repair the 100 General-module sites in four test-first provider batches, with direct-function canaries and per-batch reconciliation.
+5. Run independent category/module mutations, prove restoration, and reconcile the exhaustive all-call boundary.
+6. Regenerate only the two owned diagnostic-inventory entries, run touched-functionality verification, complete self-review, and close TASK-3796.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Reconciled all 523 starting calls: `200 private + 323 reviewed-safe` across
+  Local `242 = 100 private + 142 safe` and General
+  `281 = 100 private + 181 safe`. Final outcomes are `177 metadata + 23
+  deleted + 323 frozen`; 500 calls remain in source and no site is pending or
+  unclassified.
+- The private category matrix is Local/General/total: input `13/8/21`, prompt
+  `8/9/17`, credential `8/13/21`, endpoint/path `6/5/11`, response/output
+  `29/43/72`, and exception/error detail `36/22/58`. The eight implementation
+  batches reconcile as Local `24/23/22/31` and General `36/24/20/20`.
+- Final review corrected Cohere site `general-2efc909241862caf` from the
+  historical `199 private / 324 safe` audit to `200/323`: the real, fully
+  consumed `summarize_with_cohere()` unknown-event sentinel proved that
+  provider-controlled `event.get("type")` reached diagnostics. The corrected
+  immutable starting-projection SHA-256 is
+  `85a5c6b74f0cd4eb15f8ca0f8abfa5e18ca7f26f749d97fc7b781090cabd7733`.
+- Direct real-function sentinels cover every category in both modules. Twelve
+  independent runtime privacy mutations, two traceback-capture mutations, and
+  three stable-guard mutations (unclassified call, changed frozen expression,
+  and exception capture) each failed their owning assertion before inverse
+  restoration. Final production blob hashes, including the PR review
+  correction below, are Local `6f71f80cd94129f478844ac0bba6842c794c4f55`
+  and General `b3595d2cd85b79d985b42a962afd807e60b500bd`.
+- PR review added bounded `line_length` context to the Local LLM and Llama
+  malformed-stream diagnostics and a sanitized provider token to the
+  `analyze()` failure diagnostic. Direct real-function tests first failed on
+  the absent context, then passed after the metadata-only corrections; no
+  response content or provider-controlled value is logged.
+- Only diagnostic arguments changed. Provider selection, request payloads and
+  transport calls, response handling, retry/error paths, return strings,
+  streaming laziness/chunks, and response-close behavior remain under direct
+  tests and unchanged contracts.
+- The governed manifest changes only Local `242 -> 229` (digest
+  `6e78b604a2504fca4b07`) and General `281 -> 271` (digest
+  `d37486940059e7af2679`), plus the derived TASK-492 total `1,167 -> 1,144`.
+  Owners, reasons, unrelated checked entries, and six-file sink topology are
+  unchanged. Exact latest dev independently carries an unrelated 17-owner
+  baseline drift (`44` additions / `30` deletions; Git-patch SHA-256
+  `b77bd95ccc84d3bac066e0971a8bc24e20fdb58bef9b762d5ba77aa6399db4dd`),
+  which remains unblessed with separate To Do ownership. This lower-numbered
+  task intentionally omits the later task ID under the repository's
+  no-forward-reference rule.
+- Fresh focused evidence: the privacy file passed `257` tests; the complete
+  touched-functionality command passed `307` tests with only the approved
+  current-dev baseline failure
+  `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
+  Detached exact base `6d72f15f8332b6469a5d644d409b80914634a8dd` passed the
+  other 13 architecture tests and failed that same sole node. Ruff lint,
+  Local/helper/test formatting, Python compilation, and diff checks passed;
+  General's full-file format check retained only the known line-317 alias hunk.
+- ADR decision: no new ADR. ADR-029 already governs the metadata-only
+  persistent-log boundary. The approved baseline-red deviation and the new
+  provenance/projection incidents are documented in
+  `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->
