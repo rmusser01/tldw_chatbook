@@ -10,6 +10,17 @@ deterministic fixture corpus + golden query set spanning notes, media and
 conversations, and an env-gated pytest harness that runs every golden query
 through the real seam across all three profile modes.
 
+> **Reading this during the P2ab arc.** The fixture set has been renewed
+> (172 documents, 60 queries) with fail-first classes — `scoped`,
+> `negation`, `prompt` — admitted only where today's pipeline was measured
+> to fail them. The per-category analysis further down still describes the
+> pre-renewal state, in which hybrid recall sat at 1.000 everywhere; the
+> per-category headroom table that replaces it, and the class-level
+> admission outcomes (`compositional` and `acronym` proved unfailable on
+> this corpus and model), land with the arc's one deliberate re-stamp. Until
+> then every gated run reads `environment_changed`, which is expected and
+> not a regression. See golden.toml's fail-first block for the measurements.
+
 **Why this exists.** Every later retrieval change in the RAG-port programme
 (P2's query expansion, HyDE, PRF, a clarification gate, a granularity
 router; any threshold or model tuning) must show its effect as measured
@@ -38,8 +49,8 @@ Tests/RAG_Eval/
     runner.py                      the three-mode run + per-category scoring
     baseline_io.py                 fingerprinted baselines + the fail-on-regression gate
   fixtures/
-    corpus.toml                    49 fixture documents (note/media/conversation)
-    golden.toml                    45 golden queries (38 scored, 7 negative)
+    corpus.toml                    172 fixture documents (note/media/conversation/prompt)
+    golden.toml                    60 golden queries (46 scored, 7 negative, 7 scoped)
   baselines/
     semantic.json, plain.json, hybrid.json   committed, fingerprinted, per-mode baselines
 ```

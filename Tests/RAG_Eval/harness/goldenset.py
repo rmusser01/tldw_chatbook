@@ -16,8 +16,9 @@ Contract consumed by the ingestion and runner tasks:
     validate(corpus, golden) -> None          # raises GoldenSetError
 
 `source_type` uses the app's singular ingestion vocabulary ("note" / "media" /
-"conversation", the ITEM_TYPE_* values), so a fixture doc names its writer
-without translation.
+"conversation" / "prompt", the ITEM_TYPE_* values), so a fixture doc names its
+writer without translation — except "prompt", which names a writer that does
+not exist yet and is skipped at ingestion on purpose (see `SOURCE_TYPES`).
 
 One golden field is optional: `scope_slugs`, which only the `scoped` category
 may carry and every scoped query must. It names the corpus documents a scoped
@@ -55,15 +56,37 @@ __all__ = [
 ]
 
 #: Source types a corpus document may declare (the app's ITEM_TYPE_* values).
-SOURCE_TYPES: tuple[str, ...] = ("note", "media", "conversation")
+#:
+#: ``prompt`` is here without a writer behind it. The harness ingests media,
+#: notes and conversations through the real writer APIs; prompts have no
+#: writer, no keyword sub-leg and no vector index, so a prompt document is
+#: declared, validated and then *skipped* at ingestion
+#: (`ingest.UNWRITABLE_SOURCE_TYPES`). That is deliberate: the prompt
+#: fixtures' before-state is total absence, and a before-number authored
+#: after the seam exists is not a before-number.
+SOURCE_TYPES: tuple[str, ...] = ("note", "media", "conversation", "prompt")
 
 #: Capability categories a golden query may declare.
+#:
+#: The first four are P1's. The last three are P2ab's fail-first classes,
+#: each admitted only where today's pipeline was MEASURED to fail it (see
+#: `harness/fixture_probe.py` and the `# admitted:` comments in golden.toml).
+#:
+#: This vocabulary is deliberately SHORTER than the spec's candidate list.
+#: `compositional` and `acronym` were authored (their documents are in the
+#: corpus, now serving as distractors), probed, and admitted nothing —
+#: today's pipeline answers every candidate of both at rank 1-4. A category
+#: with no queries is not a placeholder for later, it is a report cell that
+#: silently reads as unmeasured, so the classes that failed to fail are
+#: recorded in golden.toml's measured-outcomes block instead of here.
 CATEGORIES: tuple[str, ...] = (
     "keyword",
     "paraphrase",
     "vocabulary_mismatch",
     "negative",
     "scoped",
+    "negation",
+    "prompt",
 )
 
 #: The one category permitted to carry an empty ``relevant_slugs``.
@@ -79,13 +102,13 @@ NEGATIVE_CATEGORY = "negative"
 SCOPED_CATEGORY = "scoped"
 
 #: Categories that must have at least one query for the set to be valid.
-#: ``scoped`` is deliberately absent: the schema lands before its fixtures
-#: (P2ab Task 2 before Task 3), and requiring a category nobody has authored
-#: would fail the always-on integrity gate for the whole arc. Add it here
-#: when the scoped fixtures land, together with their quota.
-REQUIRED_CATEGORIES: tuple[str, ...] = tuple(
-    category for category in CATEGORIES if category != SCOPED_CATEGORY
-)
+#: Every declared category, including ``scoped``: its fixtures landed with
+#: the fail-first authoring pass, so a scoped set that is authored and then
+#: silently lost now fails the validator like any other category. (Task 2
+#: shipped the schema with ``scoped`` exempt because requiring a category
+#: nobody had authored would have failed the always-on gate for the whole
+#: arc; that exemption is what this line retires.)
+REQUIRED_CATEGORIES: tuple[str, ...] = CATEGORIES
 
 #: Source types a ``scope_slugs`` entry may name. Conversations are outside
 #: the scope vocabulary (rag-scope-narrowing spec D5: a scoped search

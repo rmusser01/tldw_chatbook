@@ -1,12 +1,21 @@
-# RAG eval harness — golden query set (45 queries)
+# RAG eval harness — golden query set (60 queries; P1 authored the first 45)
 #
 # Schema (exact — the loader rejects missing/unknown keys):
 #   id              stable query identifier, unique
 #   query           the text handed to the retrieval seam verbatim
-#   category        "keyword" | "paraphrase" | "vocabulary_mismatch" | "negative"
+#   category        "keyword" | "paraphrase" | "vocabulary_mismatch" |
+#                   "negative" | "scoped" | "negation" | "prompt"
 #   relevant_slugs  corpus slugs (never DB ids — the real writers assign
 #                   autoincrement ids per run; ingestion maps slug -> runtime
 #                   id). Empty ONLY for `negative`.
+#   scope_slugs     corpus slugs the query's retrieval scope allows. ONLY the
+#                   `scoped` category may carry it, and every scoped query
+#                   must; the runner turns it into the production
+#                   `EffectiveScope`.
+#
+# The last three categories are P2ab's, and they are admitted on a different
+# rule from the first four — see the fail-first block near the end of this
+# file before adding to them.
 #
 # Categories are what make a P2 delta legible per capability ("HyDE:
 # paraphrase recall +0.12, keyword unchanged"), so a query's category must
@@ -336,3 +345,420 @@ id = "neg-chess-endgame"
 query = "chess endgame tablebases"
 category = "negative"
 relevant_slugs = []
+
+# ===========================================================================
+# FAIL-FIRST CLASSES (P2ab) — admitted on MEASURED failure, not on intent
+# ===========================================================================
+#
+# Everything above this line was authored to SUCCEED in a chosen mode. After
+# the fusion-weighting arc that stopped being useful: hybrid recall sat at
+# 1.000 on every scored query, so the instrument could detect a regression
+# and nothing else. The fixtures below invert the criterion. A candidate was
+# ADMITTED only when today's pipeline was measured to fail it — the target
+# missing the top-10 in BOTH vector-bearing modes (hybrid and semantic), with
+# its keyword rank recorded beside it. Failure is the admission ticket.
+#
+# Every admitted fixture carries a `# admitted: <date> hybrid=.. semantic=..
+# plain=..` line, which is the probe's own output
+# (`harness/fixture_probe.py`, `admission_comment`). A fixture without one
+# was not probed, and an unprobed fixture is an assumption.
+#
+# WHAT WAS PROBED AND NOT ADMITTED (2026-08-10, corpus of 172 documents, k=10
+# — the measurement, kept because a class that cannot be made to fail is a
+# result, not a gap in this file):
+#
+#   compositional  6 candidates, 0 admitted. Queries stating a conjunction
+#                  ("the supplier OF the coupling THAT let go on the north
+#                  run") whose answer document holds both halves in different
+#                  sentences, with decoys holding each half squarely. Hybrid
+#                  ranks: 1, 1, 1, 1, 2, 2. Diluting the anchor did not move
+#                  it (four more "north run" documents left the answer at
+#                  rank 2, behind its own single-conjunct decoy). A document
+#                  containing both halves is simply the nearest neighbour of
+#                  a query naming both.
+#   acronym        6 candidates, 0 admitted. Bare acronym in the query, the
+#                  expansion spelled out in the target and the letters
+#                  nowhere in it (plus the reverse direction, and decoys
+#                  using the letters in another sense). Hybrid ranks: 1, 1,
+#                  1, 2, 2, 4. MiniLM bridges MTBF/PPE/BOM/RTO/UPS to their
+#                  expansions unaided; the one anchor that was deliberately
+#                  diluted (four more wash-bay documents) moved its target
+#                  from rank 1 to rank 4 and no further. On this corpus and
+#                  this model, acronym expansion is not a capability gap —
+#                  which retires it as a P2c feature premise, the same way
+#                  the vocabulary-mismatch collapse retired query expansion.
+#   negation       6 candidates, 3 admitted (below). The three rejected ones
+#                  (hybrid ranks 4, 6, 7) share a property: their exception
+#                  document is ABOUT the queried aspect (a cabinet's cooling,
+#                  a vehicle's loading), so it is the nearest neighbour on
+#                  topic alone and negation blindness never gets to matter.
+#                  The three admitted ones describe the exception without
+#                  ever naming the aspect the query negates.
+#   precision_
+#   pressure       not authored. The class needs many near-relevant decoys
+#                  and a crisp relevance boundary between them, and the two
+#                  requirements pull against each other: with a dozen
+#                  near-duplicates in the corpus, the cell measures where the
+#                  label was drawn rather than what retrieval did. Dropped
+#                  deliberately (the spec permits it), not overlooked.
+#
+# The rejected candidates' documents stay in the corpus as distractors. That
+# is the point of them now: they are the company each anchor needed.
+
+# ---------------------------------------------------------------------------
+# scoped (7) — keyword-findable inside the scope, invisible to the vector leg
+# ---------------------------------------------------------------------------
+#
+# Each of these runs under a real `EffectiveScope` built from `scope_slugs`
+# (100 site documents — the whole P2ab collection, media and notes; a scope
+# has no conversations by rule, `rag_scope` spec D5). The target sits INSIDE
+# the scope and is resolved uniquely by the keyword path: `plain=1` on every
+# one of them. What fails is the route — a scope diverts a hybrid profile to
+# the semantic path, and in a 100-document scope the vector leg puts a
+# heritage note or an angling description nowhere near a query that reads
+# like works maintenance.
+#
+# The scope size is load-bearing and was measured: at 32 documents in scope,
+# 1 of 8 candidates failed (a top-10 over 32 documents can hardly exclude
+# anything); at 80, six did; at 100, seven. A scoped fixture over a small
+# scope reports recall 1.000 for a reason that has nothing to do with
+# retrieval.
+#
+# These are the before-numbers for scope-aware hybrid. When the allowlists
+# reach the FTS legs, the keyword path that already finds every one of these
+# at rank 1 becomes reachable from a scoped hybrid search, and this whole
+# block flips from recall 0.000 to recall 1.000 as a disclosed oracle update.
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# heritage note; the works' own pump/inspection writing buries it
+[[query]]
+id = "sc-pump-chamber-inspection"
+query = "pump chamber inspection"
+category = "scoped"
+relevant_slugs = ["note-kelsingham-icehouse"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# angling club water; the storm-tank and overflow-return records bury it
+[[query]]
+id = "sc-storm-overflow-record"
+query = "storm overflow record"
+category = "scoped"
+relevant_slugs = ["media-kelsingham-angling"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# wildlife pond note; the inlet-screen and survey writing buries it
+[[query]]
+id = "sc-intake-screen-survey"
+query = "intake screen survey"
+category = "scoped"
+relevant_slugs = ["note-kelsingham-pond"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# staff allotment note; the metering and key-control writing buries it
+[[query]]
+id = "sc-meter-box-key"
+query = "meter box key"
+category = "scoped"
+relevant_slugs = ["note-kelsingham-allotment"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# cycle shelter note; the valve-exercise and access-track writing buries it
+[[query]]
+id = "sc-valve-pit-access"
+query = "valve pit access"
+category = "scoped"
+relevant_slugs = ["media-kelsingham-cycle-shelter"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# fence artwork note; the sampling-round and signage writing buries it
+[[query]]
+id = "sc-sample-point-sign"
+query = "sample point sign"
+category = "scoped"
+relevant_slugs = ["media-kelsingham-fence-artwork"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1
+# mess room note; the shift/duty writing buries it
+[[query]]
+id = "sc-duty-board-notice"
+query = "duty board notice"
+category = "scoped"
+relevant_slugs = ["note-kelsingham-mess-room"]
+scope_slugs = [
+  "media-kelsingham-inlet-screens", "media-kelsingham-rapid-filters", "media-kelsingham-dosing-line", "media-kelsingham-contact-tank",
+  "media-kelsingham-sludge-press", "media-kelsingham-storm-tanks", "media-kelsingham-telemetry-outstation", "media-kelsingham-standby-generator",
+  "media-kelsingham-tanker-deliveries", "media-kelsingham-flow-monitoring", "media-kelsingham-lab-sampling", "media-kelsingham-weir-maintenance",
+  "note-kelsingham-shift-handover", "note-kelsingham-filter-backwash", "note-kelsingham-valve-exercise", "note-kelsingham-hydrant-flushing",
+  "note-kelsingham-pump-overhaul", "note-kelsingham-alarm-review", "note-kelsingham-chemical-store", "note-kelsingham-fence-line-check",
+  "note-kelsingham-access-track", "note-kelsingham-borehole-levels", "note-kelsingham-odour-complaint", "note-kelsingham-training-matrix",
+  "note-kelsingham-icehouse", "media-kelsingham-angling", "note-kelsingham-pond", "note-kelsingham-allotment",
+  "media-kelsingham-cycle-shelter", "media-kelsingham-fence-artwork", "note-kelsingham-mess-room", "note-kelsingham-hedgerow",
+  "media-ferrers-hill-outstation", "media-underhill-outstation", "media-cove-head-outstation", "media-barrow-gate-outstation",
+  "note-sedgemoor-cross-outstation", "note-hollin-ridge-outstation", "note-wraith-point-outstation", "note-marsden-fold-outstation",
+  "note-skellow-isle-supply", "media-cranmere-sands-visits", "note-tarn-foot-mast", "media-depot-fleet-vans",
+  "note-fleet-tail-lift-checks", "note-fleet-tracker-reports", "note-flatbed-loading", "media-filling-head-reliability",
+  "note-wash-bay-procedure", "note-settlement-ledger-recovery", "media-protective-equipment-store", "note-capping-turret-parts",
+  "media-vendor-reliability-claims", "note-sop-index", "note-ppe-sizing-cards", "note-wrenfold-north-run-history",
+  "note-ostrander-supply-agreement", "media-halloway-south-run-drive", "note-renshaw-training-record", "note-mowbray-signoff-list",
+  "media-mixing-line-strip-report", "note-gasket-material-policy", "note-store-flood-repairs", "note-cawdron-framework",
+  "note-tower-ladder-register", "note-ladder-examination-policy", "note-filling-head-leak-log", "note-shift-pattern",
+  "note-tool-crib-register", "note-first-aid-room", "media-key-cabinet-control", "note-uniform-ordering",
+  "media-visitor-induction", "note-waste-segregation", "media-noise-survey", "note-scaffold-tagging",
+  "media-weld-procedure-record", "note-paint-store", "media-lighting-survey", "note-drain-map",
+  "media-kelsingham-spill-records", "note-kelsingham-overflow-returns", "note-cable-route-markers", "media-survey-marker-posts",
+  "note-boundary-marker-upkeep", "media-yard-line-marking", "media-cabinet-fan-tray-service", "note-fan-tray-filter-mats",
+  "note-cabinet-cooling-survey", "media-approach-road-surfacing", "note-approach-road-gates", "note-tail-lift-training",
+  "media-tail-lift-examination-regime", "note-tracker-fitting-standard", "media-wash-bay-interceptor", "note-wash-bay-rota",
+  "note-wash-bay-drainage", "media-north-run-pipework", "note-north-run-isolation", "note-north-run-guard",
+]
+
+# ---------------------------------------------------------------------------
+# negation (3) — the query excludes what the rest of the corpus asserts
+# ---------------------------------------------------------------------------
+#
+# Eight outstation records state the norm ("the standard mains supply", "the
+# surfaced approach road", "the standard three-panel head"); the exception
+# document never uses those words at all, because a site that runs on solar
+# has no reason to mention a mains supply. So the keyword paths cannot reach
+# the target (AND-of-terms fails on the cue word — `plain=miss` on all
+# three), and the vector leg returns the documents that assert the norm.
+#
+# Both halves of that are needed. Delete the norm documents and the query has
+# nothing to be wrong about; write the cue word into the exception and the
+# keyword path answers it immediately.
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "ng-mains-supply"
+query = "which outstation does not take a standard mains supply"
+category = "negation"
+relevant_slugs = ["note-skellow-isle-supply"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "ng-surfaced-approach"
+query = "outstations that are not reached by a surfaced approach road"
+category = "negation"
+relevant_slugs = ["media-cranmere-sands-visits"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "ng-three-panel-head"
+query = "which mast does not carry a standard three-panel head"
+category = "negation"
+relevant_slugs = ["note-tarn-foot-mast"]
+
+# ---------------------------------------------------------------------------
+# prompt (5) — admitted structurally: nothing retrieves a prompt today
+# ---------------------------------------------------------------------------
+#
+# These five are not probe-admitted in the same sense as the classes above,
+# and the distinction matters. Their targets are `source_type = "prompt"`
+# corpus documents, and the harness has no prompts writer, the engine's
+# keyword leg has no prompts sub-leg, and prompts have no vector index
+# anywhere. They are absent from `slug_to_source` by construction
+# (`ingest.UNWRITABLE_SOURCE_TYPES`), so recall is 0.000 in all three modes
+# for a reason that is structural rather than measured.
+#
+# The probe was still run against them, and the recorded ranks are what it
+# returned — evidence that they are absent rather than merely unfound.
+# When the prompts sub-leg lands, these queries are the before-number it
+# flips.
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "pm-shift-summary"
+query = "prompt that turns a shift log into a short summary for the incoming supervisor"
+category = "prompt"
+relevant_slugs = ["prompt-shift-summary"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "pm-incident-timeline"
+query = "template for building an incident timeline from rough notes"
+category = "prompt"
+relevant_slugs = ["prompt-incident-timeline"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "pm-vendor-chaser"
+query = "saved prompt for chasing a supplier about a late order"
+category = "prompt"
+relevant_slugs = ["prompt-vendor-chaser"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "pm-meeting-actions"
+query = "prompt that pulls the actions out of meeting notes"
+category = "prompt"
+relevant_slugs = ["prompt-meeting-actions"]
+
+# admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+[[query]]
+id = "pm-glossary"
+query = "prompt that builds a glossary of terms from a document"
+category = "prompt"
+relevant_slugs = ["prompt-glossary-builder"]
+

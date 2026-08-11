@@ -63,6 +63,7 @@ __all__ = [
     "EvalRuntime",
     "EvalRuntimeError",
     "NOTES_USER_ID",
+    "UNWRITABLE_SOURCE_TYPES",
     "build_eval_runtime",
 ]
 
@@ -82,6 +83,23 @@ MEDIA_TYPE = "document"
 #: Matches `backfill_semantic_index`'s default, so batching behaviour (and
 #: therefore embedding batching) is the production one.
 INDEX_BATCH_SIZE = 16
+
+#: Corpus source types this harness cannot write, and therefore records as
+#: absent rather than ingesting.
+#:
+#: ``prompt`` is the only one, and its absence is the measurement. Prompts
+#: have no writer here, no keyword sub-leg in the engine and no vector index
+#: anywhere, so a prompt fixture is invisible to every retrieval mode — which
+#: is exactly the before-state the prompts golden queries pin (recall 0.000
+#: in all three modes). Skipping is therefore not a degradation to warn
+#: about but the thing being measured; the skipped slugs are recorded on the
+#: runtime (`EvalRuntime.unwritable`) so a reader can tell "not written" from
+#: "written and not found", which are different findings with the same score.
+#:
+#: An UNDECLARED source type still raises: a typo'd `source_type` must never
+#: reach this quiet path (`goldenset.validate` rejects it first, and the
+#: raise below is the second line of that defence).
+UNWRITABLE_SOURCE_TYPES: tuple[str, ...] = ("prompt",)
 
 
 class EvalRuntimeError(RuntimeError):
@@ -105,9 +123,14 @@ class EvalRuntime:
         slug_to_source: Fixture slug -> (source_type, source_id). Source ids
             are assigned by the real writers at write time, so the golden
             set's slugs are the only stable handle; this is the map that
-            resolves them.
+            resolves them. A skipped (`unwritable`) fixture is absent from
+            it, which is what makes it unretrievable by construction.
         index_summary: The accumulated `index_entries` summary
             ({'indexed', 'skipped', 'failed', 'errors'}).
+        unwritable: Fixture slug -> source_type, for every corpus document
+            this harness declined to write (`UNWRITABLE_SOURCE_TYPES`). Kept
+            so a zero score can be attributed: "never ingested" and
+            "ingested and not retrieved" are different findings.
     """
 
     app: SimpleNamespace
@@ -117,6 +140,7 @@ class EvalRuntime:
     _loop: asyncio.AbstractEventLoop
     _closers: list[Callable[[], None]] = field(default_factory=list)
     _closed: bool = False
+    unwritable: dict[str, str] = field(default_factory=dict)
 
     def run(self, awaitable: Awaitable[T]) -> T:
         """Drive an awaitable on this runtime's loop.
@@ -313,6 +337,13 @@ def build_eval_runtime(
 
     if not corpus:
         raise EvalRuntimeError("refusing to build an eval runtime over an empty corpus")
+    if all(doc.source_type in UNWRITABLE_SOURCE_TYPES for doc in corpus):
+        # Every document skipped is not a runtime, it is an empty index that
+        # would score 0.000 everywhere and read as total retrieval failure.
+        raise EvalRuntimeError(
+            "refusing to build an eval runtime whose every document has an "
+            f"unwritable source type ({', '.join(UNWRITABLE_SOURCE_TYPES)})"
+        )
 
     tmp_path = Path(tmp_path)
     persist_directory = tmp_path / "chroma"
@@ -346,8 +377,16 @@ def build_eval_runtime(
         )
 
         slug_to_source: dict[str, tuple[str, str]] = {}
+        unwritable: dict[str, str] = {}
         entries: list[IndexEntry] = []
         for doc in corpus:
+            if doc.source_type in UNWRITABLE_SOURCE_TYPES:
+                # Recorded, not written and not raised: see
+                # UNWRITABLE_SOURCE_TYPES. The document stays out of
+                # `slug_to_source`, so every mode misses it and its golden
+                # queries score 0.000 — the measurement, not a failure.
+                unwritable[doc.slug] = doc.source_type
+                continue
             if doc.source_type == "media":
                 source_id, row = _write_media(media_db, doc)
                 entry = media_index_entry(row)
@@ -417,8 +456,12 @@ def build_eval_runtime(
                 server_service=None,
             ),
             notes_user_id=NOTES_USER_ID,
-            # No prompts seam: prompts are not a corpus source type, and a
-            # None service is the shape the seam already handles.
+            # No prompts seam. Prompts ARE a corpus source type now
+            # (`goldenset.SOURCE_TYPES`), but nothing here writes or serves
+            # them: a None service is the shape the seam already handles, and
+            # the resulting total absence is what the prompt fixtures
+            # measure. Wiring a prompts service here without a writer behind
+            # it would change the shape and not the answer.
             prompt_scope_service=None,
             # An UNSTAMPED `_rag_service` wins outright in the seam's
             # resolver (`semantic_availability.current_app_rag_service`'s
@@ -445,4 +488,5 @@ def build_eval_runtime(
         index_summary=summary,
         _loop=loop,
         _closers=closers,
+        unwritable=unwritable,
     )

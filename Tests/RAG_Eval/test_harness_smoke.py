@@ -45,6 +45,28 @@ def test_model_downloads_are_blocked_for_the_duration_of_a_harness_run():
     assert transformers_is_offline() is True
 
 
+def test_a_corpus_of_only_unwritable_documents_is_refused(tmp_path):
+    """The one skip that must NOT be quiet.
+
+    Skipping the prompt fixtures is the measurement; skipping *everything*
+    is an empty index, and an empty index scores 0.000 on every query in
+    every mode — which reads as total retrieval failure rather than as "the
+    harness wrote nothing". Named here so that failure has a cause attached
+    to it.
+    """
+    import pytest
+
+    from Tests.RAG_Eval.harness.goldenset import CorpusDoc
+    from Tests.RAG_Eval.harness.ingest import EvalRuntimeError, build_eval_runtime
+
+    only_prompts = [
+        CorpusDoc("p1", "prompt", "Prompt one", "Do this. Then that. Then stop."),
+    ]
+    with pytest.raises(EvalRuntimeError) as excinfo:
+        build_eval_runtime(only_prompts, tmp_path)
+    assert "unwritable" in str(excinfo.value)
+
+
 def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
     from tldw_chatbook.Library.library_local_rag_search_service import (
         LibraryLocalRagSearchService,
@@ -53,17 +75,35 @@ def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
     from Tests.RAG_Eval.harness.goldenset import CORPUS_PATH, load_corpus
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
 
+    from Tests.RAG_Eval.harness.ingest import UNWRITABLE_SOURCE_TYPES
+
     corpus = load_corpus(CORPUS_PATH)
     runtime = build_eval_runtime(corpus, tmp_path)
     try:
-        # Every fixture document reached a real source DB and was mapped.
-        assert len(runtime.slug_to_source) == len(corpus)
+        # Every WRITABLE fixture document reached a real source DB and was
+        # mapped. The prompt fixtures are deliberately not written (there is
+        # no prompts writer and no seam that would serve them), so the
+        # accounting is stated in both directions rather than loosened: the
+        # skipped set is exactly the unwritable source types, and everything
+        # else is present. A bare `>=` here would have hidden a silently
+        # dropped note.
+        writable = [
+            doc for doc in corpus if doc.source_type not in UNWRITABLE_SOURCE_TYPES
+        ]
+        assert len(runtime.slug_to_source) == len(writable)
+        assert set(runtime.unwritable) == {
+            doc.slug for doc in corpus if doc.source_type in UNWRITABLE_SOURCE_TYPES
+        }
+        assert runtime.unwritable, (
+            "no document was skipped, so this accounting proves nothing — the "
+            "corpus should still carry the prompt fixtures"
+        )
 
-        # Every fixture document reached the vector store. Chunks, not
-        # documents, so `>=`: the long fixtures split into several.
+        # Every written fixture document reached the vector store. Chunks,
+        # not documents, so `>=`: the long fixtures split into several.
         stats = runtime.service.vector_store.get_collection_stats()
         assert not stats.get("error"), stats
-        assert stats["count"] >= len(corpus)
+        assert stats["count"] >= len(writable)
 
         # ... and comes back through the PRODUCTION seam, not the engine.
         seam = LibraryLocalRagSearchService(runtime.app)

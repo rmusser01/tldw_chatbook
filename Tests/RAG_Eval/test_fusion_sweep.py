@@ -35,7 +35,7 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
         RESCUE_TARGET_SLUG,
         run_full_matrix,
     )
-    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.goldenset import SCOPED_CATEGORY, load_fixtures
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
 
     corpus, golden = load_fixtures()
@@ -84,10 +84,27 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
             f"{label}: {len(entry.hybrid.errors)} query error(s) at the seam: "
             f"{entry.hybrid.errors}"
         )
-        assert entry.hybrid.runtime_backends == ("rag-hybrid",), (
-            f"{label}: expected every query to route to 'rag-hybrid', got "
-            f"{entry.hybrid.runtime_backends} — the fusion pass did not run "
-            "under hybrid at all"
+        # Judged over the UNSCOPED queries only, for the same reason
+        # `test_harness_run` judges it that way: a scope diverts a hybrid
+        # profile to the semantic path (the engine's allowlist pushdown is
+        # semantic-only), so once scoped fixtures exist a hybrid pass
+        # legitimately records "rag-semantic" for them — by design, not by a
+        # failed knob flip. A scoped query's cells are therefore invariant
+        # across this whole matrix by construction: no fusion knob is on
+        # their code path at all.
+        unscoped_backends = tuple(
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in entry.hybrid.queries
+                    if outcome.category != SCOPED_CATEGORY and outcome.runtime_backend
+                }
+            )
+        )
+        assert unscoped_backends == ("rag-hybrid",), (
+            f"{label}: expected every unscoped query to route to 'rag-hybrid', "
+            f"got {unscoped_backends} — the fusion pass did not run under "
+            "hybrid at all"
         )
         assert len(entry.hybrid.queries) == len(golden), (
             f"{label}: ran {len(entry.hybrid.queries)} of {len(golden)} queries"
