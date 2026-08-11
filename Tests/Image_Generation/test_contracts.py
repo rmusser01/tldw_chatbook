@@ -1,3 +1,9 @@
+from collections.abc import Mapping
+from typing import get_args, get_origin, get_type_hints
+
+import pytest
+
+
 def test_request_and_result_dataclasses():
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
     req = ImageGenRequest(
@@ -7,8 +13,42 @@ def test_request_and_result_dataclasses():
     )
     assert req.backend == "swarmui"
     assert req.reference_image is None  # default
+    assert req.cancel_event is None
     res = ImageGenResult(content=b"\x89PNG", content_type="image/png", bytes_len=4)
     assert res.bytes_len == 4
+    assert res.effective_params is None
+
+
+def test_image_result_effective_params_is_an_optional_mapping():
+    from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
+
+    params = {"operation": "edit", "steps": 20}
+    result = ImageGenResult(
+        content=b"\x89PNG",
+        content_type="image/png",
+        bytes_len=4,
+        effective_params=params,
+    )
+    annotation = get_type_hints(ImageGenResult)["effective_params"]
+
+    assert result.effective_params is params
+    assert any(get_origin(member) is Mapping for member in get_args(annotation))
+
+
+def test_image_generation_cancellation_and_comfyui_errors_are_typed_and_sanitized():
+    from tldw_chatbook.Image_Generation.exceptions import (
+        ComfyUIImageEditError,
+        ImageGenerationCancelled,
+        ImageGenerationError,
+    )
+
+    assert issubclass(ImageGenerationCancelled, ImageGenerationError)
+    error = ComfyUIImageEditError("source_upload")
+    assert isinstance(error, ImageGenerationError)
+    assert error.phase == "source_upload"
+    assert str(error) == "The source image could not be uploaded. Please try again."
+    with pytest.raises(ValueError, match="unknown image-edit failure phase"):
+        ComfyUIImageEditError("server-body-or-path")
 
 def test_resolved_reference_image_defined_locally():
     # Must be defined in capabilities.py, NOT imported from reference_images (which we dropped)

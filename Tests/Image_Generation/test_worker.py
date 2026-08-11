@@ -1,4 +1,8 @@
+import threading
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +19,16 @@ def test_build_request_defaults_format_png():
     assert req.format == "png"
     assert req.extra_params == {}          # never None
     assert req.negative_prompt is None
+    assert req.cancel_event is None
+
+
+def test_build_request_preserves_cancel_event_identity():
+    from tldw_chatbook.Image_Generation.worker import build_request
+
+    cancel_event = threading.Event()
+    req = build_request(backend="swarmui", prompt="cat", cancel_event=cancel_event)
+
+    assert req.cancel_event is cancel_event
 
 
 def test_run_generation_unknown_backend_raises(monkeypatch):
@@ -45,14 +59,17 @@ def test_run_generation_dispatches_to_adapter(monkeypatch):
 
 def _make_reference_image(**overrides):
     from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2)).save(buffer, format="PNG")
+    content = buffer.getvalue()
     defaults = dict(
         file_id=1,
         filename="ref.png",
         mime_type="image/png",
-        width=64,
-        height=64,
-        bytes_len=4,
-        content=b"1234",
+        width=2,
+        height=2,
+        bytes_len=len(content),
+        content=content,
         temp_path=None,
     )
     defaults.update(overrides)
@@ -115,6 +132,81 @@ def test_run_generation_reference_image_supported_backend_dispatches(monkeypatch
     req = worker.build_request(backend="fal", prompt="cat", reference_image=_make_reference_image())
     res = worker.run_generation(req)
     assert res.bytes_len == 1
+
+
+def test_run_generation_comfyui_requires_reference_before_adapter_construction(monkeypatch):
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    class FakeReg:
+        def resolve_backend(self, name):
+            return "comfyui" if name == "h3-alias" else None
+
+        def get_adapter(self, name):
+            raise AssertionError("adapter must not be constructed before validation")
+
+    monkeypatch.setattr(worker, "get_registry", lambda: FakeReg())
+
+    with pytest.raises(ImageGenerationError, match="requires a reference image"):
+        worker.run_generation(worker.build_request(backend="h3-alias", prompt="edit"))
+
+
+def test_run_generation_disabled_alias_stays_unavailable(monkeypatch):
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    class FakeReg:
+        def resolve_backend(self, name):
+            return None
+
+        def get_adapter(self, name):
+            raise AssertionError("disabled backend must not construct an adapter")
+
+    monkeypatch.setattr(worker, "get_registry", lambda: FakeReg())
+
+    with pytest.raises(ImageGenerationError, match="not enabled/available"):
+        worker.run_generation(worker.build_request(backend="h3-alias", prompt="edit"))
+
+
+def test_run_generation_comfyui_invalid_reference_precedes_adapter_construction(monkeypatch):
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    class FakeReg:
+        def resolve_backend(self, name):
+            return "comfyui"
+
+        def get_adapter(self, name):
+            raise AssertionError("adapter must not be constructed before validation")
+
+    monkeypatch.setattr(worker, "get_registry", lambda: FakeReg())
+    reference = _make_reference_image(content=b"not-an-image", bytes_len=12)
+
+    with pytest.raises(ImageGenerationError, match="could not be decoded"):
+        worker.run_generation(
+            worker.build_request(backend="comfyui", prompt="edit", reference_image=reference)
+        )
+
+
+def test_run_generation_optional_reference_backend_still_allows_text_to_image(monkeypatch):
+    from tldw_chatbook.Image_Generation import worker
+    from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
+
+    class FakeAdapter:
+        def generate(self, request):
+            assert request.reference_image is None
+            return ImageGenResult(content=b"x", content_type="image/png", bytes_len=1)
+
+    class FakeReg:
+        def resolve_backend(self, name):
+            return "fal"
+
+        def get_adapter(self, name):
+            return FakeAdapter()
+
+    monkeypatch.setattr(worker, "get_registry", lambda: FakeReg())
+
+    assert worker.run_generation(worker.build_request(backend="fal", prompt="cat")).bytes_len == 1
 
 
 def test_run_generation_adapter_load_failure_raises(monkeypatch):

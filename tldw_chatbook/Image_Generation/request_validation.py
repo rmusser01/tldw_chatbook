@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
+
+from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
 from tldw_chatbook.Image_Generation.config import (
@@ -24,6 +28,12 @@ from tldw_chatbook.Image_Generation.config import (
 #: cap, and non-empty content.
 IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
 REFERENCE_IMAGE_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})
+REFERENCE_IMAGE_SUPPORTED_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA"})
+_REFERENCE_MIME_BY_FORMAT = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
 
 
 @dataclass(frozen=True)
@@ -232,6 +242,81 @@ def _validate_reference_image(
     # above, which remain independent of each other and of this one).
     content = getattr(reference_image, "content", None)
     if content is None or content == b"":
-        issues.append(_issue("reference image has no content bytes", "reference_image"))
+        if backend == "comfyui" and getattr(reference_image, "temp_path", None) is not None:
+            issues.append(
+                _issue("ComfyUI reference image must use in-memory content", "reference_image")
+            )
+        else:
+            issues.append(_issue("reference image has no content bytes", "reference_image"))
     elif len(content) > IMAGE_GEN_REFERENCE_MAX_BYTES:
         issues.append(_issue("reference image exceeds the 10MB limit", "reference_image"))
+    else:
+        _validate_reference_image_content(reference_image, content, config, issues)
+
+
+def _validate_reference_image_content(
+    reference_image: Any,
+    content: bytes,
+    config: Any,
+    issues: list[ImageGenerationValidationIssue],
+) -> None:
+    """Decode and bound one in-memory reference image without reopening paths."""
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                detected_format = image.format
+                image.load()
+                mode = image.mode
+                decoded_width, decoded_height = image.size
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        issues.append(_issue("reference image exceeds safe decode limits", "reference_image"))
+        return
+    except (OSError, UnidentifiedImageError, ValueError):
+        issues.append(_issue("reference image could not be decoded", "reference_image"))
+        return
+
+    declared_mime = getattr(reference_image, "mime_type", None)
+    if _REFERENCE_MIME_BY_FORMAT.get(str(detected_format or "").upper()) != declared_mime:
+        issues.append(_issue("reference image mime does not match image content", "reference_image"))
+
+    if mode not in REFERENCE_IMAGE_SUPPORTED_MODES:
+        issues.append(_issue("reference image mode is not supported", "reference_image"))
+
+    max_width = _positive_int_attr(config, "max_width", DEFAULT_MAX_WIDTH)
+    max_height = _positive_int_attr(config, "max_height", DEFAULT_MAX_HEIGHT)
+    max_pixels = _positive_int_attr(config, "max_pixels", DEFAULT_MAX_PIXELS)
+    _validate_reference_dimension(
+        issues,
+        getattr(reference_image, "width", None),
+        path="width",
+        max_value=max_width,
+    )
+    _validate_reference_dimension(
+        issues,
+        getattr(reference_image, "height", None),
+        path="height",
+        max_value=max_height,
+    )
+    if decoded_width <= 0 or decoded_width > max_width:
+        issues.append(_issue("reference image width out of range", "reference_image"))
+    if decoded_height <= 0 or decoded_height > max_height:
+        issues.append(_issue("reference image height out of range", "reference_image"))
+    if decoded_width * decoded_height > max_pixels:
+        issues.append(
+            _issue("reference image dimensions exceed max pixels", "reference_image")
+        )
+
+
+def _validate_reference_dimension(
+    issues: list[ImageGenerationValidationIssue],
+    value: Any,
+    *,
+    path: str,
+    max_value: int,
+) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > max_value:
+        issues.append(_issue(f"reference image {path} out of range", "reference_image"))

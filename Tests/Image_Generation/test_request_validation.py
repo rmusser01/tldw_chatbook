@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
 
@@ -13,15 +16,23 @@ def _codes(issues):
 def _messages(issues):
     return {i.message for i in issues}
 
+
+def _image_bytes(*, image_format="PNG", mode="RGB", size=(2, 2)):
+    buffer = BytesIO()
+    Image.new(mode, size).save(buffer, format=image_format)
+    return buffer.getvalue()
+
+
 def _ref(**overrides):
+    content = _image_bytes()
     defaults = dict(
         file_id=1,
         filename="ref.png",
         mime_type="image/png",
-        width=64,
-        height=64,
-        bytes_len=4,
-        content=b"1234",
+        width=2,
+        height=2,
+        bytes_len=len(content),
+        content=content,
         temp_path=None,
     )
     defaults.update(overrides)
@@ -81,7 +92,18 @@ def test_reference_image_accepted_for_new_backends(rv, backend):
 
 
 def test_reference_image_webp_accepted(rv):
-    ok = {"backend": "fal", "prompt": "cat", "extra_params": {}, "reference_image": _ref(mime_type="image/webp")}
+    content = _image_bytes(image_format="WEBP")
+    ok = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            filename="ref.webp",
+            mime_type="image/webp",
+            content=content,
+            bytes_len=len(content),
+        ),
+    }
     assert rv.validate_image_generation_request(ok) == []
 
 
@@ -94,7 +116,8 @@ def test_reference_image_gif_refused(rv):
 def test_reference_image_oversize_refused(rv):
     # Real oversized content, with bytes_len reported honestly -- the size
     # cap must fire based on the actual content, not merely a claimed field.
-    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
+    image = _image_bytes()
+    big_content = image + b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1 - len(image))
     bad = {
         "backend": "fal",
         "prompt": "cat",
@@ -109,7 +132,8 @@ def test_reference_image_oversized_content_with_lying_bytes_len_refused(rv):
     # task-686 choke-point hardening: a constructor that reports a tiny
     # bytes_len while content is actually oversized must NOT bypass the cap
     # -- the cap validates len(content), never the caller-supplied bytes_len.
-    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
+    image = _image_bytes()
+    big_content = image + b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1 - len(image))
     bad = {
         "backend": "fal",
         "prompt": "cat",
@@ -121,7 +145,8 @@ def test_reference_image_oversized_content_with_lying_bytes_len_refused(rv):
 
 
 def test_reference_image_at_exact_cap_not_refused(rv):
-    ok_content = b"x" * rv.IMAGE_GEN_REFERENCE_MAX_BYTES
+    image = _image_bytes()
+    ok_content = image + b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES - len(image))
     ok = {
         "backend": "fal",
         "prompt": "cat",
@@ -182,7 +207,8 @@ def test_reference_image_multiple_problems_all_reported_no_content_variant(rv):
 def test_reference_image_multiple_problems_all_reported_oversize_variant(rv):
     # Sibling of the above: unsupported backend + bad mime + oversize
     # content, all at once.
-    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
+    image = _image_bytes()
+    big_content = image + b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1 - len(image))
     bad = {
         "backend": "swarmui",
         "prompt": "cat",
@@ -199,3 +225,120 @@ def test_reference_image_multiple_problems_all_reported_oversize_variant(rv):
     assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
     assert "reference image exceeds the 10MB limit" in messages
     assert len(issues) == 3
+
+
+def test_reference_image_declared_mime_must_match_signature(rv):
+    content = _image_bytes(image_format="JPEG")
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=len(content)),
+    }
+
+    assert "reference image mime does not match image content" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
+
+
+def test_reference_image_truncated_decode_is_refused(rv):
+    encoded = _image_bytes(size=(8, 8))
+    content = encoded[: len(encoded) // 2]
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=len(content), width=8, height=8),
+    }
+
+    assert "reference image could not be decoded" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
+
+
+def test_reference_image_decompression_bomb_warning_is_refused(rv, monkeypatch):
+    content = _image_bytes(size=(2, 2))
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 2)
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=len(content)),
+    }
+
+    assert "reference image exceeds safe decode limits" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
+
+
+def test_reference_image_unsupported_mode_is_refused(rv):
+    content = _image_bytes(image_format="TIFF", mode="I")
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=content, bytes_len=len(content)),
+    }
+
+    assert "reference image mode is not supported" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
+
+
+@pytest.mark.parametrize("dimension", [0, 9000])
+def test_reference_image_declared_dimensions_are_bounded(rv, dimension):
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(width=dimension),
+    }
+
+    assert "reference image width out of range" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
+
+
+def test_reference_image_decoded_pixel_cap_is_enforced(rv):
+    from types import SimpleNamespace
+
+    content = _image_bytes(size=(3, 3))
+    config = SimpleNamespace(
+        max_prompt_length=10_000,
+        max_width=10,
+        max_height=10,
+        max_pixels=8,
+        max_steps=100,
+    )
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            content=content,
+            bytes_len=len(content),
+            width=3,
+            height=3,
+        ),
+    }
+
+    assert "reference image dimensions exceed max pixels" in _messages(
+        rv.validate_image_generation_request(bad, config=config)
+    )
+
+
+def test_comfyui_reference_temp_path_is_refused_without_opening(rv, monkeypatch):
+    def fail_open(*args, **kwargs):
+        raise AssertionError("reference path must never be opened")
+
+    monkeypatch.setattr("builtins.open", fail_open)
+    bad = {
+        "backend": "comfyui",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=None, temp_path="sentinel-file-path"),
+    }
+
+    assert "ComfyUI reference image must use in-memory content" in _messages(
+        rv.validate_image_generation_request(bad)
+    )
