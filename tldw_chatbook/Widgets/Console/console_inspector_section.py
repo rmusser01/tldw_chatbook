@@ -10,12 +10,22 @@ consumer; Changes/Sources/Workspace sections are filed follow-ups against
 the same classes -- **this module carries no Agents-specific vocabulary**.
 
 The caller supplies rows as a sequence of ``InspectorSectionRow`` value
-objects; the component owns layout, DOM ids, and the update discipline --
-never the data. Update discipline follows ``ConsoleRunInspector``
+objects, bundled with the header summary into one atomic
+``ConsoleInspectorSectionState`` passed to ``sync_state``; the component
+owns layout, DOM ids, and the update discipline -- never the data. A single
+state object, not independent kwargs, is deliberate (task-3 review round
+1): an earlier ``sync_state(*, rows=(), summary="")`` treated an omitted
+argument as "clear this", so the natural "just refresh the rows" call
+silently wiped an unrelated summary that was never meant to change. One
+state value object makes "what is the section's state" one thing, not two
+that can drift -- the same discipline ``ConsoleRunInspector`` already uses
+for its own ``ConsoleInspectorState``.
+
+Update discipline follows ``ConsoleRunInspector``
 (`console_run_inspector.py:152-179`): a structural key (row identity +
-clickability + summary presence) decides whether a state change can be
-patched into the already-mounted row/summary Statics in place, or whether
-it must fall back to a wholesale ``refresh(recompose=True)``. Unlike
+summary presence) decides whether a state change can be patched into the
+already-mounted row/summary Statics in place, or whether it must fall back
+to a wholesale ``refresh(recompose=True)``. Unlike
 ``ConsoleWorkspaceContextTray`` (`console_workspace_context.py:537-567`,
 which deliberately reverted an equality guard because skipping recompose
 broke click targeting on its rows), the in-place path here is safe for
@@ -75,6 +85,28 @@ class InspectorSectionRow:
     secondary_text: str = ""
     status: str = ""
     clickable: bool = False
+
+
+@dataclass(frozen=True)
+class ConsoleInspectorSectionState:
+    """Atomic snapshot of everything ``sync_state`` can change: rows plus
+    the header summary.
+
+    Passed as ONE value so the two dimensions can never drift independently
+    -- a caller that wants to refresh only the rows still passes the
+    summary it already had (its own held state, unchanged), rather than
+    the previous kwargs shape where omitting ``summary`` silently meant
+    "clear it" (task-3 review round 1 finding). Mirrors
+    ``ConsoleInspectorState`` (`console_display_state.py`), the same
+    full-snapshot-per-sync pattern ``ConsoleRunInspector`` already uses.
+
+    Attributes:
+        rows: Rows to render.
+        summary: Right-aligned header summary; ``""`` hides it.
+    """
+
+    rows: tuple[InspectorSectionRow, ...] = ()
+    summary: str = ""
 
 
 class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
@@ -353,9 +385,18 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """Return a key identifying the mounted widget structure for a state.
 
         Two states with equal keys mount the same row ids, in the same
-        order, with the same clickability, and the same summary presence
-        (shown vs. hidden) -- they differ at most in row/summary text or
-        row status, which is safe to patch in place.
+        order, with the same summary presence (shown vs. hidden) -- they
+        differ at most in row/summary text, row status, or row
+        clickability, all of which are safe to patch in place.
+
+        ``clickable`` is deliberately EXCLUDED from this key (task-3 review
+        round 2 finding, LOW): ``_apply_row_update`` already re-syncs a
+        row's ``clickable``/``can_focus`` attributes unconditionally on
+        every patch, structural or not, so including it here bought no
+        correctness and only forced an avoidable recompose on a plausible
+        fleet transition (a row becoming clickable as an agent goes
+        queued -> running) -- exactly the recompose churn Task 5 is
+        measured on keeping flat.
 
         Args:
             rows: Row sequence to fingerprint.
@@ -366,30 +407,33 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             A hashable structure key.
         """
         return (
-            tuple((row.row_id, row.clickable) for row in rows),
+            tuple(row.row_id for row in rows),
             bool(summary),
         )
 
-    def sync_state(
-        self,
-        *,
-        rows: Sequence[InspectorSectionRow] = (),
-        summary: str = "",
-    ) -> None:
-        """Refresh the mounted section from new rows/summary.
+    def sync_state(self, state: ConsoleInspectorSectionState) -> None:
+        """Refresh the mounted section from a new atomic state snapshot.
+
+        ``state`` is the section's WHOLE state (rows + summary), not a
+        delta -- a caller that wants to refresh only the rows still passes
+        the summary it already had. This is deliberate (task-3 review
+        round 1, HIGH): an earlier ``sync_state(*, rows=(), summary="")``
+        kwargs shape treated an omitted argument as "clear this", so the
+        natural "just refresh the rows" call silently wiped an unrelated
+        summary. See ``ConsoleInspectorSectionState``'s docstring.
 
         When the new state is structurally compatible with the current one
-        (same row ids in the same order and order, same clickability, same
-        summary presence), the mounted row/summary Statics are patched in
-        place. Any structural change -- rows added/removed/reordered,
-        clickability changed, or the summary appearing/disappearing --
-        recomposes the whole section (counted in ``recompose_count``).
+        (same row ids in the same order, same summary presence), the
+        mounted row/summary Statics are patched in place. Any structural
+        change -- rows added/removed/reordered, or the summary
+        appearing/disappearing -- recomposes the whole section (counted in
+        ``recompose_count``).
 
         Args:
-            rows: New row sequence.
-            summary: New right-aligned header summary; ``""`` hides it.
+            state: New rows + header summary, as one atomic snapshot.
         """
-        rows = tuple(rows)
+        rows = tuple(state.rows)
+        summary = state.summary
         if rows == self.rows and summary == self.summary:
             return
         previous_rows = self.rows
@@ -446,6 +490,11 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         # Identity is unchanged by construction (same structural key), but
         # kept authoritative rather than assumed.
         row_widget.row_id = row.row_id
+        # `clickable` is NOT part of the structural key (see
+        # `_structural_key`'s docstring) -- it can change on an in-place
+        # patch, so it and the `can_focus` it drives are always re-synced
+        # here, unconditionally, whether or not this specific call's
+        # `row.clickable` differs from `previous_row.clickable`.
         row_widget.clickable = row.clickable
         row_widget.can_focus = row.clickable
         if row.primary_text != previous_row.primary_text:
@@ -470,9 +519,10 @@ class ConsoleInspectorSectionRow(Vertical):
 
     Always mounts two Statics (primary + secondary line, the latter
     possibly blank) so a row's mounted shape never depends on whether
-    ``secondary_text`` happens to be empty at any given sync -- only
-    row identity/clickability (the structural key) governs recompose vs.
-    in-place patching.
+    ``secondary_text`` happens to be empty at any given sync -- only row
+    identity (the structural key) governs recompose vs. in-place patching.
+    ``clickable`` can change across an in-place patch too (re-synced
+    unconditionally by ``ConsoleInspectorSection._apply_row_update``).
     """
 
     BINDINGS = [
