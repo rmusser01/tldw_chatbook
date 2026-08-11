@@ -19,6 +19,8 @@ from enum import Enum
 from rich.cells import cell_len, split_graphemes
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Utils.input_validation import validate_text_input
+
 
 MAX_CONSOLE_QUEUE_ENTRIES = 10
 MAX_CONSOLE_QUEUED_PROMPT_LENGTH = 100_000
@@ -315,7 +317,11 @@ class ConsolePromptQueueRegistry:
         self._monotonic = monotonic or time.monotonic
         self._states: dict[str, _SessionQueueState] = {}
         self._empty_snapshots: dict[str, PromptQueueSnapshot] = {}
-        self._issued_entry_ids: set[str] = set()
+        # Entry identities need only be unique while they can still be
+        # referenced by a queue mutation or coordinator callback. Retaining
+        # historical IDs forever would make this process-memory queue grow
+        # with lifetime throughput instead of its bounded active contents.
+        self._active_entry_ids: set[str] = set()
         self._next_insertion_order = 0
         self._registry_revision = 0
         self._shutting_down = False
@@ -367,7 +373,11 @@ class ConsolePromptQueueRegistry:
         return (
             isinstance(text, str)
             and bool(text.strip())
-            and len(text) <= MAX_CONSOLE_QUEUED_PROMPT_LENGTH
+            and validate_text_input(
+                text,
+                max_length=MAX_CONSOLE_QUEUED_PROMPT_LENGTH,
+                allow_html=False,
+            )
         )
 
     def _empty_snapshot(self, session_id: str) -> PromptQueueSnapshot:
@@ -609,7 +619,7 @@ class ConsolePromptQueueRegistry:
         if (
             not isinstance(entry_id, str)
             or not entry_id
-            or entry_id in self._issued_entry_ids
+            or entry_id in self._active_entry_ids
         ):
             return None
         admitted_at = self._monotonic()
@@ -623,7 +633,7 @@ class ConsolePromptQueueRegistry:
             insertion_order=self._next_insertion_order,
             admitted_at=float(admitted_at),
         )
-        self._issued_entry_ids.add(entry_id)
+        self._active_entry_ids.add(entry_id)
         return prompt
 
     def _claim_time(self) -> float | None:
@@ -850,7 +860,8 @@ class ConsolePromptQueueRegistry:
         index = self._waiting_index(state, entry_id)
         if index is None:
             return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
-        state.waiting.pop(index)
+        removed = state.waiting.pop(index)
+        self._active_entry_ids.discard(removed.entry_id)
         self._finalize_released_empty_state(state)
         self._bump(state)
         return self._result(
@@ -872,6 +883,9 @@ class ConsolePromptQueueRegistry:
         assert state is not None
         if not state.waiting:
             return self._result(QueueMutationStatus.UNCHANGED, session_id, state=state)
+        self._active_entry_ids.difference_update(
+            prompt.entry_id for prompt in state.waiting
+        )
         state.waiting.clear()
         self._finalize_released_empty_state(state)
         self._bump(state)
@@ -926,6 +940,7 @@ class ConsolePromptQueueRegistry:
             return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
         if state.claimed.prompt.entry_id != entry_id:
             return self._result(QueueMutationStatus.LOCKED, session_id, state=state)
+        self._active_entry_ids.discard(state.claimed.prompt.entry_id)
         state.claimed = None
         self._bump(state)
         return self._result(
@@ -1205,6 +1220,11 @@ class ConsolePromptQueueRegistry:
             )
         if state is None:
             return self._result(QueueMutationStatus.UNCHANGED, session_id)
+        self._active_entry_ids.difference_update(
+            prompt.entry_id for prompt in state.waiting
+        )
+        if state.claimed is not None:
+            self._active_entry_ids.discard(state.claimed.prompt.entry_id)
         del self._states[session_id]
         self._registry_revision += 1
         return self._result(QueueMutationStatus.APPLIED, session_id)
@@ -1226,6 +1246,7 @@ class ConsolePromptQueueRegistry:
         removed_prompts = sum(state.total_count for state in self._states.values())
         self._shutting_down = True
         self._states.clear()
+        self._active_entry_ids.clear()
         self._registry_revision += 1
         return PromptQueueShutdownResult(
             status=QueueMutationStatus.APPLIED,

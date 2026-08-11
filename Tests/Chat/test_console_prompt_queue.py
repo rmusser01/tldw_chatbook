@@ -794,6 +794,80 @@ def test_invalid_text_and_duplicate_id_fail_without_partial_mutation() -> None:
     assert too_large.status is QueueMutationStatus.INVALID
     assert too_large.snapshot is before
 
+    unsafe_markup = registry.edit(
+        "session-a",
+        entry_id=first,
+        text="<script>alert('queued')</script>",
+        expected_revision=before.revision,
+    )
+    assert unsafe_markup.status is QueueMutationStatus.INVALID
+    assert unsafe_markup.snapshot is before
+
+
+def test_entry_identity_tracking_is_bounded_to_active_prompts() -> None:
+    registry = ConsolePromptQueueRegistry(id_factory=lambda: "reusable-id")
+    _begin(registry)
+
+    first = _admit(registry, "first")
+    removed = registry.remove(
+        "session-a",
+        entry_id=first,
+        expected_revision=registry.snapshot("session-a").revision,
+    )
+    assert removed.status is QueueMutationStatus.APPLIED
+    assert registry._active_entry_ids == set()
+    released = registry.release_reservation(
+        "session-a",
+        expected_revision=removed.snapshot.revision,
+    )
+    assert released.status is QueueMutationStatus.APPLIED
+
+    _begin(registry)
+    second = _admit(registry, "second")
+    assert second == first
+    cleared = registry.clear_waiting(
+        "session-a",
+        expected_revision=registry.snapshot("session-a").revision,
+    )
+    assert cleared.status is QueueMutationStatus.APPLIED
+    assert registry._active_entry_ids == set()
+    released = registry.release_reservation(
+        "session-a",
+        expected_revision=cleared.snapshot.revision,
+    )
+    assert released.status is QueueMutationStatus.APPLIED
+
+    _begin(registry)
+    third = _admit(registry, "third")
+    claimed = registry.claim_next(
+        "session-a",
+        expected_revision=registry.snapshot("session-a").revision,
+    )
+    settled = registry.settle_claim(
+        "session-a",
+        entry_id=third,
+        expected_revision=claimed.snapshot.revision,
+    )
+    assert settled.status is QueueMutationStatus.APPLIED
+    assert registry._active_entry_ids == set()
+
+    fourth = _admit(registry, "fourth")
+    assert fourth == first
+    removed_session = registry.remove_session(
+        "session-a",
+        expected_revision=registry.snapshot("session-a").revision,
+    )
+    assert removed_session.status is QueueMutationStatus.APPLIED
+    assert registry._active_entry_ids == set()
+
+    _begin(registry)
+    _admit(registry, "fifth")
+    stopped = registry.shutdown(
+        expected_registry_revision=registry.registry_revision
+    )
+    assert stopped.status is QueueMutationStatus.APPLIED
+    assert registry._active_entry_ids == set()
+
 
 def test_registry_is_sync_and_has_no_forbidden_runtime_dependencies() -> None:
     module_path = (

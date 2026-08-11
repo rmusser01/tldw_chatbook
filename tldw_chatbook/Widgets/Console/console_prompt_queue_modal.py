@@ -13,6 +13,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Chat.console_prompt_queue import (
+    MAX_CONSOLE_QUEUE_ENTRIES,
+    MAX_CONSOLE_QUEUED_PROMPT_LENGTH,
     PromptQueueEntryPhase,
     PromptQueueMode,
     PromptQueueMutationResult,
@@ -20,6 +22,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueSnapshot,
     QueueMutationStatus,
 )
+from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
@@ -225,7 +228,8 @@ class ConsolePromptQueueModal(ModalScreen[None]):
             return
         reason = snapshot.pause_reason.value.replace("_", " ") if snapshot.pause_reason else ""
         state.update(
-            f"Queue {snapshot.total_count}/10 · {snapshot.mode.value.replace('_', ' ')}"
+            f"Queue {snapshot.total_count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
+            f"{snapshot.mode.value.replace('_', ' ')}"
             + (f" · {reason}" if reason else "")
         )
         recovery_pause = (
@@ -360,9 +364,13 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         return False
 
     def action_select_next(self) -> None:
+        """Select the next queue entry, wrapping at the end."""
+
         self._select_offset(1)
 
     def action_select_previous(self) -> None:
+        """Select the previous queue entry, wrapping at the beginning."""
+
         self._select_offset(-1)
 
     def _select_offset(self, offset: int) -> None:
@@ -378,15 +386,23 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         self._apply_snapshot(self._snapshot, force=True)
 
     def action_edit(self) -> None:
+        """Begin editing the selected waiting prompt."""
+
         self._begin_edit()
 
     def action_move_up(self) -> None:
+        """Move the selected waiting prompt one position earlier."""
+
         self._move_selected(-1)
 
     def action_move_down(self) -> None:
+        """Move the selected waiting prompt one position later."""
+
         self._move_selected(1)
 
     def action_remove(self) -> None:
+        """Request confirmation before removing the selected prompt."""
+
         self.run_worker(
             self._confirm_remove_selected(),
             exclusive=True,
@@ -488,6 +504,16 @@ class ConsolePromptQueueModal(ModalScreen[None]):
         if self._editing_entry_id is None:
             return
         edit = self.query_one("#console-prompt-queue-edit-input", TextArea)
+        if not validate_text_input(
+            edit.text,
+            max_length=MAX_CONSOLE_QUEUED_PROMPT_LENGTH,
+            allow_html=False,
+        ):
+            self._show_feedback(
+                "Prompt blocked: remove unsafe markup or shorten it before saving.",
+                warning=True,
+            )
+            return
         result = self._queue_controller.edit_waiting(
             self.session_id,
             self._editing_entry_id,

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Static, TextArea
 
-from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_prompt_queue import (
+    MAX_CONSOLE_QUEUE_ENTRIES,
+    ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
     PromptQueuePauseReason,
     QueueMutationStatus,
@@ -123,6 +124,8 @@ async def test_manager_fetches_no_body_until_selected_edit_begins() -> None:
 
         assert facade.read_calls == []
         assert modal.session_id == "pinned-session"
+        state = modal.query_one("#console-prompt-queue-manager-state", Static)
+        assert f"/{MAX_CONSOLE_QUEUE_ENTRIES}" in str(state.renderable)
 
         await pilot.click("#console-prompt-queue-edit")
         await pilot.pause()
@@ -132,6 +135,37 @@ async def test_manager_fetches_no_body_until_selected_edit_begins() -> None:
         assert modal.query_one("#console-prompt-queue-edit-input").text == (
             "first [safe] prompt"
         )
+
+
+@pytest.mark.asyncio
+async def test_manager_rejects_unsafe_edited_prompt_at_ui_boundary() -> None:
+    facade = _QueueFacade()
+    before = facade.snapshot("pinned-session")
+    first_entry = before.entries[0]
+    app = App()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal = ConsolePromptQueueModal(
+            session_id="pinned-session",
+            revision=before.revision,
+            queue_controller=facade,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.click("#console-prompt-queue-edit")
+        editor = modal.query_one("#console-prompt-queue-edit-input", TextArea)
+        editor.text = "<script>alert('queued')</script>"
+        await pilot.click("#console-prompt-queue-save")
+        await pilot.pause()
+
+        after = facade.snapshot("pinned-session")
+        assert after.revision == before.revision
+        assert after.entries[0] is first_entry
+        feedback = modal.query_one(
+            "#console-prompt-queue-manager-feedback", Static
+        )
+        assert "Prompt blocked" in str(feedback.renderable)
 
 
 @pytest.mark.asyncio
