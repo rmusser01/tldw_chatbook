@@ -255,3 +255,8 @@ def test_chat_api_call_forwards_qwencloud_mode_base_and_tools(
             api_mode="responses",
         )
         assert "api_mode" not in other
+
+
+def test_qwencloud_is_sensitive_auxiliary_audited() -> None:
+    assert "qwencloud" in chat_functions.API_CALL_HANDLERS
+    assert "qwencloud" in chat_functions.SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Literal, Never, cast
@@ -83,6 +84,66 @@ def _retry_configuration(
             "QwenCloud retry delay must be non-negative and finite."
         )
     return llm_retry_count(retries), retry_delay
+
+
+class _RetryStatusResponse:
+    def __init__(self, response: requests.Response) -> None:
+        self.status = int(response.status_code)
+        self.headers = response.headers
+
+    def get_redirect_location(self) -> None:
+        return None
+
+
+def _build_retry_policy(*, retries: int, retry_delay: float) -> Retry:
+    return Retry(
+        total=retries,
+        backoff_factor=retry_delay,
+        status_forcelist=_RETRYABLE_STATUS_CODES,
+        allowed_methods=frozenset({"POST"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+
+
+def _advance_retry_policy(
+    retry_policy: Retry,
+    *,
+    api_url: str,
+    response: requests.Response | None = None,
+    error: RequestException | None = None,
+) -> tuple[Retry, float]:
+    retry_after: float | None = None
+    if response is not None:
+        retry_response = _RetryStatusResponse(response)
+        retry_after = retry_policy.get_retry_after(cast(Any, retry_response))
+        next_policy = retry_policy.increment(
+            method="POST",
+            url=api_url,
+            response=cast(Any, retry_response),
+        )
+    else:
+        next_policy = retry_policy.increment(
+            method="POST",
+            url=api_url,
+            error=error,
+        )
+    delay = retry_after if retry_after is not None else next_policy.get_backoff_time()
+    return next_policy, delay
+
+
+def _transport_without_hidden_retries() -> HTTPAdapter:
+    retry_policy = Retry(
+        total=0,
+        connect=0,
+        read=0,
+        redirect=0,
+        status=0,
+        other=0,
+        allowed_methods=frozenset({"POST"}),
+        raise_on_status=False,
+    )
+    return HTTPAdapter(max_retries=retry_policy)
 
 
 def _is_mode_model_mismatch(response: requests.Response) -> bool:
@@ -821,7 +882,7 @@ def _normalize_response_usage(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_response_tool_call(raw_call: Mapping[str, Any]) -> dict[str, Any]:
-    call_id = raw_call.get("call_id", raw_call.get("id"))
+    call_id = raw_call.get("call_id")
     name = raw_call.get("name")
     arguments = raw_call.get("arguments")
     if (
@@ -1129,15 +1190,8 @@ def chat_with_qwencloud(
     if not math.isfinite(timeout) or timeout <= 0:
         raise _configuration_error("QwenCloud timeout must be positive and finite.")
     retries, retry_delay = _retry_configuration(provider_settings)
-    retry_policy = Retry(
-        total=retries,
-        backoff_factor=retry_delay,
-        status_forcelist=_RETRYABLE_STATUS_CODES,
-        allowed_methods=frozenset({"POST"}),
-        respect_retry_after_header=True,
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry_policy)
+    retry_policy = _build_retry_policy(retries=retries, retry_delay=retry_delay)
+    adapter = _transport_without_hidden_retries()
 
     suffix = "/responses" if final_mode == "responses" else "/chat/completions"
     api_url = f"{final_base}{suffix}"
@@ -1146,54 +1200,82 @@ def chat_with_qwencloud(
         "Content-Type": "application/json",
     }
 
-    response: requests.Response | None = None
     with requests.Session() as session:
         session.mount("https://", adapter)
         session.mount("http://", adapter)
-        try:
-            response = session.post(
-                api_url,
-                headers=headers,
-                json=payload,
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            result = response.json()
-            if not isinstance(result, Mapping):
-                raise _provider_error("QwenCloud response envelope must be an object.")
-            return normalize_qwencloud_response(result, api_mode=final_mode)
-        except HTTPError as exc:
-            failed_response = exc.response if exc.response is not None else response
-            if failed_response is None:
-                logger.error(
-                    "QwenCloud request failed; status=unknown; error_type=http_error"
+        for attempt_index in range(retries + 1):
+            response: requests.Response | None = None
+            retry_sleep: float | None = None
+            try:
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                    stream=True,
                 )
-                raise _provider_error(
-                    "QwenCloud returned an HTTP failure without a response."
-                ) from None
-            _raise_qwencloud_http_error(failed_response)
-        except (RequestsConnectionError, RequestsTimeout) as exc:
-            logger.error(
-                "QwenCloud request failed; status=none; error_type={}",
-                type(exc).__name__,
-            )
-            raise _provider_error(
-                "QwenCloud network request failed.",
-                status_code=504 if isinstance(exc, RequestsTimeout) else 502,
-            ) from None
-        except RequestException as exc:
-            logger.error(
-                "QwenCloud request failed; status=none; error_type={}",
-                type(exc).__name__,
-            )
-            raise _provider_error("QwenCloud network request failed.") from None
-        except (TypeError, ValueError) as exc:
-            logger.error(
-                "QwenCloud request failed; status={}; error_type={}",
-                getattr(response, "status_code", "unknown"),
-                type(exc).__name__,
-            )
-            raise _provider_error("QwenCloud returned malformed JSON.") from None
-        finally:
-            if response is not None:
-                response.close()
+                status_code = int(response.status_code)
+                if status_code in _RETRYABLE_STATUS_CODES and attempt_index < retries:
+                    retry_policy, retry_sleep = _advance_retry_policy(
+                        retry_policy,
+                        api_url=api_url,
+                        response=response,
+                    )
+                else:
+                    response.raise_for_status()
+                    result = response.json()
+                    if not isinstance(result, Mapping):
+                        raise _provider_error(
+                            "QwenCloud response envelope must be an object."
+                        )
+                    return normalize_qwencloud_response(result, api_mode=final_mode)
+            except HTTPError as exc:
+                failed_response = exc.response if exc.response is not None else response
+                if failed_response is None:
+                    logger.error(
+                        "QwenCloud request failed; "
+                        "status=unknown; error_type=http_error"
+                    )
+                    raise _provider_error(
+                        "QwenCloud returned an HTTP failure without a response."
+                    ) from None
+                _raise_qwencloud_http_error(failed_response)
+            except (RequestsConnectionError, RequestsTimeout) as exc:
+                if attempt_index < retries:
+                    retry_policy, retry_sleep = _advance_retry_policy(
+                        retry_policy,
+                        api_url=api_url,
+                        error=exc,
+                    )
+                else:
+                    logger.error(
+                        "QwenCloud request failed; status=none; error_type={}",
+                        type(exc).__name__,
+                    )
+                    raise _provider_error(
+                        "QwenCloud network request failed.",
+                        status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                    ) from None
+            except RequestException as exc:
+                logger.error(
+                    "QwenCloud request failed; status=none; error_type={}",
+                    type(exc).__name__,
+                )
+                raise _provider_error("QwenCloud network request failed.") from None
+            except (TypeError, ValueError) as exc:
+                logger.error(
+                    "QwenCloud request failed; status={}; error_type={}",
+                    getattr(response, "status_code", "unknown"),
+                    type(exc).__name__,
+                )
+                raise _provider_error("QwenCloud returned malformed JSON.") from None
+            finally:
+                if response is not None:
+                    response.close()
+
+            if retry_sleep is None:
+                raise _provider_error("QwenCloud retry state was incomplete.")
+            if retry_sleep > 0:
+                time.sleep(retry_sleep)
+
+    raise _provider_error("QwenCloud request attempts were exhausted.")

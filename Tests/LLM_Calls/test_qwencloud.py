@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socket
+import threading
 from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
 import requests
 from loguru import logger
-from urllib3.exceptions import (
-    ConnectTimeoutError,
-    MaxRetryError,
-    ReadTimeoutError,
-)
-from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -95,13 +92,161 @@ class _RecordingSession:
         self.closed = True
 
 
-class _RetryResponse:
-    def __init__(self, status: int, *, headers: dict[str, str] | None = None) -> None:
-        self.status = status
-        self.headers = headers or {}
+_SCRIPTED_SUCCESS_BODY = (
+    b'{"choices":[{"message":{"role":"assistant","content":"ok"},'
+    b'"finish_reason":"stop"}]}'
+)
+_ScriptedAction = str | tuple[int, dict[str, str]]
 
-    def get_redirect_location(self) -> None:
-        return None
+
+class _ScriptedQwenHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self) -> None:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length:
+            self.rfile.read(content_length)
+
+        server = self.server
+        assert isinstance(server, _ScriptedQwenServer)
+        action = server.next_action()
+        if action == "stall":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(_SCRIPTED_SUCCESS_BODY)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.flush()
+            server.release_stalls.wait(timeout=1)
+            self.close_connection = True
+            return
+
+        if action == "success":
+            status_code = 200
+            headers: dict[str, str] = {}
+            body = _SCRIPTED_SUCCESS_BODY
+        else:
+            status_code, headers = action
+            body = b'{"error":{"message":"scripted provider failure"}}'
+
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        self.close_connection = True
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+class _ScriptedQwenServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, actions: list[_ScriptedAction]) -> None:
+        super().__init__(("127.0.0.1", 0), _ScriptedQwenHandler)
+        self.actions = actions
+        self.attempts: list[_ScriptedAction] = []
+        self.release_stalls = threading.Event()
+        self._attempt_lock = threading.Lock()
+
+    def next_action(self) -> _ScriptedAction:
+        with self._attempt_lock:
+            attempt_index = len(self.attempts)
+            action = (
+                self.actions[attempt_index]
+                if attempt_index < len(self.actions)
+                else (599, {})
+            )
+            self.attempts.append(action)
+            return action
+
+
+@contextmanager
+def _scripted_qwen_server(
+    actions: list[_ScriptedAction],
+) -> Iterator[tuple[str, _ScriptedQwenServer]]:
+    server = _ScriptedQwenServer(actions)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}/compatible-mode/v1", server
+    finally:
+        server.release_stalls.set()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+
+
+def _configure_qwencloud_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    retries: int,
+    retry_delay: float = 0,
+    timeout: float = 0.05,
+) -> None:
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "timeout": timeout,
+                        "retries": retries,
+                        "retry_delay": retry_delay,
+                    }
+                }
+            }
+        ),
+    )
+
+
+def _track_real_transport_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[str], list[requests.Response], set[int]]:
+    post_urls: list[str] = []
+    returned_responses: list[requests.Response] = []
+    closed_response_ids: set[int] = set()
+    real_post = requests.Session.post
+    real_close = requests.Response.close
+
+    def recording_post(
+        session: requests.Session, url: str, **kwargs: Any
+    ) -> requests.Response:
+        post_urls.append(url)
+        response = real_post(session, url, **kwargs)
+        returned_responses.append(response)
+        return response
+
+    def recording_close(response: requests.Response) -> None:
+        closed_response_ids.add(id(response))
+        real_close(response)
+
+    monkeypatch.setattr(requests.Session, "post", recording_post)
+    monkeypatch.setattr(requests.Response, "close", recording_close)
+    return post_urls, returned_responses, closed_response_ids
+
+
+def _call_scripted_qwencloud(api_base_url: str) -> dict[str, Any]:
+    result = chat_with_qwencloud(
+        input_data=[{"role": "user", "content": "hello"}],
+        model="qwen3.8-max",
+        api_key="key",
+        streaming=False,
+        api_base_url=api_base_url,
+        api_mode="chat_completions",
+    )
+    assert isinstance(result, dict)
+    return result
 
 
 @contextmanager
@@ -1429,6 +1574,29 @@ def test_nonstream_rejects_empty_success_and_malformed_shapes() -> None:
         assert "private" not in str(exc_info.value)
 
 
+def test_responses_requires_call_id_not_transport_id() -> None:
+    for call_id_fields in ({}, {"call_id": "  "}):
+        with pytest.raises(ChatProviderError) as exc_info:
+            qwencloud.normalize_qwencloud_response(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "id": "fc_transport_only",
+                            "type": "function_call",
+                            "status": "completed",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            **call_id_fields,
+                        }
+                    ],
+                },
+                api_mode="responses",
+            )
+        assert exc_info.value.provider == "qwencloud"
+        assert "incomplete function call" in str(exc_info.value).lower()
+
+
 @pytest.mark.parametrize(
     ("api_mode", "suffix", "response_payload"),
     (
@@ -1591,142 +1759,157 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
         assert canary not in serialized
 
 
-def _mounted_retry_policy(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    retries: object,
-    retry_delay: object,
-    sensitive: bool = False,
-) -> Retry:
-    response = _TransportResponse(
-        {
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": "ok"},
-                    "finish_reason": "stop",
-                }
-            ]
-        }
-    )
-    session = _RecordingSession(response)
-    monkeypatch.setattr(
-        qwencloud,
-        "requests",
-        SimpleNamespace(Session=lambda: session),
-    )
-    monkeypatch.setattr(
-        qwencloud,
-        "get_runtime_config_snapshot",
-        lambda: SimpleNamespace(
-            values={
-                "api_settings": {
-                    "qwencloud": {
-                        "timeout": 3,
-                        "retries": retries,
-                        "retry_delay": retry_delay,
-                    }
-                }
-            }
-        ),
-    )
-
-    request_context = sensitive_llm_request() if sensitive else nullcontext()
-    with request_context:
-        chat_with_qwencloud(
-            input_data=[{"role": "user", "content": "hello"}],
-            model="qwen3.8-max",
-            api_key="key",
-            streaming=False,
-            api_base_url="https://qwen.example/v1",
-            api_mode="chat_completions",
-        )
-
-    assert {prefix for prefix, _adapter in session.mounts} == {"http://", "https://"}
-    retry_policies = {
-        id(adapter.max_retries): adapter.max_retries
-        for _prefix, adapter in session.mounts
-    }
-    assert len(retry_policies) == 1
-    return next(iter(retry_policies.values()))
-
-
-def _attempts_until_exhausted(
-    retry: Retry,
-    *,
-    response: _RetryResponse | None = None,
-    error: Exception | None = None,
-) -> int:
-    attempts = 1
-    current = retry
-    while True:
-        try:
-            current = current.increment(
-                method="POST",
-                url="https://qwen.example/v1/chat/completions",
-                response=response,
-                error=error,
-            )
-        except MaxRetryError:
-            return attempts
-        attempts += 1
-
-
+@pytest.mark.allow_network
 def test_retry_policy_counts_status_connection_and_timeout_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry = _mounted_retry_policy(monkeypatch, retries=2, retry_delay=0.25)
-
-    assert retry.total == 2
-    assert retry.allowed_methods == frozenset({"POST"})
-    assert retry.status_forcelist == frozenset({429, 500, 502, 503, 504})
-    assert retry.respect_retry_after_header is True
-    assert _attempts_until_exhausted(retry, response=_RetryResponse(503)) == 3
-    assert (
-        _attempts_until_exhausted(
-            retry, error=ConnectTimeoutError(None, "connection canary")
-        )
-        == 3
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
     )
-    assert (
-        _attempts_until_exhausted(
-            retry, error=ReadTimeoutError(None, None, "timeout canary")
-        )
-        == 3
-    )
+    _configure_qwencloud_transport(monkeypatch, retries=2)
 
-    integer_retry_after = retry.get_retry_after(
-        _RetryResponse(429, headers={"Retry-After": "4"})  # type: ignore[arg-type]
-    )
-    assert integer_retry_after == 4
-    date_header = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=5))
-    date_retry_after = retry.get_retry_after(
-        _RetryResponse(429, headers={"Retry-After": date_header})  # type: ignore[arg-type]
-    )
-    assert date_retry_after is not None
-    assert 3 <= date_retry_after <= 6
+    post_start = len(post_urls)
+    response_start = len(returned_responses)
+    with _scripted_qwen_server(["stall", "stall", "success"]) as (
+        api_base_url,
+        timeout_server,
+    ):
+        result = _call_scripted_qwencloud(api_base_url)
+    timeout_responses = returned_responses[response_start:]
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(timeout_server.attempts) == 3
+    assert len(post_urls[post_start:]) == 3
+    assert len(timeout_responses) == 3
+    assert all(id(response) in closed_response_ids for response in timeout_responses)
 
-    after_one = retry.increment(
-        method="POST",
-        url="https://qwen.example/v1/chat/completions",
-        error=ConnectTimeoutError(None, "first"),
-    )
-    after_two = after_one.increment(
-        method="POST",
-        url="https://qwen.example/v1/chat/completions",
-        error=ConnectTimeoutError(None, "second"),
-    )
-    assert after_two.get_backoff_time() == pytest.approx(0.5)
+    post_start = len(post_urls)
+    response_start = len(returned_responses)
+    with _scripted_qwen_server([(503, {}), (503, {}), "success"]) as (
+        api_base_url,
+        status_server,
+    ):
+        result = _call_scripted_qwencloud(api_base_url)
+    status_responses = returned_responses[response_start:]
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(status_server.attempts) == 3
+    assert len(post_urls[post_start:]) == 3
+    assert len(status_responses) == 3
+    assert all(id(response) in closed_response_ids for response in status_responses)
 
-    negative = _mounted_retry_policy(monkeypatch, retries=-9, retry_delay=1)
-    assert negative.total == 0
+    guarded_connect = socket.socket.connect
+    connection_attempts = 0
+    post_start = len(post_urls)
+    response_start = len(returned_responses)
+    with _scripted_qwen_server(["success"]) as (api_base_url, connection_server):
+        target_port = connection_server.server_address[1]
+
+        def flaky_connect(
+            client_socket: socket.socket, address: tuple[str, int]
+        ) -> None:
+            nonlocal connection_attempts
+            if address[1] == target_port:
+                connection_attempts += 1
+                if connection_attempts < 3:
+                    raise ConnectionRefusedError("scripted connection failure")
+            guarded_connect(client_socket, address)
+
+        monkeypatch.setattr(socket.socket, "connect", flaky_connect)
+        result = _call_scripted_qwencloud(api_base_url)
+    connection_responses = returned_responses[response_start:]
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert connection_attempts == 3
+    assert len(connection_server.attempts) == 1
+    assert len(post_urls[post_start:]) == 3
+    assert len(connection_responses) == 1
+    assert id(connection_responses[0]) in closed_response_ids
+
+    _configure_qwencloud_transport(monkeypatch, retries=-9)
+    post_start = len(post_urls)
+    with _scripted_qwen_server([(503, {}), "success"]) as (
+        api_base_url,
+        negative_server,
+    ):
+        with pytest.raises(ChatProviderError):
+            _call_scripted_qwencloud(api_base_url)
+    assert len(negative_server.attempts) == 1
+    assert len(post_urls[post_start:]) == 1
 
 
+@pytest.mark.allow_network
 def test_sensitive_request_forces_zero_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry = _mounted_retry_policy(monkeypatch, retries=7, retry_delay=1, sensitive=True)
-    assert retry.total == 0
-    assert _attempts_until_exhausted(retry, response=_RetryResponse(503)) == 1
+    _configure_qwencloud_transport(monkeypatch, retries=7)
+    with (
+        _scripted_qwen_server([(503, {}), "success"]) as (
+            api_base_url,
+            server,
+        ),
+        sensitive_llm_request(),
+        pytest.raises(ChatProviderError),
+    ):
+        _call_scripted_qwencloud(api_base_url)
+    assert len(server.attempts) == 1
+
+
+@pytest.mark.allow_network
+def test_retry_policy_honors_retry_after_and_exponential_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda delay: sleeps.append(delay))
+
+    _configure_qwencloud_transport(monkeypatch, retries=1)
+    with _scripted_qwen_server([(429, {"Retry-After": "4"}), "success"]) as (
+        api_base_url,
+        integer_server,
+    ):
+        _call_scripted_qwencloud(api_base_url)
+    assert len(integer_server.attempts) == 2
+    assert sleeps == [4]
+
+    sleeps.clear()
+    date_header = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=5))
+    with _scripted_qwen_server([(503, {"Retry-After": date_header}), "success"]) as (
+        api_base_url,
+        date_server,
+    ):
+        _call_scripted_qwencloud(api_base_url)
+    assert len(date_server.attempts) == 2
+    assert len(sleeps) == 1
+    assert 3 <= sleeps[0] <= 6
+
+    sleeps.clear()
+    _configure_qwencloud_transport(monkeypatch, retries=2, retry_delay=0.25)
+    with _scripted_qwen_server([(503, {}), (503, {}), "success"]) as (
+        api_base_url,
+        backoff_server,
+    ):
+        _call_scripted_qwencloud(api_base_url)
+    assert len(backoff_server.attempts) == 3
+    assert sleeps == [pytest.approx(0.5)]
+
+
+@pytest.mark.allow_network
+def test_retry_policy_uses_one_global_budget_across_mixed_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_urls, returned_responses, closed_response_ids = (
+        _track_real_transport_resources(monkeypatch)
+    )
+    _configure_qwencloud_transport(monkeypatch, retries=2)
+
+    with _scripted_qwen_server([(503, {}), "stall", (503, {}), "success"]) as (
+        api_base_url,
+        server,
+    ):
+        with pytest.raises(ChatProviderError):
+            _call_scripted_qwencloud(api_base_url)
+
+    assert len(server.attempts) == 3
+    assert len(post_urls) == 3
+    assert len(returned_responses) == 3
+    assert all(id(response) in closed_response_ids for response in returned_responses)
 
 
 def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(

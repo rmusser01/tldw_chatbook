@@ -317,11 +317,6 @@ def test_sensitive_audit_registry_covers_every_registered_chat_handler() -> None
     )
 
 
-def test_qwencloud_is_sensitive_auxiliary_audited() -> None:
-    assert "qwencloud" in chat_functions.API_CALL_HANDLERS
-    assert "qwencloud" in SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
-
-
 def test_registered_chat_handlers_accept_pinned_endpoint_override() -> None:
     missing = {
         endpoint
