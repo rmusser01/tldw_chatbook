@@ -22,6 +22,7 @@ from tldw_chatbook.TTS.profile_schema import decode_utc_datetime, decode_uuid
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
 REFERENCE_BLOB_CHUNK_BYTES = 256 * 1024
+REFERENCE_VALIDATION_PROGRESS_OPCODE_INTERVAL = 1_000
 
 REFERENCE_SUMMARY_ALIASES = (
     "reference_reference_id",
@@ -285,10 +286,29 @@ def validate_reference_rows(
 ) -> None:
     """Fully qualify every reference payload, metadata row, and total quota."""
 
+    callback_error: BaseException | None = None
     body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    progress_installed = False
+
+    def interrupt_after_deadline() -> int:
+        nonlocal callback_error
+        assert check_deadline is not None
+        try:
+            check_deadline()
+        except BaseException as error:
+            callback_error = error
+            return 1
+        return 0
+
     try:
         if check_deadline is not None:
             check_deadline()
+            connection.set_progress_handler(
+                interrupt_after_deadline,
+                REFERENCE_VALIDATION_PROGRESS_OPCODE_INTERVAL,
+            )
+            progress_installed = True
         quota = connection.execute(
             f"SELECT COUNT(*), COALESCE(SUM(byte_length), 0) FROM {REFERENCE_TABLE}"
         ).fetchone()
@@ -339,8 +359,18 @@ def validate_reference_rows(
             check_deadline()
     except BaseException as error:
         body_error = error
-    if body_error is not None and not isinstance(body_error, Exception):
-        raise body_error
+    if progress_installed:
+        try:
+            connection.set_progress_handler(None, 0)
+        except BaseException as error:
+            cleanup_error = error
+    if callback_error is not None:
+        body_error = callback_error
+    for candidate_error in (body_error, cleanup_error):
+        if candidate_error is not None and not isinstance(candidate_error, Exception):
+            raise candidate_error
+    if cleanup_error is not None:
+        raise ProfileRepositoryError("reference_unavailable") from None
     if isinstance(body_error, ProfileRepositoryError):
         raise ProfileRepositoryError(body_error.code) from None
     if body_error is not None:
@@ -351,6 +381,7 @@ __all__ = [
     "PROFILE_WITH_REFERENCE_SELECT",
     "ASSIGNED_PROFILE_WITH_REFERENCE_JOIN_SELECT",
     "REFERENCE_BLOB_CHUNK_BYTES",
+    "REFERENCE_VALIDATION_PROGRESS_OPCODE_INTERVAL",
     "REFERENCE_ID_INDEX",
     "REFERENCE_PAYLOAD_SELECT",
     "REFERENCE_SUMMARY_ALIASES",

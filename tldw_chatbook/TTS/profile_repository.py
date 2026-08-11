@@ -1036,6 +1036,42 @@ class TTSProfileRepository:
             raise _repository_error("invalid_state")
         return active_path
 
+    def _clear_reference_damage_markers(self) -> None:
+        """Clear markers at one lifecycle generation boundary."""
+
+        with self._state_lock:
+            self._damaged_reference_profile_ids.clear()
+
+    def _discard_reference_damage_marker(self, profile_id: UUID) -> None:
+        """Clear one repaired or removed reference marker."""
+
+        with self._state_lock:
+            self._damaged_reference_profile_ids.discard(profile_id)
+
+    def _reference_damage_is_marked(
+        self,
+        profile_id: UUID,
+        generation: int,
+    ) -> bool:
+        """Return whether this exact generation isolated the reference."""
+
+        with self._state_lock:
+            return (
+                self._generation == generation
+                and profile_id in self._damaged_reference_profile_ids
+            )
+
+    def _mark_reference_damage(self, profile_id: UUID, generation: int) -> None:
+        """Mark row-local damage only while its admitted generation is live."""
+
+        with self._state_lock:
+            if (
+                self._generation == generation
+                and not self._terminal
+                and self._state is ProfileRepositoryState.OPEN
+            ):
+                self._damaged_reference_profile_ids.add(profile_id)
+
     async def open(self) -> ProfileStoreResult[None]:
         """Open the profile store or retry one unavailable open attempt.
 
@@ -1068,6 +1104,7 @@ class TTSProfileRepository:
                 if state_error is not None:
                     raise _repository_error(state_error)
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 executor = self._executor
 
@@ -1198,7 +1235,7 @@ class TTSProfileRepository:
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
 
-        self._damaged_reference_profile_ids.clear()
+        self._clear_reference_damage_markers()
         if self._connection is not None or self._lease is not None:
             self._worker_cleanup()
 
@@ -1924,6 +1961,7 @@ class TTSProfileRepository:
                 connection,
                 validated_profile_id,
                 validated_revision,
+                validated_generation,
             ),
             expected_generation=validated_generation,
         )
@@ -2376,7 +2414,7 @@ class TTSProfileRepository:
     ) -> ProfileRestoreReceipt:
         """Run one exclusive staged restore and race-free shared rebind."""
 
-        self._damaged_reference_profile_ids.clear()
+        self._clear_reference_damage_markers()
         stage_path: Path | None = None
         recovery_path: Path | None = None
         exclusive_lease: ProfileStoreLease | None = None
@@ -2984,6 +3022,7 @@ class TTSProfileRepository:
                     raise _repository_error(state_error)
                 self._state = ProfileRepositoryState.RESTORING
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 pending = tuple(self._pending_futures)
                 executor = self._executor
@@ -3584,7 +3623,7 @@ class TTSProfileRepository:
                 or updated.reference.byte_length != canonical.byte_length
             ):
                 raise _repository_error("corrupt_data")
-            self._damaged_reference_profile_ids.discard(profile_id)
+            self._discard_reference_damage_marker(profile_id)
             return updated
 
         return self._worker_transaction(
@@ -3620,7 +3659,7 @@ class TTSProfileRepository:
             )
             if updated.reference is not None:
                 raise _repository_error("corrupt_data")
-            self._damaged_reference_profile_ids.discard(profile_id)
+            self._discard_reference_damage_marker(profile_id)
             return updated
 
         return self._worker_transaction(
@@ -3635,9 +3674,10 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         profile_id: UUID,
         expected_revision: int,
+        expected_generation: int,
     ) -> TTSCloneReference:
         def read_exact() -> TTSCloneReference:
-            if profile_id in self._damaged_reference_profile_ids:
+            if self._reference_damage_is_marked(profile_id, expected_generation):
                 raise _repository_error("reference_unavailable")
             profile = self._worker_get_base_profile(connection, profile_id)
             if profile.revision != expected_revision:
@@ -3713,7 +3753,7 @@ class TTSProfileRepository:
                     cleanup_error = caught
                 _raise_with_cleanup_precedence(error, cleanup_error)
             if error.code == "reference_unavailable":
-                self._damaged_reference_profile_ids.add(profile_id)
+                self._mark_reference_damage(profile_id, expected_generation)
             raise
 
     def _worker_assignment_count(
@@ -4203,6 +4243,7 @@ class TTSProfileRepository:
                         value=None,
                     )
                 self._generation += 1
+                self._damaged_reference_profile_ids.clear()
                 generation = self._generation
                 self._terminal = True
                 self._state = ProfileRepositoryState.CLOSED
@@ -4267,7 +4308,7 @@ class TTSProfileRepository:
     def _worker_cleanup(self) -> None:
         """Close SQLite before releasing the shared lease on the worker."""
 
-        self._damaged_reference_profile_ids.clear()
+        self._clear_reference_damage_markers()
         connection = self._connection
         lease = self._lease
         connection_error: BaseException | None = None

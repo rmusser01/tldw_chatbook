@@ -116,6 +116,42 @@ def _assert_error(error: ProfileRepositoryError, code: str) -> None:
     assert error.__context__ is None
 
 
+def test_reference_qualification_deadline_interrupts_aggregate_sql() -> None:
+    progress_callbacks: list[object] = []
+    deadline_checks = 0
+
+    class AggregateScanConnection:
+        def set_progress_handler(
+            self,
+            callback: object,
+            opcode_interval: int,
+        ) -> None:
+            progress_callbacks.append((callback, opcode_interval))
+
+        def execute(self, _sql: str) -> object:
+            callback, _interval = cast(tuple[Any, int], progress_callbacks[-1])
+            assert callable(callback)
+            assert callback() == 1
+            raise sqlite3.OperationalError("private interrupted query detail")
+
+    def check_deadline() -> None:
+        nonlocal deadline_checks
+        deadline_checks += 1
+        if deadline_checks >= 2:
+            raise ProfileRepositoryError("restore_failed")
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        reference_storage.validate_reference_rows(
+            cast(sqlite3.Connection, AggregateScanConnection()),
+            check_deadline=check_deadline,
+        )
+
+    _assert_error(caught.value, "restore_failed")
+    assert len(progress_callbacks) == 2
+    assert progress_callbacks[0][1] == 1_000  # type: ignore[index]
+    assert progress_callbacks[1] == (None, 0)
+
+
 @pytest.mark.asyncio
 async def test_attach_stream_read_and_metadata_only_profile_surfaces(
     tmp_path: Path,
@@ -667,6 +703,59 @@ async def test_close_clears_generation_local_damage_markers(tmp_path: Path) -> N
     await repository.close()
 
     assert repository._damaged_reference_profile_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_restore_setup_failure_clears_prior_generation_damage_markers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    repository = profile_repository.TTSProfileRepository(path, _clock=lambda: NOW)
+    await repository.open()
+    generation, revision = await _create(repository, PROFILE_A, "Narrator")
+    attached = await repository.set_reference(
+        PROFILE_A,
+        _canonical(),
+        expected_revision=revision,
+        expected_generation=generation,
+    )
+    await repository.backup_to(candidate)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "UPDATE tts_profile_clone_references SET sha256 = ?",
+            ("0" * 64,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(ProfileRepositoryError):
+        await repository.get_reference(
+            PROFILE_A,
+            expected_revision=attached.value.revision,
+            expected_generation=generation,
+        )
+    assert PROFILE_A in repository._damaged_reference_profile_ids
+
+    real_create_task = profile_repository.asyncio.create_task
+
+    def fail_task_creation(coroutine: Any) -> None:
+        coroutine.close()
+        raise RuntimeError("private setup failure")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(profile_repository.asyncio, "create_task", fail_task_creation)
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate)
+    _assert_error(caught.value, "restore_failed")
+    assert repository.state.value == "open"
+    assert repository.generation == generation + 1
+    assert repository._damaged_reference_profile_ids == set()
+
+    assert profile_repository.asyncio.create_task is real_create_task
+    await repository.close()
 
 
 @pytest.mark.asyncio
