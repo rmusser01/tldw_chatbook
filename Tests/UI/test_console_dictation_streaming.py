@@ -1321,10 +1321,17 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         button = await _wait_for_mic_label(composer, pilot, "Dictate")
         assert console._console_dictation_state == "idle"
         assert console._console_dictation_session is None
-        # This fake stop finishes inside Textual's 0.2 s pressed animation.
-        # Button deliberately ignores clicks while its ``-active`` class is
-        # present, so wait for that input animation rather than racing it.
-        assert button.has_class("-active")
+        # Button deliberately ignores clicks while its ``-active`` press
+        # animation is running -- a fixed ~0.2s real-clock timer Textual
+        # owns, started when the click landed, independent of how long this
+        # capture's async stop-and-transcribe unwind (asyncio.to_thread +
+        # run_worker + a posted ConsoleDictationEvent) takes to reach
+        # "Dictate". Under load that unwind can outlast the button's own
+        # animation, so ``-active`` may already be gone by the time the
+        # label changes -- asserting it is still present raced exactly that
+        # (flaky ~50% of isolated runs under load, task-3400). Waiting for
+        # it to clear is the real precondition for the next click below and
+        # is a no-op if it already has.
         while button.has_class("-active"):
             await pilot.pause(0.01)
 
