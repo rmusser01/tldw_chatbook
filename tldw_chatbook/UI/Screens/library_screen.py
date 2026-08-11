@@ -236,6 +236,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
@@ -561,6 +562,9 @@ LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
 LIBRARY_CANVAS_KIND_NOTES = "notes"
+LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
+    {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -7611,7 +7615,7 @@ class LibraryScreen(BaseAppScreen):
         )
         install_progress.display = self._parakeet_v2_install_progress is not None
         yield install_progress
-        if shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
+        if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
             with Horizontal(id="library-notes-source-strip"):
                 database_selected = (
                     self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
@@ -7852,7 +7856,7 @@ class LibraryScreen(BaseAppScreen):
                         compact=self._library_notes_compact,
                         id="library-notes-canvas",
                     )
-                elif shell.canvas_kind == "notes-create":
+                elif shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES_CREATE:
                     yield LibraryNotesCanvas(
                         mode="create",
                         compact=self._library_notes_compact,
@@ -8106,7 +8110,7 @@ class LibraryScreen(BaseAppScreen):
                                 "New note",
                                 "Create a new note.",
                                 LIBRARY_ROW_CREATE_NOTE,
-                                "notes-create",
+                                LIBRARY_CANVAS_KIND_NOTES_CREATE,
                                 "library-hub-action-new-note",
                             ),
                         ):
@@ -11952,7 +11956,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             notes_source_strip_mounted = bool(self.query("#library-notes-source-strip"))
             destination_uses_notes_source_strip = (
-                shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+                shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
             )
             if notes_source_strip_mounted != destination_uses_notes_source_strip:
                 return False

@@ -179,13 +179,15 @@ class LibraryNotesCanvas(Vertical):
         )
         # Database mode persists notes in the Library; Files edits a folder
         # directly, while Sync mirrors a folder into this database.
-        yield Static(
+        database_purpose = Static(
             "These notes live in the Library's own database — for notes "
             "that live in a folder on disk, switch to Files, or use Sync "
             "to mirror one in.",
             id="library-notes-database-purpose",
             markup=False,
         )
+        database_purpose.display = not self.compact
+        yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
             yield Input(
@@ -660,6 +662,9 @@ class LibraryNotesCanvas(Vertical):
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:
+            database_purpose = self.query("#library-notes-database-purpose")
+            if database_purpose:
+                database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
             select_all = self.query("#library-notes-select-all")
             if select_all:
