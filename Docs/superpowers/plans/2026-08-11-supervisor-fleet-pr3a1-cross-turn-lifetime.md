@@ -172,6 +172,23 @@ Replacement (spec §5 Containment): per-child `max_wall_seconds` from the defini
 
 For each seam below, a surviving child must either keep a valid one, get a replacement, or have its output deliberately and observably dropped. **Silent loss is the failure mode to avoid** — a child whose steps, diffs and token spend vanish looks like it worked.
 
+**The failure shape to hunt, named by Task 3** (which found it the hard way):
+*per-turn state read off `self` at call time silently misfiles work that
+outlives the turn.* The run-log writer had exactly this shape — `on_record`
+read `self.run_log_writer` at call time while `run_turn` replaced the
+attribute, so a survivor's records landed in the next turn's tree. Nothing
+raised; the records simply went somewhere wrong. Task 3 fixed it by resolving
+the writer per RUN and capturing it on the parent's thread **at spawn time**,
+so a child not scheduled until the next turn still files into its own tree.
+
+Sweep for the same shape systematically, not opportunistically. Every
+`self.<per-turn attr>` read from a code path a child can reach is a candidate:
+start with `_turn_definitions`, `_fleet`, `_fleet_cancels`, `_fleet_threads`,
+`registry`. For each, answer: is it read at call time or captured at spawn?
+If read at call time, what does a survivor get after `run_turn` reassigns it —
+and does anything raise, or does it silently do the wrong thing? Silence is
+the dangerous answer.
+
 - [ ] **Step 1: Audit and report a table** (seam → what a surviving child does today → decision → evidence):
   - `on_step` (`console_agent_bridge.py:2031`) — closes over turn-local `live_steps`/`subagents`/`pending_diffs`
   - diff sink (`:1660`, wired `:1711`) — nothing drains it after the turn
