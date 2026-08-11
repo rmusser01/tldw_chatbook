@@ -70,7 +70,7 @@ Validated findings are fixed by the implementing agent with a new focused RED→
 
 ### Packaged workflow and distribution
 
-- Create `tldw_chatbook/Image_Generation/workflows/minimax_h3_image_edit.json` — sole packaged H3 image-edit graph.
+- Create `tldw_chatbook/Image_Generation/workflows/minimax_h3_image_edit.json` — sole packaged H3 image-edit graph. Its logical packaged workflow key is the extensionless `minimax_h3_image_edit`; the `.json` suffix belongs only to the resource filename and is not accepted as a second loader key.
 - Create `Tests/Image_Generation/test_comfyui_workflow_assets.py` — independent exact node/class/link/literal/output inventory and hygiene assertions.
 - Create `Tests/Image_Generation/test_comfyui_workflow_distribution.py` — wheel/sdist inventory plus fresh-wheel installed-resource load.
 - Modify `pyproject.toml` — include only `Image_Generation/workflows/*.json` as Image Generation package data.
@@ -135,7 +135,7 @@ Validated findings are fixed by the implementing agent with a new focused RED→
 
 **Interfaces:**
 - Consumes: the approved exact node/class/link and four-change allowlist in design §5.
-- Produces: one package-resource-confined workflow key that the adapter can load from source, wheel, and sdist.
+- Produces: one package-resource-confined logical key, `minimax_h3_image_edit`, mapped internally to the sole resource filename `minimax_h3_image_edit.json`, loadable from source, wheel, and sdist.
 
 - [ ] **Step 1: Reconfirm provenance boundaries without revealing source identity**
 
@@ -193,7 +193,7 @@ Canonicalize private source and sanitized copies after removing only those four 
 
 - [ ] **Step 6: Add package-data declarations and the minimal confined loader seam**
 
-Add `"tldw_chatbook.Image_Generation" = ["workflows/*.json"]` to setuptools package data and the matching `recursive-include` to `MANIFEST.in`. Add only the minimal loader needed by the distribution test to the new adapter module: `importlib.resources.files(...)`, reject path separators/arbitrary keys, parse one known resource, validate it as a JSON object, return a deep copy.
+Add `"tldw_chatbook.Image_Generation" = ["workflows/*.json"]` to setuptools package data and the matching `recursive-include` to `MANIFEST.in`. Add only the minimal loader needed by the distribution test to the new adapter module: `importlib.resources.files(...)`, accept only the logical key `minimax_h3_image_edit`, map it internally to `minimax_h3_image_edit.json`, reject the suffixed filename/path separators/arbitrary keys, parse one known resource, validate it as a JSON object, and return a deep copy.
 
 - [ ] **Step 7: Verify GREEN and mutate the inventory guards**
 
