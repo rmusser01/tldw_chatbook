@@ -26,29 +26,12 @@ this never touches a real user config or database.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
-
 import pytest
 
-
-class _RecordingFastMCP:
-    """Stand-in for ``mcp.server.fastmcp.FastMCP``.
-
-    Captures every ``@self.mcp.tool()``-decorated function by name so the
-    test can call the exact closures ``_register_tools()`` defines, without
-    requiring the optional ``mcp`` package to be installed (it is not,
-    in this environment).
-    """
-
-    def __init__(self) -> None:
-        self.tools: Dict[str, Callable[..., Any]] = {}
-
-    def tool(self):
-        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            self.tools[func.__name__] = func
-            return func
-
-        return decorator
+gateway = pytest.importorskip(
+    "mcp_unified.gateway", reason="mcp-unified extra not installed"
+)
+GatewayRequestContext = gateway.GatewayRequestContext
 
 
 @pytest.fixture
@@ -68,45 +51,49 @@ def _isolated_profile(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _build_server_with_real_notes_tools(monkeypatch):
+def _build_server_with_real_notes_tools():
     """Construct a bare ``TldwMCPServer`` with real notes tools registered.
 
-    Bypasses ``__init__`` (which requires the optional ``mcp`` package) via
-    ``__new__``, runs the real, unmodified ``_init_databases()``, then
-    registers tools using ``_RecordingFastMCP`` in place of ``FastMCP`` so
-    the real ``create_note``/``search_notes`` closures can be captured and
-    called directly.
+    Bypasses the legacy ``__init__`` via ``__new__``, runs the real,
+    unmodified ``_init_databases()``, then registers and finalizes the real
+    closures against the standalone gateway adapter.
     """
+    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
     from tldw_chatbook.MCP import server as mcp_server_module
 
     instance = mcp_server_module.TldwMCPServer.__new__(mcp_server_module.TldwMCPServer)
     instance._init_databases()
 
-    fake_mcp = _RecordingFastMCP()
-    instance.mcp = fake_mcp
+    runtime = ChatbookGatewayRuntime(
+        name="tldw_chatbook",
+        version="0.1.0",
+        tool_descriptors=mcp_server_module._describe_local_tools(),
+    )
+    instance.mcp = runtime
     instance._register_tools()
+    runtime.finalize()
 
-    return instance, fake_mcp
+    return instance, runtime
 
 
 @pytest.mark.asyncio
-async def test_create_note_and_search_notes_work_end_to_end(
-    _isolated_profile, monkeypatch
-):
+async def test_create_note_and_search_notes_work_end_to_end(_isolated_profile):
     """AC: create_note and search_notes work end to end against a temp DB."""
-    instance, fake_mcp = _build_server_with_real_notes_tools(monkeypatch)
+    _instance, runtime = _build_server_with_real_notes_tools()
+    context = GatewayRequestContext(request_id="notes-end-to-end")
 
-    create_note = fake_mcp.tools["create_note"]
-    search_notes = fake_mcp.tools["search_notes"]
-
-    created = await create_note(
-        title="Grocery List", content="Buy oat milk and coffee beans"
+    created = await runtime.call_tool(
+        "create_note",
+        {"title": "Grocery List", "content": "Buy oat milk and coffee beans"},
+        context,
     )
     assert "error" not in created
     assert created["title"] == "Grocery List"
     assert created["id"]
 
-    results = await search_notes(query="oat milk", limit=10)
+    results = await runtime.call_tool(
+        "search_notes", {"query": "oat milk", "limit": 10}, context
+    )
     assert results, f"expected a match, got: {results}"
     assert not any("error" in r for r in results)
 
@@ -118,9 +105,7 @@ async def test_create_note_and_search_notes_work_end_to_end(
 
 
 @pytest.mark.asyncio
-async def test_create_note_tool_no_longer_accepts_tags_or_template(
-    _isolated_profile, monkeypatch
-):
+async def test_create_note_tool_no_longer_accepts_tags_or_template(_isolated_profile):
     """Regression guard: ``tags``/``template`` are gone from the tool schema.
 
     Neither parameter maps to anything ``NotesInteropService.add_note`` (or
@@ -128,19 +113,17 @@ async def test_create_note_tool_no_longer_accepts_tags_or_template(
     silently accepted syntax that still failed at the (nonexistent)
     ``create_note`` method call.
     """
-    import inspect
-
-    instance, fake_mcp = _build_server_with_real_notes_tools(monkeypatch)
-
-    create_note = fake_mcp.tools["create_note"]
-    parameters = set(inspect.signature(create_note).parameters)
+    _instance, runtime = _build_server_with_real_notes_tools()
+    descriptors = await runtime.list_tools(
+        GatewayRequestContext(request_id="notes-schema")
+    )
+    create_note = next(item for item in descriptors if item["name"] == "create_note")
+    parameters = set(create_note["inputSchema"]["properties"])
 
     assert parameters == {"title", "content"}
 
 
-def test_notes_service_is_constructed_with_the_real_signature(
-    _isolated_profile, monkeypatch
-):
+def test_notes_service_is_constructed_with_the_real_signature(_isolated_profile):
     """Regression guard for the exact bug: the service must construct
     without needing a permissive fake (unlike the pre-fix tests in
     ``test_server_media_db_path.py`` / ``test_server_character_service.py``,
@@ -149,7 +132,7 @@ def test_notes_service_is_constructed_with_the_real_signature(
     """
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
-    instance, _fake_mcp = _build_server_with_real_notes_tools(monkeypatch)
+    instance, _runtime = _build_server_with_real_notes_tools()
 
     assert isinstance(instance.notes_service, NotesInteropService)
     assert instance.notes_service.unified_db_template is instance.chachanotes_db

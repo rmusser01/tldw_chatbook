@@ -183,9 +183,9 @@ class SimplifiedRAGSearchService:
 
             return results[:limit]
 
-        except Exception as e:
+        except Exception:
             # Do NOT swallow this into an empty result (task-2271): a
             # missing/renamed media_db method or any other search failure
             # must surface as an error, never as a silent "0 results".
-            logger.error(f"Error in keyword_search: {e}")
+            logger.error("Keyword search failed.")
             raise

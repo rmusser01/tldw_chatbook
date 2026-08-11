@@ -10,6 +10,9 @@ from typing import Any, Optional, Callable
 from loguru import logger
 
 # Global flags for optional dependency availability
+# This is feature availability, not a credential.
+_TOKEN_CHUNKING_AVAILABILITY = {"token_chunking": False}  # nosec B105
+
 DEPENDENCIES_AVAILABLE = {
     "torch": False,
     "transformers": False,
@@ -24,7 +27,7 @@ DEPENDENCIES_AVAILABLE = {
     "chunker": False,
     "chinese_chunking": False,
     "japanese_chunking": False,
-    "token_chunking": False,
+    **_TOKEN_CHUNKING_AVAILABILITY,
     "cohere": False,
     # Audio/Video processing
     "audio_processing": False,
@@ -203,7 +206,14 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "all-tools",
         "All optional tools",
         AREA_ALL,
-        ("grep_ast", "chromadb", "vllm", "playwright", "faster-whisper", "mcp[cli]"),
+        (
+            "grep_ast",
+            "chromadb",
+            "vllm",
+            "playwright",
+            "faster-whisper",
+            "mcp-unified",
+        ),
         "Release packaging",
         "All optional capabilities",
         OWNER_RELEASE,
@@ -362,7 +372,7 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "mcp",
         "MCP server and client support",
         AREA_MCP,
-        ("mcp[cli]",),
+        ("mcp-unified",),
         "MCP",
         "MCP server/client tools",
         OWNER_MCP,
@@ -1305,7 +1315,7 @@ def check_image_processing_deps() -> bool:
 
 def check_mcp_deps() -> bool:
     """Check dependencies needed for MCP functionality."""
-    mcp_available = check_dependency("mcp")
+    mcp_available = check_dependency("mcp_unified", "mcp")
     DEPENDENCIES_AVAILABLE["mcp"] = mcp_available
 
     if mcp_available:

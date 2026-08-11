@@ -40,11 +40,11 @@ surface: they are read-only, locally served, and contract-governed by
 the descriptor table (`_describe_local_library_tools`), and the in-app direct
 runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
 one shared `LocalLibraryToolService` (composed by
-`build_local_library_tool_service`) via `asyncio.to_thread`. This surface is
-deliberately FastMCP-free (owner directive, 2026-08-07): the standalone
-`TldwMCPServer` below remains the legacy FastMCP-based stdio server and is
-untouched by this work. The Console-only `[console].direct_library_tools`
-retrieval-mode toggle has no effect on this surface.
+`build_local_library_tool_service`) via `asyncio.to_thread`. The standalone
+`TldwMCPServer` below uses `mcp-unified` and deliberately does not publish
+these in-process Library tools. The Console-only
+`[console].direct_library_tools` retrieval-mode toggle has no effect on this
+surface.
 """
 
 import asyncio  # noqa: E402
@@ -54,16 +54,14 @@ from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional, Any  # noqa: E402
 from datetime import datetime  # noqa: E402
 
-# Import MCP server components conditionally
+# Import the standalone MCP runtime conditionally.
 try:
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.models import InitializationOptions
-    from mcp.types import Tool, Resource, Prompt, TextContent, ImageContent  # noqa: F401
+    from mcp_unified.gateway import serve_stdio
 
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    FastMCP = None
+    serve_stdio = None  # type: ignore[assignment]
 
 from loguru import logger  # noqa: E402
 
@@ -167,7 +165,30 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
         else:
             required.append(arg.arg)
         properties[arg.arg] = prop
-    return {"type": "object", "properties": properties, "required": required}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _signature_to_prompt_arguments(
+    fn: ast.AsyncFunctionDef | ast.FunctionDef,
+) -> list[dict[str, Any]]:
+    """Describe prompt arguments without exposing Python annotations."""
+    positional = [*fn.args.posonlyargs, *fn.args.args]
+    first_default_index = len(positional) - len(fn.args.defaults)
+    arguments = [
+        {"name": arg.arg, "required": index < first_default_index}
+        for index, arg in enumerate(positional)
+        if arg.arg not in ("self", "cls")
+    ]
+    arguments.extend(
+        {"name": arg.arg, "required": default is None}
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults)
+    )
+    return arguments
 
 
 def _extract_registered_entries(
@@ -193,7 +214,7 @@ def _extract_registered_entries(
                         or func.attr != decorator_name
                     ):
                         continue
-                    entry = {
+                    entry: dict[str, Any] = {
                         "name": nested.name,
                         "description": _first_doc_line(ast.get_docstring(nested)),
                     }
@@ -205,6 +226,8 @@ def _extract_registered_entries(
                             entry["uri"] = first_arg.value
                     if decorator_name == "tool":
                         entry["inputSchema"] = _signature_to_input_schema(nested)
+                    elif decorator_name == "prompt":
+                        entry["arguments"] = _signature_to_prompt_arguments(nested)
                     entries.append(entry)
                     break
             return entries
@@ -263,9 +286,9 @@ def build_local_library_tool_service(
     Single construction site for ``LocalLibraryToolService`` on the local MCP
     surface (task-1337, plan Task 9): ``LocalMCPRuntimeDelegate`` calls this
     lazily on first Library dispatch, so every in-process consumer of the
-    direct runtime shares identical backend wiring. (The standalone
-    FastMCP-based ``TldwMCPServer`` deliberately does NOT use this -- the
-    local Library surface is FastMCP-free per owner directive, 2026-08-07.)
+    direct runtime shares identical backend wiring. The ``mcp-unified``
+    standalone ``TldwMCPServer`` deliberately does NOT use this; Library
+    tools remain available only through the in-process direct runtime.
 
     Every backend is best-effort: a construction failure degrades that item
     type's tools to the service's structured ``feature_unavailable`` payload
@@ -388,7 +411,14 @@ class TldwMCPServer:
 
         self.name = name
         self.version = version
-        self.mcp = FastMCP(name)
+        # Defer this import: local-tool provider modules refer back to server helpers.
+        from .gateway_runtime import ChatbookGatewayRuntime
+
+        self.mcp = ChatbookGatewayRuntime(
+            name=name,
+            version=version,
+            tool_descriptors=_describe_local_tools(),
+        )
 
         # Initialize databases
         self._init_databases()
@@ -407,6 +437,7 @@ class TldwMCPServer:
         self._register_resources()
         self._register_prompts()
         self._register_local_agent_tools()
+        self.mcp.finalize()
 
         logger.info(f"MCP Server '{name}' initialized")
 
@@ -471,8 +502,8 @@ class TldwMCPServer:
             )
 
             logger.info("Databases initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize databases: {e}")
+        except Exception:
+            logger.error("Failed to initialize databases.")
             raise
 
     def _register_tools(self):
@@ -681,26 +712,70 @@ class TldwMCPServer:
 
     def _register_resources(self):
         """Register MCP resources."""
+        from urllib.parse import quote
+
+        def json_metadata(
+            resource: Dict[str, Any], scheme: str, identifier: str
+        ) -> Dict[str, Any]:
+            """Normalize trusted legacy URI spelling and SQLite metadata."""
+
+            def normalize(value: Any) -> Any:
+                if isinstance(value, datetime):
+                    return value.isoformat()
+                if isinstance(value, dict):
+                    return {key: normalize(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [normalize(item) for item in value]
+                return value
+
+            expected_legacy_uri = f"{scheme}://{identifier}"
+            if resource.get("uri") == expected_legacy_uri:
+                canonical_identifier = quote(
+                    identifier,
+                    safe="-._~",
+                )
+                resource = {
+                    **resource,
+                    "uri": f"{scheme}://{canonical_identifier}",
+                }
+            metadata = resource.get("metadata")
+            return (
+                {**resource, "metadata": normalize(metadata)}
+                if isinstance(metadata, dict)
+                else resource
+            )
 
         @self.mcp.resource("conversation://{conversation_id}")
         async def get_conversation(conversation_id: str) -> Dict[str, Any]:
             """Get a conversation by ID."""
-            return await self.resources.get_conversation_resource(conversation_id)
+            return json_metadata(
+                await self.resources.get_conversation_resource(conversation_id),
+                "conversation",
+                conversation_id,
+            )
 
         @self.mcp.resource("note://{note_id}")
         async def get_note(note_id: str) -> Dict[str, Any]:
             """Get a note by ID."""
-            return await self.resources.get_note_resource(note_id)
+            return json_metadata(
+                await self.resources.get_note_resource(note_id), "note", note_id
+            )
 
         @self.mcp.resource("character://{character_id}")
         async def get_character(character_id: str) -> Dict[str, Any]:
             """Get a character profile by ID."""
-            return await self.resources.get_character_resource(character_id)
+            return json_metadata(
+                await self.resources.get_character_resource(character_id),
+                "character",
+                character_id,
+            )
 
         @self.mcp.resource("media://{media_id}")
         async def get_media(media_id: str) -> Dict[str, Any]:
             """Get media content by ID."""
-            return await self.resources.get_media_resource(media_id)
+            return json_metadata(
+                await self.resources.get_media_resource(media_id), "media", media_id
+            )
 
         @self.mcp.resource("rag-chunk://{chunk_uuid}")
         async def get_rag_chunk(chunk_uuid: str) -> Dict[str, Any]:
@@ -710,7 +785,11 @@ class TldwMCPServer:
             an integer id -- see `MCPResources.get_rag_chunk_resource` for
             why (TASK-985).
             """
-            return await self.resources.get_rag_chunk_resource(chunk_uuid)
+            return json_metadata(
+                await self.resources.get_rag_chunk_resource(chunk_uuid),
+                "rag-chunk",
+                chunk_uuid,
+            )
 
         # List resources
         @self.mcp.list_resources()
@@ -799,15 +878,12 @@ class TldwMCPServer:
         ``get_user_data_dir() / "mcp_permissions.json"`` so Console
         "Always allow" grants apply here.
 
-        FastMCP derives input schemas from Python type annotations (not
-        JSON schema), so each tool is bound with a generic
-        ``arguments: dict`` signature; the provider's JSON schema travels
-        on the registration for introspection/future SDK use.
+        The provider's exact JSON schemas and ``ToolResult`` handlers are
+        staged together and published only after the full set validates.
         """
         from ..config import get_user_data_dir
         from .local_server_tools import (
             _local_agent_tool_registrations,
-            _parameter_summary,
             build_server_local_provider,
             local_tools_exposure_enabled,
             resolve_server_workspace_root,
@@ -823,59 +899,36 @@ class TldwMCPServer:
         # operator the built-in tools — log and start without local tools.
         try:
             workspace_root = resolve_server_workspace_root()
-            store = MCPPermissionStore(
-                get_user_data_dir() / "mcp_permissions.json"
-            )
+            store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
             provider = build_server_local_provider(workspace_root, store)
 
             registrations = _local_agent_tool_registrations(provider)
-            for registration in registrations:
-                # The handler's signature IS the generic `arguments: dict`
-                # surface; invoke() is sync and worker-thread safe. FastMCP
-                # can't consume the JSON schema, so append a compact
-                # parameter summary to the description — otherwise external
-                # clients get zero parameter documentation.
-                description = registration.description + _parameter_summary(
-                    registration.parameters
-                )
-                self.mcp.tool(
-                    name=registration.name,
-                    description=description,
-                )(registration.handler)
-            logger.info(
-                f"Registered {len(registrations)} local agent tools (permission-gated)"
-            )
+            self.mcp.register_local_tools(registrations)
         except Exception:  # noqa: BLE001 — never sink the whole server for this
-            logger.exception("Failed to register local agent tools; continuing without them")
+            import sys
 
-    async def run(self, transport: str = "stdio"):
+            print(
+                "Local MCP tools unavailable; continuing with built-in tools.",
+                file=sys.stderr,
+            )
+
+    async def run(self, transport: str = "stdio") -> int:
         """Run the MCP server.
 
         Args:
-            transport: Transport type (stdio, http)
+            transport: Transport name; only ``stdio`` is supported.
         """
-        if transport == "stdio":
-            # Run with stdio transport (for Claude Desktop)
-            from mcp.server.stdio import stdio_server
-
-            async with stdio_server() as (read_stream, write_stream):
-                await self.mcp.run(
-                    read_stream=read_stream,
-                    write_stream=write_stream,
-                    initialization_options=InitializationOptions(
-                        server_name=self.name, server_version=self.version
-                    ),
-                )
-        else:
-            # TODO: Implement HTTP transport
-            raise NotImplementedError(f"Transport {transport} not implemented yet")
+        if transport != "stdio":
+            raise NotImplementedError("Only stdio transport is supported")
+        if serve_stdio is None:
+            raise RuntimeError("MCP stdio runtime is unavailable")
+        return await serve_stdio(self.mcp)
 
 
-async def main():
+async def main() -> int:
     """Main entry point for running the MCP server."""
-    server = TldwMCPServer()
-    await server.run()
+    return await TldwMCPServer().run("stdio")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

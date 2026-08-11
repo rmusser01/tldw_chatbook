@@ -18,6 +18,12 @@ from ..DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcripts
 # mcp-hub-phase3-2026-07, Defect 2).
 
 
+def _prompt_failure() -> List[Dict[str, str]]:
+    """Return the bounded public fallback without exposing internal details."""
+    logger.error("MCP prompt creation failed.")
+    return [{"role": "user", "content": "Unable to create prompt."}]
+
+
 class MCPPrompts:
     """Container for MCP prompt implementations."""
 
@@ -93,9 +99,8 @@ class MCPPrompts:
 
             return [{"role": "user", "content": prompt}]
 
-        except Exception as e:
-            logger.error(f"Error creating summarize_conversation prompt: {e}")
-            return [{"role": "user", "content": f"Error creating prompt: {str(e)}"}]
+        except Exception:
+            return _prompt_failure()
 
     async def generate_document_prompt(
         self, conversation_id: int, doc_type: str = "summary", format: str = "markdown"
@@ -152,9 +157,8 @@ class MCPPrompts:
 
             return [{"role": "user", "content": prompt}]
 
-        except Exception as e:
-            logger.error(f"Error creating generate_document prompt: {e}")
-            return [{"role": "user", "content": f"Error creating prompt: {str(e)}"}]
+        except Exception:
+            return _prompt_failure()
 
     async def analyze_media_prompt(
         self,
@@ -228,9 +232,8 @@ class MCPPrompts:
 
             return [{"role": "user", "content": prompt}]
 
-        except Exception as e:
-            logger.error(f"Error creating analyze_media prompt: {e}")
-            return [{"role": "user", "content": f"Error creating prompt: {str(e)}"}]
+        except Exception:
+            return _prompt_failure()
 
     async def search_and_synthesize_prompt(
         self, query: str, num_sources: int = 5, synthesis_type: str = "overview"
@@ -253,7 +256,7 @@ class MCPPrompts:
 
             rag_service = SimplifiedRAGSearchService(self.media_db)
 
-            results = rag_service.keyword_search(query, limit=num_sources)
+            results = await rag_service.keyword_search(query=query, limit=num_sources)
 
             if not results:
                 return [
@@ -287,9 +290,8 @@ class MCPPrompts:
 
             return [{"role": "user", "content": prompt}]
 
-        except Exception as e:
-            logger.error(f"Error creating search_and_synthesize prompt: {e}")
-            return [{"role": "user", "content": f"Error creating prompt: {str(e)}"}]
+        except Exception:
+            return _prompt_failure()
 
     async def character_writing_prompt(
         self,
@@ -359,6 +361,5 @@ class MCPPrompts:
 
             return messages
 
-        except Exception as e:
-            logger.error(f"Error creating character_writing prompt: {e}")
-            return [{"role": "user", "content": f"Error creating prompt: {str(e)}"}]
+        except Exception:
+            return _prompt_failure()

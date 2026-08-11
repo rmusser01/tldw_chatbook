@@ -8,6 +8,7 @@ pytest-cov
 hypothesis
 aiohttp
 build
+uv>=0.8.0,<1
 setuptools>=77
 
 # Optional dependencies needed for tests
