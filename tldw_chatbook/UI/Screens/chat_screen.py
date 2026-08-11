@@ -3465,6 +3465,37 @@ class ChatScreen(BaseAppScreen):
     # never takes the fresh branch.
     _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging")
 
+    #: Memo for ONE synchronous Console state-derivation pass, or None when
+    #: no pass is open. A CLASS attribute default because the hand-built
+    #: `ChatScreen.__new__()` test fixtures never run `__init__`.
+    _console_derivation_memo: dict[Any, Any] | None = None
+
+    @contextmanager
+    def _console_derivation_scope(self):
+        """Memoize repeated provider lookups for one derivation pass.
+
+        Building the Console control state and the Workbench state off it
+        re-derives the same provider selection and readiness config once
+        per leg: measured on dev, a single draft-edit sync ran
+        `_build_console_provider_selection` 7x and
+        `_provider_readiness_app_config` 63x (task-15452). None of those
+        legs mutate anything, and the pass is synchronous, so one memo for
+        its duration is exact rather than merely close.
+
+        Deliberately opt-in and scoped: outside a `with` block every lookup
+        is live, exactly as before. Re-entrant (an inner scope keeps the
+        outer memo) and always torn down, so a raising leg cannot leave a
+        stale selection cached for the next keystroke.
+        """
+        if self._console_derivation_memo is not None:
+            yield
+            return
+        self._console_derivation_memo = {}
+        try:
+            yield
+        finally:
+            self._console_derivation_memo = None
+
     def _provider_readiness_app_config(self) -> Any:
         """Return the freshest app config for provider-readiness checks.
 
@@ -3474,24 +3505,33 @@ class ChatScreen(BaseAppScreen):
         task-177). When the snapshot looks disk-loaded, re-source it from
         ``load_settings()`` - cheap (cached) except right after a save, which
         is exactly when the fresh read matters.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): one draft-edit sync called this 63 times.
         """
+        memo = self._console_derivation_memo
+        if memo is not None and "app_config" in memo:
+            return memo["app_config"]
         try:
             app_config = getattr(self.app, "app_config")
         except (AttributeError, NoActiveAppError):
             app_config = getattr(self.app_instance, "app_config", {}) or {}
         app_config = app_config or {}
-        if not self._console_config_snapshot_is_disk_loaded(app_config):
-            return app_config
-        try:
-            fresh = load_settings()
-        except Exception:
-            logger.debug(
-                "Console readiness refresh via load_settings() failed; using snapshot"
-            )
-            return app_config
-        if isinstance(fresh, Mapping) and fresh:
-            return fresh
-        return app_config
+        resolved = app_config
+        if self._console_config_snapshot_is_disk_loaded(app_config):
+            try:
+                fresh = load_settings()
+            except Exception:
+                logger.debug(
+                    "Console readiness refresh via load_settings() failed; "
+                    "using snapshot"
+                )
+            else:
+                if isinstance(fresh, Mapping) and fresh:
+                    resolved = fresh
+        if memo is not None:
+            memo["app_config"] = resolved
+        return resolved
 
     @classmethod
     def _console_config_snapshot_is_disk_loaded(cls, app_config: Any) -> bool:
@@ -4188,7 +4228,25 @@ class ChatScreen(BaseAppScreen):
     def _build_console_provider_selection(
         self, session_id: str | None = None
     ) -> ConsoleProviderSelection:
-        """Return an owning-session provider selection without switching tabs."""
+        """Return an owning-session provider selection without switching tabs.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): one draft-edit sync built this 7 times for the same
+        session.
+        """
+        memo = self._console_derivation_memo
+        memo_key = ("provider_selection", session_id)
+        if memo is not None and memo_key in memo:
+            return memo[memo_key]
+        selection = self._build_console_provider_selection_uncached(session_id)
+        if memo is not None:
+            memo[memo_key] = selection
+        return selection
+
+    def _build_console_provider_selection_uncached(
+        self, session_id: str | None = None
+    ) -> ConsoleProviderSelection:
+        """Derive the provider selection with no memo in front of it."""
         app_config = self._provider_readiness_app_config()
         store = self._ensure_console_chat_store()
         if session_id is None:
@@ -4286,7 +4344,24 @@ class ChatScreen(BaseAppScreen):
     def _active_console_provider_model_display(
         self,
     ) -> tuple[str, str | None, ConsoleSessionSettings]:
-        """Return provider/model labels backed by active session settings."""
+        """Return provider/model labels backed by active session settings.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): the control state and the Workbench state built off it
+        each re-derive this leg.
+        """
+        memo = self._console_derivation_memo
+        if memo is not None and "provider_model_display" in memo:
+            return memo["provider_model_display"]
+        display = self._active_console_provider_model_display_uncached()
+        if memo is not None:
+            memo["provider_model_display"] = display
+        return display
+
+    def _active_console_provider_model_display_uncached(
+        self,
+    ) -> tuple[str, str | None, ConsoleSessionSettings]:
+        """Derive provider/model labels with no memo in front of them."""
         settings = self._session._ensure_active_console_session_settings()
         selection = self._build_console_provider_selection()
         legacy_provider, _legacy_model = self._effective_console_provider_model()
@@ -4302,7 +4377,25 @@ class ChatScreen(BaseAppScreen):
     def _active_console_settings_readiness(
         self,
     ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
-        """Return effective settings plus Console-native readiness for display/send surfaces."""
+        """Return effective settings plus Console-native readiness for display/send surfaces.
+
+        Served from the per-pass memo inside a `_console_derivation_scope`
+        (task-15452): the blocker copy, the recovery action and the setup
+        blocker each re-derive it, and `build_console_settings_readiness`
+        is the single most expensive leg of a draft-edit sync.
+        """
+        memo = self._console_derivation_memo
+        if memo is not None and "settings_readiness" in memo:
+            return memo["settings_readiness"]
+        readiness = self._active_console_settings_readiness_uncached()
+        if memo is not None:
+            memo["settings_readiness"] = readiness
+        return readiness
+
+    def _active_console_settings_readiness_uncached(
+        self,
+    ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
+        """Derive effective settings + readiness with no memo in front."""
         settings = self._session._ensure_active_console_session_settings()
         selection = self._build_console_provider_selection()
         selected_model = selection.explicit_model or selection.configured_model
@@ -18036,28 +18129,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         workbench_state = self._build_console_workbench_state(control_state)
-        control_state_changed = control_state != self._last_console_control_state
-        workbench_state_changed = workbench_state != self._last_console_workbench_state
-        if control_state_changed or workbench_state_changed:
-            try:
-                control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-            except QueryError:
-                control_bar = None
-            if control_bar is not None:
-                control_bar.sync_state(control_state, actions=workbench_state.actions)
-            try:
-                status_chips = self.query_one(
-                    "#console-status-chips", ConsoleStatusChips
-                )
-            except QueryError:
-                status_chips = None
-            if status_chips is not None:
-                status_chips.sync_state(control_state)
-            self._sync_console_workbench_state(
-                control_state, workbench_state=workbench_state
-            )
-            self._last_console_control_state = control_state
-            self._last_console_workbench_state = workbench_state
+        self._push_console_control_state_if_changed(control_state, workbench_state)
         self._sync_console_transcript_guidance()
         # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
         # the task-251 report: the brief's Change 3 asked to skip this
@@ -18103,6 +18175,54 @@ class ChatScreen(BaseAppScreen):
         # `_sync_console_cost_chip` owns its own equality guard.
         self._sync_console_cost_chip()
 
+    def _push_console_control_state_if_changed(
+        self,
+        control_state: ConsoleControlState,
+        workbench_state: Any,
+    ) -> bool:
+        """Push control/Workbench state into the widgets only when it moved.
+
+        The one place `_last_console_control_state` /
+        `_last_console_workbench_state` are read and written (task-15452).
+        Every caller that pushes must go through here: the control bar
+        consumes `workbench_state.actions` as well as `control_state`, so a
+        caller that pushed only the Workbench widgets and then recorded the
+        new `_last_*` values would make the NEXT `_sync_console_control_bar`
+        see "unchanged" and skip a control-bar refresh it still owed --
+        which is exactly the trap the draft-edit path used to avoid only by
+        never recording anything.
+
+        Args:
+            control_state: Freshly built Console control/readiness state.
+            workbench_state: Workbench state built from that control state.
+
+        Returns:
+            True when the widgets were pushed, False when nothing moved.
+        """
+        if (
+            control_state == self._last_console_control_state
+            and workbench_state == self._last_console_workbench_state
+        ):
+            return False
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
+            control_bar = None
+        if control_bar is not None:
+            control_bar.sync_state(control_state, actions=workbench_state.actions)
+        try:
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
+        except QueryError:
+            status_chips = None
+        if status_chips is not None:
+            status_chips.sync_state(control_state)
+        self._sync_console_workbench_state(
+            control_state, workbench_state=workbench_state
+        )
+        self._last_console_control_state = control_state
+        self._last_console_workbench_state = workbench_state
+        return True
+
     def _sync_console_workbench_state(
         self,
         control_state: ConsoleControlState,
@@ -18141,10 +18261,26 @@ class ChatScreen(BaseAppScreen):
             pass
 
     def _sync_console_workbench_actions_from_draft(self) -> None:
-        """Refresh Workbench command readiness after composer draft changes."""
-        self._sync_console_workbench_state(
-            self._build_console_control_state(self._pending_console_launch_context)
-        )
+        """Refresh Workbench command readiness after composer draft changes.
+
+        Runs on every printable keystroke, so it goes through the same
+        equality gate as `_sync_console_control_bar` (task-15452): before
+        that it rebuilt and re-pushed Workbench state unconditionally --
+        ~12 layout-invalidating `Static.update` calls plus two
+        `sort_children` (which bump the DOM version up the whole ancestor
+        chain and so evict the screen-wide `query_one` cache) for a state
+        that is identical between any two characters of a word.
+
+        `_sync_console_command_popup` stays OUTSIDE the gate: the popup
+        filters on the draft text itself, which moves on every keystroke
+        while the derived Workbench state does not.
+        """
+        with self._console_derivation_scope():
+            control_state = self._build_console_control_state(
+                self._pending_console_launch_context
+            )
+            workbench_state = self._build_console_workbench_state(control_state)
+        self._push_console_control_state_if_changed(control_state, workbench_state)
         self._sync_console_command_popup()
 
     def _console_command_popup_or_none(self) -> ConsoleCommandPopup | None:
