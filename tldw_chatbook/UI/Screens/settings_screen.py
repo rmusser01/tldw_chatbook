@@ -983,6 +983,7 @@ def _build_field_search_index() -> None:
                 ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
                 ("settings-appearance-font-size", "Web font size (px)"),
                 ("settings-appearance-density", "Density"),
+                ("settings-appearance-transcript-style", "Console transcript"),
                 ("settings-appearance-animations-enabled", "Animations"),
                 ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
             ),
@@ -5322,6 +5323,8 @@ class SettingsScreen(BaseAppScreen):
             return "font_size"
         if message.startswith("Density"):
             return "density"
+        if message.startswith("Transcript style"):
+            return "console_transcript_style"
         if message.startswith("Animations"):
             return "animations_enabled"
         if message.startswith("Reduce motion"):
@@ -5338,6 +5341,7 @@ class SettingsScreen(BaseAppScreen):
             "palette_theme_limit": "#settings-appearance-palette-theme-limit",
             "font_size": "#settings-appearance-font-size",
             "density": "#settings-appearance-density",
+            "console_transcript_style": "#settings-appearance-transcript-style",
             "animations_enabled": "#settings-appearance-animations-enabled",
             "smooth_scrolling": "#settings-appearance-smooth-scrolling",
             "reduce_motion": "#settings-appearance-reduce-motion",
@@ -5351,6 +5355,7 @@ class SettingsScreen(BaseAppScreen):
             "palette_theme_limit",
             "font_size",
             "density",
+            "console_transcript_style",
             "animations_enabled",
             "smooth_scrolling",
             "reduce_motion",
@@ -5423,6 +5428,7 @@ class SettingsScreen(BaseAppScreen):
         values = self._appearance_setting_values()
         return (
             f"Theme {values['default_theme']} | Density {values['density']} | "
+            f"Transcript {str(values['console_transcript_style']).replace('_', ' ')} | "
             f"Font {values['font_size']} | Palette limit {values['palette_theme_limit']}"
         )
 
@@ -9747,6 +9753,19 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "appearance.density"),
                 ("Validation", "compact, normal, or comfortable"),
             )
+        if field_id == "settings-appearance-transcript-style":
+            return (
+                ("Focused setting", "Console transcript"),
+                (
+                    "Purpose",
+                    "Controls semantic speaker color and optional roleplay prose accents.",
+                ),
+                ("Saved as", "appearance.console_transcript_style"),
+                (
+                    "Validation",
+                    "neutral, role accents, or immersive RP",
+                ),
+            )
         if field_id == "settings-appearance-animations-enabled":
             return (
                 ("Focused setting", "Animations"),
@@ -13046,6 +13065,20 @@ class SettingsScreen(BaseAppScreen):
                         allow_blank=False,
                         compact=True,
                     )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Console transcript", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Neutral", "neutral"),
+                            ("Role accents", "role_accents"),
+                            ("Immersive RP", "immersive_rp"),
+                        ],
+                        value=str(values["console_transcript_style"]),
+                        id="settings-appearance-transcript-style",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
                 yield Static("Motion and scrolling", classes="destination-section")
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Animations", classes="settings-input-label")
@@ -14374,6 +14407,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-appearance-palette-theme-limit",
                 "settings-appearance-font-size",
                 "settings-appearance-density",
+                "settings-appearance-transcript-style",
                 "settings-appearance-animations-enabled",
                 "settings-appearance-smooth-scrolling",
             }
@@ -14715,6 +14749,19 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_appearance_defaults:
             return
         self._stage_appearance_value("density", str(event.value or "normal"))
+        self._mark_appearance_settings_staged()
+
+    @on(Select.Changed, "#settings-appearance-transcript-style")
+    def handle_appearance_transcript_style_changed(
+        self, event: Select.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value(
+            "console_transcript_style",
+            str(event.value or "role_accents"),
+        )
         self._mark_appearance_settings_staged()
 
     @on(Checkbox.Changed, "#settings-appearance-animations-enabled")
@@ -18044,6 +18091,41 @@ class SettingsScreen(BaseAppScreen):
                             type(exc).__name__,
                         )
 
+    def _signal_console_appearance_refresh(self) -> None:
+        """Publish saved transcript styling to every live Console screen."""
+
+        generation = (
+            int(
+                getattr(
+                    self.app_instance,
+                    "_console_appearance_refresh_generation",
+                    0,
+                )
+                or 0
+            )
+            + 1
+        )
+        self.app_instance._console_appearance_refresh_generation = generation
+        signalled: set[int] = set()
+        for app in (self.app, self.app_instance):
+            for screen in tuple(getattr(app, "screen_stack", ()) or ()):
+                screen_key = id(screen)
+                if screen_key in signalled:
+                    continue
+                signalled.add(screen_key)
+                refresh = getattr(screen, "request_console_appearance_refresh", None)
+                if callable(refresh):
+                    try:
+                        refresh(generation)
+                    except Exception as exc:
+                        logger.warning(
+                            "Console appearance refresh failed after settings save "
+                            "(screen_type=%s, generation=%s, error_type=%s).",
+                            type(screen).__name__,
+                            generation,
+                            type(exc).__name__,
+                        )
+
     def _apply_appearance_save_result(
         self,
         saved: bool,
@@ -18051,6 +18133,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if saved:
             self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._signal_console_appearance_refresh()
             self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
             self._appearance_result = "Appearance defaults saved."
             self._set_static_text(
@@ -18673,6 +18756,12 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-appearance-density", Select).value = str(
                     values["density"]
                 )
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#settings-appearance-transcript-style", Select
+                ).value = str(values["console_transcript_style"])
             except QueryError:
                 pass
             try:

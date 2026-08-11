@@ -69,6 +69,15 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+
+/* Console transcript speaker accents. Textual exposes whether the active
+   theme is dark or light as an App class; the two assistant tones keep the
+   same warm semantic role while meeting ordinary-text contrast on both. */
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
 $ds-home-dashboard-grid-height: 18;

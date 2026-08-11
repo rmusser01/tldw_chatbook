@@ -51,9 +51,24 @@ ordinary generated replies do not.
 One shared Console presentation resolver supplies the role label, effective
 visible content, and character-roleplay styling state to plain transcript
 rows, Markdown rows, copy/export/save surfaces, and model-context assembly.
-Character-bound rows receive theme-derived semantic tints and stronger
-speaker-name accents. Generic and Persona sessions retain their existing
-neutral identity semantics.
+Transcript styling is a global Appearance preference stored as
+`[appearance].console_transcript_style`. Its closed vocabulary is `neutral`,
+`role_accents`, and `immersive_rp`, with `role_accents` as the default.
+Neutral retains speaker labels without role color. Role accents apply
+semantic row tints and stronger speaker-name accents to both generic and
+character-bound sessions. Immersive RP retains those cues and additionally
+accents user, assistant, and character prose.
+
+### 2026-08-11 amendment: accessible role-accent modes
+
+Speaker treatments use semantic, theme-aware tokens rather than fixed role
+colors in renderer code. Dark and light themes may resolve different concrete
+accent colors to preserve contrast. Color is never the only identity signal:
+speaker labels remain visible in every mode. Failed, selected, system, tool,
+code, and link treatments take precedence over immersive prose color where
+their operational meaning would otherwise be obscured. A successful
+Appearance save publishes a generation signal and mounted Console transcripts
+re-resolve their presentation without an application restart.
 
 ## Context
 
@@ -106,8 +121,10 @@ literal macros to leak when provenance or sync context is absent.
 - Metadata writes must preserve sibling keys and use the database's optimistic
   concurrency contract. A failed durable write keeps the live session value
   and reports that reopening may restore the previous value.
-- Roleplay color remains semantic and theme-derived. Speaker labels continue
-  to carry identity when color is unavailable or indistinguishable.
+- Transcript color remains semantic and theme-aware. Speaker labels continue
+  to carry identity when color is unavailable, disabled, or indistinguishable.
+- Existing installations adopt Role accents through the configuration default;
+  users can restore the former neutral presentation from Settings > Appearance.
 - No schema migration, new identity table, Persona compatibility alias, or
   message-role change is introduced.
 
@@ -121,6 +138,9 @@ handoff through transcript presentation and provider-context assembly.
 Visual verification must use the real stylesheet or the real app compositor.
 Both dark and light themes must show readable user and character rows, with
 selected, streaming, failed, system, and tool states retaining precedence.
+Speaker labels and any Immersive RP prose accent must reach at least WCAG AA
+4.5:1 contrast against the compositor-painted background in both supported
+light and dark theme modes.
 
 Only tests related to the files and behavior changed by TASK-14801 are part of
 the implementation gate.

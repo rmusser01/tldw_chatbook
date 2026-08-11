@@ -284,6 +284,41 @@ async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> 
         assert edit.has_focus
 
 
+@pytest.mark.asyncio
+async def test_full_console_manager_mounts_entry_children_before_live_list_insert() -> None:
+    """Opening Manage must not race child mounts against an unattached row."""
+
+    _app, host = _ready_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        snapshot = controller.prompt_queue_registry.begin_chain(
+            session_id,
+            context_epoch=controller.store.conversation_context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        ).snapshot
+        controller.prompt_queue_registry.admit(
+            session_id,
+            text="mounted before children",
+            expected_revision=snapshot.revision,
+        )
+        controller.prompt_queue_coordinator.publish_registry_change(session_id)
+        await console._sync_native_console_chat_ui()
+
+        console.query_one("#console-prompt-queue-manage", Button).press()
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptQueueModal)
+        entry_buttons = list(modal.query(".console-prompt-queue-entry-select"))
+        assert len(entry_buttons) == 1
+        assert entry_buttons[0].is_mounted
+        assert entry_buttons[0].parent is not None
+        assert entry_buttons[0].parent.is_mounted
+
+
 class _FakeChatController:
     def __init__(self, *, accepted: bool, preparing: bool = False) -> None:
         self.prompt_queue_registry = _registry_with_chain() if accepted else ConsolePromptQueueRegistry()
