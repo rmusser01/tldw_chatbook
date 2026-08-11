@@ -1,4 +1,4 @@
-"""Pure request translation for QwenCloud's compatible API modes."""
+"""QwenCloud dual-API transport, translation, and response normalization."""
 
 from __future__ import annotations
 
@@ -6,13 +6,33 @@ import json
 import math
 import os
 import re
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
-from typing import Any, Literal, cast
+from typing import Any, Literal, Never, cast
 from urllib.parse import urlsplit
 
-from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatConfigurationError
+import requests
+from loguru import logger
+from requests.adapters import HTTPAdapter
+from requests.exceptions import (
+    ConnectionError as RequestsConnectionError,
+    HTTPError,
+    RequestException,
+    Timeout as RequestsTimeout,
+)
+from urllib3.util import Retry
+
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
+from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
+
+logger = logger.bind(module="qwencloud")
 
 QwenCloudAPIMode = Literal["responses", "chat_completions"]
 
@@ -23,6 +43,7 @@ _ENDPOINT_SUFFIXES = ("/chat/completions", "/responses")
 _REASONING_EFFORTS: frozenset[str] = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 def _configuration_error(message: str) -> ChatConfigurationError:
@@ -31,6 +52,97 @@ def _configuration_error(message: str) -> ChatConfigurationError:
 
 def _bad_request(message: str) -> ChatBadRequestError:
     return ChatBadRequestError(provider="qwencloud", message=message)
+
+
+def _provider_error(message: str, *, status_code: int = 502) -> ChatProviderError:
+    return ChatProviderError(
+        provider="qwencloud", message=message, status_code=status_code
+    )
+
+
+def _retry_configuration(
+    provider_settings: Mapping[str, Any],
+) -> tuple[int, float]:
+    configured_retries = provider_settings.get("retries", 3)
+    if isinstance(configured_retries, bool):
+        raise _configuration_error("QwenCloud retries must be an integer.")
+    try:
+        retries = max(0, int(configured_retries))
+    except (TypeError, ValueError) as exc:
+        raise _configuration_error("QwenCloud retries must be an integer.") from exc
+
+    configured_delay = provider_settings.get("retry_delay", 1)
+    if isinstance(configured_delay, bool):
+        raise _configuration_error("QwenCloud retry delay must be numeric.")
+    try:
+        retry_delay = float(configured_delay)
+    except (TypeError, ValueError) as exc:
+        raise _configuration_error("QwenCloud retry delay must be numeric.") from exc
+    if not math.isfinite(retry_delay) or retry_delay < 0:
+        raise _configuration_error(
+            "QwenCloud retry delay must be non-negative and finite."
+        )
+    return llm_retry_count(retries), retry_delay
+
+
+def _is_mode_model_mismatch(response: requests.Response) -> bool:
+    detail = ""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        payload = None
+    if isinstance(payload, Mapping):
+        error = payload.get("error")
+        if isinstance(error, Mapping):
+            message = error.get("message")
+            if isinstance(message, str):
+                detail = message
+    if not detail:
+        raw_text = getattr(response, "text", "")
+        detail = raw_text if isinstance(raw_text, str) else ""
+    lowered = detail.lower()
+    incompatible = any(
+        marker in lowered
+        for marker in ("not supported", "unsupported", "incompatible", "not compatible")
+    )
+    mentions_mode = any(
+        marker in lowered
+        for marker in ("responses api", "chat completions", "api mode", "api_mode")
+    )
+    return "model" in lowered and incompatible and mentions_mode
+
+
+def _raise_qwencloud_http_error(response: requests.Response) -> Never:
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    logger.error(
+        "QwenCloud request failed; status={}; error_type=http_error",
+        status_code,
+    )
+    if status_code in {401, 403}:
+        raise ChatAuthenticationError(
+            provider="qwencloud",
+            message="QwenCloud authentication failed. Check the QwenCloud API key.",
+        ) from None
+    if status_code == 429:
+        raise ChatRateLimitError(
+            provider="qwencloud",
+            message="QwenCloud rate limit exceeded. Retry after the provider delay.",
+        ) from None
+    if 400 <= status_code < 500:
+        if _is_mode_model_mismatch(response):
+            message = (
+                "QwenCloud model is not compatible with the selected API mode; "
+                "choose a compatible model or switch api_mode."
+            )
+        else:
+            message = f"QwenCloud rejected the request (status {status_code})."
+        raise ChatBadRequestError(provider="qwencloud", message=message) from None
+    if 500 <= status_code < 600:
+        raise _provider_error(
+            f"QwenCloud service failed (status {status_code}).",
+            status_code=status_code,
+        ) from None
+    raise _provider_error("QwenCloud returned an unexpected HTTP failure.") from None
 
 
 def _validate_optional_number(name: str, value: Any) -> None:
@@ -697,3 +809,391 @@ def build_qwencloud_payload(
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
     return payload
+
+
+def _normalize_response_usage(payload: Mapping[str, Any]) -> dict[str, Any]:
+    usage = payload.get("usage")
+    if usage is None:
+        return {}
+    if not isinstance(usage, Mapping):
+        raise _provider_error("QwenCloud returned malformed token usage.")
+    return deepcopy(dict(usage))
+
+
+def _normalize_response_tool_call(raw_call: Mapping[str, Any]) -> dict[str, Any]:
+    call_id = raw_call.get("call_id", raw_call.get("id"))
+    name = raw_call.get("name")
+    arguments = raw_call.get("arguments")
+    if (
+        not isinstance(call_id, str)
+        or not call_id.strip()
+        or not isinstance(name, str)
+        or not name.strip()
+        or not isinstance(arguments, str)
+    ):
+        raise _provider_error("QwenCloud returned an incomplete function call.")
+    try:
+        decoded_arguments = json.loads(
+            arguments, parse_constant=_reject_non_finite_json_constant
+        )
+    except (TypeError, ValueError) as exc:
+        raise _provider_error(
+            "QwenCloud returned malformed function-call arguments."
+        ) from exc
+    if not isinstance(decoded_arguments, Mapping):
+        raise _provider_error("QwenCloud returned non-object function-call arguments.")
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": arguments},
+    }
+
+
+def _normalize_responses_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    status = payload.get("status")
+    if status in {"failed", "cancelled"}:
+        raise _provider_error("QwenCloud did not complete the response.")
+    if status not in {"completed", "incomplete"}:
+        raise _provider_error("QwenCloud returned a malformed response status.")
+
+    output = payload.get("output")
+    if not isinstance(output, Sequence) or isinstance(output, (str, bytes)):
+        raise _provider_error("QwenCloud returned a malformed response envelope.")
+
+    text_fragments: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    call_ids: set[str] = set()
+    for raw_item in output:
+        if not isinstance(raw_item, Mapping):
+            raise _provider_error("QwenCloud returned a malformed output item.")
+        item_type = raw_item.get("type")
+        if item_type == "reasoning":
+            continue
+        if item_type == "message":
+            content = raw_item.get("content")
+            if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
+                raise _provider_error("QwenCloud returned malformed message content.")
+            for raw_part in content:
+                if not isinstance(raw_part, Mapping):
+                    raise _provider_error(
+                        "QwenCloud returned a malformed message content part."
+                    )
+                part_type = raw_part.get("type")
+                if part_type == "output_text":
+                    text = raw_part.get("text")
+                    if not isinstance(text, str):
+                        raise _provider_error(
+                            "QwenCloud returned malformed output text."
+                        )
+                    text_fragments.append(text)
+                    continue
+                if part_type == "refusal":
+                    raise _provider_error("QwenCloud refused the response.")
+                raise _provider_error(
+                    "QwenCloud returned an unsupported message content part."
+                )
+            continue
+        if item_type == "function_call":
+            if status != "completed" or raw_item.get("status") not in {
+                None,
+                "completed",
+            }:
+                raise _provider_error("QwenCloud returned an incomplete function call.")
+            normalized_call = _normalize_response_tool_call(raw_item)
+            call_id = normalized_call["id"]
+            if call_id in call_ids:
+                raise _provider_error("QwenCloud returned duplicate function-call IDs.")
+            call_ids.add(call_id)
+            tool_calls.append(normalized_call)
+            continue
+        raise _provider_error("QwenCloud returned an unsupported output item.")
+
+    content = "".join(text_fragments)
+    has_usable_text = bool(content.strip())
+    if status == "incomplete":
+        incomplete_details = payload.get("incomplete_details")
+        reason = (
+            incomplete_details.get("reason")
+            if isinstance(incomplete_details, Mapping)
+            else None
+        )
+        if reason != "max_output_tokens" or not has_usable_text or tool_calls:
+            raise _provider_error("QwenCloud returned an incomplete response.")
+        finish_reason = "length"
+    elif tool_calls:
+        finish_reason = "tool_calls"
+    else:
+        finish_reason = "stop"
+
+    if not has_usable_text and not tool_calls:
+        raise _provider_error("QwenCloud returned no usable response content.")
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": content if has_usable_text else None,
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {
+        "choices": [{"message": message, "finish_reason": finish_reason}],
+        "usage": _normalize_response_usage(payload),
+    }
+
+
+def _normalize_chat_completions_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    choices = payload.get("choices")
+    if (
+        not isinstance(choices, Sequence)
+        or isinstance(choices, (str, bytes))
+        or not choices
+        or not isinstance(choices[0], Mapping)
+    ):
+        raise _provider_error("QwenCloud returned a malformed choices envelope.")
+    choice = choices[0]
+    raw_message = choice.get("message")
+    if not isinstance(raw_message, Mapping):
+        raise _provider_error("QwenCloud returned a malformed assistant message.")
+
+    content = raw_message.get("content")
+    if content is not None and not isinstance(content, str):
+        raise _provider_error("QwenCloud returned malformed assistant text.")
+    raw_calls = raw_message.get("tool_calls")
+    tool_calls: list[dict[str, Any]] = []
+    call_ids: set[str] = set()
+    if raw_calls is not None:
+        if (
+            not isinstance(raw_calls, Sequence)
+            or isinstance(raw_calls, (str, bytes))
+            or not raw_calls
+        ):
+            raise _provider_error("QwenCloud returned malformed function calls.")
+        for raw_call in raw_calls:
+            if (
+                not isinstance(raw_call, Mapping)
+                or raw_call.get("type") != "function"
+                or not isinstance(raw_call.get("function"), Mapping)
+            ):
+                raise _provider_error("QwenCloud returned a malformed function call.")
+            function = raw_call["function"]
+            normalized_call = _normalize_response_tool_call(
+                {
+                    "call_id": raw_call.get("id"),
+                    "name": function.get("name"),
+                    "arguments": function.get("arguments"),
+                }
+            )
+            call_id = normalized_call["id"]
+            if call_id in call_ids:
+                raise _provider_error("QwenCloud returned duplicate function-call IDs.")
+            call_ids.add(call_id)
+            tool_calls.append(normalized_call)
+
+    has_usable_text = isinstance(content, str) and bool(content.strip())
+    if not has_usable_text and not tool_calls:
+        raise _provider_error("QwenCloud returned no usable response content.")
+    raw_finish_reason = choice.get("finish_reason")
+    if tool_calls:
+        finish_reason = "tool_calls"
+    elif isinstance(raw_finish_reason, str) and raw_finish_reason:
+        finish_reason = raw_finish_reason
+    else:
+        raise _provider_error("QwenCloud returned no completion finish reason.")
+
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": content if has_usable_text else None,
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {
+        "choices": [{"message": message, "finish_reason": finish_reason}],
+        "usage": _normalize_response_usage(payload),
+    }
+
+
+def normalize_qwencloud_response(
+    payload: Mapping[str, Any], *, api_mode: QwenCloudAPIMode
+) -> dict[str, Any]:
+    """Normalize a successful QwenCloud response to Chatbook's chat contract.
+
+    Args:
+        payload: Decoded provider JSON response.
+        api_mode: The API mode used for the request.
+
+    Returns:
+        A standard choices/message/finish/usage mapping.
+
+    Raises:
+        ChatProviderError: If the successful HTTP response is malformed or empty.
+    """
+    if not isinstance(payload, Mapping):
+        raise _provider_error("QwenCloud response envelope must be an object.")
+    if api_mode == "responses":
+        return _normalize_responses_payload(payload)
+    if api_mode == "chat_completions":
+        return _normalize_chat_completions_payload(payload)
+    raise _provider_error("QwenCloud response used an unknown API mode.")
+
+
+def chat_with_qwencloud(
+    input_data: list[dict[str, Any]],
+    model: str | None = None,
+    api_key: str | None = None,
+    system_message: str | None = None,
+    temp: float | None = None,
+    streaming: bool | None = False,
+    topp: float | None = None,
+    topk: int | None = None,
+    max_tokens: int | None = None,
+    seed: int | None = None,
+    stop: str | list[str] | None = None,
+    logprobs: bool | None = None,
+    top_logprobs: int | None = None,
+    presence_penalty: float | None = None,
+    response_format: dict[str, str] | None = None,
+    n: int | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    reasoning_effort: str | None = None,
+    api_base_url: str | None = None,
+    api_mode: str | None = None,
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Send a QwenCloud request through the selected compatible API mode.
+
+    Transport timeout and retry policy are owned by QwenCloud's modern provider
+    settings rather than the generic dispatcher.
+    """
+    config_values = get_runtime_config_snapshot().values
+    api_settings = config_values.get("api_settings", {})
+    provider_settings: Mapping[str, Any] = {}
+    if isinstance(api_settings, Mapping):
+        configured_qwencloud = api_settings.get("qwencloud", {})
+        if isinstance(configured_qwencloud, Mapping):
+            provider_settings = configured_qwencloud
+
+    final_mode = normalize_qwencloud_api_mode(
+        api_mode, provider_settings=provider_settings
+    )
+    configured_base = provider_settings.get("api_base_url")
+    final_base = normalize_qwencloud_base_url(
+        api_base_url
+        if api_base_url is not None
+        else configured_base
+        if isinstance(configured_base, str)
+        else None
+    )
+    final_api_key = resolve_qwencloud_api_key(
+        api_key, provider_settings=provider_settings
+    )
+    configured_model = provider_settings.get("model")
+    final_model = (
+        model
+        if model is not None
+        else configured_model
+        if isinstance(configured_model, str)
+        else "qwen3.8-max"
+    )
+    final_streaming = False if streaming is None else streaming
+    if final_streaming:
+        raise _configuration_error(
+            "QwenCloud streaming transport is not available in this adapter version."
+        )
+
+    payload = build_qwencloud_payload(
+        api_mode=final_mode,
+        model=final_model,
+        system_message=system_message,
+        messages_payload=input_data,
+        streaming=final_streaming,
+        tools=tools,
+        tool_choice=tool_choice,
+        temp=temp,
+        topp=topp,
+        topk=topk,
+        max_tokens=max_tokens,
+        seed=seed,
+        stop=stop,
+        logprobs=logprobs,
+        top_logprobs=top_logprobs,
+        presence_penalty=presence_penalty,
+        response_format=response_format,
+        n=n,
+        reasoning_effort=reasoning_effort,
+    )
+    timeout_value = provider_settings.get("timeout", 120)
+    try:
+        timeout = float(timeout_value)
+    except (TypeError, ValueError) as exc:
+        raise _configuration_error("QwenCloud timeout must be numeric.") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise _configuration_error("QwenCloud timeout must be positive and finite.")
+    retries, retry_delay = _retry_configuration(provider_settings)
+    retry_policy = Retry(
+        total=retries,
+        backoff_factor=retry_delay,
+        status_forcelist=_RETRYABLE_STATUS_CODES,
+        allowed_methods=frozenset({"POST"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry_policy)
+
+    suffix = "/responses" if final_mode == "responses" else "/chat/completions"
+    api_url = f"{final_base}{suffix}"
+    headers = {
+        "Authorization": f"Bearer {final_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    response: requests.Response | None = None
+    with requests.Session() as session:
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        try:
+            response = session.post(
+                api_url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, Mapping):
+                raise _provider_error("QwenCloud response envelope must be an object.")
+            return normalize_qwencloud_response(result, api_mode=final_mode)
+        except HTTPError as exc:
+            failed_response = exc.response if exc.response is not None else response
+            if failed_response is None:
+                logger.error(
+                    "QwenCloud request failed; status=unknown; error_type=http_error"
+                )
+                raise _provider_error(
+                    "QwenCloud returned an HTTP failure without a response."
+                ) from None
+            _raise_qwencloud_http_error(failed_response)
+        except (RequestsConnectionError, RequestsTimeout) as exc:
+            logger.error(
+                "QwenCloud request failed; status=none; error_type={}",
+                type(exc).__name__,
+            )
+            raise _provider_error(
+                "QwenCloud network request failed.",
+                status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+            ) from None
+        except RequestException as exc:
+            logger.error(
+                "QwenCloud request failed; status=none; error_type={}",
+                type(exc).__name__,
+            )
+            raise _provider_error("QwenCloud network request failed.") from None
+        except (TypeError, ValueError) as exc:
+            logger.error(
+                "QwenCloud request failed; status={}; error_type={}",
+                getattr(response, "status_code", "unknown"),
+                type(exc).__name__,
+            )
+            raise _provider_error("QwenCloud returned malformed JSON.") from None
+        finally:
+            if response is not None:
+                response.close()

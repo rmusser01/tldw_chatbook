@@ -317,6 +317,11 @@ def test_sensitive_audit_registry_covers_every_registered_chat_handler() -> None
     )
 
 
+def test_qwencloud_is_sensitive_auxiliary_audited() -> None:
+    assert "qwencloud" in chat_functions.API_CALL_HANDLERS
+    assert "qwencloud" in SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
+
+
 def test_registered_chat_handlers_accept_pinned_endpoint_override() -> None:
     missing = {
         endpoint
@@ -1268,6 +1273,7 @@ def _plant_sentinel_openai_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("sensitive", [False, True])
+@pytest.mark.allow_network
 def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception(
     monkeypatch: pytest.MonkeyPatch,
     sensitive: bool,
@@ -1305,6 +1311,7 @@ def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception
     assert SENTINEL_API_KEY not in rendered
 
 
+@pytest.mark.allow_network
 def test_sentinel_api_key_leaks_via_diagnose_true_sink_confirming_mechanism_is_real(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1478,9 +1485,7 @@ def test_fresh_process_incident_shape_leaks_only_without_package_import(
 
     project_root = Path(__file__).resolve().parents[2]
     child_env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("LOGURU_")
+        key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
     child_env["LEAK_SENTINEL"] = SENTINEL_API_KEY
     child_env["PYTHONPATH"] = str(project_root) + (
@@ -1546,9 +1551,7 @@ def test_package_import_preserves_host_configured_loguru_sinks(
 
     project_root = Path(__file__).resolve().parents[2]
     child_env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("LOGURU_")
+        key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
     child_env["PYTHONPATH"] = str(project_root) + (
         os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""

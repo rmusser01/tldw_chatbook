@@ -2,17 +2,116 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+from types import SimpleNamespace
+from typing import Any, Iterator
 
 import pytest
+import requests
+from loguru import logger
+from urllib3.exceptions import (
+    ConnectTimeoutError,
+    MaxRetryError,
+    ReadTimeoutError,
+)
+from urllib3.util import Retry
 
-from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatConfigurationError
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
+import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
 from tldw_chatbook.LLM_Calls.qwencloud import (
     build_qwencloud_payload,
+    chat_with_qwencloud,
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
     resolve_qwencloud_api_key,
 )
+from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
+
+
+class _TransportResponse:
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        status_code: int = 200,
+        text: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._payload = payload
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers or {}
+        self.closed = False
+
+    def json(self) -> dict[str, Any]:
+        return deepcopy(self._payload)
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(response=self)  # type: ignore[arg-type]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RecordingSession:
+    def __init__(
+        self,
+        response: _TransportResponse,
+        *,
+        error: requests.exceptions.RequestException | None = None,
+    ) -> None:
+        self.response = response
+        self.error = error
+        self.mounts: list[tuple[str, object]] = []
+        self.posts: list[dict[str, Any]] = []
+        self.closed = False
+
+    def __enter__(self) -> _RecordingSession:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def mount(self, prefix: str, adapter: object) -> None:
+        self.mounts.append((prefix, adapter))
+
+    def post(self, url: str, **kwargs: Any) -> _TransportResponse:
+        self.posts.append({"url": url, **deepcopy(kwargs)})
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RetryResponse:
+    def __init__(self, status: int, *, headers: dict[str, str] | None = None) -> None:
+        self.status = status
+        self.headers = headers or {}
+
+    def get_redirect_location(self) -> None:
+        return None
+
+
+@contextmanager
+def _captured_qwencloud_logs() -> Iterator[list[str]]:
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        yield records
+    finally:
+        logger.remove(sink_id)
 
 
 def test_api_mode_config_then_default_and_exact_values() -> None:
@@ -1047,3 +1146,814 @@ def test_responses_rejects_unpairable_tool_batches_before_network() -> None:
                 streaming=False,
             )
         assert exc_info.value.provider == "qwencloud"
+
+
+def test_nonstream_normalizes_text_tools_finish_and_usage() -> None:
+    responses_mixed = qwencloud.normalize_qwencloud_response(
+        {
+            "id": "resp_123",
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "msg_123",
+                    "type": "message",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "I will check both."}],
+                },
+                {
+                    "id": "fc_transport_A",
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_A",
+                    "name": "first_tool",
+                    "arguments": '{"value":1}',
+                },
+                {
+                    "id": "fc_transport_B",
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_B",
+                    "name": "second_tool",
+                    "arguments": '{"value":2}',
+                },
+            ],
+            "usage": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "total_tokens": 18,
+                "input_tokens_details": {"cached_tokens": 3},
+            },
+        },
+        api_mode="responses",
+    )
+    assert responses_mixed == {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I will check both.",
+                    "tool_calls": [
+                        {
+                            "id": "call_A",
+                            "type": "function",
+                            "function": {
+                                "name": "first_tool",
+                                "arguments": '{"value":1}',
+                            },
+                        },
+                        {
+                            "id": "call_B",
+                            "type": "function",
+                            "function": {
+                                "name": "second_tool",
+                                "arguments": '{"value":2}',
+                            },
+                        },
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "total_tokens": 18,
+            "input_tokens_details": {"cached_tokens": 3},
+        },
+    }
+
+    responses_text = qwencloud.normalize_qwencloud_response(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "content": [
+                        {"type": "output_text", "text": "Hello"},
+                        {"type": "output_text", "text": " world"},
+                    ],
+                }
+            ],
+        },
+        api_mode="responses",
+    )
+    assert responses_text["choices"][0] == {
+        "message": {"role": "assistant", "content": "Hello world"},
+        "finish_reason": "stop",
+    }
+    assert responses_text["usage"] == {}
+
+    responses_tool_only = qwencloud.normalize_qwencloud_response(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_only",
+                    "name": "lookup",
+                    "arguments": "{}",
+                }
+            ],
+        },
+        api_mode="responses",
+    )
+    assert responses_tool_only["choices"][0]["message"]["content"] is None
+    assert responses_tool_only["choices"][0]["finish_reason"] == "tool_calls"
+
+    responses_partial = qwencloud.normalize_qwencloud_response(
+        {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [
+                {
+                    "type": "message",
+                    "status": "incomplete",
+                    "content": [{"type": "output_text", "text": "Partial answer"}],
+                }
+            ],
+        },
+        api_mode="responses",
+    )
+    assert responses_partial["choices"][0] == {
+        "message": {"role": "assistant", "content": "Partial answer"},
+        "finish_reason": "length",
+    }
+
+    chat_mixed = qwencloud.normalize_qwencloud_response(
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Checking now.",
+                        "tool_calls": [
+                            {
+                                "id": "call_chat_A",
+                                "type": "function",
+                                "function": {
+                                    "name": "first_tool",
+                                    "arguments": "{}",
+                                },
+                            },
+                            {
+                                "id": "call_chat_B",
+                                "type": "function",
+                                "function": {
+                                    "name": "second_tool",
+                                    "arguments": '{"x":2}',
+                                },
+                            },
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 9,
+                "completion_tokens": 5,
+                "total_tokens": 14,
+            },
+        },
+        api_mode="chat_completions",
+    )
+    assert chat_mixed["choices"][0]["message"] == {
+        "role": "assistant",
+        "content": "Checking now.",
+        "tool_calls": [
+            {
+                "id": "call_chat_A",
+                "type": "function",
+                "function": {"name": "first_tool", "arguments": "{}"},
+            },
+            {
+                "id": "call_chat_B",
+                "type": "function",
+                "function": {"name": "second_tool", "arguments": '{"x":2}'},
+            },
+        ],
+    }
+    assert chat_mixed["choices"][0]["finish_reason"] == "tool_calls"
+    assert chat_mixed["usage"] == {
+        "prompt_tokens": 9,
+        "completion_tokens": 5,
+        "total_tokens": 14,
+    }
+
+
+def test_nonstream_rejects_empty_success_and_malformed_shapes() -> None:
+    malformed_cases = (
+        ("responses", {"status": "completed", "output": []}),
+        ("responses", {"status": "completed", "output": {}}),
+        ("responses", {"status": "failed", "output": []}),
+        ("responses", {"status": "cancelled", "output": []}),
+        (
+            "responses",
+            {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "content_filter"},
+                "output": [
+                    {
+                        "type": "message",
+                        "status": "incomplete",
+                        "content": [{"type": "output_text", "text": "private"}],
+                    }
+                ],
+            },
+        ),
+        (
+            "responses",
+            {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": "call_partial",
+                        "name": "lookup",
+                        "arguments": "{",
+                    }
+                ],
+            },
+        ),
+        ("chat_completions", {"choices": []}),
+        ("chat_completions", {"choices": {}}),
+        ("chat_completions", {"choices": [{"message": "bad"}]}),
+        (
+            "chat_completions",
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": None},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        ),
+        (
+            "chat_completions",
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_bad",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "lookup",
+                                        "arguments": 7,
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+        ),
+    )
+    for api_mode, payload in malformed_cases:
+        with pytest.raises(ChatProviderError) as exc_info:
+            qwencloud.normalize_qwencloud_response(
+                payload,  # type: ignore[arg-type]
+                api_mode=api_mode,  # type: ignore[arg-type]
+            )
+        assert exc_info.value.provider == "qwencloud"
+        assert "private" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("api_mode", "suffix", "response_payload"),
+    (
+        (
+            "responses",
+            "/responses",
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "ok"}],
+                    }
+                ],
+            },
+        ),
+        (
+            "chat_completions",
+            "/chat/completions",
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        ),
+    ),
+)
+def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    api_mode: str,
+    suffix: str,
+    response_payload: dict[str, Any],
+) -> None:
+    response = _TransportResponse(response_payload)
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {"timeout": 37, "retries": 0, "retry_delay": 0}
+                }
+            }
+        ),
+        raising=False,
+    )
+
+    chat_with_qwencloud(
+        input_data=[{"role": "user", "content": "hello"}],
+        model="qwen3.8-max",
+        api_key="qwen-secret",
+        streaming=False,
+        api_base_url="https://qwen.example/compatible-mode/v1/responses",
+        api_mode=api_mode,
+    )
+
+    assert len(session.posts) == 1
+    request = session.posts[0]
+    assert request["url"] == f"https://qwen.example/compatible-mode/v1{suffix}"
+    assert request["headers"] == {
+        "Authorization": "Bearer qwen-secret",
+        "Content-Type": "application/json",
+    }
+    assert request["timeout"] == 37.0
+    assert request["json"]["model"] == "qwen3.8-max"
+    assert request["json"]["stream"] is False
+    assert session.closed is True
+    assert response.closed is True
+
+
+def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _TransportResponse(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+        raising=False,
+    )
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-env-lower-priority")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-env-canary")
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "api_mode": "chat_completions",
+                        "api_base_url": "https://qwen-only.example/compatible-mode/v1",
+                        "api_key": "qwen-modern-key",
+                        "model": "qwen-config-model",
+                        "timeout": 41,
+                        "retries": 0,
+                        "retry_delay": 0,
+                    },
+                    "openai": {
+                        "api_base_url": "https://openai-canary.example/v1",
+                        "api_key": "openai-config-canary",
+                        "model": "openai-model-canary",
+                    },
+                    "deepseek": {
+                        "api_base_url": "https://deepseek-canary.example/v1",
+                        "api_key": "deepseek-config-canary",
+                    },
+                }
+            }
+        ),
+        raising=False,
+    )
+
+    chat_with_qwencloud(
+        input_data=[{"role": "user", "content": "hello"}],
+        model=None,
+        api_key=None,
+        streaming=False,
+        api_base_url=None,
+        api_mode=None,
+    )
+
+    assert len(session.posts) == 1
+    request = session.posts[0]
+    assert request["url"] == (
+        "https://qwen-only.example/compatible-mode/v1/chat/completions"
+    )
+    assert request["headers"]["Authorization"] == "Bearer qwen-modern-key"
+    assert request["json"]["model"] == "qwen-config-model"
+    assert request["timeout"] == 41.0
+    serialized = repr(request)
+    for canary in (
+        "openai-env-canary",
+        "openai-config-canary",
+        "openai-model-canary",
+        "openai-canary.example",
+        "deepseek-config-canary",
+        "deepseek-canary.example",
+    ):
+        assert canary not in serialized
+
+
+def _mounted_retry_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    retries: object,
+    retry_delay: object,
+    sensitive: bool = False,
+) -> Retry:
+    response = _TransportResponse(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "timeout": 3,
+                        "retries": retries,
+                        "retry_delay": retry_delay,
+                    }
+                }
+            }
+        ),
+    )
+
+    request_context = sensitive_llm_request() if sensitive else nullcontext()
+    with request_context:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model="qwen3.8-max",
+            api_key="key",
+            streaming=False,
+            api_base_url="https://qwen.example/v1",
+            api_mode="chat_completions",
+        )
+
+    assert {prefix for prefix, _adapter in session.mounts} == {"http://", "https://"}
+    retry_policies = {
+        id(adapter.max_retries): adapter.max_retries
+        for _prefix, adapter in session.mounts
+    }
+    assert len(retry_policies) == 1
+    return next(iter(retry_policies.values()))
+
+
+def _attempts_until_exhausted(
+    retry: Retry,
+    *,
+    response: _RetryResponse | None = None,
+    error: Exception | None = None,
+) -> int:
+    attempts = 1
+    current = retry
+    while True:
+        try:
+            current = current.increment(
+                method="POST",
+                url="https://qwen.example/v1/chat/completions",
+                response=response,
+                error=error,
+            )
+        except MaxRetryError:
+            return attempts
+        attempts += 1
+
+
+def test_retry_policy_counts_status_connection_and_timeout_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry = _mounted_retry_policy(monkeypatch, retries=2, retry_delay=0.25)
+
+    assert retry.total == 2
+    assert retry.allowed_methods == frozenset({"POST"})
+    assert retry.status_forcelist == frozenset({429, 500, 502, 503, 504})
+    assert retry.respect_retry_after_header is True
+    assert _attempts_until_exhausted(retry, response=_RetryResponse(503)) == 3
+    assert (
+        _attempts_until_exhausted(
+            retry, error=ConnectTimeoutError(None, "connection canary")
+        )
+        == 3
+    )
+    assert (
+        _attempts_until_exhausted(
+            retry, error=ReadTimeoutError(None, None, "timeout canary")
+        )
+        == 3
+    )
+
+    integer_retry_after = retry.get_retry_after(
+        _RetryResponse(429, headers={"Retry-After": "4"})  # type: ignore[arg-type]
+    )
+    assert integer_retry_after == 4
+    date_header = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=5))
+    date_retry_after = retry.get_retry_after(
+        _RetryResponse(429, headers={"Retry-After": date_header})  # type: ignore[arg-type]
+    )
+    assert date_retry_after is not None
+    assert 3 <= date_retry_after <= 6
+
+    after_one = retry.increment(
+        method="POST",
+        url="https://qwen.example/v1/chat/completions",
+        error=ConnectTimeoutError(None, "first"),
+    )
+    after_two = after_one.increment(
+        method="POST",
+        url="https://qwen.example/v1/chat/completions",
+        error=ConnectTimeoutError(None, "second"),
+    )
+    assert after_two.get_backoff_time() == pytest.approx(0.5)
+
+    negative = _mounted_retry_policy(monkeypatch, retries=-9, retry_delay=1)
+    assert negative.total == 0
+
+
+def test_sensitive_request_forces_zero_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry = _mounted_retry_policy(monkeypatch, retries=7, retry_delay=1, sensitive=True)
+    assert retry.total == 0
+    assert _attempts_until_exhausted(retry, response=_RetryResponse(503)) == 1
+
+
+def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = (
+        _TransportResponse(
+            {"error": {"message": "ordinary validation failure"}},
+            status_code=422,
+            text='{"error":{"message":"ordinary validation failure"}}',
+        ),
+        _TransportResponse(
+            {
+                "error": {
+                    "message": (
+                        "model qwen-canary is not supported by the Responses API "
+                        "RAW-MISMATCH-CANARY"
+                    )
+                }
+            },
+            status_code=400,
+            text=(
+                "model qwen-canary is not supported by the Responses API "
+                "RAW-MISMATCH-CANARY"
+            ),
+        ),
+    )
+    for index, response in enumerate(responses):
+        session = _RecordingSession(response)
+        monkeypatch.setattr(
+            qwencloud,
+            "requests",
+            SimpleNamespace(Session=lambda: session),
+        )
+        monkeypatch.setattr(
+            qwencloud,
+            "get_runtime_config_snapshot",
+            lambda: SimpleNamespace(
+                values={
+                    "api_settings": {
+                        "qwencloud": {
+                            "timeout": 3,
+                            "retries": 8,
+                            "retry_delay": 0,
+                        }
+                    }
+                }
+            ),
+        )
+
+        with pytest.raises(ChatBadRequestError) as exc_info:
+            chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "private"}],
+                model="qwen3.8-max",
+                api_key="key",
+                streaming=False,
+                api_base_url="https://qwen.example/v1",
+                api_mode="responses",
+            )
+        assert len(session.posts) == 1
+        assert exc_info.value.provider == "qwencloud"
+        if index == 1:
+            recovery = str(exc_info.value)
+            assert "compatible model" in recovery
+            assert "api_mode" in recovery
+            assert "RAW-MISMATCH-CANARY" not in recovery
+
+
+def test_qwencloud_errors_and_logs_redact_private_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canaries = (
+        "AUTHORIZATION-CANARY",
+        "MESSAGE-CANARY",
+        "TOOL-DESCRIPTION-CANARY",
+        "TOOL-ARGUMENT-CANARY",
+        "TOOL-CALL-ARGUMENT-CANARY",
+        "TOOL-RESULT-CANARY",
+        "RAW-BODY-CANARY",
+    )
+    response = _TransportResponse(
+        {"error": {"message": "RAW-BODY-CANARY"}},
+        status_code=500,
+        text='{"error":{"message":"RAW-BODY-CANARY"}}',
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {
+                        "timeout": 3,
+                        "retries": 0,
+                        "retry_delay": 0,
+                    }
+                }
+            }
+        ),
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "TOOL-DESCRIPTION-CANARY",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "type": "string",
+                            "description": "TOOL-ARGUMENT-CANARY",
+                        }
+                    },
+                },
+            },
+        }
+    ]
+
+    with (
+        _captured_qwencloud_logs() as logs,
+        pytest.raises(ChatProviderError) as exc_info,
+    ):
+        chat_with_qwencloud(
+            input_data=[
+                {"role": "user", "content": "MESSAGE-CANARY"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_private",
+                            "type": "function",
+                            "function": {
+                                "name": "lookup",
+                                "arguments": ('{"secret":"TOOL-CALL-ARGUMENT-CANARY"}'),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_private",
+                    "content": "TOOL-RESULT-CANARY",
+                },
+            ],
+            model="qwen3.8-max",
+            api_key="AUTHORIZATION-CANARY",
+            streaming=False,
+            tools=tools,
+            api_base_url="https://qwen.example/v1",
+            api_mode="chat_completions",
+        )
+
+    assert exc_info.value.provider == "qwencloud"
+    captured = "\n".join(logs) + "\n" + str(exc_info.value)
+    for canary in canaries:
+        assert canary not in captured
+    assert "qwencloud" in captured.lower()
+    assert "status=500" in captured
+    assert session.closed is True
+    assert response.closed is True
+
+    for status_code, expected_type in (
+        (401, ChatAuthenticationError),
+        (403, ChatAuthenticationError),
+        (429, ChatRateLimitError),
+    ):
+        status_response = _TransportResponse(
+            {"error": {"message": "RAW-BODY-CANARY"}},
+            status_code=status_code,
+            text="RAW-BODY-CANARY",
+        )
+        status_session = _RecordingSession(status_response)
+        monkeypatch.setattr(
+            qwencloud,
+            "requests",
+            SimpleNamespace(Session=lambda: status_session),
+        )
+        with (
+            _captured_qwencloud_logs() as status_logs,
+            pytest.raises(expected_type) as status_exc,
+        ):
+            chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "MESSAGE-CANARY"}],
+                model="qwen3.8-max",
+                api_key="AUTHORIZATION-CANARY",
+                streaming=False,
+                api_base_url="https://qwen.example/v1",
+                api_mode="chat_completions",
+            )
+        status_capture = "\n".join(status_logs) + "\n" + str(status_exc.value)
+        for canary in canaries:
+            assert canary not in status_capture
+        assert f"status={status_code}" in status_capture
+        assert status_session.closed is True
+        assert status_response.closed is True
+
+    for network_error in (
+        requests.exceptions.ConnectionError("RAW-BODY-CANARY"),
+        requests.exceptions.Timeout("RAW-BODY-CANARY"),
+    ):
+        network_session = _RecordingSession(_TransportResponse({}), error=network_error)
+        monkeypatch.setattr(
+            qwencloud,
+            "requests",
+            SimpleNamespace(Session=lambda: network_session),
+        )
+        with (
+            _captured_qwencloud_logs() as network_logs,
+            pytest.raises(ChatProviderError) as network_exc,
+        ):
+            chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "MESSAGE-CANARY"}],
+                model="qwen3.8-max",
+                api_key="AUTHORIZATION-CANARY",
+                streaming=False,
+                api_base_url="https://qwen.example/v1",
+                api_mode="chat_completions",
+            )
+        network_capture = "\n".join(network_logs) + "\n" + str(network_exc.value)
+        for canary in canaries:
+            assert canary not in network_capture
+        assert network_session.closed is True

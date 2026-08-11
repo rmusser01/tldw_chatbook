@@ -310,7 +310,7 @@ class TestMockedChatAPIs:
 class TestMockedChatUnit:
     """Unit tests with mocked external services to verify error handling"""
 
-    @patch("requests.post")
+    @patch("requests.Session.post")
     def test_local_service_connection_handling(self, mock_post):
         """Test handling of local service connection errors"""
         # Mock connection refused error

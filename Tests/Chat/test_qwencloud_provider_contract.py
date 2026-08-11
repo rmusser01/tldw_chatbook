@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import tomllib
 
+import pytest
+
+import tldw_chatbook.Chat.Chat_Functions as chat_functions
+
 from tldw_chatbook.Chat.console_provider_support import (
     ConsoleProviderIdentity,
     resolve_console_provider_identity,
@@ -25,9 +29,7 @@ def test_qwencloud_embedded_config_defaults() -> None:
     assert config["api_settings"]["qwencloud"] == {
         "api_mode": "responses",
         "api_key_env_var": "DASHSCOPE_API_KEY",
-        "api_base_url": (
-            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-        ),
+        "api_base_url": ("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         "model": "qwen3.8-max",
         "timeout": 120,
         "retries": 3,
@@ -82,11 +84,7 @@ def test_qwencloud_readiness_uses_modern_config_before_its_env() -> None:
 
     configured_env = get_provider_readiness(
         "QwenCloud",
-        {
-            "api_settings": {
-                "qwencloud": {"api_key_env_var": "QWENCLOUD_OVERRIDE_KEY"}
-            }
-        },
+        {"api_settings": {"qwencloud": {"api_key_env_var": "QWENCLOUD_OVERRIDE_KEY"}}},
         environ={
             "QWENCLOUD_OVERRIDE_KEY": "configured-env-key",
             "DASHSCOPE_API_KEY": "default-env-key",
@@ -138,3 +136,122 @@ def test_qwencloud_builtin_endpoint_is_international_compatible_base() -> None:
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     )
     assert provider_uses_endpoint("qwencloud", {}) is True
+
+
+def test_chat_api_call_forwards_qwencloud_mode_base_and_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def qwencloud_handler(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    qwencloud_handler.__name__ = "qwencloud_handler"
+    monkeypatch.setitem(
+        chat_functions.API_CALL_HANDLERS, "qwencloud", qwencloud_handler
+    )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Look up a value.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    chat_functions.chat_api_call(
+        api_endpoint="QwenCloud",
+        messages_payload=[{"role": "user", "content": "hello"}],
+        api_key="qwen-key",
+        temp=0.2,
+        system_message="Be concise.",
+        streaming=False,
+        model="qwen3.8-max",
+        topk=20,
+        topp=0.8,
+        logprobs=True,
+        top_logprobs=2,
+        presence_penalty=0.1,
+        frequency_penalty=0.4,
+        tools=tools,
+        tool_choice="auto",
+        max_tokens=128,
+        seed=7,
+        stop=["END"],
+        response_format={"type": "json_object"},
+        n=1,
+        reasoning_effort="medium",
+        api_base_url="https://qwen.example/compatible-mode/v1",
+        api_mode="chat_completions",
+    )
+
+    assert captured == {
+        "input_data": [{"role": "user", "content": "hello"}],
+        "model": "qwen3.8-max",
+        "api_key": "qwen-key",
+        "system_message": "Be concise.",
+        "temp": 0.2,
+        "streaming": False,
+        "topp": 0.8,
+        "topk": 20,
+        "max_tokens": 128,
+        "seed": 7,
+        "stop": ["END"],
+        "logprobs": True,
+        "top_logprobs": 2,
+        "presence_penalty": 0.1,
+        "response_format": {"type": "json_object"},
+        "n": 1,
+        "tools": tools,
+        "tool_choice": "auto",
+        "reasoning_effort": "medium",
+        "api_base_url": "https://qwen.example/compatible-mode/v1",
+        "api_mode": "chat_completions",
+    }
+    assert "frequency_penalty" not in captured
+    assert set(chat_functions.PROVIDER_PARAM_MAP["qwencloud"]) == {
+        "messages_payload",
+        "model",
+        "api_key",
+        "system_message",
+        "temp",
+        "streaming",
+        "topp",
+        "topk",
+        "max_tokens",
+        "seed",
+        "stop",
+        "logprobs",
+        "top_logprobs",
+        "presence_penalty",
+        "response_format",
+        "n",
+        "tools",
+        "tool_choice",
+        "reasoning_effort",
+        "api_base_url",
+        "api_mode",
+    }
+
+    for endpoint in ("openai", "deepseek"):
+        other: dict[str, object] = {}
+
+        def representative_handler(**kwargs: object) -> dict[str, object]:
+            other.update(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        representative_handler.__name__ = f"{endpoint}_handler"
+        monkeypatch.setitem(
+            chat_functions.API_CALL_HANDLERS, endpoint, representative_handler
+        )
+        chat_functions.chat_api_call(
+            api_endpoint=endpoint,
+            messages_payload=[{"role": "user", "content": "hello"}],
+            model="representative-model",
+            streaming=False,
+            api_mode="responses",
+        )
+        assert "api_mode" not in other

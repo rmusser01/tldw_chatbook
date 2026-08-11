@@ -77,6 +77,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_custom_openai_2,
     chat_with_mlx_lm,
 )
+from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
@@ -116,6 +117,7 @@ API_CALL_HANDLERS = {
     "huggingface": chat_with_huggingface,
     "moonshot": chat_with_moonshot,
     "zai": chat_with_zai,
+    "qwencloud": chat_with_qwencloud,
     "llama_cpp": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
@@ -153,6 +155,7 @@ SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(
         "huggingface",
         "moonshot",
         "zai",
+        "qwencloud",
         "llama_cpp",
         "koboldcpp",
         "oobabooga",
@@ -181,6 +184,29 @@ FIXME: The mappings and handlers should be validated for correctness.
 # 2. Parameter mapping for each provider
 # Maps generic chat_api_call param name to provider-specific param name
 PROVIDER_PARAM_MAP = {
+    "qwencloud": {
+        "messages_payload": "input_data",
+        "model": "model",
+        "api_key": "api_key",
+        "system_message": "system_message",
+        "temp": "temp",
+        "streaming": "streaming",
+        "topp": "topp",
+        "topk": "topk",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "presence_penalty": "presence_penalty",
+        "response_format": "response_format",
+        "n": "n",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "api_base_url": "api_base_url",
+        "api_mode": "api_mode",
+    },
     "openai": {
         "api_key": "api_key",
         "messages_payload": "input_data",
@@ -780,6 +806,7 @@ def chat_api_call(
     prompt_caching: Optional[bool] = None,
     llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
     api_base_url: Optional[str] = None,
+    api_mode: Optional[str] = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
@@ -794,6 +821,8 @@ def chat_api_call(
         messages_payload: A list of message objects (OpenAI format: `{'role': ..., 'content': ...}`)
                           representing the conversation history and current user message.
         api_base_url: Optional request-pinned provider endpoint override.
+        api_mode: Optional provider-specific external API mode. Only mapped
+            providers receive this value.
         api_key: The API key for the specified provider.
         temp: Temperature for sampling, controlling randomness.
         system_message: An optional system-level instruction for the LLM. How this is
