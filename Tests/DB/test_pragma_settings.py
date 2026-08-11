@@ -17,6 +17,50 @@ pragma application does not raise -- never that journal_mode is WAL. A few
 stores (``tts.profile_store``) are registered private-file-only in
 ``DB/private_sqlite.py``'s owner policy and have no ``:memory:`` target at
 all; those are covered by the file-backed test only.
+
+Swept (task-15465 fix round 2) every ``connect_private_sqlite`` and
+``sqlite3.connect`` call site in production code (grep, not a sample) to
+confirm the claim above is actually exhaustive. Two categories of
+``connect_private_sqlite`` call are legitimately NOT covered here, neither
+because it is a live application database this task missed:
+
+- **Read-only by construction** (``read_only=True``/``immutable=True``, so
+  the connection never writes and a journal-mode/synchronous pragma is
+  moot): ``TTS/profile_schema.py``'s ``peek_profile_store_schema_version``
+  (owner ``tts.profile_store_version_peek``), ``RAG_Search/simplified/
+  rag_service.py``'s ChaChaNotes keyword-leg reader (owner
+  ``rag.chachanotes_keyword_leg``), ``DB/Client_Media_DB_v2.py``'s
+  integrity check (owner ``db.media.integrity``), ``Web_Scraping/
+  cookie_scraping/cookie_cloner.py``'s three browser-cookie readers
+  (owners ``cookies.chrome``/``cookies.edge``/``cookies.firefox`` -- these
+  read a THIRD-PARTY browser's own database, never this app's), and
+  ``UI/Tools_Settings_Window.py``'s schema/integrity checks (owners
+  ``settings.schema``/``settings.integrity``).
+- **Backup/restore/migration/candidate infrastructure**: connections that
+  operate on a disposable ``tempfile.mkstemp()`` staging copy (written
+  once, then published or discarded, never the live store) or reopen the
+  live store transiently in read-only-in-practice validation mode as part
+  of a rare migration/restore flow, never as the store's ongoing live
+  connection. This is ``UI/Tools_Settings_Window.py``'s vacuum/backup/
+  restore workers (owners ``settings.vacuum``/``settings.*_backup``/
+  ``settings.restore``, whose ``-wal``/``-shm`` sidecar handling was
+  separately audited under this task's AC#3 -- see the task's
+  Implementation Notes) and ``TTS/profile_repository.py``'s backup/
+  migration/candidate/snapshot connections (owners
+  ``tts.profile_backup``/``tts.profile_migration_backup``/
+  ``tts.profile_restore_stage``/``tts.profile_recovery``/
+  ``tts.profile_snapshot``) plus ``TTS/profile_schema.py``'s two
+  candidate-validation sites (``tts.profile_candidate_upgrade``: an
+  in-place schema upgrade run against a disposable pre-copied snapshot
+  file to validate a restore candidate, never the live store itself).
+  These are all one-shot maintenance operations, not databases this app
+  reads and writes as part of normal operation.
+
+``DB/search_history_db.py``, ``DB/Research_DB.py``, ``DB/Writing_DB.py``,
+``DB/Mindmap_DB.py``, and ``DB/Sync_Client.py`` are dead code (no import
+site anywhere outside their own module or the owner-policy registry) --
+task-15481 will retire them; this task's own description names them as an
+explicit skip, not a gap.
 """
 
 from __future__ import annotations
@@ -43,6 +87,7 @@ from tldw_chatbook.Notifications.client_notifications_db import ClientNotificati
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.TTS.profile_schema import open_profile_store
 from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import SQLiteStorage
@@ -254,6 +299,16 @@ def _event_state_memory(_tmp_path: Path):
     return conn, db.close
 
 
+def _notes_mirror_file(tmp_path: Path):
+    db = NotesMirror(tmp_path / "notes_mirror.db")
+    return db._conn, db.close
+
+
+def _notes_mirror_memory(_tmp_path: Path):
+    db = NotesMirror(":memory:")
+    return db._conn, db.close
+
+
 def _sync_state_file(tmp_path: Path):
     db = SyncStateRepository(tmp_path / "sync_state.db")
     conn = db._get_connection()
@@ -310,6 +365,7 @@ _CASES: list[tuple[str, Callable, Callable | None]] = [
     ("research", _research_file, _research_memory),
     ("event_state", _event_state_file, _event_state_memory),
     ("sync_state", _sync_state_file, _sync_state_memory),
+    ("notes_mirror", _notes_mirror_file, _notes_mirror_memory),
     ("file_notes_replica", _file_notes_replica_file, _file_notes_replica_memory),
     ("tamagotchi", _tamagotchi_file, _tamagotchi_memory),
 ]
