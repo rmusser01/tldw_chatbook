@@ -109,19 +109,17 @@ class LibraryCollectionsPanel(Vertical):
             return
 
         if self.state.status == "empty":
+            # task-4023 AC#7: the empty state stacked FOUR "nothing here"
+            # sentences (headline, next-action, purpose dump, and a
+            # meaningless "No Collection selected." with zero collections
+            # in existence). Two lines now: the fact, then one sentence
+            # combining purpose + next action (``state.empty_copy``).
             yield Static(
                 "No Collections yet.",
                 id="library-collections-empty-title",
                 classes="destination-section",
             )
-            yield Static(
-                "Create a local Collection record to start reviewing saved content.",
-                id="library-collections-empty-next-action",
-            )
             yield Static(self.state.empty_copy, id="library-collections-empty")
-            yield Static(
-                "No Collection selected.", id="library-collection-selected-empty"
-            )
             yield from self._compose_collection_form()
             return
 

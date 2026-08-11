@@ -896,6 +896,161 @@ async def test_blocked_run_records_nothing_in_recent_searches():
 
 
 # ---------------------------------------------------------------------------
+# AC#7: layout/copy honesty -- canvas title budget, viewer Type line, and
+# the three surfaces whose Escape was inert (Export, Collections, staging).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_media_canvas_rows_do_not_inherit_the_rail_title_budget():
+    """AC#7: media/conversations canvas rows truncated titles at 17 chars
+    (the RAIL's 20-cell cap) on a 170-column terminal, leaving ~115 blank
+    columns. Canvas rows render the full title; CSS ellipsis handles real
+    overflow at the rendered edge."""
+    import dataclasses
+
+    from tldw_chatbook.Library.library_media_state import LibraryMediaRow
+
+    long_title = "Quarterly planning notes for the Atlas migration project 2026"
+    state = dataclasses.replace(
+        _select_mode_zero_selected_state(),
+        rows=(
+            LibraryMediaRow(
+                media_id="m1",
+                title=long_title,
+                media_type="document",
+                secondary="document · 1m",
+                selected=False,
+                checked=False,
+            ),
+        ),
+        count=1,
+    )
+
+    class _App(App):
+        def compose(self):
+            yield LibraryMediaCanvas(canvas=state, id="library-media-canvas")
+
+    async with _App().run_test(size=(170, 40)) as pilot:
+        row = pilot.app.query_one("#library-media-row-0", Button)
+        assert long_title in str(row.label)
+
+
+def test_viewer_type_line_names_rendered_markdown_honestly():
+    """AC#7: 'Type: plaintext' for a .md the viewer renders as markdown.
+    The metadata line now says what the user is looking at while still
+    naming the stored type."""
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        build_library_media_viewer_state,
+    )
+
+    markdown_detail = {
+        "id": "1",
+        "title": "Notes",
+        "type": "plaintext",
+        "content": "# Heading\n\n- a real markdown bullet\n- another\n",
+    }
+    state = build_library_media_viewer_state(markdown_detail)
+    assert state.is_markdown
+    assert "Type: markdown (stored as plaintext)" in state.metadata_lines
+
+    plain_detail = {
+        "id": "2",
+        "title": "Log",
+        "type": "plaintext",
+        "content": "just words\nno structure at all\n" * 3,
+    }
+    plain_state = build_library_media_viewer_state(plain_detail)
+    assert not plain_state.is_markdown
+    assert "Type: plaintext" in plain_state.metadata_lines
+
+
+@pytest.mark.asyncio
+async def test_escape_works_on_export_collections_and_staging_canvases():
+    """AC#7: Escape was inert on Export, Collections, and the Study
+    staging canvas (and 'Export…' from within Media navigated away with
+    no return path). Escape now: Export -> back to the canvas that opened
+    it (or the hub from the rail), Collections -> focus rail, staging ->
+    hub. The footer advertises each via the shared seam."""
+    from textual.widgets import Input as _Input
+
+    from Tests.UI.test_product_maturity_phase39_library_collections import (
+        DestinationHarness,
+        FakeLibraryCollectionsService,
+        _active_destination_screen,
+        _seed_library_sources,
+        _wait_for_library_snapshot,
+        _wait_for_selector,
+    )
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_INGEST_EXPORT,
+    )
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        # --- Export… from within Media returns to Media on Escape.
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-export")
+        screen.query_one("#library-media-export", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-export-submit")
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
+        assert shortcuts.get("esc") == "back to Media"
+        await pilot.press("escape")
+        for _ in range(300):
+            if screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                break
+            await pilot.pause(0.01)
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+        # --- Export entered from the rail returns to the hub landing.
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-export-submit")
+        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
+        assert shortcuts.get("esc") == "back to hub"
+        await pilot.press("escape")
+        for _ in range(300):
+            if screen._library_selected_row_id == "":
+                break
+            await pilot.pause(0.01)
+        assert screen._library_selected_row_id == ""
+
+        # --- Collections: Escape is the list-canvas focus hop to the rail.
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
+        assert shortcuts.get("esc") == "focus rail"
+        await pilot.press("escape")
+        for _ in range(300):
+            focused = screen.focused
+            if isinstance(focused, _Input) and focused.id == "library-search-input":
+                break
+            await pilot.pause(0.01)
+        assert getattr(screen.focused, "id", None) == "library-search-input"
+
+        # --- Study staging canvas: Escape returns to the hub.
+        screen.query_one("#library-row-create-study", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-actions")
+        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
+        assert shortcuts.get("esc") == "back to hub"
+        await pilot.press("escape")
+        for _ in range(300):
+            if screen._library_selected_row_id == "":
+                break
+            await pilot.pause(0.01)
+        assert screen._library_selected_row_id == ""
+
+
+# ---------------------------------------------------------------------------
 # AC#1 follow-up (Task 2 review M-1): the IN-PLACE marker patchers had zero
 # automated coverage -- removing `_patch_library_disabled_marker_label` from
 # `_apply_library_row_toggle` (mutation C) or the collections patcher's label

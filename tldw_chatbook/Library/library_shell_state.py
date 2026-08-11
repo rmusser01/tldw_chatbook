@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# task-4023 AC#7: no "on the left" -- at ≤100 columns the shell shows one
+# pane at a time (the rail fills the width and this canvas is hidden), so
+# spatial copy was width-dependent nonsense. The copy now holds at every
+# width the layout can take.
 LIBRARY_CANVAS_LANDING_COPY = (
-    "Search everything, pick a section on the left, or add something new."
+    "Search everything, pick a section, or add something new."
 )
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"

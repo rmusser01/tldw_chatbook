@@ -634,7 +634,7 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         visible = _visible_text(screen)
         assert "Conversations (2)" in visible
         assert (
-            "Search everything, pick a section on the left, or add something new."
+            "Search everything, pick a section, or add something new."
             in visible
         )
         assert screen.query_one("#library-canvas-landing")
@@ -943,7 +943,7 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
             label = str(row.label)
             if row.id in handoff_ids:
                 assert "\n" in label, f"{row.id} lost its handoff discriminator"
-                assert "opens staging canvas" in label
+                assert "see what carries over" in label
                 assert "opens Study" not in label
                 assert row.styles.height.value == 2
             else:
@@ -16410,7 +16410,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
         # destination keeps it disabled now, which is correct).
@@ -16532,7 +16532,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
         submit = screen.query_one("#library-export-submit", Button)
         # Counts landed with a positive total, but no destination chosen yet.
         assert submit.disabled is True
@@ -17078,7 +17078,7 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "Everything: 1 media · 1 conversations · 0 notes"
+        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
 
 
 class _GatedExportCountMediaDB:
@@ -17167,7 +17167,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-scope-line", Static) is scope_line
         assert (
             str(scope_line.renderable)
-            == "Everything: 1 media · 1 conversations · 0 notes"
+            == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
         )
         # Positive total, but still no destination -- Export stays disabled.
         assert screen.query_one("#library-export-submit", Button).disabled is True

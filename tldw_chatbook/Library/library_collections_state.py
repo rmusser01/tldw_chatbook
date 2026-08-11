@@ -13,9 +13,11 @@ from tldw_chatbook.Sync_Interop.sync_profile_status_state import (
 )
 
 
+# task-4023 AC#7: ONE sentence combining purpose and next action -- the
+# empty canvas used to stack four separate "nothing here" sentences.
 LIBRARY_COLLECTIONS_EMPTY_COPY = (
-    "No stored collection items are available locally yet. Collections are for "
-    "reading, reviewing, and reusing saved content."
+    "Collections gather saved content for reading and review — "
+    "create one below to start."
 )
 LIBRARY_COLLECTIONS_NAME_MAX_LENGTH = 120
 LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH = 500

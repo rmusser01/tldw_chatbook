@@ -963,6 +963,15 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "study": "create-study",
 }
 
+#: task-4023 AC#7: the three Study staging (handoff) rows -- the surfaces
+#: whose Escape returns to the hub landing (they had no back path at all).
+#: Row ids match ``library_shell_state.py``'s study_rows.
+LIBRARY_STUDY_HANDOFF_ROW_IDS = (
+    "create-study",
+    "create-flashcards",
+    "create-quizzes",
+)
+
 
 def _record_value(record: Any, key: str, fallback: Any = "") -> Any:
     if isinstance(record, Mapping):
@@ -1406,6 +1415,15 @@ class LibraryScreen(BaseAppScreen):
         # to the hub landing; the persisted ingest form survives (the
         # task-2043 persistence rule), so Esc is never destructive.
         ("escape", "library_ingest_back", "Back to Library hub"),
+        # task-4023 AC#7: three surfaces still had an inert Escape (the
+        # re-critique's P2 residue). Same disjoint-gate contract as the
+        # chain above -- each check_action passes only on its own row.
+        # Export goes back to the canvas that opened it ("Export…" from
+        # within Media navigated away with no return path) or to the hub
+        # when entered from the rail; the Study staging canvases had no
+        # back path at all.
+        ("escape", "library_export_back", "Back from Export"),
+        ("escape", "library_handoff_back", "Back to Library hub"),
         # task-3020 AC2: an ARMED bulk-delete confirmation on the Media
         # list is still ``_library_media_view == "list"`` (the toolbar is
         # swapped in place, not a distinct sub-view), so without this the
@@ -1453,6 +1471,12 @@ class LibraryScreen(BaseAppScreen):
     #: state -- an attribute defined only there is missing exactly when the
     #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
     _library_media_detail_is_remote: bool = False
+
+    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
+    #: canvas ("" = entered from the rail/deep link). Escape returns
+    #: there; a plain rail switch clears it. Class-level default for the
+    #: same restored-session reason as ``_library_media_detail_is_remote``.
+    _library_export_origin_row_id: str = ""
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
     #: show=True bindings the retired Textual Footer used to render
@@ -3099,6 +3123,29 @@ class LibraryScreen(BaseAppScreen):
         # gate below (they all require a different row id).
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             return self.LIBRARY_INGEST_SHORTCUTS
+        # task-4023 AC#7: Export and the Study staging canvases advertise
+        # their newly wired Escape. Export's label names the actual
+        # destination -- the canvas whose "Export…" opened it, or the hub.
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            origin_label = _LIBRARY_HELP_SURFACE_LABELS.get(
+                self._library_export_origin_row_id, ""
+            )
+            back_label = f"back to {origin_label}" if origin_label else "back to hub"
+            return (
+                ("/", "focus search"),
+                ("F6", "next pane"),
+                ("esc", back_label),
+            )
+        if self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS:
+            return (
+                ("/", "focus search"),
+                ("F6", "next pane"),
+                ("esc", "back to hub"),
+            )
+        # task-4023 AC#7: Collections shares the list-canvas Escape
+        # contract (focus hop toward the rail) and its footer set.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            return self.LIBRARY_LIST_SHORTCUTS
         if self._file_notes_active():
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
@@ -8869,6 +8916,11 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        # task-4023 AC#7: remember which canvas opened Export so Escape
+        # (action_library_export_back) can return there -- "Export… from
+        # within Media navigates away with no return path". Recorded
+        # AFTER the flush admits the switch, BEFORE the row id moves.
+        self._library_export_origin_row_id = self._library_selected_row_id
         self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
         self._reset_library_export_transient_state(scope)
         self.refresh(recompose=True)
@@ -11850,6 +11902,10 @@ class LibraryScreen(BaseAppScreen):
             # failure must not leak into a later fresh Create entry.
             self._library_note_create_status = ""
         self._library_selected_row_id = row_id
+        # task-4023 AC#7: a plain rail switch is a fresh entry -- only
+        # ``_open_library_export_canvas`` (which bypasses this seam) may
+        # arm an Export back-origin.
+        self._library_export_origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
         self._library_notes_explicit_stage_intent = row_id in {
@@ -14367,6 +14423,10 @@ class LibraryScreen(BaseAppScreen):
             return self._library_prompt_editor_active()
         if action == "library_ingest_back":
             return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        if action == "library_export_back":
+            return self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        if action == "library_handoff_back":
+            return self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
         if action == "library_media_bulk_delete_cancel":
             # task-3020 AC2: only while the bulk-delete confirmation is
             # genuinely armed -- mirrors the single-item viewer confirm's
@@ -14398,7 +14458,14 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         if action == "library_list_focus_rail":
-            return self._library_list_canvas_showing_list()
+            # task-4023 AC#7: Collections joins the list-canvas Escape
+            # contract (it was the one browse canvas where Escape was
+            # inert) -- a plain list surface's Escape is a focus hop
+            # toward the rail, never navigation.
+            return (
+                self._library_list_canvas_showing_list()
+                or self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            )
         if action == "library_rag_use_in_console":
             # Mirrors action_library_rag_use_in_console's own gate exactly
             # (that method also accepts no focused card -- "u" stages
@@ -14649,6 +14716,40 @@ class LibraryScreen(BaseAppScreen):
             # Esc leaves for the hub as before.
             self._disarm_library_ingest_start_confirm()
             self._update_library_ingest_gate(self._build_library_ingest_state())
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
+
+    async def action_library_export_back(self) -> None:
+        """Escape: leave the Export canvas (task-4023 AC#7).
+
+        Returns to the canvas whose "Export…" action opened it (Media/
+        Conversations/Notes -- the "navigates away with no return path"
+        finding), or to the hub landing when Export was entered from the
+        rail. A running export keeps running; the canvas's own state
+        (including the durable last-export receipt) survives exactly as a
+        rail switch would leave it.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        origin = self._library_export_origin_row_id
+        self._library_export_origin_row_id = ""
+        if origin:
+            await self._select_library_rail_row(origin)
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
+
+    async def action_library_handoff_back(self) -> None:
+        """Escape: leave a Study staging canvas for the hub (task-4023 AC#7).
+
+        The three handoff canvases had no back path at all -- Escape was
+        inert and nothing on the canvas led anywhere except forward into
+        Study. Mirrors ``action_library_ingest_back``'s hub return.
+        """
+        if self._library_selected_row_id not in LIBRARY_STUDY_HANDOFF_ROW_IDS:
             return
         await self._select_library_rail_row("")
         if self.is_mounted:
@@ -24802,8 +24903,25 @@ class LibraryScreen(BaseAppScreen):
             collapsible = history_widgets[0]
             if not isinstance(collapsible, Collapsible):
                 return
-            if force_collapsed is not None:
-                collapsible.collapsed = force_collapsed
+            if force_collapsed is not None and (
+                collapsible.collapsed != force_collapsed
+            ):
+                # task-4023 AC#6 (RC-08): assigning the reactive here used
+                # to run Textual's ``Collapsible._watch_collapsed``, which
+                # schedules an ANIMATED ``self.scroll_visible()`` -- at
+                # results arrival that animation scrolled the panel to the
+                # Recents strip at the BOTTOM, sailing past the Evidence
+                # region (and overriding `_reveal_library_rag_results`,
+                # found by spying ``panel.scroll_to``). Apply the visual
+                # collapse without the watcher: the state field was already
+                # set by the results-arrival transition, so skipping the
+                # Collapsed/Expanded message loses nothing (the handler
+                # only mirrors the value back into the same field). A
+                # USER'S own title click still takes the normal watcher
+                # path, scroll and all.
+                collapsible.set_reactive(Collapsible.collapsed, force_collapsed)
+                collapsible._update_collapsed(force_collapsed)
+                collapsible.refresh(layout=True)
             try:
                 contents = collapsible.query_one(Collapsible.Contents)
             except (NoMatches, QueryError):
