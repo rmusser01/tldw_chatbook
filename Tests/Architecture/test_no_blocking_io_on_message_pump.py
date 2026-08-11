@@ -266,7 +266,7 @@ def _scan_package() -> dict[tuple[str, str, str], list[str]]:
     for subdir in SCANNED_SUBDIRS:
         for path in sorted((PACKAGE_ROOT / subdir).rglob("*.py")):
             try:
-                functions, handlers = _analyse(path.read_text())
+                functions, handlers = _analyse(path.read_text(encoding="utf-8"))
             except (SyntaxError, UnicodeDecodeError):  # pragma: no cover
                 continue
             relative = path.relative_to(PACKAGE_ROOT).as_posix()

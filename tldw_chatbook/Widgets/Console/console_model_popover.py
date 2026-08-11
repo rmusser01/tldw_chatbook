@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
@@ -56,6 +56,7 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
     #console-model-popover {
         width: 60;
         height: auto;
+        max-height: 100%;
         border: tall gray;
         background: black;
         padding: 1 2;
@@ -124,22 +125,26 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 self._settings.provider, self._providers_models, self._settings.model
             )
         ]
-        with Vertical(id="console-model-popover"):
+        with VerticalScroll(id="console-model-popover"):
             yield Static("Model", classes="console-modal-header")
             yield Select(
                 provider_options,
                 value=self._settings.provider,
                 id="console-popover-provider",
             )
-            yield Select(
+            model_select = Select(
                 model_options,
                 value=self._settings.model if self._settings.model else Select.BLANK,
                 id="console-popover-model",
                 allow_blank=True,
             )
+            model_select.display = False
+            yield model_select
             yield ModelSearchPicker(
                 id="console-popover-model-search",
                 provider_select_id="#console-popover-provider",
+                current_model=self._settings.model,
+                providers_models=self._providers_models,
             )
             yield Static("Temperature", classes="console-popover-field-label")
             yield Input(
@@ -185,6 +190,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         ]
         model_select = self.query_one("#console-popover-model", Select)
         model_select.set_options(options)
+        self.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        ).refresh_provider(provider, current_model=None)
 
     @on(ModelSearchPicker.ModelSelected)
     def _model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
@@ -239,7 +247,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         """
         event.stop()
         provider_value = self.query_one("#console-popover-provider", Select).value
-        model_value = self.query_one("#console-popover-model", Select).value
+        model_value = self.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        ).value
         temperature_text = self.query_one(
             "#console-popover-temperature", Input
         ).value.strip()
@@ -259,7 +269,7 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
             replace(
                 self._settings,
                 provider=str(provider_value),
-                model=None if model_value in (None, Select.BLANK) else str(model_value),
+                model=None if model_value is None else str(model_value),
                 temperature=temperature,
                 streaming=self._streaming,
             )

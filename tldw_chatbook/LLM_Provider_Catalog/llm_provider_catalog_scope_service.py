@@ -435,6 +435,27 @@ class LLMProviderCatalogScopeService:
         )
         return tuple(result)
 
+    async def has_discovered_model_snapshot(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str,
+        staged_settings: dict[str, Any] | None = None,
+    ) -> bool:
+        """Return whether the selected source has a current endpoint snapshot."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("models", "list", normalized_mode))
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return False
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            service.has_discovered_model_snapshot(
+                provider=provider,
+                staged_settings=staged_settings,
+            )
+        )
+        return bool(result)
+
     async def persist_discovered_models_to_settings(
         self,
         *,

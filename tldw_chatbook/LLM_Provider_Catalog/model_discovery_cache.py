@@ -47,6 +47,15 @@ class ModelDiscoveryCache:
             models.extend(cached_models)
         return tuple(models)
 
+    def has_snapshot(
+        self,
+        provider_list_key: str,
+        endpoint_fingerprint: str,
+    ) -> bool:
+        """Return whether a snapshot exists, including an empty snapshot."""
+        key = (str(provider_list_key), str(endpoint_fingerprint))
+        return key in self._models_by_provider_endpoint
+
     def clear(self, provider_list_key: str | None = None) -> None:
         """Clear all cached models, or only one exact provider key."""
         if provider_list_key is None:

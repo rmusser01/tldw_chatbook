@@ -12,7 +12,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -57,6 +57,7 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
 )
@@ -149,6 +150,14 @@ class FakeConsoleModelDiscoveryScope:
 class FailingConsoleModelDiscoveryScope:
     async def merge_saved_and_discovered_models(self, **kwargs):
         raise RuntimeError("merge failed")
+
+
+class EmptyConsoleModelSnapshotScope:
+    async def merge_saved_and_discovered_models(self, **_kwargs):
+        return ()
+
+    async def has_discovered_model_snapshot(self, **_kwargs):
+        return True
 
 
 def _visible_text(app: App[None]) -> str:
@@ -870,13 +879,13 @@ def test_choose_model_action_label_normalization() -> None:
 async def test_console_model_resolution_includes_runtime_discovered_models() -> None:
     scope = FakeConsoleModelDiscoveryScope(
         (
+            _merged_model("gpt-4.1", source="persisted_discovered"),
             _merged_model(
                 "gpt-5",
                 source="runtime_discovered",
                 capability_status="unknown",
                 persisted=False,
             ),
-            _merged_model("gpt-4.1"),
         )
     )
     options = await provider_model_resolution.resolve_provider_model_options(
@@ -954,6 +963,23 @@ async def test_console_settings_model_resolution_preserves_configured_alternativ
     )
 
     assert models["local_llamacpp"] == ["uat-local-model", "uat-alt-local-model"]
+
+
+@pytest.mark.asyncio
+async def test_console_settings_model_resolution_keeps_empty_cloud_snapshot_authoritative() -> (
+    None
+):
+    app = _build_test_app()
+    app.providers_models = {"anthropic": ["retired-model"]}
+    app.llm_provider_catalog_scope_service = EmptyConsoleModelSnapshotScope()
+    console = ChatScreen(app)
+
+    models = await console._providers_models_for_console_settings(
+        "anthropic",
+        current_model=None,
+    )
+
+    assert models["anthropic"] == []
 
 
 @pytest.mark.asyncio
@@ -1233,7 +1259,7 @@ async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_
         assert model_input.display is True
         assert model_input.disabled is True
         assert model_input.value == "model-a"
-        assert app.focused is model_custom
+        assert getattr(app.focused, "id", None) == "model-search-picker-input"
 
 
 @pytest.mark.asyncio
@@ -2134,7 +2160,7 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_tabs_to_model_select_after_provider_change() -> (
+async def test_console_settings_modal_tabs_to_model_picker_after_provider_change() -> (
     None
 ):
     app = StyledModalHarness()
@@ -2158,20 +2184,26 @@ async def test_console_settings_modal_tabs_to_model_select_after_provider_change
 
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         model_select = app.screen.query_one("#console-settings-model-select", Select)
+        picker = app.screen.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
 
         provider_select.focus()
         provider_select.value = "groq"
         await pilot.pause()
 
-        assert model_select.disabled is False
-        assert model_select.display is True
+        assert app.screen.query_one(
+            "#console-settings-model-legacy-adapter"
+        ).display is False
         assert model_select.value == "llama-3.3-70b-versatile"
+        assert picker.value == "llama-3.3-70b-versatile"
 
         await pilot.press("tab")
-        await _wait_for_focused_id(app, pilot, "console-settings-model-select")
-        await pilot.press("enter")
+        await _wait_for_focused_id(app, pilot, "model-search-picker-input")
+        await pilot.press("8")
+        await pilot.pause()
 
-        assert model_select.expanded is True
+        assert app.screen.query_one("#model-search-picker-results", OptionList).display
 
 
 @pytest.mark.asyncio
@@ -2559,6 +2591,48 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_uses_shared_picker_and_saves_search_result() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1", "gpt-5"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        picker = app.screen.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        legacy_adapter = app.screen.query_one(
+            "#console-settings-model-legacy-adapter"
+        )
+        assert picker.display is True
+        assert legacy_adapter.display is False
+
+        search_input = picker.query_one("#model-search-picker-input", Input)
+        search_input.value = "gpt-5"
+        await pilot.pause()
+        results = picker.query_one("#model-search-picker-results", OptionList)
+        option = results.get_option_at_index(0)
+        results.post_message(OptionList.OptionSelected(results, option, 0))
+        await pilot.pause()
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "gpt-5"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_refreshes_readiness_after_returning_to_model_list() -> (
     None
 ):
@@ -2582,6 +2656,10 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         await pilot.click("#console-settings-model-custom")
         await pilot.pause()
 
+        picker = app.screen.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        assert picker.custom_mode is True
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         provider_model_section = app.screen.query_one(
@@ -2591,6 +2669,8 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         app.screen._sync_readiness_display()
         await pilot.pause()
 
+        assert model_input.value == ""
+        assert picker.value is None
         assert "Choose a model to enable sending." in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section") is True
@@ -2796,16 +2876,19 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
         app.screen.query_one("#console-settings-provider", Select).value = "custom"
         await pilot.pause()
 
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_select.display is False
-        assert model_select.disabled is True
-        assert "model-a" not in _select_values(model_select)
-        assert model_input.display is True
-        assert model_input.disabled is False
-        assert model_input.value == ""
-        assert model_input.placeholder == "Enter model id"
-        model_input.value = "freeform-model"
+        picker = app.screen.query_one("#console-settings-model-picker")
+        picker_input = picker.query_one("#model-search-picker-input", Input)
+        picker_status = picker.query_one("#model-search-picker-status", Static)
+        custom_button = app.screen.query_one(
+            "#console-settings-model-custom", Button
+        )
+        assert picker.value is None
+        assert "No models reported" in str(picker_status.renderable)
+        assert custom_button.display is True
+        assert custom_button.disabled is False
+
+        await pilot.click("#console-settings-model-custom")
+        picker_input.value = "freeform-model"
         await pilot.pause()
         await pilot.click("#console-settings-save")
 
@@ -2836,10 +2919,9 @@ async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_inp
         app.screen.query_one("#console-settings-provider", Select).value = "koboldcpp"
         await pilot.pause()
 
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_input.display is True
-        assert model_input.disabled is False
-        assert model_input.placeholder == "Enter model id"
+        await pilot.click("#console-settings-model-custom")
+        model_input = app.screen.query_one("#model-search-picker-input", Input)
+        assert model_input.placeholder == "Choose or search models"
 
         await pilot.click(model_input)
         for character in "local-model":
@@ -2884,6 +2966,10 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
         assert model_input.disabled is True
         assert model_input.value == "gpt-4.1"
         assert "model-a" not in _select_values(model_select)
+        picker = app.screen.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        assert picker.value == "gpt-4.1"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -4739,14 +4825,14 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
         recovery_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        await _wait_for_focused_id(host, pilot, "console-settings-model-select")
+        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
 
         assert (
             modal_screen.query_one("#console-settings-provider", Select).value
             == "llama_cpp"
         )
         assert (
-            modal_screen.query_one("#console-settings-model-select", Select).value
+            modal_screen.query_one(ModelSearchPicker).value
             == "model-a"
         )
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
@@ -6293,3 +6379,12 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.pause()
 
         assert modal._current_model_value() == "only-real-model"
+        picker = modal.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("o", "n", "l", "y")
+        await pilot.pause()
+        results = modal.query_one("#model-search-picker-results", OptionList)
+        assert [str(option.prompt) for option in results.options] == [
+            "only-real-model"
+        ]

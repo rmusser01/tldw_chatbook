@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from rich.markup import escape as escape_markup
 
 
@@ -365,6 +366,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Model")
+                        yield ModelSearchPicker(
+                            id="console-settings-model-picker",
+                            provider_select_id="#console-settings-provider",
+                            current_model=selected_model,
+                            providers_models=self._providers_models,
+                            show_custom_button=False,
+                        )
+                    legacy_model_row = Horizontal(
+                        id="console-settings-model-legacy-adapter"
+                    )
+                    legacy_model_row.display = False
+                    with legacy_model_row:
                         model_select = Select(
                             model_select_options,
                             value=model_select_value,
@@ -393,12 +406,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                         model_custom = Button(
                             "Custom model",
                             id="console-settings-model-custom",
-                            disabled=not has_model_options,
+                            disabled=False,
                         )
                         model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
                         model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
                         model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
-                        model_custom.display = has_model_options
+                        model_custom.display = True
                         yield model_custom
                         supports_discovery = self._provider_supports_model_discovery(
                             self._settings.provider
@@ -900,9 +913,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
+        provider = self._select_value_text(event.value)
+        if provider == self._active_provider:
+            return
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
-        provider = self._select_value_text(event.value)
         model = self._model_for_provider(provider)
         base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
@@ -913,16 +928,57 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
 
     @on(Select.Changed, "#console-settings-model-select")
     def _model_select_changed(self, event: Select.Changed) -> None:
+        model_id = normalize_console_model_value(
+            self._select_value_text(event.value)
+        )
+        self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        ).set_model_value(model_id)
         self._sync_readiness_display()
 
     @on(Input.Changed, "#console-settings-model-input")
     def _model_input_changed(self, event: Input.Changed) -> None:
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        if picker.custom_mode:
+            picker.set_custom_value(event.value)
+        self._sync_readiness_display()
+
+    @on(ModelSearchPicker.ModelSelected)
+    def _model_picker_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
+        event.stop()
+        self._set_provider_model_draft(self._active_provider, event.model_id)
+        self._sync_model_controls(self._active_provider, event.model_id)
+        self._sync_readiness_display()
+
+    @on(ModelSearchPicker.ModelValueChanged)
+    def _model_picker_value_changed(
+        self, event: ModelSearchPicker.ModelValueChanged
+    ) -> None:
+        self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_readiness_display()
 
     @on(Button.Pressed, "#console-settings-model-custom")
     def _model_custom_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self._toggle_manual_model_input()
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        picker.toggle_custom_mode()
+        model_select = self.query_one("#console-settings-model-select", Select)
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_custom = self.query_one("#console-settings-model-custom", Button)
+        if picker.custom_mode:
+            model_select.display = False
+            model_select.disabled = True
+            model_input.display = True
+            model_input.disabled = False
+            model_input.value = picker.value or ""
+            model_custom.label = "Model list"
+        else:
+            self._sync_model_controls(self._active_provider, picker.value)
+        self._sync_readiness_display()
 
     @staticmethod
     def _provider_supports_model_discovery(provider: str) -> bool:
@@ -1005,6 +1061,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             self._set_model_discover_status(f"No models reported at {display}.")
             return
         self._discovered_model_ids[provider] = tuple(result.model_ids)
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        picker.set_discovered_models(provider, list(result.model_ids))
         count = len(result.model_ids)
         # With exactly one model there is nothing to choose, so choose it. The
         # previous behaviour kept whatever was already selected -- which is how
@@ -1016,7 +1076,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._sync_model_controls(provider, selected_model)
         if count == 1:
             self._set_model_discover_status(
-                f"Found 1 model at {display} — selected {result.model_ids[0]}."
+                f"Found 1 model at {display}; selected {result.model_ids[0]}."
             )
         else:
             self._set_model_discover_status(f"Found {count} models at {display}.")
@@ -1124,6 +1184,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             model_custom.label = "Custom model"
             model_custom.disabled = False
             model_custom.display = True
+            self.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            ).refresh_provider(provider, current_model=selected)
             return
 
         fallback = current_model or ""
@@ -1137,8 +1200,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         model_input.disabled = False
         model_input.display = True
         model_custom.label = "Custom model"
-        model_custom.disabled = True
-        model_custom.display = False
+        model_custom.disabled = False
+        model_custom.display = True
+        self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        ).refresh_provider(provider, current_model=fallback or None)
 
     def _toggle_manual_model_input(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
@@ -1179,12 +1245,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._sync_readiness_display()
 
     def _focus_model_control(self) -> None:
-        model_select = self.query_one("#console-settings-model-select", Select)
-        if model_select.display and not model_select.disabled:
-            model_select.focus()
-            return
-        model_input = self.query_one("#console-settings-model-input", Input)
-        model_input.focus()
+        self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        ).focus_input()
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
         """Return provider options labeled with shared catalog display names.
@@ -1455,6 +1518,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         return None
 
     def _current_model_value(self) -> str | None:
+        try:
+            picker = self.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            )
+        except (NoMatches, QueryError):
+            picker = None
+        if picker is not None:
+            return normalize_console_model_value(picker.value)
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
         if model_select.display and not model_select.disabled:

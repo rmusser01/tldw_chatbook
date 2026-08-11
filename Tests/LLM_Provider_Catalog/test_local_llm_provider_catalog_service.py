@@ -242,8 +242,10 @@ async def test_local_llm_provider_catalog_service_uses_known_provider_default_en
     )
 
     result = await service.discover_models(provider="OpenAI")
+    has_snapshot = service.has_discovered_model_snapshot(provider="OpenAI")
 
     assert result.status == "success"
+    assert has_snapshot is True
     assert discovery_calls == [
         {
             "provider": "OpenAI",
@@ -436,12 +438,14 @@ def test_local_discovered_model_cache_operations_enforce_runtime_policy():
     )
 
     service.list_discovered_models(provider="OpenAI")
+    service.has_discovered_model_snapshot(provider="OpenAI")
     service.merge_saved_and_discovered_models(provider="OpenAI")
     service.clear_discovered_models(provider="OpenAI")
 
     assert [
         call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
     ] == [
+        "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.persist.local",
