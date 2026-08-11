@@ -13,11 +13,14 @@ import pytest
 
 from textual import on
 from textual.app import App
-from textual.widgets import Input, OptionList, Select
+from textual.widgets import Button, Input, OptionList, Select
 
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from tldw_chatbook.Widgets.model_search_picker import (
+    MODEL_ID_MAX_LENGTH,
+    ModelSearchPicker,
+)
 
 
 class _FakeScope:
@@ -94,6 +97,7 @@ class PickerTestApp(App[None]):
             id="model-search-picker",
             current_model=self._current_model,
         )
+        yield Button("Apply", id="apply")
 
     @on(ModelSearchPicker.ModelSelected)
     def _record_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
@@ -394,6 +398,35 @@ async def test_escape_clears_filter_without_losing_committed_model():
 
 
 @pytest.mark.asyncio
+async def test_blur_restores_committed_model_after_uncommitted_filter():
+    app = PickerTestApp(
+        {"OpenRouter": ["saved-model"]},
+        _entries("OpenRouter", ["anthropic/claude-x"]),
+        current_model="saved-model",
+    )
+    async with app.run_test() as pilot:
+        search_input = app.query_one("#model-search-picker-input", Input)
+        app.set_focus(search_input)
+        await pilot.pause()
+        assert search_input.value == ""
+
+        search_input.value = "claude"
+        await pilot.pause()
+        assert _results(app).display
+
+        await pilot.click("#apply")
+        for _ in range(20):
+            await pilot.pause(0.01)
+            if search_input.value == "saved-model":
+                break
+
+        picker = app.query_one(ModelSearchPicker)
+        assert picker.value == "saved-model"
+        assert search_input.value == "saved-model"
+        assert not _results(app).display
+
+
+@pytest.mark.asyncio
 async def test_empty_catalog_names_custom_id_recovery():
     app = PickerTestApp({"OpenRouter": []}, ())
     async with app.run_test() as pilot:
@@ -448,6 +481,36 @@ async def test_custom_id_escape_hatch_commits_typed_value():
         assert picker.custom_mode is True
         assert picker.value == "vendor/private-model"
         assert "Custom model ID" in str(
+            app.query_one("#model-search-picker-status").renderable
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_model_id",
+    [
+        "vendor/model\nsecond-line",
+        "vendor/model\n",
+        "x" * (MODEL_ID_MAX_LENGTH + 1),
+        "vendor/<script-model",
+    ],
+)
+async def test_custom_id_rejects_invalid_text(invalid_model_id):
+    app = PickerTestApp(
+        {"OpenRouter": ["saved-model"]},
+        _entries("OpenRouter", ["openai/current-model"]),
+        current_model="saved-model",
+    )
+    async with app.run_test() as pilot:
+        await pilot.click("#model-search-picker-custom")
+        search_input = app.query_one("#model-search-picker-input", Input)
+        search_input.value = invalid_model_id
+        await pilot.pause()
+
+        picker = app.query_one(ModelSearchPicker)
+        assert picker.custom_mode is True
+        assert picker.value is None
+        assert "Invalid model ID" in str(
             app.query_one("#model-search-picker-status").renderable
         )
 

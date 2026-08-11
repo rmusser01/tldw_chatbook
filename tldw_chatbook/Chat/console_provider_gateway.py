@@ -68,6 +68,8 @@ _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
+PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
+"""Maximum model-ID context included in user-visible provider error copy."""
 
 
 @dataclass(slots=True)
@@ -187,7 +189,7 @@ def _provider_error_copy_with_model_recovery(
         return copy
     model_id = "".join(
         character for character in str(model or "").strip() if character.isprintable()
-    )[:256]
+    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
     if not model_id:
         return copy
     return (

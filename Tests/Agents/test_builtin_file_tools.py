@@ -47,6 +47,7 @@ _SYMLINK_CAPABILITY_ERRNOS = frozenset(
     )
     if error_code is not None
 )
+_WINDOWS_PRIVILEGE_NOT_HELD_ERROR = 1314
 
 
 def _create_directory_symlink_or_skip(link: Path, target: Path) -> None:
@@ -57,7 +58,7 @@ def _create_directory_symlink_or_skip(link: Path, target: Path) -> None:
         pytest.skip("directory symlinks are unavailable on this platform")
     except OSError as exc:
         if (
-            getattr(exc, "winerror", None) == 1314
+            getattr(exc, "winerror", None) == _WINDOWS_PRIVILEGE_NOT_HELD_ERROR
             or exc.errno in _SYMLINK_CAPABILITY_ERRNOS
         ):
             pytest.skip(

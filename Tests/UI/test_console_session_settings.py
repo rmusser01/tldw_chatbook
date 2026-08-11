@@ -2656,6 +2656,10 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         await pilot.click("#console-settings-model-custom")
         await pilot.pause()
 
+        picker = app.screen.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        assert picker.custom_mode is True
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         provider_model_section = app.screen.query_one(
@@ -2665,6 +2669,8 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         app.screen._sync_readiness_display()
         await pilot.pause()
 
+        assert model_input.value == ""
+        assert picker.value is None
         assert "Choose a model to enable sending." in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section") is True

@@ -18,14 +18,17 @@ from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
 _CLOUD_CATALOG_PROVIDER_KEYS = {
     provider_config_key(provider) for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
 }
+MODEL_ID_MAX_LENGTH = 256
+_BLUR_RESTORE_DELAY_SECONDS = 0.05
 
 
-class _ModelPickerInput(Input):
+class ModelPickerInput(Input):
     """Input that lets the compound picker own Escape semantics."""
 
     class EscapePressed(Message):
@@ -149,7 +152,7 @@ class ModelSearchPicker(Widget):
     def compose(self) -> ComposeResult:
         """Compose the editable combobox, custom action, status, and results."""
         with Horizontal(classes="model-search-picker-control"):
-            yield _ModelPickerInput(
+            yield ModelPickerInput(
                 value=self._selected_model or "",
                 placeholder="Choose or search models",
                 id="model-search-picker-input",
@@ -173,8 +176,19 @@ class ModelSearchPicker(Widget):
 
     @staticmethod
     def _normalize_model(value: object | None) -> str | None:
-        text = str(value or "").strip()
+        raw_text = str(value or "")
+        text = raw_text.strip()
         if not text or text.lower() in {"none", "null"}:
+            return None
+        if (
+            sanitize_string(raw_text, max_length=MODEL_ID_MAX_LENGTH) != raw_text
+            or any(character in raw_text for character in "\r\n\t")
+            or not validate_text_input(
+                raw_text,
+                max_length=MODEL_ID_MAX_LENGTH,
+                allow_html=False,
+            )
+        ):
             return None
         return text
 
@@ -357,6 +371,16 @@ class ModelSearchPicker(Widget):
 
     def _render_catalog_status(self) -> None:
         if self._custom_mode:
+            if self.is_mounted:
+                custom_value = self.query_one(
+                    "#model-search-picker-input", Input
+                ).value
+                if custom_value and self._normalize_model(custom_value) is None:
+                    self._set_status(
+                        "Invalid model ID. Use a single-line value of at most "
+                        f"{MODEL_ID_MAX_LENGTH} characters."
+                    )
+                    return
             self._set_status(
                 "Custom model ID. Enter the exact ID expected by this provider."
             )
@@ -480,6 +504,26 @@ class ModelSearchPicker(Widget):
         self._set_input_value("")
         self._render_matches("", show_empty_query=True)
 
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        """Restore committed copy after focus leaves the compound picker."""
+        self.set_timer(
+            _BLUR_RESTORE_DELAY_SECONDS,
+            self._restore_committed_display_after_blur,
+        )
+
+    def _restore_committed_display_after_blur(self) -> None:
+        """Keep visible and committed catalog values aligned after an edit."""
+        if self._custom_mode or not self.is_mounted:
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors_with_self:
+            return
+        input_widget = self.query_one("#model-search-picker-input", Input)
+        if input_widget.value != (self._selected_model or "") or self._matches:
+            self._set_input_value(self._selected_model or "")
+            self._hide_results()
+            self._render_catalog_status()
+
     @on(Input.Changed, "#model-search-picker-input")
     def _handle_query(self, event: Input.Changed) -> None:
         if self._suppress_input_events:
@@ -540,8 +584,8 @@ class ModelSearchPicker(Widget):
             self._render_catalog_status()
             event.stop()
 
-    @on(_ModelPickerInput.EscapePressed)
-    def _input_escape_pressed(self, event: _ModelPickerInput.EscapePressed) -> None:
+    @on(ModelPickerInput.EscapePressed)
+    def _input_escape_pressed(self, event: ModelPickerInput.EscapePressed) -> None:
         self._cancel_edit(event)
 
     @on(events.Key)

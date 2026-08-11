@@ -2,16 +2,16 @@
 id: TASK-14812
 title: Unify Console model selection into a searchable picker
 status: In Progress
-created_date: 2026-08-10 21:52
-dependencies:
-- TASK-3600
-labels:
-- console
-- models
-- ux
 assignee:
-- '@codex'
-updated_date: 2026-08-10 22:30
+  - '@codex'
+created_date: '2026-08-10 21:52'
+updated_date: '2026-08-11 01:31'
+labels:
+  - console
+  - models
+  - ux
+dependencies:
+  - TASK-3600
 ---
 
 ## Description
@@ -28,6 +28,7 @@ Give Console users one keyboard-first model control that supports fast selection
 - [x] #4 Loading, empty-catalog, unavailable-catalog, and current-model-not-listed states are explicit and actionable
 - [x] #5 A clearly separated custom model ID escape hatch remains available
 - [x] #6 Provider changes refresh the choices and cannot retain a model from the previous provider
+- [x] #7 Custom model IDs are validated as bounded single-line text before they can reach downstream provider calls
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,6 +48,7 @@ Reason: ADR-020 already defines catalog authority, uncapped search, transient cu
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 - Reworked `ModelSearchPicker` into the controlled, keyboard-first model control used by both Alt+M and full Console settings. It loads each provider's uncapped endpoint-scoped catalog in a worker, filters only in memory, preserves the committed selection during search/cancel, and provides explicit loading, empty, unavailable, unlisted-current, no-match, and custom-ID states.
 - Routed provider switches, catalog selection, custom IDs, focus recovery, apply, and manual endpoint discovery through the shared picker. Existing Select/Input controls remain hidden compatibility adapters for established validation and draft logic.
@@ -58,12 +60,13 @@ Reason: ADR-020 already defines catalog authority, uncapped search, transient cu
 - ADR required: no. Existing ADR-020 remains the governing catalog-authority and fallback decision.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+Qodo review remediation: validated custom model IDs with the shared input-validation helpers and a 256-character single-line boundary; restored the committed catalog model after an uncommitted filter loses focus; deferred blur collapse briefly so pointer clicks complete before layout reflow; renamed ModelPickerInput to conform to class naming; and replaced the provider-error and Windows privilege literals with named constants. Added picker and modal regressions. Verification: 24 picker tests passed, 49 Console settings model tests passed, 45 Console rail/popover tests passed, the targeted provider 400 recovery test passed, and the file-tool suite passed 22 tests with one explicit symlink-capability skip. Scoped Ruff and git diff --check passed.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
-
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+<!-- SECTION:FINAL_SUMMARY:END -->
