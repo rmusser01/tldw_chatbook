@@ -829,7 +829,7 @@ Repeat Task 1 Steps 1–3. Rerun the 523-call reconciliation against the new bas
 Expected: all selected tests pass. The sole permitted deviation is
 `test_production_diagnostic_inventory_and_sink_topology_are_unchanged` failing with
 the exact unrelated latest-dev baseline reproduced in a detached worktree at the
-recorded Step 1 base (`39298db48f173976a8563ad1a95415f8cf506c24` for the
+recorded Step 1 base (`6d72f15f8332b6469a5d644d409b80914634a8dd` for the
 fresh-review run): these 17 owner paths only —
 `Agents/agent_service.py`, `Chat/console_agent_bridge.py`,
 `Chat/console_chat_controller.py`, `Chat/console_chat_store.py`,
@@ -839,7 +839,7 @@ fresh-review run): these 17 owner paths only —
 `RAG_Search/simplified/search_service.py`, `UI/Console_Modules/session.py`,
 `UI/Screens/chat_screen.py`, `UI/Screens/library_screen.py`, and `app.py` — with
 the detached-base Git-patch manifest-diff fingerprint
-`24d71574ec8e8ab57384059d469685dd851ba5aee7795d8841b6ca081fce58eb`
+`b77bd95ccc84d3bac066e0971a8bc24e20fdb58bef9b762d5ba77aa6399db4dd`
 (`44` additions, `30` deletions, six persistent-sink files). That drift must have
 separate backlog ownership and must not be written into TASK-3796's manifest. Any
 different failed node, owner set, diff fingerprint, or sink topology is a real

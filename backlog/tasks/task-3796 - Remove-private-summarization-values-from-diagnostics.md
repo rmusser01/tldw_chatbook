@@ -228,7 +228,7 @@ Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026
   Owners, reasons, unrelated checked entries, and six-file sink topology are
   unchanged. Exact latest dev independently carries an unrelated 17-owner
   baseline drift (`44` additions / `30` deletions; Git-patch SHA-256
-  `24d71574ec8e8ab57384059d469685dd851ba5aee7795d8841b6ca081fce58eb`),
+  `b77bd95ccc84d3bac066e0971a8bc24e20fdb58bef9b762d5ba77aa6399db4dd`),
   which remains unblessed with separate To Do ownership. This lower-numbered
   task intentionally omits the later task ID under the repository's
   no-forward-reference rule.
@@ -236,7 +236,7 @@ Detailed plan: [TASK-3796 implementation plan](../../Docs/superpowers/plans/2026
   touched-functionality command passed `307` tests with only the approved
   current-dev baseline failure
   `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`.
-  Detached exact base `39298db48f173976a8563ad1a95415f8cf506c24` passed the
+  Detached exact base `6d72f15f8332b6469a5d644d409b80914634a8dd` passed the
   other 13 architecture tests and failed that same sole node. Ruff lint,
   Local/helper/test formatting, Python compilation, and diff checks passed;
   General's full-file format check retained only the known line-317 alias hunk.
