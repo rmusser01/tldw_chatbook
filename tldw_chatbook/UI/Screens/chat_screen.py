@@ -104,11 +104,13 @@ from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRowTotals,
     ConsoleCostState,
+    TokenEstimateCache,
     build_cost_rows,
     build_cost_rows_totals,
     build_cost_snapshot,
     build_cost_state,
     fingerprint_break_reason,
+    token_estimate_signature,
 )
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage, as_seconds
@@ -3527,6 +3529,28 @@ class ChatScreen(BaseAppScreen):
     #: no pass is open. A CLASS attribute default because the hand-built
     #: `ChatScreen.__new__()` test fixtures never run `__init__`.
     _console_derivation_memo: dict[Any, Any] | None = None
+
+    #: Cross-tick memo for the cost chip's per-row token estimates
+    #: (task-15451), lazily created by `_console_cost_estimate_cache_or_new`.
+    #: Unlike `_console_derivation_memo` this deliberately OUTLIVES a single
+    #: pass -- the whole point is that the 0.2s tick stops re-tokenizing rows
+    #: it already estimated on the previous tick. Also a CLASS attribute
+    #: default, for the same `__new__()`-fixture reason.
+    _console_cost_estimate_cache: TokenEstimateCache | None = None
+
+    def _console_cost_estimate_cache_or_new(self) -> TokenEstimateCache:
+        """Return this screen's token-estimate memo, creating it on first use.
+
+        Held per screen rather than per session: entries are keyed by message
+        id and every hit is re-verified against the row's own text, so the
+        two sessions of a switched-between pair share the cache safely (see
+        :class:`TokenEstimateCache`).
+        """
+        cache = self._console_cost_estimate_cache
+        if cache is None:
+            cache = TokenEstimateCache()
+            self._console_cost_estimate_cache = cache
+        return cache
 
     @contextmanager
     def _console_derivation_scope(self):
@@ -8357,11 +8381,30 @@ class ChatScreen(BaseAppScreen):
             # the rail can never disagree about a conversation's fleet
             # spend.
             fleet_tokens = self._agent._console_agent_fleet_token_total()
+            # task-15451: this method runs on the 0.2s tick for the whole
+            # duration of a run (plus every control-bar sync pass and the
+            # 10s TTL timer), and the equality guard in
+            # `_sync_console_cost_chip` gates only the REPAINT -- the build
+            # itself always ran. Without the memo below every usage-less row
+            # (all user/system rows, legacy assistant rows, the staged
+            # evidence pseudo-row) was re-tokenized by a per-character
+            # Python loop 5x/s: ~28ms/tick on a 99KB transcript, measured.
+            # The memo re-verifies each row's own text before serving a hit,
+            # so it can change how long this takes but not what it returns.
+            #
+            # Gating the whole snapshot on `store.payload_revision` instead
+            # was considered and rejected: usage is not payload-affecting, so
+            # `ConsoleChatStore.set_message_usage` never bumps that counter --
+            # a real priced usage landing on an ALREADY-terminal row (the
+            # documented Stop-path ordering) would leave the chip showing the
+            # estimated total until some unrelated edit moved the revision.
+            estimate_cache = self._console_cost_estimate_cache_or_new()
             snapshot = build_cost_snapshot(
                 snapshot_messages,
                 provider=provider,
                 model=model,
                 fleet_tokens=fleet_tokens,
+                estimate_cache=estimate_cache,
             )
 
             controller = self._console_chat_controller
@@ -8433,15 +8476,37 @@ class ChatScreen(BaseAppScreen):
                     # (fingerprint recompute -- and so `break_reason` /
                     # `alert` -- is frozen during the run, but this
                     # projection is computed fresh every call).
-                    dict_messages = [
-                        {
-                            "role": str(getattr(message.role, "value", message.role)),
-                            "content": message.content,
-                        }
+                    #
+                    # task-15451: gated, but not cheap -- an alerting
+                    # session pays a WHOLE-transcript estimate on every tick
+                    # for as long as the alert stands. Same memo, same
+                    # guarantee: the hit is verified against every row's
+                    # (role, content) before it is served.
+                    projection_rows = tuple(
+                        (
+                            str(getattr(message.role, "value", message.role)),
+                            message.content,
+                        )
                         for message in snapshot_messages
-                    ]
-                    estimated_tokens = _estimate_tokens_locally(
-                        dict_messages, model or "", provider_key
+                    )
+
+                    def _estimate_projection() -> int:
+                        return _estimate_tokens_locally(
+                            [
+                                {"role": role, "content": content}
+                                for role, content in projection_rows
+                            ],
+                            model or "",
+                            provider_key,
+                        )
+
+                    projection_cache = self._console_cost_estimate_cache_or_new()
+                    estimated_tokens = projection_cache.estimate(
+                        ("#cost-projection", session_id),
+                        token_estimate_signature(
+                            projection_rows, model or "", provider_key
+                        ),
+                        _estimate_projection,
                     )
                     rate_delta = (
                         pricing.cache_write_per_mtok - pricing.cache_read_per_mtok
