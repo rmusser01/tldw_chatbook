@@ -403,6 +403,11 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow: hidden hidden;
     }
 
+    #file-notes-root-status.-warning {
+        color: $warning;
+        text-style: bold;
+    }
+
     /* task-2850: the "no root chosen yet" empty state is a prompt +
        adjacent action, not a status toolbar -- the ``1fr`` above is
        correct once a root is linked (it reserves room for a Details/
@@ -840,7 +845,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 yield self._git_panel_widget
             with Vertical(id="file-notes-editor-pane"):
                 back = Button(
-                    "‹ Navigator",
+                    "Back to navigator",
                     id="file-notes-back",
                     compact=True,
                 )
@@ -1259,8 +1264,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
 
     def _render_projection(
         self,
@@ -1304,8 +1308,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._entries = new_entries
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        if result.replica_warning:
-            self._runtime_warning = result.replica_warning
+        self._runtime_warning = result.replica_warning or ""
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,
@@ -1337,12 +1340,14 @@ class LibraryFileNotesWorkspace(Vertical):
             status.tooltip = None
             status.update(self._root_status_summary)
             status.set_class(True, "-empty-root")
+            status.set_class(False, "-warning")
             body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
             return
         status.set_class(False, "-empty-root")
+        status.set_class(bool(self._runtime_warning), "-warning")
         is_offline = self._root_offline if offline is None else offline
         state = (
             "Checking"

@@ -33,6 +33,7 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     FileNotesService,
     OperationResult,
     ReconcileResult,
+    ScanResult,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
@@ -149,6 +150,19 @@ def test_reconcile_tolerates_projection_disappearing_during_unmount(
     assert projection_attempts == [False]
     assert workspace.entries == {}
     assert workspace._deleted_paths == ("deleted.md",)
+
+
+def test_scan_and_reconcile_clear_stale_replica_warning() -> None:
+    """A clean service result must clear a warning from the prior result."""
+    workspace = LibraryFileNotesWorkspace(root=None, replica=None)
+
+    workspace._runtime_warning = "stale scan warning"
+    workspace._adopt_scan_state(ScanResult(status="ok"), ())
+    assert workspace._runtime_warning == ""
+
+    workspace._runtime_warning = "stale reconcile warning"
+    workspace._apply_reconcile(ReconcileResult(status="ok"), ())
+    assert workspace._runtime_warning == ""
 
 
 async def _wait_until(
@@ -465,14 +479,23 @@ async def test_file_notes_root_details_preserve_exact_path_and_warning(
 
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
-        workspace._runtime_warning = "Recovery unavailable: replica locked"
-        workspace._update_root_surface(offline=False)
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="ok",
+                replica_warning="Recovery unavailable: replica locked",
+            ),
+            (),
+        )
         await pilot.pause()
 
         assert (
             _static_text(workspace, "#file-notes-root-status")
             == "Warning · Local folder: Research Notes"
         )
+        root_status = workspace.query_one("#file-notes-root-status")
+        assert root_status.has_class("-warning")
+        assert "#file-notes-root-status.-warning" in workspace.DEFAULT_CSS
+        assert "color: $warning;" in workspace.DEFAULT_CSS
         tooltip = workspace.query_one("#file-notes-root-status").tooltip
         assert tooltip is not None
         assert str(root.resolve()) in str(tooltip)
@@ -487,7 +510,31 @@ async def test_file_notes_root_details_preserve_exact_path_and_warning(
         assert str(root.resolve()) in exact
         assert "Recovery unavailable: replica locked" in exact
 
+        workspace._apply_reconcile(ReconcileResult(status="ok"), ())
+        await pilot.pause()
+        assert workspace._runtime_warning == ""
+        assert not root_status.has_class("-warning")
+
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_navigation_and_key_guidance_use_one_phrase() -> None:
+    """Keep return navigation and key guidance consistent across File Notes."""
+    workspace = LibraryFileNotesWorkspace(root=None)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor_back = workspace.query_one("#file-notes-back", Button)
+        git_back = workspace.query_one("#file-notes-git-back", Button)
+        guide = _static_text(workspace, "#file-notes-git-guide")
+
+        assert str(editor_back.label) == "Back to navigator"
+        assert str(git_back.label) == "Back to navigator"
+        assert guide == "Up/Down select · Tab actions · Enter run · Esc back"
+        assert "|" not in guide
+
+    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
