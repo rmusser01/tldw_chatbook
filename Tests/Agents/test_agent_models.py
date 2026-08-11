@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
     WAIT_AGENTS_TOOL_NAME,
     clamp_child_budget,
+    contain_child_budget,
 )
 
 
@@ -175,6 +176,94 @@ def test_clamp_child_budget_propagates_tool_call_seconds():
     child = clamp_child_budget(parent, 30.0)
     assert child.max_tool_call_seconds == 45.0   # taken from the child arg (== parent here)
     assert child.max_subagents == 0              # existing invariant still holds
+
+
+# -- contain_child_budget (PR3a-1 Task 5) -----------------------------------
+#
+# `clamp_child_budget` above is UNCHANGED and stays in the module -- it is
+# not production's call site anymore (see `agent_service.spawn`), but its
+# own contract (and every test above) is untouched. `contain_child_budget`
+# replaces the "child can never outlive its parent" clamp with an
+# independent per-child ceiling: PR3a-1 Task 2 made surviving the turn the
+# DEFAULT, so a child's own wall-clock bound can no longer depend on how
+# much of the PARENT's budget happened to be left at spawn time -- that
+# made a background child's effective ceiling an accident of WHEN in the
+# turn it was spawned, not a real bound. `run_agent_loop`'s own wall-clock
+# check (`agent_runtime.py`) is already measured from the RUN'S OWN
+# `started`, not the parent's, so handing a child a plain, caller-resolved
+# ceiling here needs no engine-side change.
+
+
+def test_contain_child_budget_uses_its_own_ceiling():
+    child = contain_child_budget(RunBudget(), max_wall_seconds=900.0)
+    assert child.max_wall_seconds == 900.0
+    assert child.max_subagents == 0  # depth-1 preserved, same as clamp
+    assert child.max_steps == 8  # steps stay per-run, unclamped
+
+
+def test_contain_child_budget_signature_has_no_parent_remainder_argument():
+    """Structural proof the parent-remainder shape is gone from this path.
+
+    `clamp_child_budget` takes `parent_remaining_seconds`; the whole point
+    of this task is that the replacement does not -- there is nothing
+    about the PARENT in this call at all, only the child's own ceiling.
+    """
+    import inspect
+
+    params = list(inspect.signature(contain_child_budget).parameters)
+    assert params == ["child", "max_wall_seconds"]
+
+
+def test_contain_child_budget_floors_at_one_second():
+    child = contain_child_budget(RunBudget(), max_wall_seconds=-5.0)
+    assert child.max_wall_seconds == 1.0
+
+
+def test_contain_child_budget_preserves_max_total_tokens():
+    child = RunBudget(max_total_tokens=7000)
+    assert contain_child_budget(child, max_wall_seconds=900.0).max_total_tokens == 7000
+
+
+def test_contain_child_budget_preserves_max_tool_result_chars():
+    child = RunBudget(max_tool_result_chars=0)
+    assert (
+        contain_child_budget(child, max_wall_seconds=900.0).max_tool_result_chars
+        == 0
+    )
+
+
+def test_contain_child_budget_propagates_tool_call_seconds():
+    parent = RunBudget(max_tool_call_seconds=45.0)
+    child = contain_child_budget(parent, max_wall_seconds=900.0)
+    assert child.max_tool_call_seconds == 45.0
+    assert child.max_subagents == 0
+
+
+def test_contain_child_budget_inherits_model_turns_and_steps_unclamped():
+    """The 'turn-scoped budget is unchanged' half: everything except the
+    wall clock and the subagent count passes through exactly like
+    `clamp_child_budget` already does -- children still inherit the same
+    round budget as their parent (operator decision, 2026-07-25)."""
+    parent = RunBudget(
+        max_model_turns=12,
+        max_steps=40,
+        max_active_tools=5,
+        max_subagent_result_chars=333,
+        max_tool_result_chars=0,
+        max_total_tokens=7000,
+        max_tool_call_seconds=45.0,
+    )
+    child = contain_child_budget(parent, max_wall_seconds=900.0)
+    assert child.max_model_turns == 12
+    assert child.max_steps == 40
+    assert child.max_active_tools == 5
+    assert child.max_subagent_result_chars == 333
+    assert child.max_tool_result_chars == 0
+    assert child.max_total_tokens == 7000
+    assert child.max_tool_call_seconds == 45.0
+    # Only these two are ever touched by containment:
+    assert child.max_wall_seconds == 900.0
+    assert child.max_subagents == 0
 
 
 def test_pure_module_has_no_forbidden_imports():

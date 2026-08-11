@@ -358,6 +358,15 @@ class RunOutcome:
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
     """Clamp a sub-agent's budget so it cannot outlive its parent.
 
+    PR3a-1 Task 5: no longer production's call site (see
+    ``AgentService.spawn``, which now calls ``contain_child_budget``
+    below instead) -- surviving the turn is the default since Task 2, so
+    a background child must not be clamped to its parent's remaining
+    wall-clock. This function is unmodified and kept for any explicitly
+    turn-scoped caller that still wants "a child can never outlive its
+    parent" as a hard guarantee, rather than forcing the two shapes
+    together with a conditional.
+
     Sub-agents deliberately INHERIT ``max_model_turns`` and ``max_steps``
     rather than being clamped down (operator decision, 2026-07-25, first
     taken when the Console cap was raised 8 -> 20 and re-confirmed when it
@@ -386,6 +395,82 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_wall_seconds=min(
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
+        max_subagents=0,
+        max_active_tools=child.max_active_tools,
+        max_subagent_result_chars=child.max_subagent_result_chars,
+        max_tool_result_chars=child.max_tool_result_chars,
+        max_model_turns=child.max_model_turns,
+        max_total_tokens=child.max_total_tokens,
+        max_tool_call_seconds=child.max_tool_call_seconds,
+    )
+
+
+def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget:
+    """Bound a background sub-agent's own budget -- independent of its parent.
+
+    PR3a-1 Task 5 (spec Sec 5 "Containment") replacement for
+    ``clamp_child_budget``'s "child can never outlive its parent" clamp,
+    which this PR intentionally removes: Task 2 made surviving the turn
+    the DEFAULT, so a still-``running`` child is expected background work,
+    not a dead attempt. Tying its wall-clock ceiling to how much of the
+    PARENT's own budget happened to be left at spawn time made a
+    background child's effective bound an accident of WHEN in the turn it
+    was spawned -- a child spawned in the run's last second would have
+    gotten almost no time of its own, and a child spawned early would have
+    inherited most of the parent's, neither of which describes a bound on
+    the CHILD's own work.
+
+    ``run_agent_loop``'s own wall-clock check (``agent_runtime.py``) is
+    already measured from the RUN'S OWN ``started``, not the parent's, so
+    handing a child a plain, caller-resolved ceiling here needs no
+    engine-side change -- only the caller (``AgentService.spawn``) stops
+    deriving it from the parent's remainder and instead resolves it from
+    ``[agents] child_max_wall_seconds`` (default
+    ``agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS``; see that constant's
+    own comment for the sizing rationale and the resulting worst-case
+    aggregate).
+
+    Containment is now bounded in three independent dimensions, none of
+    them the parent's lifetime: TIME (this function's own
+    ``max_wall_seconds`` argument), COUNT (the existing
+    ``[agents] max_live_subagents`` live-children cap, enforced by
+    ``FleetCoordinator`` and untouched by this function), and SPEND
+    (``max_total_tokens``, passed through UNCHANGED below exactly as
+    ``clamp_child_budget`` already did -- see that function's own
+    docstring for why the real worst-case aggregate spend is
+    ``(1 + max_subagents)x`` that ceiling, not a value it bounds
+    directly; this task does not change that math).
+
+    Sub-agents still deliberately INHERIT ``max_model_turns`` and
+    ``max_steps`` unchanged (the same 2026-07-25 operator decision
+    ``clamp_child_budget`` documents) -- only ``max_wall_seconds`` and
+    ``max_subagents`` are ever touched here.
+
+    ``clamp_child_budget`` above is UNCHANGED and stays in the module: it
+    is simply no longer production's call site. Keeping it separate
+    avoids forcing one function to serve both the old
+    parent-remainder-clamp shape and this independent-ceiling shape
+    through a conditional.
+
+    Args:
+        child: The would-be child's budget (today: the parent's own
+            ``config.budget``, since sub-agents inherit steps/turns/tokens
+            from the parent -- see ``AgentService.spawn``).
+        max_wall_seconds: The child's own wall-clock ceiling, resolved by
+            the caller -- counted from the CHILD's own start, never from
+            the parent's, and never shrunk by how much of the parent's own
+            budget remains.
+
+    Returns:
+        A new ``RunBudget`` with ``max_wall_seconds`` set to the given
+        ceiling (floored at 1s, same floor ``clamp_child_budget`` uses)
+        and ``max_subagents`` zeroed -- depth-1 sub-agents never spawn,
+        an invariant this function preserves exactly, not just by
+        omission. Every other field passes through unchanged.
+    """
+    return RunBudget(
+        max_steps=child.max_steps,
+        max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,

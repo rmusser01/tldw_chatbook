@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import functools
+import math
 import sys
 import threading
 import time
@@ -42,7 +43,7 @@ from .agent_models import (
     SkillFileBindings,
     ToolCall,
     ToolResult,
-    clamp_child_budget,
+    contain_child_budget,
     definition_from_row,
     # Aliased: `_run_one` below has its own `definition_fingerprint: str |
     # None` keyword parameter (the audit value to persist), and that
@@ -129,6 +130,44 @@ DEFAULT_MAX_LIVE_SUBAGENTS = 3
 #: semantics in PR 3b).
 SUBAGENTS_OUTLIVE_TURN_KEY = "subagents_outlive_turn"
 DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
+#: ``[agents]`` key sizing a background child's OWN wall-clock ceiling
+#: (PR3a-1 Task 5, spec Sec 5 "Containment"). Replaces
+#: ``clamp_child_budget``'s "child can never outlive its parent" clamp,
+#: which tied a child's ceiling to how much of the PARENT's own budget
+#: happened to be left at spawn time -- coherent only while a child was
+#: guaranteed to die at end of turn (pre-Task-2). Once survival is the
+#: default, that clamp would hand a late-spawned child almost no time of
+#: its own, an accident of timing rather than a real bound. This key gives
+#: every child the SAME independent ceiling, counted from its own start,
+#: following the ``CONSOLE_MAX_*`` precedent in
+#: ``console_agent_bridge.py`` for sizing a generous-but-real backstop
+#: rather than a target.
+#:
+#: Sized to match ``console_agent_bridge.CONSOLE_MAX_WALL_SECONDS`` (1800s
+#: -- the Console primary's own ceiling, derived there as 25-50s/turn x 30
+#: model turns at the slow local-model pace that bound exercises) rather
+#: than some fraction of it: a child inherits the SAME ``max_model_turns``
+#: as its parent (2026-07-25 operator decision, unchanged by this task),
+#: so it needs a comparably-sized ceiling to actually finish a full run of
+#: its own rather than being cut off partway through by construction.
+#:
+#: Worst-case aggregate, stated honestly (spec Sec 5 wants time, count and
+#: spend bounded independently, not by the parent's lifetime): SPEND is
+#: unaffected by this task -- ``max_total_tokens`` still passes through
+#: each child unchanged, still not divided, so the aggregate is still
+#: roughly ``(1 + max_subagents)x`` one run's ceiling (see
+#: ``contain_child_budget``'s docstring). TIME changes: a surviving child
+#: spawned near the end of the parent's own wall-clock window can now run
+#: for up to THIS MANY MORE seconds after the turn has already returned to
+#: the user, so the worst-case wall-clock span from "user sends the
+#: message" to "every child has settled" is now up to roughly double the
+#: parent's own ceiling (~3600s / 1 hour at Console's current 1800s/1800s),
+#: not bounded by the parent's own window alone as it was before this
+#: task. Each of up to ``max_subagents`` children can independently run
+#: that long past the turn's return, concurrently with each other, so this
+#: widens the per-child TIME bound, not a per-message multiplier on it.
+CHILD_MAX_WALL_SECONDS_KEY = "child_max_wall_seconds"
+DEFAULT_CHILD_MAX_WALL_SECONDS = 1800.0
 #: How long a poll loop sleeps between coordinator checks. Small enough
 #: that a cancelled run is not held up perceptibly, large enough not to
 #: spin a core while several children work.
@@ -176,6 +215,45 @@ def _coerce_max_live_subagents(value) -> int:
             )
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
+
+
+def _coerce_child_max_wall_seconds(value) -> float:
+    """Read a background child's own wall-clock ceiling from config.
+
+    Args:
+        value: Whatever ``_setting`` returned -- an env var is always a
+            string, a TOML value may be any type, and a hand-edited file
+            may hold nonsense.
+
+    Returns:
+        The configured ceiling as a float. Unparseable, non-finite (NaN
+        or infinite), or missing values fall back to
+        ``DEFAULT_CHILD_MAX_WALL_SECONDS`` rather than raising -- same
+        rule as ``_coerce_max_live_subagents``: a malformed config key
+        must never stop an agent run.
+
+        The floor at 1 second is deliberately NOT enforced here -- it
+        lives in ``contain_child_budget`` itself (the same place
+        ``clamp_child_budget``'s own floor already lived), so every
+        caller of that function gets the floor for free regardless of
+        where its ``max_wall_seconds`` argument came from, instead of
+        duplicating the floor in two places that could drift apart.
+    """
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not a "
+            f"number; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
+        )
+        return DEFAULT_CHILD_MAX_WALL_SECONDS
+    if not math.isfinite(parsed):
+        logger.warning(
+            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not "
+            f"finite; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
+        )
+        return DEFAULT_CHILD_MAX_WALL_SECONDS
+    return parsed
 
 
 def _coerce_subagents_outlive_turn(value) -> bool:
@@ -581,9 +659,9 @@ class AgentService:
         # client for no reachable benefit.
         self._child_model_scope = child_model_scope or contextlib.nullcontext
         # Per-TURN fleet state, all owned by the primary run's thread (a
-        # child never spawns -- clamp_child_budget zeroes max_subagents),
-        # so no lock is needed on these three. Reset at the top of every
-        # `run_turn`.
+        # child never spawns -- contain_child_budget zeroes max_subagents,
+        # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
+        # is needed on these three. Reset at the top of every `run_turn`.
         self._fleet: FleetCoordinator | None = None
         # Keyed by handle id since PR3a-1 Task 2, not a bare list: the
         # end-of-turn join has to skip the threads of children that are
@@ -1422,7 +1500,17 @@ class AgentService:
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(ok=False, error="sub-agent budget exhausted")
             sub_agent_spawns += 1
-            remaining = config.budget.max_wall_seconds - (self.clock() - started)
+            # PR3a-1 Task 5: the child's OWN wall-clock ceiling, resolved
+            # fresh per spawn (mirrors `remaining`'s old per-spawn read) --
+            # independent of the parent's own elapsed/remaining budget.
+            # See `contain_child_budget` and `DEFAULT_CHILD_MAX_WALL_
+            # SECONDS` for why the parent-remainder clamp (`remaining =
+            # config.budget.max_wall_seconds - (self.clock() - started)`,
+            # this variable's pre-Task-5 replacement) no longer bounds a
+            # background child that is allowed to outlive its parent.
+            child_max_wall_seconds = _coerce_child_max_wall_seconds(
+                _setting(CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS)
+            )
             # Q6/Task-12: an explicit override (a skill's own narrowed
             # allow-list -- builtins + local tool names, intersect-only so
             # a skill narrows but never grants; see SkillRunner.run)
@@ -1481,7 +1569,7 @@ class AgentService:
                 model=child_model,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
-                budget=clamp_child_budget(config.budget, remaining),
+                budget=contain_child_budget(config.budget, child_max_wall_seconds),
                 native_tools=config.native_tools,
             )
             # C1: snapshot/restore whatever review_state_scope owns (see

@@ -62,6 +62,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import (
+    join_fleet_children,
     pin_agent_settings,
     pin_max_live_subagents,
     pin_turn_scoped_children,
@@ -1231,6 +1232,131 @@ def test_children_outlive_their_turn_by_default():
     """The shipped default is survival -- asserted, not assumed."""
     assert agent_service.DEFAULT_SUBAGENTS_OUTLIVE_TURN is True
     assert agent_service.SUBAGENTS_OUTLIVE_TURN_KEY == "subagents_outlive_turn"
+
+
+# -- containment: replacing clamp_child_budget's parent-remainder clamp ----
+#
+# PR3a-1 Task 5 (spec Sec 5 "Containment"). A background child deliberately
+# outlives its parent (Task 2's default), so its own wall-clock ceiling can
+# no longer be `min(child, parent's remaining budget)` -- that made a
+# surviving child's effective bound an accident of WHEN in the turn it was
+# spawned. The replacement: `agent_models.contain_child_budget` gives the
+# child its OWN independent ceiling, resolved from `[agents]
+# child_max_wall_seconds` (default `DEFAULT_CHILD_MAX_WALL_SECONDS`) --
+# same `_setting`-driven config chain as `max_live_subagents` above. The
+# live-children COUNT cap (`max_live_subagents`) and the per-child SPEND
+# ceiling (`max_total_tokens`, passed through unchanged) are untouched by
+# this task -- they already bound the fleet independently of the parent's
+# lifetime.
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("900", 900.0),
+        (900, 900.0),
+        (900.5, 900.5),
+        ("0.5", 0.5),
+        # The 1s FLOOR is deliberately NOT this function's job -- it lives
+        # in `contain_child_budget` (single source of truth, same place
+        # `clamp_child_budget`'s own floor already lived), so a
+        # non-positive config value passes through unfloored here.
+        (0, 0.0),
+        (-5, -5.0),
+        # Unparseable -> the documented default, never a raise.
+        ("plenty", agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (None, agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        ("", agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (float("inf"), agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (float("nan"), agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+    ],
+)
+def test_coerce_child_max_wall_seconds(configured, expected):
+    assert agent_service._coerce_child_max_wall_seconds(configured) == expected
+
+
+def test_a_spawned_childs_own_wall_clock_matches_the_config_default(db):
+    """A child's persisted budget carries the INDEPENDENT default ceiling,
+    not the parent's own (`FLEET_CFG.budget.max_wall_seconds == 240.0`,
+    deliberately different from the default below so this distinguishes
+    old vs new behaviour). Also pins the depth-1 guarantee end to end.
+    """
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert (
+        child["budget"]["max_wall_seconds"]
+        == agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS
+    )
+    assert child["budget"]["max_wall_seconds"] != FLEET_CFG.budget.max_wall_seconds
+    assert child["budget"]["max_subagents"] == 0  # depth-1 preserved
+
+
+def test_a_spawned_childs_wall_clock_ceiling_respects_a_config_override(
+    db, monkeypatch
+):
+    """The config key actually reaches the spawn call, not just the default."""
+    pin_agent_settings(monkeypatch, child_max_wall_seconds="77.0")
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["budget"]["max_wall_seconds"] == 77.0
+
+
+def test_a_spawned_childs_other_budget_fields_still_inherit_the_parents(db):
+    """The 'turn-scoped budget is unchanged' half, end to end through the
+    real spawn() closure: everything except the wall clock and the
+    subagent count still comes from the parent's own budget, same as
+    `clamp_child_budget` always passed through."""
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(
+            max_steps=40,
+            max_model_turns=17,
+            max_subagents=2,
+            max_total_tokens=5000,
+            max_tool_call_seconds=45.0,
+        ),
+    )
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["budget"]["max_model_turns"] == 17
+    assert child["budget"]["max_steps"] == 40
+    assert child["budget"]["max_total_tokens"] == 5000
+    assert child["budget"]["max_tool_call_seconds"] == 45.0
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
