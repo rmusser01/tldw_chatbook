@@ -155,7 +155,7 @@ Record the current `HEAD` as one exact line, `implementation_base=<full-commit-h
 
 Create `test_comfyui_workflow_assets.py` with constants independently transcribed from design §5.2, not derived from the graph under test:
 
-- exact 17-node ID → `class_type` map;
+- exact 18-node ID → `class_type` map;
 - exact 24 destination-input → source-link map;
 - exactly one output-class node, `165: SaveImage`;
 - nodes `154` and `166` absent;
