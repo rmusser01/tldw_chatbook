@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 09:45'
-updated_date: '2026-08-11 16:30'
+updated_date: '2026-08-11 19:26'
 labels:
   - library
   - notes
@@ -74,5 +74,6 @@ per-route `source_strip` fork survives for the create-note canvas
 - Extended the route-owned source-strip contract to both `notes` and `notes-create`, so List, Editor, Sync, loading, and Create all retain the visible `Database | Files` authority control and the same 14-row compact canvas allocation.
 - Simplified the task-8 geometry helpers to one source-strip truth, restored the 60x20 navigator list from 5 to 9 rows (selection from 6 to 10), and added a compact/wide/compact identity-preserving regression.
 - Verification: 24 responsive Library shell tests passed; 2 `LibraryNotesCanvas` widget tests passed; both new guards were mutation-checked and failed when individually removed, then the two focused regressions passed again after restoration. Scoped Ruff checks passed for production and test changes (the test-file run excluded its pre-existing unrelated F401 import).
+- Qodo review remediation: introduced canonical `LIBRARY_CANVAS_KIND_NOTES_CREATE` ownership in `library_shell_state.py` and replaced every behavior-critical `notes-create` literal in the shell builder and Library screen. The 30-test shell-state suite, both focused mounted-UI regressions, and scoped Ruff checks passed after the change.
 - ADR: no new ADR; the change conforms to ADR-011 and ADR-015. Documentation is complete in this task record; no reusable incident warranted a new lessons entry.
-- Modified files: `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `Tests/UI/test_library_shell.py`, and this task record.
+- Modified files: `tldw_chatbook/Library/library_shell_state.py`, `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `Tests/Library/test_library_shell_state.py`, `Tests/UI/test_library_shell.py`, and this task record.

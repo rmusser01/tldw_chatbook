@@ -29,6 +29,7 @@ LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+LIBRARY_CANVAS_KIND_NOTES_CREATE = "notes-create"
 # The three Study staging (handoff) rows -- consumers that need "is this a
 # study handoff row" import these rather than repeating the literals
 # (Qodo PR-1488 #2; the study_rows definitions below are the canonical use).
@@ -441,7 +442,7 @@ def build_library_shell_state(
             section_id="create",
             title="New note",
             target_kind="canvas",
-            target_id="notes-create",
+            target_id=LIBRARY_CANVAS_KIND_NOTES_CREATE,
             count=None,
             count_known=True,
         ),
