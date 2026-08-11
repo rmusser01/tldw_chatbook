@@ -829,7 +829,8 @@ Repeat Task 1 Steps 1–3. Rerun the 523-call reconciliation against the new bas
 Expected: all selected tests pass. The sole permitted deviation is
 `test_production_diagnostic_inventory_and_sink_topology_are_unchanged` failing with
 the exact unrelated latest-dev baseline reproduced in a detached worktree at the
-recorded Step 1 base: these 15 owner paths only —
+recorded Step 1 base (`b4c5105eda4c38a5b5446d7982c36d5fefaec8a1` for the
+final review-fix run): these 15 owner paths only —
 `Agents/agent_service.py`, `Chat/console_agent_bridge.py`,
 `Chat/console_chat_controller.py`, `Chat/console_chat_store.py`,
 `Chat/console_context_compaction.py`, `Chat/console_provider_gateway.py`,
