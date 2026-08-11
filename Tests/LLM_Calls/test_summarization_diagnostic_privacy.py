@@ -352,6 +352,26 @@ GENERAL_OPENAI_EXCEPTION_CANARY = "GENERAL_OPENAI_EXCEPTION_CANARY_3796"
 GENERAL_ANTHROPIC_RESPONSE_CANARY = "GENERAL_ANTHROPIC_RESPONSE_CANARY_3796"
 GENERAL_ANTHROPIC_STREAM_CANARY = "GENERAL_ANTHROPIC_STREAM_CANARY_3796"
 GENERAL_ANTHROPIC_EXCEPTION_CANARY = "GENERAL_ANTHROPIC_EXCEPTION_CANARY_3796"
+COHERE_CREDENTIAL_CANARY = "C0H3R3_K3Y_3796"
+COHERE_PROMPT_CANARY = "COHERE_PROMPT_CANARY_3796"
+COHERE_RESPONSE_CANARY = "COHERE_RESPONSE_CANARY_3796"
+COHERE_STREAM_CANARY = "COHERE_STREAM_CANARY_3796"
+COHERE_EXCEPTION_CANARY = "COHERE_EXCEPTION_CANARY_3796"
+COHERE_PRIVATE_STREAMING_VALUE = "COHERE_PRIVATE_STREAMING_VALUE_3796"
+GROQ_CREDENTIAL_CANARY = "GR0Q_K3Y_3796"
+GROQ_INPUT_CANARY = "GROQ_INPUT_CANARY_3796"
+GROQ_PROMPT_CANARY = "GROQ_PROMPT_CANARY_3796"
+GROQ_RESPONSE_CANARY = "GROQ_RESPONSE_CANARY_3796"
+GROQ_STREAM_CANARY = "GROQ_STREAM_CANARY_3796"
+GROQ_EXCEPTION_CANARY = "GROQ_EXCEPTION_CANARY_3796"
+GROQ_PRIVATE_STREAMING_VALUE = "GROQ_PRIVATE_STREAMING_VALUE_3796"
+OPENROUTER_CREDENTIAL_CANARY = "0P3NR0UT3R_K3Y_3796"
+OPENROUTER_INPUT_CANARY = "OPENROUTER_INPUT_CANARY_3796"
+OPENROUTER_PROMPT_CANARY = "OPENROUTER_PROMPT_CANARY_3796"
+OPENROUTER_RESPONSE_CANARY = "OPENROUTER_RESPONSE_CANARY_3796"
+OPENROUTER_STREAM_CANARY = "OPENROUTER_STREAM_CANARY_3796"
+OPENROUTER_EXCEPTION_CANARY = "OPENROUTER_EXCEPTION_CANARY_3796"
+OPENROUTER_PRIVATE_STREAMING_VALUE = "OPENROUTER_PRIVATE_STREAMING_VALUE_3796"
 
 
 @dataclass(frozen=True)
@@ -636,6 +656,41 @@ def _general_provider_settings(
         ("anthropic_api", "api_retries"): 0,
         ("anthropic_api", "api_retry_delay"): 0,
     }
+
+
+def _general_mid_provider_settings() -> dict[tuple[str, str], object]:
+    return {
+        ("cohere_api", "api_key"): "fixed-cohere-key",
+        ("cohere_api", "model"): "fixed-cohere-model",
+        ("cohere_api", "api_retries"): 0,
+        ("cohere_api", "api_retry_delay"): 0,
+        ("groq_api", "api_key"): "fixed-groq-key",
+        ("groq_api", "model"): "fixed-groq-model",
+        ("groq_api", "api_retries"): 0,
+        ("groq_api", "api_retry_delay"): 0,
+        ("openrouter_api", "api_key"): "fixed-openrouter-key",
+        ("openrouter_api", "model"): "fixed-openrouter-model",
+        ("openrouter_api", "api_retries"): 0,
+        ("openrouter_api", "api_retry_delay"): 0,
+    }
+
+
+def _install_signature_bound_general_config_loader(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException | None = None,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    real_loader = general_summarization.load_and_log_configs
+    signature = inspect.signature(real_loader)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_loader(*args: object, **kwargs: object) -> None:
+        signature.bind(*args, **kwargs)
+        calls.append((args, kwargs))
+        if failure is not None:
+            raise failure
+
+    monkeypatch.setattr(general_summarization, "load_and_log_configs", fake_loader)
+    return calls
 
 
 def _invoke_general_input(
@@ -4164,3 +4219,656 @@ def test_anthropic_file_error_hides_path_and_preserves_in_band_error(
     assert result == f"Anthropic: File not found: {GENERAL_PATH_CANARY}"
     assert GENERAL_PATH_CANARY not in captured.text
     assert "Anthropic: File not found" in captured.text
+
+
+def test_no_pending_general_mid_sites() -> None:
+    pending = [
+        site
+        for site in _ledger_sites()
+        if site["group"] == "general_mid"
+        and site["starting_classification"] == "private"
+        and site["outcome"] == "pending"
+    ]
+
+    assert len(pending) == 0, (
+        f"general_mid has {len(pending)} pending private diagnostics: "
+        f"{[site['site_id'] for site in pending]}"
+    )
+
+
+def test_cohere_success_hides_credential_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        json_data={
+            "message": {"content": [{"type": "text", "text": COHERE_RESPONSE_CANARY}]}
+        }
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_cohere(
+            COHERE_CREDENTIAL_CANARY,
+            "fixed input",
+            COHERE_PROMPT_CANARY,
+            system_message="fixed system",
+        )
+
+    assert result == COHERE_RESPONSE_CANARY
+    assert settings_calls == [
+        (("cohere_api", "model", "command-a-03-2025"), {}),
+        (("cohere_api", "api_retries", 3), {}),
+        (("cohere_api", "api_retry_delay", 5), {}),
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ("https://api.cohere.com/v2/chat",)
+    assert post_kwargs["headers"]["Authorization"] == (
+        f"Bearer {COHERE_CREDENTIAL_CANARY}"
+    )
+    assert post_kwargs["json"]["messages"] == [
+        {"role": "system", "content": "fixed system"},
+        {
+            "role": "user",
+            "content": f"fixed input \n\n\n\n{COHERE_PROMPT_CANARY}",
+        },
+    ]
+    for canary in (
+        COHERE_CREDENTIAL_CANARY,
+        COHERE_PROMPT_CANARY,
+        COHERE_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "Cohere: Credential configured" in captured.text
+    assert "Cohere: Prompt prepared; character_count=" in captured.text
+    assert "Cohere: API response received" in captured.text
+
+
+def test_cohere_missing_config_credential_does_not_claim_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _general_mid_provider_settings()
+    settings[("cohere_api", "api_key")] = ""
+    settings_calls = _install_signature_bound_general_settings(monkeypatch, settings)
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_cohere(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Cohere: API Key Not Provided/Found in Config file or is empty"
+    assert settings_calls == [(("cohere_api", "api_key"), {})]
+    assert post_calls == []
+    assert "Cohere: Credential configured" not in captured.text
+
+
+def test_cohere_stream_is_lazy_and_hides_rejected_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"retry: {COHERE_STREAM_CANARY}".encode(),
+            f"data: {{{COHERE_STREAM_CANARY}".encode(),
+            f"data: {json.dumps([COHERE_STREAM_CANARY])}".encode(),
+            json.dumps(
+                {
+                    "type": "content-delta",
+                    "delta": {"message": {"content": {"text": "fixed cohere chunk"}}},
+                }
+            ).encode(),
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_cohere(
+            "fixed-cohere-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=COHERE_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        assert response.closed is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed cohere chunk"]
+    assert response.iter_lines_started is True
+    assert response.closed is True
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == COHERE_PRIVATE_STREAMING_VALUE
+    assert post_calls[0][1]["stream"] is True
+    assert COHERE_STREAM_CANARY not in captured.text
+    assert COHERE_PRIVATE_STREAMING_VALUE not in captured.text
+    assert "Cohere Stream: Non-JSON line skipped" in captured.text
+    assert "Cohere Stream: Response event rejected" in captured.text
+    assert "Cohere Stream: Non-object event skipped" in captured.text
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["nonstream", "stream"])
+def test_cohere_status_failure_hides_response_body_and_preserves_return(
+    streaming: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(status_code=429, text=COHERE_RESPONSE_CANARY)
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_cohere(
+            "fixed-cohere-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=streaming,
+        )
+
+    assert result == f"Cohere: API request failed: {COHERE_RESPONSE_CANARY}"
+    assert response.iter_lines_started is False
+    assert COHERE_RESPONSE_CANARY not in captured.text
+    assert "Cohere: API request failed; status_code=429" in captured.text
+
+
+def test_cohere_transport_exception_hides_message_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        RuntimeError(COHERE_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_cohere(
+            "fixed-cohere-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "Cohere: Error occurred while processing summary with Cohere: "
+        f"{COHERE_EXCEPTION_CANARY}"
+    )
+    assert COHERE_EXCEPTION_CANARY not in captured.text
+    assert "Cohere: Processing failed; exception_type=RuntimeError" in captured.text
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_groq_success_hides_input_prompt_credential_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": GROQ_RESPONSE_CANARY}}]}
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_groq(
+            GROQ_CREDENTIAL_CANARY,
+            GROQ_INPUT_CANARY,
+            GROQ_PROMPT_CANARY,
+            system_message="fixed system",
+        )
+
+    assert result == GROQ_RESPONSE_CANARY
+    assert settings_calls == [
+        (("groq_api", "model", "llama3-70b-8192"), {}),
+        (("groq_api", "api_retries", 3), {}),
+        (("groq_api", "api_retry_delay", 5), {}),
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ("https://api.groq.com/openai/v1/chat/completions",)
+    assert post_kwargs["headers"]["Authorization"] == (
+        f"Bearer {GROQ_CREDENTIAL_CANARY}"
+    )
+    assert post_kwargs["json"]["messages"] == [
+        {"role": "system", "content": "fixed system"},
+        {
+            "role": "user",
+            "content": f"{GROQ_INPUT_CANARY} \n\n\n\n{GROQ_PROMPT_CANARY}",
+        },
+    ]
+    for canary in (
+        GROQ_CREDENTIAL_CANARY,
+        GROQ_INPUT_CANARY,
+        GROQ_PROMPT_CANARY,
+        GROQ_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "Groq: Credential configured" in captured.text
+    assert "Groq: Input prepared; character_count=" in captured.text
+    assert "Groq: Prompt prepared; character_count=" in captured.text
+    assert "Groq: API response received" in captured.text
+
+
+def test_groq_missing_config_credential_does_not_claim_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _general_mid_provider_settings()
+    settings[("groq_api", "api_key")] = ""
+    _install_signature_bound_general_settings(monkeypatch, settings)
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_groq(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == "Groq: API Key Not Provided/Found in Config file or is empty"
+    assert post_calls == []
+    assert "Groq: Credential configured" not in captured.text
+
+
+def test_groq_stream_preserves_raw_flag_and_hides_malformed_line(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        lines=(
+            f"data: {{{GROQ_STREAM_CANARY}".encode(),
+            json.dumps({"choices": [{"delta": {"content": "fixed groq chunk"}}]})
+            .join(["data: ", ""])
+            .encode(),
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        stream = general_summarization.summarize_with_groq(
+            "fixed-groq-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=GROQ_PRIVATE_STREAMING_VALUE,
+        )
+        assert inspect.isgenerator(stream)
+        assert response.iter_lines_started is False
+        chunks = list(stream)
+
+    assert chunks == ["fixed groq chunk"]
+    assert response.iter_lines_started is True
+    assert len(post_calls) == 1
+    assert post_calls[0][1]["json"]["stream"] == GROQ_PRIVATE_STREAMING_VALUE
+    assert post_calls[0][1]["stream"] is True
+    assert GROQ_STREAM_CANARY not in captured.text
+    assert GROQ_PRIVATE_STREAMING_VALUE not in captured.text
+    assert "Groq Stream: Response event rejected" in captured.text
+
+
+def test_groq_status_failure_hides_response_body_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    response = _FakeResponse(
+        status_code=503,
+        json_data={"error": GROQ_RESPONSE_CANARY},
+        text=GROQ_RESPONSE_CANARY,
+    )
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_groq(
+            "fixed-groq-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"Groq: API request failed: {GROQ_RESPONSE_CANARY}"
+    assert GROQ_RESPONSE_CANARY not in captured.text
+    assert "Groq: API request failed; status_code=503" in captured.text
+
+
+def test_groq_transport_exception_hides_message_and_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        RuntimeError(GROQ_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_groq(
+            "fixed-groq-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "Groq: Error occurred while processing summary with Groq: "
+        f"{GROQ_EXCEPTION_CANARY}"
+    )
+    assert GROQ_EXCEPTION_CANARY not in captured.text
+    assert "Groq: Processing failed; exception_type=RuntimeError" in captured.text
+    assert not [record for record in captured.caplog.records if record.exc_info]
+
+
+def test_groq_input_conversion_remains_eager_without_logging_converted_value(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class UnsupportedInput:
+        calls = 0
+
+        def __str__(self) -> str:
+            self.calls += 1
+            return GROQ_INPUT_CANARY
+
+    input_value = UnsupportedInput()
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run for unsupported input"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_groq(
+            "fixed-groq-key",
+            input_value,
+            "fixed prompt",
+        )
+
+    assert result == (
+        "Groq: Error occurred while processing summary with Groq: "
+        "Groq: Invalid input data format"
+    )
+    assert input_value.calls == 1
+    assert post_calls == []
+    assert GROQ_INPUT_CANARY not in captured.text
+    assert "Groq: Input prepared; character_count=" in captured.text
+
+
+def test_openrouter_success_hides_credential_input_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings_calls = _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    config_calls = _install_signature_bound_general_config_loader(monkeypatch)
+    response = _FakeResponse(
+        json_data={"choices": [{"message": {"content": OPENROUTER_RESPONSE_CANARY}}]}
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            OPENROUTER_CREDENTIAL_CANARY,
+            OPENROUTER_INPUT_CANARY,
+            OPENROUTER_PROMPT_CANARY,
+            system_message="fixed system",
+        )
+
+    assert result == OPENROUTER_RESPONSE_CANARY
+    assert config_calls == [((), {})]
+    assert settings_calls == [
+        (("openrouter_api", "model", "mistralai/mistral-7b-instruct"), {}),
+        (("openrouter_api", "api_retries", 3), {}),
+        (("openrouter_api", "api_retry_delay", 5), {}),
+    ]
+    assert len(post_calls) == 1
+    post_args, post_kwargs = post_calls[0]
+    assert post_args == ()
+    assert post_kwargs["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert post_kwargs["headers"]["Authorization"] == (
+        f"Bearer {OPENROUTER_CREDENTIAL_CANARY}"
+    )
+    payload = json.loads(post_kwargs["data"])
+    assert payload["messages"] == [
+        {"role": "system", "content": "fixed system"},
+        {
+            "role": "user",
+            "content": f"{OPENROUTER_INPUT_CANARY} \n\n\n\n{OPENROUTER_PROMPT_CANARY}",
+        },
+    ]
+    for canary in (
+        OPENROUTER_CREDENTIAL_CANARY,
+        OPENROUTER_INPUT_CANARY,
+        OPENROUTER_PROMPT_CANARY,
+        OPENROUTER_RESPONSE_CANARY,
+    ):
+        assert canary not in captured.text
+    assert "OpenRouter: Credential configured" in captured.text
+    assert "OpenRouter: API response received" in captured.text
+
+
+def test_openrouter_stream_hides_returned_content_and_consumes_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    response = _FakeResponse(
+        lines=(
+            f"data: {json.dumps({'choices': [{'delta': {'content': OPENROUTER_STREAM_CANARY}}]})}".encode(),
+            b"data: [DONE]",
+        )
+    )
+    post_calls = _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=OPENROUTER_PRIVATE_STREAMING_VALUE,
+        )
+
+    assert result == OPENROUTER_STREAM_CANARY
+    assert response.iter_lines_started is True
+    assert len(post_calls) == 1
+    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert post_calls[0][1]["stream"] is True
+    assert OPENROUTER_STREAM_CANARY not in captured.text
+    assert OPENROUTER_PRIVATE_STREAMING_VALUE not in captured.text
+    assert "OpenRouter Stream: Content received; character_count=" in captured.text
+
+
+def test_openrouter_stream_status_failure_hides_body_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    response = _FakeResponse(status_code=429, text=OPENROUTER_RESPONSE_CANARY)
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+
+    assert result == (
+        "openrouter: Streaming API request failed with status code 429: "
+        f"{OPENROUTER_RESPONSE_CANARY}"
+    )
+    assert OPENROUTER_RESPONSE_CANARY not in captured.text
+    assert "OpenRouter Stream: API request failed; status_code=429" in captured.text
+
+
+def test_openrouter_stream_exception_hides_message_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    _install_signature_bound_general_session_post(
+        monkeypatch,
+        RuntimeError(OPENROUTER_EXCEPTION_CANARY),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+            streaming=True,
+        )
+
+    assert result == (
+        "openrouter: Error occurred while processing stream: "
+        f"{OPENROUTER_EXCEPTION_CANARY}"
+    )
+    assert OPENROUTER_EXCEPTION_CANARY not in captured.text
+    assert "OpenRouter Stream: Processing failed; exception_type=RuntimeError" in (
+        captured.text
+    )
+
+
+def test_openrouter_nonstream_status_failure_hides_body_and_preserves_return(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    _install_signature_bound_general_config_loader(monkeypatch)
+    response = _FakeResponse(
+        status_code=503,
+        json_data={"error": OPENROUTER_RESPONSE_CANARY},
+        text=OPENROUTER_RESPONSE_CANARY,
+    )
+    _install_signature_bound_general_session_post(monkeypatch, response)
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == f"openrouter: API request failed: {OPENROUTER_RESPONSE_CANARY}"
+    assert OPENROUTER_RESPONSE_CANARY not in captured.text
+    assert "OpenRouter: API request failed; status_code=503" in captured.text
+
+
+def test_openrouter_config_exception_is_hidden_and_transport_is_not_started(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    config_calls = _install_signature_bound_general_config_loader(
+        monkeypatch,
+        RuntimeError(OPENROUTER_EXCEPTION_CANARY),
+    )
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run after config failure"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "fixed-openrouter-key",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "OpenRouter: Error occurred while processing config file with OpenRouter: "
+        f"{OPENROUTER_EXCEPTION_CANARY}"
+    )
+    assert config_calls == [((), {})]
+    assert post_calls == []
+    assert OPENROUTER_EXCEPTION_CANARY not in captured.text
+
+
+def test_openrouter_missing_config_credential_does_not_claim_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _general_mid_provider_settings()
+    settings[("openrouter_api", "api_key")] = ""
+    settings_calls = _install_signature_bound_general_settings(monkeypatch, settings)
+    config_calls = _install_signature_bound_general_config_loader(monkeypatch)
+    post_calls = _install_signature_bound_general_session_post(
+        monkeypatch,
+        AssertionError("transport must not run without a credential"),
+    )
+
+    with _capture_stdlib_and_loguru(caplog) as captured:
+        result = general_summarization.summarize_with_openrouter(
+            "",
+            "fixed input",
+            "fixed prompt",
+        )
+
+    assert result == (
+        "OpenRouter: Error occurred while processing config file with OpenRouter: "
+        "No valid Anthropic API key available"
+    )
+    assert settings_calls == [
+        (("openrouter_api", "api_key"), {}),
+        (("openrouter_api", "model", "mistralai/mistral-7b-instruct"), {}),
+    ]
+    assert config_calls == [((), {})]
+    assert post_calls == []
+    assert "OpenRouter: Credential configured" not in captured.text

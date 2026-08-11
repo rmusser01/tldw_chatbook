@@ -1226,9 +1226,7 @@ def summarize_with_cohere(
         if system_message is None:
             system_message = ""
 
-        logging.debug(
-            f"Cohere: Using API Key: {cohere_api_key[:5]}...{cohere_api_key[-5:] if cohere_api_key else None}"
-        )
+        logging.debug("Cohere: Credential configured")
 
         logging.debug("Cohere: Using provided string data for summarization")
         data = input_data
@@ -1265,7 +1263,10 @@ def summarize_with_cohere(
         }
 
         cohere_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(f"Cohere: Prompt being sent is {cohere_prompt}")
+        logging.debug(
+            "Cohere: Prompt prepared; character_count=%s",
+            len(cohere_prompt),
+        )
 
         # Cohere v2 /chat (task-297): the last v1 /chat caller in the repo --
         # chat_with_cohere migrated in task-267 (PR #690); v2 takes a
@@ -1315,7 +1316,8 @@ def summarize_with_cohere(
                 # raise_for_status() surfaced a bodyless HTTPError through
                 # the outer except with a different string (task-297 review).
                 logging.error(
-                    f"Cohere: API request failed with status code {response.status_code}: {response.text}"
+                    "Cohere: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Cohere: API request failed: {response.text}"
 
@@ -1350,25 +1352,19 @@ def summarize_with_cohere(
                         # SSE transports may interleave metadata/comment lines
                         # (id:, retry:, ": keep-alive") -- harmless, so debug
                         # not warning (Qodo #698-3).
-                        logging.debug(
-                            f"Cohere: Skipping non-JSON stream line: {decoded_line[:120]}"
-                        )
+                        logging.debug("Cohere Stream: Non-JSON line skipped")
                         continue
                     if not decoded_line or decoded_line == "[DONE]":
                         continue
                     try:
                         event = json.loads(decoded_line)
                     except json.JSONDecodeError:
-                        logging.error(
-                            f"Cohere: Error decoding JSON from line: {decoded_line}"
-                        )
+                        logging.error("Cohere Stream: Response event rejected")
                         continue
                     if not isinstance(event, dict):
                         # A JSON list/primitive line would crash .get() and
                         # kill the generator (Gemini #698-1).
-                        logging.debug(
-                            f"Cohere: Skipping non-object stream event: {decoded_line[:120]}"
-                        )
+                        logging.debug("Cohere Stream: Non-object event skipped")
                         continue
                     if event.get("type") == "content-delta":
                         chunk = (
@@ -1416,7 +1412,7 @@ def summarize_with_cohere(
                 # HTML) would raise into the outer except and break the
                 # pinned failure format (Gemini/Qodo #698-2).
                 response_data = response.json()
-                logging.debug(f"API Response Data: {response_data}")
+                logging.debug("Cohere: API response received")
                 # v2 returns message.content as a parts array; concatenate
                 # the text parts (mirrors chat_with_cohere, task-267).
                 content_parts = (response_data.get("message") or {}).get(
@@ -1434,12 +1430,16 @@ def summarize_with_cohere(
                 return "Cohere: Expected data not found in API response."
             else:
                 logging.error(
-                    f"Cohere: API request failed with status code {response.status_code}: {response.text}"
+                    "Cohere: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Cohere: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Cohere: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Cohere: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Cohere: Error occurred while processing summary with Cohere: {str(e)}"
 
 
@@ -1472,16 +1472,14 @@ def summarize_with_groq(
             logging.error("Groq: No valid API key available")
             return "Groq: API Key Not Provided/Found in Config file or is empty"
 
-        logging.debug(f"Groq: Using API Key: {groq_api_key[:5]}...{groq_api_key[-5:]}")
+        logging.debug("Groq: Credential configured")
 
         # Input data handling
         logging.debug("Groq: Using provided string data for summarization")
         data = input_data
 
         # Debug logging to identify sent data
-        logging.debug(
-            f"Groq: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)"
-        )
+        logging.debug("Groq: Input prepared; character_count=%s", len(str(data)))
         logging.debug(f"Groq: Type of data: {type(data)}")
 
         if isinstance(data, dict) and "summary" in data:
@@ -1514,7 +1512,10 @@ def summarize_with_groq(
         }
 
         groq_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
-        logging.debug(f"Groq: Prompt being sent is {groq_prompt}")
+        logging.debug(
+            "Groq: Prompt prepared; character_count=%s",
+            len(groq_prompt),
+        )
 
         data = {
             "messages": [
@@ -1580,9 +1581,7 @@ def summarize_with_groq(
                             collected_messages += chunk
                             yield chunk
                         except json.JSONDecodeError:
-                            logging.error(
-                                f"Groq: Error decoding JSON from line: {line}"
-                            )
+                            logging.error("Groq Stream: Response event rejected")
                             continue
                 # Optionally, you can return the full collected message at the end
                 # yield collected_messages
@@ -1616,7 +1615,7 @@ def summarize_with_groq(
             )
 
             response_data = response.json()
-            logging.debug(f"API Response Data: {response_data}")
+            logging.debug("Groq: API response received")
 
             if response.status_code == 200:
                 if "choices" in response_data and len(response_data["choices"]) > 0:
@@ -1628,12 +1627,16 @@ def summarize_with_groq(
                     return "Groq: Expected data not found in API response."
             else:
                 logging.error(
-                    f"Groq: API request failed with status code {response.status_code}: {response.text}"
+                    "Groq: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"Groq: API request failed: {response.text}"
 
     except Exception as e:
-        logging.error(f"Groq: Error in processing: {str(e)}", exc_info=True)
+        logging.error(
+            "Groq: Processing failed; exception_type=%s",
+            safe_metadata_token(type(e).__name__),
+        )
         return f"Groq: Error occurred while processing summary with Groq: {str(e)}"
 
 
@@ -1677,9 +1680,7 @@ def summarize_with_openrouter(
         logging.error("OpenRouter: Error in processing: {str(e)}")
         return f"OpenRouter: Error occurred while processing config file with OpenRouter: {str(e)}"
 
-    logging.debug(
-        f"OpenRouter: Using API Key: {openrouter_api_key[:5]}...{openrouter_api_key[-5:]}"
-    )
+    logging.debug("OpenRouter: Credential configured")
 
     logging.debug(f"OpenRouter: Using Model: {openrouter_model}")
 
@@ -1779,7 +1780,10 @@ def summarize_with_openrouter(
                                     delta = json_data["choices"][0].get("delta", {})
                                     if "content" in delta:
                                         content = delta["content"]
-                                        logging.info(content)
+                                        logging.info(
+                                            "OpenRouter Stream: Content received; character_count=%s",
+                                            len(content),
+                                        )
                                         full_response += content
                             except json.JSONDecodeError:
                                 continue
@@ -1788,12 +1792,18 @@ def summarize_with_openrouter(
                 return full_response.strip()
             else:
                 error_msg = f"openrouter: Streaming API request failed with status code {response.status_code}: {response.text}"
-                logging.error(error_msg)
+                logging.error(
+                    "OpenRouter Stream: API request failed; status_code=%s",
+                    response.status_code,
+                )
                 return error_msg
 
         except Exception as e:
             error_msg = f"openrouter: Error occurred while processing stream: {str(e)}"
-            logging.error(error_msg)
+            logging.error(
+                "OpenRouter Stream: Processing failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return error_msg
     else:
         try:
@@ -1840,9 +1850,7 @@ def summarize_with_openrouter(
             )
 
             response_data = response.json()
-            logging.debug(
-                f"API Response Data: {response_data}",
-            )
+            logging.debug("OpenRouter: API response received")
 
             if response.status_code == 200:
                 if "choices" in response_data and len(response_data["choices"]) > 0:
@@ -1857,11 +1865,15 @@ def summarize_with_openrouter(
                     return "openrouter: Expected data not found in API response."
             else:
                 logging.error(
-                    f"openrouter:  API request failed with status code {response.status_code}: {response.text}"
+                    "OpenRouter: API request failed; status_code=%s",
+                    response.status_code,
                 )
                 return f"openrouter: API request failed: {response.text}"
         except Exception as e:
-            logging.error(f"openrouter: Error in processing: {str(e)}")
+            logging.error(
+                "OpenRouter: Processing failed; exception_type=%s",
+                safe_metadata_token(type(e).__name__),
+            )
             return f"openrouter: Error occurred while processing summary with openrouter: {str(e)}"
 
 
