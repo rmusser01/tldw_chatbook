@@ -38,25 +38,24 @@ transcription and ordered shutdown still completed.
 
 ## Exact changed-test union
 
-The union was derived once from
+The union was derived from
 `git diff --name-only --diff-filter=ACMR origin/dev...HEAD` and contained the
-24 changed Python test files recorded in the JSON. It was run once, in one
-explicit command, with the repository virtual environment and no keyword
-filtering:
+24 changed Python test files recorded in the JSON. Each run used one explicit
+command with the repository virtual environment and no keyword filtering:
 
 ```text
 ../../.venv/bin/python -m pytest Tests/App/test_submit_library_ingest_job.py Tests/Library/test_library_ingest_runner.py Tests/Local_Ingestion/test_parakeet_v2_artifact.py Tests/Local_Ingestion/test_transcription_service_parakeet_buffer_wav.py Tests/Model_Artifacts/test_service.py Tests/STT/test_dispatch_coordinator.py Tests/STT/test_local_stt_executor.py Tests/STT/test_parakeet_dispatch.py Tests/STT/test_parakeet_external.py Tests/STT/test_parakeet_onnx.py Tests/STT/test_parakeet_sources.py Tests/STT/test_transcription_service_facade.py Tests/UI/test_destination_shells.py Tests/UI/test_first_run_wizard_live_contract.py Tests/UI/test_library_ingest_canvas.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_model_artifact_widgets.py Tests/UI/test_model_browser_state.py Tests/UI/test_model_curated_view.py Tests/UI/test_model_external_view.py Tests/UI/test_model_installed_view.py Tests/UI/test_parakeet_v2_install_ui.py Tests/Wizards/test_first_run_speech_step.py Tests/Wizards/test_first_run_speech_step_state.py -q
 ```
 
-Result: **6 failed, 1248 passed, 1 skipped, 16 warnings in 356.88
-seconds**. The whole union was not automatically rerun.
+Initial evidence result at `e18a4e4d7`: **6 failed, 1248 passed, 1 skipped,
+16 warnings in 356.88 seconds**.
 
-Two localhost artifact fixtures were denied permission to bind
-`127.0.0.1` by the sandbox. Two union-only failures passed as isolated nodes.
-Two isolated UI nodes remain red: the Installed-view fake lacks the new
-`records()` contract, and the progress-widget mock spec lacks `update()`.
-The exact nodes, classifications, and isolated rerun outcomes are recorded in
-the JSON. No code was changed during this evidence task.
+Final reviewed-head result at `bdd2f25e3`: **3 failed, 1262 passed, 1 skipped,
+9 warnings in 376.78 seconds**. The two UI test-double failures were corrected
+and passed in this union; the earlier First Run union-order failure also passed.
+Two localhost artifact fixtures were still denied permission to bind
+`127.0.0.1` by the sandbox. The remaining dispatch import-state assertion
+passed in isolation in 0.37 seconds. The union was not run again.
 
 ## Static verification
 
@@ -76,7 +75,8 @@ the JSON. No code was changed during this evidence task.
 ## Status and open gates
 
 TASK-598 remains **In Progress**. This host supports the available macOS arm64
-external-mode evidence, but the exact changed-test union is not fully green.
+external-mode evidence, but the exact changed-test union is not fully green in
+the sandbox.
 Native source verification, copy/delete, and real ONNX CPU smoke remain open on
 Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64. No Linux or
 Windows readiness claim is made.

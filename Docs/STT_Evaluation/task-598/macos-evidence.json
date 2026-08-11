@@ -1,8 +1,9 @@
 {
   "schema_version": 1,
   "evidence_label": "isolated_macos_external_mode_in_memory_production_path",
-  "generated_at": "2026-08-10T04:26:39Z",
+  "generated_at": "2026-08-11T22:18:36Z",
   "tested_commit": "e18a4e4d7c391a8c2633f629092288b33b589688",
+  "final_review_commit": "bdd2f25e33d94058c11fe89238793284b89a37d0",
   "status": "passed",
   "task_status": "In Progress",
   "host": {
@@ -115,9 +116,17 @@
         "Tests/Wizards/test_first_run_speech_step_state.py",
         "-q"
       ],
-      "whole_union_runs": 1,
+      "whole_union_runs": 2,
       "status": "failed",
       "result": {
+        "passed": 1262,
+        "failed": 3,
+        "skipped": 1,
+        "warnings": 9,
+        "duration_seconds": 376.78
+      },
+      "initial_result": {
+        "commit": "e18a4e4d7c391a8c2633f629092288b33b589688",
         "passed": 1248,
         "failed": 6,
         "skipped": 1,
@@ -140,25 +149,7 @@
         {
           "node": "Tests/STT/test_parakeet_dispatch.py::test_resolver_never_loads_download_layers_and_fails_without_installed_artifact",
           "classification": "union_import_state",
-          "isolated_rerun": "passed in 0.17 seconds"
-        },
-        {
-          "node": "Tests/UI/test_first_run_wizard_live_contract.py::test_full_track_skip_everything_leaves_app_usable",
-          "classification": "union_order_or_shared_state",
-          "detail": "The union run did not find #nav-console on HomeScreen.",
-          "isolated_rerun": "passed with one warning in 5.63 seconds"
-        },
-        {
-          "node": "Tests/UI/test_model_installed_view.py::test_models_host_lazily_wires_parakeet_activation_and_deletion",
-          "classification": "reproducible_isolated_test_fixture_mismatch",
-          "detail": "The test double _Source has no records() method.",
-          "isolated_rerun": "failed with one warning in 3.60 seconds"
-        },
-        {
-          "node": "Tests/UI/test_parakeet_v2_install_ui.py::test_progress_message_updates_retained_state_and_widget",
-          "classification": "reproducible_isolated_mock_spec_mismatch",
-          "detail": "The queried MagicMock(spec=ModelInstallProgress) has no update() method.",
-          "isolated_rerun": "failed with one warning in 0.69 seconds"
+          "isolated_rerun": "passed in 0.37 seconds"
         }
       ]
     },
