@@ -732,6 +732,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "api_settings.<provider>.endpoint",
         "api_settings.<provider>.api_key",
         "api_settings.<provider>.api_key_env_var",
+        "api_settings.<provider>.api_mode",
         "api_settings.<provider>.model_defaults.<model>",
     )
     assert records_by_category[

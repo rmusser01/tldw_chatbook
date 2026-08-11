@@ -45,6 +45,7 @@ from textual.widgets import (
 
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
+from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -118,6 +119,7 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     load_model_catalog_settings,
 )
+from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
 from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
@@ -567,6 +569,19 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "vllm": "http://127.0.0.1:8000/v1",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+QWENCLOUD_API_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Responses", "responses"),
+    ("Chat Completions", "chat_completions"),
+)
+QWENCLOUD_API_MODE_HELP_COPY = (
+    "Responses is stateless with store=false; Chat Completions disables thinking "
+    "replay; existing function tools work in both; QwenCloud built-in tools are "
+    "excluded."
+)
+QWENCLOUD_API_MODE_INVALID_COPY = (
+    "QwenCloud API mode is invalid. Open API mode and choose Responses or Chat "
+    "Completions, then Save."
+)
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -1686,6 +1701,7 @@ def overlay_provider_draft_config(
     draft_endpoint: str | None,
     draft_env_var: str | None,
     draft_api_key: str | None,
+    draft_api_mode: object | None = None,
 ) -> dict:
     """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
 
@@ -1696,6 +1712,7 @@ def overlay_provider_draft_config(
         draft_endpoint: Draft endpoint, or ``None`` to leave the saved endpoint.
         draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
         draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
+        draft_api_mode: Draft QwenCloud API mode, or ``None`` to leave saved.
 
     Returns:
         A new config dict; ``app_config`` is never mutated.
@@ -1715,6 +1732,8 @@ def overlay_provider_draft_config(
         section["api_key_env_var"] = draft_env_var
     if draft_api_key is not None:
         section["api_key"] = draft_api_key
+    if draft_api_mode is not None:
+        section["api_mode"] = draft_api_mode
     return merged
 
 
@@ -1957,6 +1976,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
         self._syncing_provider_endpoint = False
+        self._syncing_provider_api_mode = False
         self._syncing_provider_api_key = False
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
@@ -2864,6 +2884,7 @@ class SettingsScreen(BaseAppScreen):
                     "api_settings.<provider>.endpoint",
                     "api_settings.<provider>.api_key",
                     "api_settings.<provider>.api_key_env_var",
+                    "api_settings.<provider>.api_mode",
                     "api_settings.<provider>.model_defaults.<model>",
                     "model_capabilities.models.<model>.context_window",
                 ),
@@ -7485,6 +7506,109 @@ class SettingsScreen(BaseAppScreen):
             draft.values.get(key) if draft is not None and key in draft.values else None
         )
 
+    @staticmethod
+    def _provider_api_mode_draft_key(provider: object) -> str:
+        """Return the provider-scoped draft key for an API mode control."""
+        return f"provider_api_mode:{provider_config_key(str(provider or ''))}"
+
+    def _provider_api_mode_value(self, provider: object) -> object:
+        """Resolve a provider API mode from draft, saved config, then default."""
+        provider_key = provider_config_key(str(provider or ""))
+        if not provider_key:
+            return ""
+        draft_key = self._provider_api_mode_draft_key(provider_key)
+        draft = self._provider_draft()
+        if draft is not None and draft_key in draft.values:
+            return draft.values[draft_key]
+        return self._provider_saved_api_mode_value(provider_key)
+
+    def _provider_saved_api_mode_value(self, provider: object) -> object:
+        """Resolve a provider API mode without consulting the session draft."""
+        provider_key = provider_config_key(str(provider or ""))
+        if not provider_key:
+            return ""
+        provider_config = self._provider_config(provider_key)
+        if "api_mode" in provider_config:
+            return provider_config["api_mode"]
+        return "responses" if provider_key == "qwencloud" else ""
+
+    def _stage_provider_api_mode(self, provider: object, value: object) -> None:
+        """Stage one provider's mode without disturbing another provider's draft."""
+        provider_key = provider_config_key(str(provider or ""))
+        if provider_key != "qwencloud":
+            return
+        category = SettingsCategoryId.PROVIDERS_MODELS
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft_key = self._provider_api_mode_draft_key(provider_key)
+        original = draft.originals.get(
+            draft_key, self._provider_saved_api_mode_value(provider_key)
+        )
+        draft.set_value(draft_key, original, value)
+        try:
+            value_matches_original = normalize_qwencloud_api_mode(
+                value
+            ) == normalize_qwencloud_api_mode(original)
+        except ChatConfigurationError:
+            value_matches_original = value == original
+        if value_matches_original:
+            draft.values.pop(draft_key, None)
+            draft.originals.pop(draft_key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._mark_provider_test_result_stale()
+
+    def _provider_api_mode_draft_snapshot(
+        self, *, excluding_provider: object | None = None
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        """Copy unsaved API-mode namespaces that a provider save must retain."""
+        draft = self._provider_draft()
+        if draft is None:
+            return {}, {}
+        excluded_key = (
+            self._provider_api_mode_draft_key(excluding_provider)
+            if provider_config_key(str(excluding_provider or "")) == "qwencloud"
+            else ""
+        )
+        values = {
+            key: value
+            for key, value in draft.values.items()
+            if key.startswith("provider_api_mode:") and key != excluded_key
+        }
+        originals = {
+            key: value
+            for key, value in draft.originals.items()
+            if key in values
+        }
+        return originals, values
+
+    def _restore_provider_api_mode_draft_snapshot(
+        self,
+        snapshot: tuple[dict[str, object], dict[str, object]],
+    ) -> None:
+        """Restore provider API-mode namespaces after another provider saves."""
+        originals, values = snapshot
+        if not values:
+            return
+        category = SettingsCategoryId.PROVIDERS_MODELS
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft.originals.update(originals)
+        draft.values.update(values)
+
+    def _provider_api_mode_display_value(self, provider: object) -> tuple[str, bool]:
+        """Return a safe selector value and whether the saved/draft mode is valid."""
+        if provider_config_key(str(provider or "")) != "qwencloud":
+            return "responses", True
+        try:
+            return normalize_qwencloud_api_mode(
+                self._provider_api_mode_value(provider)
+            ), True
+        except ChatConfigurationError:
+            return "responses", False
+
     def _resolve_provider_model_for_settings(self):
         draft = self._provider_draft()
         settings_provider = (
@@ -7526,6 +7650,7 @@ class SettingsScreen(BaseAppScreen):
             "endpoint": self._provider_endpoint_value(provider),
             "api_key": "",
             "credential_env_var": self._provider_credential_env_var(provider),
+            "api_mode": self._provider_saved_api_mode_value(provider),
             "model_context_window": self._provider_model_context_window(provider, model)
             or "",
             "model_profile_temperature": profile.get("temperature", ""),
@@ -7549,12 +7674,14 @@ class SettingsScreen(BaseAppScreen):
     def _provider_setting_values(self) -> dict[str, object]:
         loaded = self._provider_loaded_setting_values()
         draft = self._provider_draft()
-        return {
+        values = {
             key: draft.values[key]
             if draft is not None and key in draft.values
             else value
             for key, value in loaded.items()
         }
+        values["api_mode"] = self._provider_api_mode_value(values.get("provider"))
+        return values
 
     def _provider_setting_values_mapping(self) -> Mapping[str, object]:
         values = self._provider_setting_values()
@@ -7906,6 +8033,7 @@ class SettingsScreen(BaseAppScreen):
             "#settings-provider-credential-env-var",
             Input,
         ).value.strip()
+        api_mode = self._provider_api_mode_value(provider)
         model_context_window = self._normalise_model_context_window(
             self.query_one("#settings-model-context-window", Input).value
         )
@@ -7982,6 +8110,7 @@ class SettingsScreen(BaseAppScreen):
             "endpoint": endpoint,
             "api_key": api_key,
             "credential_env_var": credential_env_var,
+            "api_mode": api_mode,
             "model_context_window": model_context_window,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
@@ -8253,6 +8382,58 @@ class SettingsScreen(BaseAppScreen):
             )
         finally:
             self._syncing_provider_manual = False
+
+    def _sync_provider_api_mode_widget(self, provider: str) -> None:
+        """Show QwenCloud's mode selector and hide it for every other provider."""
+        try:
+            row = self.query_one("#settings-provider-api-mode-row", Horizontal)
+            selector = self.query_one("#settings-provider-api-mode", Select)
+            guidance = self.query_one(
+                "#settings-provider-api-mode-guidance", Static
+            )
+        except QueryError:
+            return
+        is_qwencloud = provider_config_key(provider) == "qwencloud"
+        display_value, valid = self._provider_api_mode_display_value(provider)
+        row.set_class(not is_qwencloud, "settings-gated-profile-hidden")
+        guidance.set_class(not is_qwencloud, "settings-gated-profile-hidden")
+        selector.disabled = not is_qwencloud
+        selector.set_class(is_qwencloud and not valid, "settings-invalid-input")
+        if selector.value != display_value:
+            self._syncing_provider_api_mode = True
+            try:
+                selector.value = display_value
+            finally:
+                self._syncing_provider_api_mode = False
+        guidance.update(
+            QWENCLOUD_API_MODE_INVALID_COPY
+            if is_qwencloud and not valid
+            else QWENCLOUD_API_MODE_HELP_COPY
+        )
+
+    def _snapshot_provider_api_mode_widget(self, provider: object) -> None:
+        """Capture the visible QwenCloud selector before switching providers."""
+        if provider_config_key(str(provider or "")) != "qwencloud":
+            return
+        try:
+            selector = self.query_one("#settings-provider-api-mode", Select)
+        except QueryError:
+            return
+        value = self._select_value_text(selector.value)
+        if not value:
+            return
+        display_value, current_value_is_valid = (
+            self._provider_api_mode_display_value(provider)
+        )
+        draft = self._provider_draft()
+        draft_key = self._provider_api_mode_draft_key(provider)
+        if (
+            not current_value_is_valid
+            and (draft is None or draft_key not in draft.values)
+            and value == display_value
+        ):
+            return
+        self._stage_provider_api_mode(provider, value)
 
     def _provider_catalog_summary(self) -> str:
         # task-180: show grouped display names, never a raw config-key dump.
@@ -8643,7 +8824,11 @@ class SettingsScreen(BaseAppScreen):
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         draft = self._provider_draft()
         dirty = draft.dirty_keys if draft is not None else set()
-        if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
+        api_mode_draft_key = self._provider_api_mode_draft_key(provider)
+        if not (
+            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key}
+            & dirty
+        ):
             return app_config
         provider_save_key, _config = self._provider_config_entry(provider)
         provider_save_key = provider_save_key or provider_config_key(provider)
@@ -8669,6 +8854,11 @@ class SettingsScreen(BaseAppScreen):
             draft_endpoint=endpoint if "endpoint" in dirty else None,
             draft_env_var=env_var if "credential_env_var" in dirty else None,
             draft_api_key=api_key if "api_key" in dirty else None,
+            draft_api_mode=(
+                self._provider_api_mode_value(provider)
+                if api_mode_draft_key in dirty
+                else None
+            ),
         )
 
     def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
@@ -9389,6 +9579,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._refresh_generation_support_summary(provider)
+        self._sync_provider_api_mode_widget(provider)
         self._refresh_provider_field_guidance()
 
     def _detail_row(
@@ -9508,6 +9699,13 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 ("Saved as", endpoint_key),
                 ("Validation", "must start with http:// or https:// when set"),
+            )
+        if field_id == "settings-provider-api-mode":
+            return (
+                ("Focused setting", "API mode"),
+                ("Purpose", QWENCLOUD_API_MODE_HELP_COPY),
+                ("Saved as", "api_settings.qwencloud.api_mode"),
+                ("Validation", "responses or chat_completions"),
             )
         if field_id == "settings-provider-api-key":
             return (
@@ -10266,6 +10464,43 @@ class SettingsScreen(BaseAppScreen):
                     validators=[ProviderEndpointURLValidator()],
                     validate_on={"blur", "submitted"},
                 )
+            api_mode_value, api_mode_valid = self._provider_api_mode_display_value(
+                provider
+            )
+            api_mode_row_classes = "settings-input-row settings-select-row"
+            if provider_config_key(provider) != "qwencloud":
+                api_mode_row_classes += " settings-gated-profile-hidden"
+            with Horizontal(
+                id="settings-provider-api-mode-row", classes=api_mode_row_classes
+            ):
+                yield Static("API mode", classes="settings-input-label")
+                yield Select(
+                    QWENCLOUD_API_MODE_OPTIONS,
+                    value=api_mode_value,
+                    id="settings-provider-api-mode",
+                    classes=(
+                        "settings-compact-select"
+                        if api_mode_valid
+                        else "settings-compact-select settings-invalid-input"
+                    ),
+                    allow_blank=False,
+                    compact=True,
+                    disabled=provider_config_key(provider) != "qwencloud",
+                )
+            yield Static(
+                (
+                    QWENCLOUD_API_MODE_INVALID_COPY
+                    if provider_config_key(provider) == "qwencloud"
+                    and not api_mode_valid
+                    else QWENCLOUD_API_MODE_HELP_COPY
+                ),
+                id="settings-provider-api-mode-guidance",
+                classes=(
+                    "settings-status-row"
+                    if provider_config_key(provider) == "qwencloud"
+                    else "settings-status-row settings-gated-profile-hidden"
+                ),
+            )
             yield Static("Credentials", classes="destination-section")
             yield Static(
                 self._provider_credential_status(provider),
@@ -14477,6 +14712,7 @@ class SettingsScreen(BaseAppScreen):
             "settings-provider-manual-value",
             "settings-model-value",
             "settings-provider-endpoint-value",
+            "settings-provider-api-mode",
             "settings-provider-api-key",
             "settings-provider-api-key-clear",
             "settings-provider-credential-env-var",
@@ -16547,6 +16783,7 @@ class SettingsScreen(BaseAppScreen):
         previous_provider = str(
             self._provider_setting_values_mapping().get("provider") or ""
         )
+        self._snapshot_provider_api_mode_widget(previous_provider)
         provider_changed = bool(provider) and provider_config_key(
             provider
         ) != provider_config_key(previous_provider)
@@ -16710,6 +16947,42 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Select.Changed, "#settings-provider-api-mode")
+    def handle_provider_api_mode_changed(self, event: Select.Changed) -> None:
+        """Stage QwenCloud's selected API wire mode in its provider namespace."""
+        event.stop()
+        if self._syncing_provider_api_mode:
+            return
+        provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
+        if provider_config_key(provider) != "qwencloud":
+            return
+        value = self._select_value_text(event.value)
+        if not value:
+            return
+        display_value, current_value_is_valid = (
+            self._provider_api_mode_display_value(provider)
+        )
+        draft = self._provider_draft()
+        draft_key = self._provider_api_mode_draft_key(provider)
+        if (
+            (draft is None or draft_key not in draft.values)
+            and value == display_value
+            and (current_value_is_valid or not event.select.has_focus)
+        ):
+            # Select emits its constructor value after mount. Do not create a
+            # false draft or silently repair an invalid persisted setting.
+            return
+        self._stage_provider_api_mode(provider, value)
+        event.select.remove_class("settings-invalid-input")
+        self._set_static_text(
+            "#settings-provider-api-mode-guidance",
+            QWENCLOUD_API_MODE_HELP_COPY,
+        )
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -17084,6 +17357,10 @@ class SettingsScreen(BaseAppScreen):
             panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
+            current_provider = str(
+                self._provider_setting_values_mapping().get("provider") or ""
+            ).strip()
+            self._snapshot_provider_api_mode_widget(current_provider)
             try:
                 values = self._provider_form_values_from_widgets()
             except ValueError as exc:
@@ -17103,13 +17380,34 @@ class SettingsScreen(BaseAppScreen):
             api_key = str(values.get("api_key") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
-            if not provider_config_key(provider):
+            provider_key = provider_config_key(provider)
+            if not provider_key:
                 self._provider_save_result = "Provider is required."
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
                 self.app.notify(self._provider_save_result, severity="error")
                 return
+            normalized_api_mode: str | None = None
+            if provider_key == "qwencloud":
+                try:
+                    normalized_api_mode = normalize_qwencloud_api_mode(
+                        values.get("api_mode")
+                    )
+                except ChatConfigurationError:
+                    self._provider_save_result = QWENCLOUD_API_MODE_INVALID_COPY
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    try:
+                        self.query_one(
+                            "#settings-provider-api-mode", Select
+                        ).add_class("settings-invalid-input")
+                    except QueryError:
+                        pass
+                    self.app.notify(self._provider_save_result, severity="error")
+                    return
+                values["api_mode"] = normalized_api_mode
             endpoint_touched = draft is not None and "endpoint" in draft.dirty_keys
             loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
             if (
@@ -17157,6 +17455,14 @@ class SettingsScreen(BaseAppScreen):
                 if key in chat_defaults_keys and loaded_values.get(key) != value
             }
             dirty_keys = draft.dirty_keys if draft is not None else set()
+            api_mode_draft_key = self._provider_api_mode_draft_key(provider)
+            api_mode_dirty = bool(
+                provider_key == "qwencloud"
+                and draft is not None
+                and api_mode_draft_key in dirty_keys
+                and normalized_api_mode
+                != self._provider_saved_api_mode_value(provider)
+            )
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
@@ -17174,7 +17480,6 @@ class SettingsScreen(BaseAppScreen):
                 draft is not None and draft.values.get("model_context_window_reset")
             )
             context_window_dirty = context_window_dirty or context_window_reset
-            provider_key = provider_config_key(provider)
             provider_section_key, _provider_config = self._provider_config_entry(
                 provider
             )
@@ -17250,15 +17555,22 @@ class SettingsScreen(BaseAppScreen):
                 )
                 self.app.notify(self._provider_save_result, severity="error")
                 return
+            retained_api_mode_draft = self._provider_api_mode_draft_snapshot(
+                excluding_provider=provider
+            )
             if (
                 not dirty_values
                 and not endpoint_dirty
                 and not credential_dirty
                 and not api_key_dirty
+                and not api_mode_dirty
                 and not model_profile_dirty
                 and not context_window_dirty
             ):
                 self._settings_drafts.pop(category, None)
+                self._restore_provider_api_mode_draft_snapshot(
+                    retained_api_mode_draft
+                )
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
                 self._provider_save_result = "Provider settings: no changes to save."
@@ -17280,6 +17592,8 @@ class SettingsScreen(BaseAppScreen):
                 provider_settings_values["api_key"] = api_key
             if credential_dirty:
                 provider_settings_values["api_key_env_var"] = credential_env_var
+            if api_mode_dirty and normalized_api_mode is not None:
+                provider_settings_values["api_mode"] = normalized_api_mode
             if provider_settings_values and provider_key:
                 provider_save_key = provider_section_key or provider_key
                 provider_settings_saved = SettingsConfigAdapter().save_values(
@@ -17345,6 +17659,7 @@ class SettingsScreen(BaseAppScreen):
                     endpoint_dirty
                     or credential_dirty
                     or api_key_dirty
+                    or api_mode_dirty
                     or next_model_defaults is not None
                 ) and provider_key:
                     app_config = getattr(self.app_instance, "app_config", None)
@@ -17384,6 +17699,9 @@ class SettingsScreen(BaseAppScreen):
                         model_entries[model] = dict(next_model_capabilities)
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
+                self._restore_provider_api_mode_draft_snapshot(
+                    retained_api_mode_draft
+                )
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result

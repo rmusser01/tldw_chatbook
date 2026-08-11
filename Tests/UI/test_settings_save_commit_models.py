@@ -171,6 +171,7 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-provider-manual-value",
         "settings-model-value",
         "settings-provider-endpoint-value",
+        "settings-provider-api-mode",
         "settings-provider-api-key",
         "settings-provider-credential-env-var",
         "settings-model-profile-temperature",

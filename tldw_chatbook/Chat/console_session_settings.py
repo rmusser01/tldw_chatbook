@@ -57,6 +57,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "oobabooga",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
         "zai",
