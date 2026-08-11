@@ -668,8 +668,18 @@ class LibraryNotesCanvas(Vertical):
                 )
             export_selected = self.query("#library-notes-export-selected")
             if export_selected:
-                export_selected.first(Button).label = (
-                    "Export" if compact else "Export selected"
+                # Whole-branch review IMPORTANT-1: this in-place rewrite must
+                # compose through the same marker helper as compose() and the
+                # screen's `_patch_library_disabled_marker_label`, and re-tier
+                # the stashed base -- a plain rewrite stripped the AC#1 "○"
+                # marker on every compact-boundary crossing while disabled,
+                # and left the stash at the wrong-tier spelling for the next
+                # in-place patch.
+                button = export_selected.first(Button)
+                export_base = "Export" if compact else "Export selected"
+                button._library_disabled_marker_base = export_base
+                button.label = library_disabled_action_label(
+                    export_base, button.disabled
                 )
             return
         if self.mode != "sync" or self.sync_state is None:

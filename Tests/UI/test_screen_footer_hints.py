@@ -101,9 +101,11 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # Merged footer (AppFooterStatus): task-2860 -- the screen's
                 # own "F6 next pane" entry now renders verbatim (it used to
                 # be silently dropped as a "reserved global key", leaving
-                # only the generic "F6 panes" copy); the global cluster in
-                # turn excludes "F6 panes" since the screen already covers
-                # that key, so F1/Ctrl+P/Ctrl+Q are the only globals left.
+                # only the global cluster's generic copy, then spelled
+                # "F6 panes"); the global cluster in turn excludes its own
+                # F6 entry ("F6 next pane" since task-4023 AC#5) because the
+                # screen already covers that key, so F1/Ctrl+P/Ctrl+Q are
+                # the only globals left.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
                     == "/ focus search | i import content | n new note | "
@@ -133,8 +135,8 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # canvas, including this one.
                 # task-4023 AC#4 (RC-10): the set now covers F6 itself, so
                 # the screen entry renders "F6 next pane" verbatim and the
-                # global cluster drops its generic "F6 panes" copy (the
-                # task-2860 merge rule, same as the landing assertion above).
+                # global cluster drops its own F6 entry (the task-2860
+                # merge rule, same as the landing assertion above).
                 assert screen_footer.shortcut_text == (
                     "u use Library context in Console | "
                     "enter select evidence | o open evidence | "

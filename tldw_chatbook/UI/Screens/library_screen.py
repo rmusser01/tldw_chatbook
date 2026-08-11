@@ -14363,12 +14363,14 @@ class LibraryScreen(BaseAppScreen):
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All eight "escape" ``BINDINGS`` entries share the same key --
-        Textual tries them in order and stops at the first whose
-        ``check_action`` passes, so each one returning ``False`` outside
-        its own context is what lets the next fall through untouched
-        (task-3302 added the Ingest-canvas gate and task-3020 added the
-        bulk-delete-confirm cancel to the original six).
+        All of this screen's "escape" ``BINDINGS`` entries share the same
+        key (count them in ``BINDINGS``; a hard-coded number here went
+        stale twice) -- Textual tries them in order and stops at the first
+        whose ``check_action`` passes, so each one returning ``False``
+        outside its own context is what lets the next fall through
+        untouched (task-3302 added the Ingest-canvas gate and task-3020
+        added the bulk-delete-confirm cancel to the original six; task-4023
+        AC#7 added the Export and Study-handoff backs).
 
         task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
         actions (``u``/``enter``/``o``) had NO gate here before this task
@@ -14536,7 +14538,7 @@ class LibraryScreen(BaseAppScreen):
         # 2026-08-08). Case is folded for the same reason ("F6" vs "f6").
         # (task-4023 AC#4 / RC-10) The seen-set also GROWS as extras
         # accumulate: two simultaneously active same-key BINDINGS extras
-        # (eight "escape" entries share one key on this screen) previously
+        # (this screen's many "escape" entries share one key) previously
         # had no intra-set dedupe, so a surface whose footer set lacks
         # "esc" could still list Escape twice with two labels. Keeping the
         # FIRST active entry matches how Textual resolves same-key
@@ -23582,15 +23584,15 @@ class LibraryScreen(BaseAppScreen):
     def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:
         """Track manual expand/collapse so recomposes preserve the user's choice.
 
-        `Collapsible._watch_collapsed` posts this message on every change of
-        the `collapsed` reactive -- both the user clicking the title and the
-        programmatic `collapsible.collapsed = force_collapsed` assignment in
-        `_refresh_library_rag_history_widget` (the results-arrival
-        force-collapse path). The latter is harmless to mirror here: that
-        assignment always uses `panel_state.history_collapsed`, which is
-        itself derived from `_library_rag_history_collapsed` moments after
-        that field was just set at the results-arrival transition, so this
-        handler only ever re-writes the field to the value it already holds.
+        `Collapsible._watch_collapsed` posts this message whenever the
+        `collapsed` reactive changes through the normal watcher path -- in
+        practice the user clicking the title. The results-arrival
+        force-collapse in `_refresh_library_rag_history_widget` deliberately
+        BYPASSES the watcher (`set_reactive` + `_update_collapsed`, task-4023
+        AC#6 / RC-08: the watcher's animated `scroll_visible` sailed past the
+        Evidence region), so it never reaches this handler; that path keeps
+        the field honest itself -- `_apply_library_rag_search_outcome` sets
+        `_library_rag_history_collapsed` at the transition.
         """
         event.stop()
         self._library_rag_history_collapsed = event.collapsible.collapsed
@@ -24888,13 +24890,16 @@ class LibraryScreen(BaseAppScreen):
         `force_collapsed` (D1) is `None` for every caller except the
         results-arrival transition in `_apply_library_rag_search_outcome`:
         `None` leaves the live widget's `collapsed` reactive exactly as the
-        user left it; a `bool` overwrites it. This is safe for full
-        recomposes too (scope toggles, the mode toggle) -- not just in-place
-        refreshes (query edits, evidence selection) -- because
-        `sync_library_rag_history_collapsed` mirrors every live `collapsed`
-        change (manual or programmatic) back into
-        `_library_rag_history_collapsed`, so `compose()` always rebuilds the
-        `Collapsible` from the user's last choice instead of a stale field.
+        user left it; a `bool` applies the collapse below WITHOUT the
+        watcher (task-4023 AC#6 / RC-08 -- see the inline comment). This is
+        safe for full recomposes too (scope toggles, the mode toggle) -- not
+        just in-place refreshes (query edits, evidence selection) -- because
+        both writers keep the state field mirrored: a USER'S title click
+        takes the watcher path and `sync_library_rag_history_collapsed`
+        copies it into `_library_rag_history_collapsed`, while the
+        force-collapse caller already set that same field at the transition,
+        so `compose()` always rebuilds the `Collapsible` from the last
+        choice instead of a stale field.
         """
         async with self._library_rag_history_refresh_lock:
             history_widgets = list(self.query("#library-rag-history"))

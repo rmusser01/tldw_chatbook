@@ -5827,8 +5827,13 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        # Results just landed: the collapsible is force-collapsed.
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+        # Results just landed: the collapsible is force-collapsed. Assert
+        # the RENDERED class too, not just the reactive -- the AC#6/RC-08
+        # force-collapse bypasses the watcher, so a Textual change to how
+        # `-collapsed` gets applied must turn this pin red (review M-C).
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is True
+        assert collapsible.has_class("-collapsed")
 
         # Mirror a user click on the collapsible header.
         screen.query_one("#library-rag-history", Collapsible).collapsed = False
@@ -5837,7 +5842,9 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         screen.query_one("#library-rag-query-input", Input).value = "alpha b"
         await _wait_for_library_rag_query_ready(screen, pilot, "alpha b")
 
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is False
+        assert not collapsible.has_class("-collapsed")
 
 
 @pytest.mark.asyncio
@@ -5877,8 +5884,12 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        # Results just landed: the collapsible is force-collapsed.
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+        # Results just landed: the collapsible is force-collapsed. Assert
+        # the RENDERED class too (review M-C): the AC#6/RC-08 bypass applies
+        # it via `_update_collapsed`, outside the watcher.
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is True
+        assert collapsible.has_class("-collapsed")
 
         # Mirror a user click on the collapsible header.
         screen.query_one("#library-rag-history", Collapsible).collapsed = False
@@ -5896,7 +5907,9 @@ async def test_library_shell_history_manual_expand_survives_scope_toggle_recompo
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-history-0")
 
-        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
+        collapsible = screen.query_one("#library-rag-history", Collapsible)
+        assert collapsible.collapsed is False
+        assert not collapsible.has_class("-collapsed")
 
 
 def _never_loads(self) -> None:

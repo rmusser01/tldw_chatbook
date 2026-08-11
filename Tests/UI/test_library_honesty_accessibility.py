@@ -1149,3 +1149,149 @@ async def test_collections_patcher_rebuilds_marker_label_both_directions():
         assert str(create_btn.label) == (
             f"{LIBRARY_DISABLED_ACTION_MARKER} Create Collection"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC#1 follow-up (whole-branch review IMPORTANT-1): the compact width patcher
+# (`apply_compact_presentation`) rewrote the notes Export-selected label plain
+# on every compact-boundary crossing -- stripping the "○" marker while
+# `disabled=True` and leaving `_library_disabled_marker_base` at the
+# wrong-tier spelling, so the next in-place patch rebuilt the wrong-width
+# label. Both the Task-2 sweep (grep for `.disabled =`) and the Task-3
+# grammar sweep missed it because this patcher rewrites the LABEL without
+# touching `disabled`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
+    """IMPORTANT-1: crossing the compact boundary with the button disabled
+    must preserve the "○" marker (and the F-018 reason), and must re-tier
+    the stashed base so the row-toggle patcher rebuilds the tier-correct
+    spelling in BOTH directions (enable while compact, disable while wide).
+    """
+    from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import (
+        _patch_library_disabled_marker_label,
+    )
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+
+    state = LibraryNotesListState(
+        rows=(),
+        header_copy="Notes (0)",
+        status_copy="",
+        empty_copy="",
+        select_mode=True,
+        selected_count=0,
+    )
+
+    class _NotesSelectApp(App):
+        def compose(self):
+            yield LibraryNotesCanvas(list_state=state, id="library-notes-canvas")
+
+    async with _NotesSelectApp().run_test() as pilot:
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        export_btn = pilot.app.query_one("#library-notes-export-selected", Button)
+        assert export_btn.disabled is True
+        assert str(export_btn.label) == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        )
+
+        # Wide -> compact while disabled: marker + reason survive at the
+        # compact spelling, and the stash re-tiers with the label.
+        canvas.apply_compact_presentation(True)
+        assert export_btn.disabled is True
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export"
+        assert export_btn._library_disabled_marker_base == "Export"
+        assert str(export_btn.tooltip) == LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+
+        # Enable while compact through the shared patcher: the re-tiered
+        # stash must yield the COMPACT spelling, not "Export selected".
+        export_btn.disabled = False
+        _patch_library_disabled_marker_label(export_btn)
+        assert str(export_btn.label) == "Export"
+
+        # Compact -> wide while enabled: wide spelling, still no marker,
+        # stash re-tiers back.
+        canvas.apply_compact_presentation(False)
+        assert str(export_btn.label) == "Export selected"
+        assert export_btn._library_disabled_marker_base == "Export selected"
+
+        # Disable while wide through the shared patcher: the marker returns
+        # at the wide tier.
+        export_btn.disabled = True
+        _patch_library_disabled_marker_label(export_btn)
+        assert str(export_btn.label) == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC#7 follow-up (whole-branch review M-A): the rail-switch export-origin
+# clear (`_select_library_rail_row`'s `_library_export_origin_row_id = ""`)
+# had zero coverage -- mutating it to a no-op left the full honesty file
+# green. The escape pin's rail-entry leg only reaches the rail AFTER
+# `action_library_export_back` already cleared the origin, so the guarded
+# path (Export-from-Media -> rail-switch AWAY -> rail-enter Export fresh)
+# was unpinned: with the clear gone, the footer would lie "esc back to
+# Media" and Escape would navigate there.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
+    """M-A: Export reached from Media arms a Media back-origin; a plain
+    rail switch to another canvas must clear it, so a later fresh rail
+    entry into Export is hub-origined -- footer says "back to hub" and
+    Escape lands on the hub, never Media."""
+    from Tests.UI.test_product_maturity_phase39_library_collections import (
+        DestinationHarness,
+        FakeLibraryCollectionsService,
+        _active_destination_screen,
+        _seed_library_sources,
+        _wait_for_library_snapshot,
+        _wait_for_selector,
+    )
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_INGEST_EXPORT,
+    )
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        # Arm the Media origin through the real bypass seam.
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-export")
+        screen.query_one("#library-media-export", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-export-submit")
+        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+        # Rail-switch AWAY (a plain route boundary, not Export's own back).
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        # Fresh rail entry into Export: the stale Media origin must be gone.
+        screen.query_one(
+            f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button
+        ).press()
+        await _wait_for_selector(screen, pilot, "#library-export-submit")
+        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
+        assert shortcuts.get("esc") == "back to hub"
+
+        await pilot.press("escape")
+        for _ in range(300):
+            if screen._library_selected_row_id == "":
+                break
+            await pilot.pause(0.01)
+        assert screen._library_selected_row_id == ""

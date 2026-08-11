@@ -2285,7 +2285,11 @@ def test_queue_groups_batches_with_headers_and_latest_line():
     assert bare.job_ids == ("ingest-job-1",)
     assert headed.batch_id == "local-aaa"
     assert headed.job_ids == ("ingest-job-2", "ingest-job-3")
-    assert headed.header_line.startswith("▸ folder_a — 2 files")
+    # Whole-branch review M-D (pre-existing conformance): no leading "▸ " --
+    # the task-4023 AC#5 convention reserves that prefix for the selected
+    # row of a list, and this header is a plain grouping Static.
+    assert headed.header_line.startswith("folder_a — 2 files")
+    assert not headed.header_line.startswith("▸")
     assert "1 done" in headed.header_line
     assert "1 skipped" in headed.header_line
     # The batch carries the newer submitted_at here, so it is the latest
