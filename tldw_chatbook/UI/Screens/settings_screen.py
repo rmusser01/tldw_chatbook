@@ -55,6 +55,8 @@ from ...Chat.console_context_policy import (
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
+    DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
+    ConsoleTranscriptStyle,
     normalize_chat_display_name,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
@@ -13069,9 +13071,12 @@ class SettingsScreen(BaseAppScreen):
                     yield Static("Console transcript", classes="settings-input-label")
                     yield Select(
                         [
-                            ("Neutral", "neutral"),
-                            ("Role accents", "role_accents"),
-                            ("Immersive RP", "immersive_rp"),
+                            ("Neutral", ConsoleTranscriptStyle.NEUTRAL.value),
+                            (
+                                "Role accents",
+                                ConsoleTranscriptStyle.ROLE_ACCENTS.value,
+                            ),
+                            ("Immersive RP", ConsoleTranscriptStyle.IMMERSIVE_RP.value),
                         ],
                         value=str(values["console_transcript_style"]),
                         id="settings-appearance-transcript-style",
@@ -14760,7 +14765,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_appearance_value(
             "console_transcript_style",
-            str(event.value or "role_accents"),
+            str(event.value or DEFAULT_CONSOLE_TRANSCRIPT_STYLE.value),
         )
         self._mark_appearance_settings_staged()
 

@@ -31,7 +31,15 @@ DEFAULT_CONSOLE_TRANSCRIPT_STYLE = ConsoleTranscriptStyle.ROLE_ACCENTS
 
 
 def normalize_console_transcript_style(value: object) -> ConsoleTranscriptStyle:
-    """Return a supported transcript style with the expressive safe default."""
+    """Return a supported transcript style with the expressive safe default.
+
+    Args:
+        value: Candidate enum member or string-like transcript style value.
+
+    Returns:
+        The matching transcript style, or the default role-accent style when
+        the candidate is unsupported or blank.
+    """
 
     if isinstance(value, ConsoleTranscriptStyle):
         return value
