@@ -443,8 +443,6 @@ def _canonicalize_exact_recipe_requirement(
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
-    if canonical != requirement:
-        raise ProfileValidationError("reference_invalid")
     return canonical
 
 
@@ -485,6 +483,11 @@ def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
     reference = cast(TTSCloneReference, value)
     try:
         summary = _canonicalize_exact_reference_summary(reference.summary)
+        direct_requirement = _canonicalize_exact_recipe_requirement(
+            reference.recipe_requirement
+        )
+        if summary.recipe_requirement != direct_requirement:
+            raise ValueError
         canonical = TTSCloneReference(
             summary=summary,
             reference_text=reference.reference_text,
@@ -494,7 +497,14 @@ def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
-    if canonical != reference:
+    if (
+        type(reference.reference_text) is not str
+        or type(reference.sha256) is not str
+        or type(reference.wav_bytes) is not bytes
+        or canonical.reference_text != reference.reference_text
+        or canonical.sha256 != reference.sha256
+        or canonical.wav_bytes != reference.wav_bytes
+    ):
         raise ProfileValidationError("reference_invalid")
     return canonical
 

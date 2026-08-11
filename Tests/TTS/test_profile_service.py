@@ -194,6 +194,49 @@ def test_reference_canonicalizer_rejects_forged_recipe_provenance() -> None:
         profile_service._canonicalize_exact_reference_summary(forged)
 
 
+def test_reference_canonicalizer_rejects_forged_direct_recipe_provenance() -> None:
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+        recipe_revision=1,
+        model_id="model-a",
+    )
+    wav_bytes = b"canonical-private-reference"
+    summary = TTSCloneReferenceSummary(
+        reference_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        byte_length=len(wav_bytes),
+        duration_ms=250,
+        sample_rate_hz=24_000,
+        channels=1,
+        sample_encoding="pcm_s16le",
+        created_at=_CREATED_AT,
+        updated_at=_CREATED_AT,
+        recipe_requirement=requirement,
+    )
+    reference = TTSCloneReference(
+        summary=summary,
+        recipe_requirement=requirement,
+        reference_text="Private transcript",
+        sha256=hashlib.sha256(wav_bytes).hexdigest(),
+        wav_bytes=wav_bytes,
+    )
+
+    class _AlwaysEqualRecipeRequirement:
+        def __eq__(self, _other: object) -> bool:
+            return True
+
+    forged = object.__new__(TTSCloneReference)
+    for reference_field in fields(TTSCloneReference):
+        object.__setattr__(
+            forged,
+            reference_field.name,
+            getattr(reference, reference_field.name),
+        )
+    object.__setattr__(forged, "recipe_requirement", _AlwaysEqualRecipeRequirement())
+
+    with pytest.raises(ProfileValidationError, match=r"reference_invalid"):
+        profile_service._canonicalize_exact_reference(forged)
+
+
 def _portable_profile(
     *,
     profile_id: UUID = _PROFILE_ID,
