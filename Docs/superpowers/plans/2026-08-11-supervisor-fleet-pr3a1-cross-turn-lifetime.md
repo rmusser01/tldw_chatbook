@@ -108,10 +108,34 @@ Today `_settle_fleet` unconditionally waits, cancels and abandons (`:911-947`). 
 
 **Files:** `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Agents/run_log.py`; test `Tests/Agents/test_run_log*.py`
 
-`write_manifest` (`:2467`) and `close()` (`:2479`) fire when the turn ends. A surviving child then appends to a closed writer. `bind()` latches permanently (`run_log.py:502-511`), and the writer is scoped to one run tree by design.
+**CORRECTED after Task 2's review — read this before touching anything.** The
+obvious diagnosis is wrong, and acting on it ships a non-fix.
 
-- [ ] **Step 1: Failing test** — a surviving child's records after its turn's manifest is written either land somewhere real or are dropped deliberately and observably. Decide which; a silent drop is not acceptable.
-- [ ] **Step 2: Implement.** Options to weigh in the report: defer `close()` until the run tree's last child finishes; give a surviving child its own writer; or keep the tree's writer open and rewrite the manifest on last-child-exit. Note the docstring's warning (`:2378-2389`) about reusing a writer across trees — do not violate it.
+It is NOT (only) that a survivor appends to a *closed* writer. `on_record`
+reads `self.run_log_writer` **at call time** (`agent_service.py:2368`), and
+`run_turn` **replaces that attribute** with a fresh writer bound to the new
+primary (`:2564-2569`, `:1165`). Probed with a recording-writer double: turn
+1's survivor wrote **zero** records to turn 1's writer, and its `model` record
+landed on turn 2's writer, bound to **turn 2's primary run id**.
+
+Two consequences, both worse than a dropped append:
+- Turn 1's child has an **empty** "Full run log".
+- Turn 2's run tree contains a **foreign run's records**, reachable via
+  `run_log_slice`/`search_run_log` scoped to that tree — the exact inverse of
+  the property `test_run_log_sandbox_isolation` and
+  `test_run_log_workspace_isolation` exist to defend.
+
+So deferring `close()` fixes nothing: the attribute swap is untouched by
+deferral, and the misfiling happens between turns, not after them. The writer
+a child records through must be resolved **per run**, not read off the service
+at call time.
+
+Also still true: `bind()` latches permanently (`run_log.py:502-511`) and a
+writer is scoped to one run tree by design (`:2378-2389`) — do not "fix" this
+by reusing one writer across trees.
+
+- [ ] **Step 1: Failing test** — reproduce the MISFILING first, not the closed-writer story: a survivor's records after its turn ends must not appear in the next turn's tree, and must land in its own tree or be dropped deliberately and observably. A silent drop is not acceptable; silent misfiling into another tree is worse.
+- [ ] **Step 2: Implement.** Bind the writer a child records through to the child's own run tree rather than to whatever `self.run_log_writer` currently points at. Weigh in the report: pass the writer down at spawn; defer the tree's `close()` until its last child finishes (necessary but NOT sufficient on its own — say why in your report to prove you read this); or give the survivor its own writer. Whatever you choose, add a test that the isolation properties above still hold with a survivor in flight.
 - [ ] **Step 3: Gate + Commit.**
 
 ---
