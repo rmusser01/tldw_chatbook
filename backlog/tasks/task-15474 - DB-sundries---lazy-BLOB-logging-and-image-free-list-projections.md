@@ -134,7 +134,7 @@ consumer: `Chat_Functions.load_characters` base64-encodes `image` into
 `image_base64` for a test-covered (if currently UI-dead) compatibility
 helper -- updated to pass `include_image=True`.
 
-Tests added: `Tests/DB/test_character_cards_paging.py` gained six tests
+Tests added: `Tests/DB/test_character_cards_paging.py` gained five tests
 (image excluded by default in both the plain-browse and FTS-search branches,
 `include_image=True` round-trips the exact bytes in both branches, and a
 "no other field regressed" check covering every non-image column).
