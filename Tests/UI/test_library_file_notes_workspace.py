@@ -349,7 +349,13 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
     size: tuple[int, int],
     expected_height: int,
 ) -> None:
-    """Authority copy uses one moderate row and at most two compact rows."""
+    """Verify authority copy uses bounded rows at supported terminal sizes.
+
+    Args:
+        tmp_path: Temporary directory used as the linked File Notes root.
+        size: Terminal dimensions used to mount the workspace.
+        expected_height: Expected rendered height of the authority copy.
+    """
     root = tmp_path / "notes"
     root.mkdir()
     replica = FileNotesReplica(":memory:")
@@ -383,6 +389,12 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
+    """Verify the persistent root row favors a friendly folder identity.
+
+    Args:
+        tmp_path: Temporary directory used to construct the linked root.
+        size: Terminal dimensions used to mount the workspace.
+    """
     root = tmp_path / "deep" / "nested" / "Research Notes"
     root.mkdir(parents=True)
     replica = FileNotesReplica(":memory:")
@@ -408,6 +420,11 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
 async def test_file_notes_root_details_preserve_exact_path_and_warning(
     tmp_path: Path,
 ) -> None:
+    """Verify root details retain exact telemetry and recovery warnings.
+
+    Args:
+        tmp_path: Temporary directory used to construct the linked root.
+    """
     root = tmp_path / "deep" / "nested" / "Research Notes"
     root.mkdir(parents=True)
     replica = FileNotesReplica(":memory:")

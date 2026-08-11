@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 18:45'
-updated_date: '2026-08-10 18:52'
+updated_date: '2026-08-10 19:08'
 labels:
   - notes
   - library
@@ -50,4 +50,5 @@ Reason: this is an atomic copy and responsive-presentation refinement within the
 - Preserved the root chooser, Change and Details actions, empty/offline behavior, responsive navigator/editor body, replica ownership, disk saves, Sync boundary, and Session Git behavior. No storage, service, or generated CSS bundle changed.
 - Added seven mounted cases covering complete copy, bounded height, retained body capacity, friendly identity at three supported sizes, warning visibility, tooltip detail, and the keyboard-reachable Details dialog. The pre-implementation run failed all seven against the old clipped/path-heavy presentation.
 - Verification: the complete affected battery passed with 157 tests (`test_library_file_notes_workspace.py`, `test_non_obscuring_focus_contract.py`, and `test_css_build_integrity.py`); targeted Ruff, Python compilation, `git diff --check`, and self-review passed. Only pre-existing dependency, SQLite privacy, pytest-cache permission, and pytest-asyncio warnings were reported.
+- Qodo follow-up: added Google-style `Args:` documentation to all three newly introduced async tests, satisfying compliance rule 497152 without changing runtime behavior or task scope.
 - ADR required: no. The implementation conforms to ADR-011 and ADR-029 without changing disk authority, synchronization, ownership, or long-lived application structure.
