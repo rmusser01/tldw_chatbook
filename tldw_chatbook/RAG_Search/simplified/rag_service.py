@@ -201,6 +201,31 @@ MetadataAllowlist = Union[
 ]
 
 
+def _rereadable_entry(
+    entry: Mapping[str, Collection[str]],
+) -> Mapping[str, Collection[str]]:
+    """Freeze an entry's one-shot values, leaving re-readable ones alone.
+
+    Same hazard as ``_allowlist_entries``' own, one level down: a generator
+    passed as ``source_id`` is drained by whoever reads it first (the cache
+    key, in ``RAGService.search``) and every later reader sees an EMPTY set
+    of allowed ids. ``abc.Collection`` is exactly the "can be read again"
+    test -- a set/frozenset/list/tuple/str is one, a generator is not.
+
+    Args:
+        entry: One AND-group.
+
+    Returns:
+        The entry with any non-re-readable value materialized. Re-readable
+        values are passed through untouched, so the common case allocates
+        nothing new beyond the dict.
+    """
+    return {
+        key: values if isinstance(values, abc.Collection) else tuple(values)
+        for key, values in entry.items()
+    }
+
+
 def _allowlist_entries(
     metadata_allowlist: Optional[MetadataAllowlist],
 ) -> Tuple[Mapping[str, Collection[str]], ...]:
@@ -213,19 +238,42 @@ def _allowlist_entries(
     per source type because a flat dict cannot express "media in A OR note in
     B"). Both reduce to the same thing here.
 
+    **The result is re-readable.** A scope is read at least three times per
+    search (the cache key, then each leg), so a one-shot iterable would be
+    drained by the first reader and reach the legs EMPTY -- which fails OPEN:
+    an empty allowlist is "no scoping request", so both legs would run
+    unscoped and the unscoped rows would then be cached under the SCOPED key.
+    Reproduced with a generator expression during review; materializing here
+    (and in ``_rereadable_entry``, for the values) is what makes the shape
+    safe for the new seams Tasks 5/7 thread allowlists through.
+
     Args:
         metadata_allowlist: The caller's allowlist, in either shape.
 
     Returns:
-        One entry per AND-group; empty for ``None``, an empty mapping, an
-        empty sequence, or a sequence of empty mappings (all of which mean
-        "no scoping request", not "match nothing").
+        One entry per AND-group; empty for ``None``, an empty mapping, or an
+        empty sequence (all of which mean "no scoping request").
+
+    Raises:
+        ValueError: If a SEQUENCE contains an empty entry. An empty
+            AND-group restricts nothing, so silently dropping it would let
+            ``[{}]`` read as "no allowlist" (fail-open) while ``[{media},
+            {}]`` reads as "media only" -- two different answers to the same
+            malformed input. ``EffectiveScope`` carries only non-empty
+            entries, so this is unreachable from ``build_semantic_allowlists``
+            and is a caller defect wherever it appears.
     """
     if not metadata_allowlist:
         return ()
     if isinstance(metadata_allowlist, abc.Mapping):
-        return (metadata_allowlist,)
-    return tuple(entry for entry in metadata_allowlist if entry)
+        return (_rereadable_entry(metadata_allowlist),)
+    entries = tuple(metadata_allowlist)
+    if any(not entry for entry in entries):
+        raise ValueError(
+            "metadata_allowlist entries must each be a non-empty mapping; an "
+            "empty entry restricts nothing and would silently widen the scope"
+        )
+    return tuple(_rereadable_entry(entry) for entry in entries)
 
 
 def _keyword_allowlist_ids(
@@ -260,6 +308,7 @@ def _keyword_allowlist_ids(
         return None
 
     ids_by_type: Dict[str, Optional[set]] = {}
+    unservable_types: set = set()
     for entry in entries:
         unenforceable = set(entry) - ENFORCEABLE_ALLOWLIST_KEYS
         if unenforceable:
@@ -289,6 +338,7 @@ def _keyword_allowlist_ids(
 
         for source_type in source_types:
             if source_type not in KEYWORD_LEG_SOURCE_TYPES:
+                unservable_types.add(source_type)
                 continue  # No sub-leg serves this type (e.g. a vector-only type).
             if source_type not in ids_by_type:
                 ids_by_type[source_type] = (
@@ -302,6 +352,22 @@ def _keyword_allowlist_ids(
                 # One of them restricts nothing, so their union restricts
                 # nothing.
                 ids_by_type[source_type] = None
+
+    if unservable_types:
+        # Named, not swallowed. The two sibling paths
+        # (`_resolve_keyword_source_types`, the Library's translation map)
+        # both say which values they dropped, and this one matters MORE: a
+        # plural typo ("notes") or a source type that reaches the scope
+        # vocabulary before it has an FTS sub-leg (exactly B2's prompt
+        # sequencing) empties the keyword leg for that type with no other
+        # symptom than missing rows.
+        logger.warning(
+            "Allowlist names source type(s) {} that no keyword sub-leg "
+            "serves; the leg serves {}. Items of those types are reachable "
+            "through the vector leg only.",
+            sorted(str(value) for value in unservable_types),
+            sorted(KEYWORD_LEG_SOURCE_TYPES),
+        )
 
     return {
         # An entry that names a type with ZERO ids can only match nothing --
@@ -973,6 +1039,14 @@ class RAGService:
                 ``search_type="keyword"``, or if ``keyword_source_types`` is
                 provided with ``search_type="semantic"``.
         """
+        # Freeze the scope BEFORE anything reads it. This method reads it
+        # twice (the cache key, then the legs) and hybrid reads it twice
+        # more, so a one-shot iterable would reach the legs drained -- i.e.
+        # unscoped -- and the unscoped rows would be stored under the SCOPED
+        # cache key. `_allowlist_entries` also rejects malformed entries, so
+        # both happen once, here, before any guard reads a value.
+        metadata_allowlist = _allowlist_entries(metadata_allowlist) or None
+
         if metadata_allowlist and search_type == "keyword":
             raise ValueError(
                 "metadata_allowlist is not supported for search_type='keyword' "
@@ -1211,6 +1285,11 @@ class RAGService:
                     metadata_allowlist=entry,
                 )
             )
+        # No cross-entry dedup, deliberately: `build_semantic_allowlists`
+        # emits ONE entry per source_type, so the entries are disjoint and no
+        # chunk can appear in two of them. (The FTS side does dedup, via
+        # `_fusion_doc_key`, because its sub-legs can genuinely overlap.) A
+        # future allowlist whose entries are NOT disjoint would need one here.
         merged.sort(key=lambda result: result.score, reverse=True)
         return merged[:top_k]
 
@@ -2070,6 +2149,12 @@ class RAGService:
         diverted to a semantic-only search and the keyword leg was
         structurally unreachable under a scope.
         """
+        # One scope, two legs: freeze it here as well as in `search`, so a
+        # direct caller cannot hand this method a one-shot iterable that the
+        # semantic leg drains before the keyword leg ever reads it (which
+        # would leave the FTS leg unscoped -- failing OPEN).
+        metadata_allowlist = _allowlist_entries(metadata_allowlist) or None
+
         # Get results from both search types. The pool multiplier widens
         # ONLY these two leg fetches -- `_semantic_search`'s own internal
         # over-fetch (its raw vector-store call) still uses the module

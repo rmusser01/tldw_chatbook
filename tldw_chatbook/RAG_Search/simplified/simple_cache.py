@@ -63,7 +63,12 @@ def _canonicalize_metadata_allowlist(
     if isinstance(metadata_allowlist, abc.Mapping):
         entries: List[Any] = [metadata_allowlist]
     else:
-        entries = [entry for entry in metadata_allowlist if entry]
+        # Empty entries are NOT filtered out: an entry that restricts nothing
+        # makes a different request from one that is absent, and dropping it
+        # here would let `[{a}, {}]` share a key with `[{a}]`. The engine
+        # rejects that shape outright (`_allowlist_entries`), so this is the
+        # key function agreeing with the guard rather than second-guessing it.
+        entries = list(metadata_allowlist)
         if not entries:
             return None
     canonical = [

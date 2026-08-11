@@ -52,6 +52,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -170,6 +171,21 @@ def _types(results):
     return [r.metadata.get("source_type") for r in results]
 
 
+@pytest.fixture
+def warnings_captured():
+    """Collect loguru WARNING+ records (`test_keyword_leg_chacha.py`'s idiom).
+
+    `capsys` never sees loguru output, so "we warned about it" is
+    unverifiable without a sink.
+    """
+    messages = []
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
 # --- The guard: hybrid is admitted, keyword still refuses -------------------
 
 
@@ -225,6 +241,143 @@ def test_an_empty_allowlist_is_still_no_allowlist_for_every_mode(corpus):
                 QUERY, top_k=3, search_type=search_type, metadata_allowlist={}
             )
         )
+
+
+# --- A scope must survive being read more than once -------------------------
+#
+# Review finding (reproduced live): a scope is read at least three times per
+# search -- the cache key, then each leg -- and nothing materialized it. A
+# generator expression was drained by the cache-key pass, so both legs
+# received an EMPTY allowlist, which is "no scoping request": the search
+# returned ALL rows and cached them under the SCOPED key. No caller passes one
+# today; Tasks 5/7 thread allowlists through new seams, which is exactly when
+# a comprehension gets written as a genexp by accident.
+
+
+def test_a_one_shot_allowlist_survives_the_cache_key_pass(corpus):
+    """A generator allowlist must scope the search, not silently open it."""
+    service = _service_for(corpus)
+    in_scope = corpus["media"][1]
+
+    results = _hybrid_keyword_rows(
+        service, (entry for entry in [_entry("media", [in_scope])])
+    )
+
+    assert _source_ids(results) == [in_scope], (
+        "a one-shot allowlist was consumed before the legs read it, so the "
+        f"search ran UNSCOPED: {_source_ids(results)}"
+    )
+
+
+def test_one_shot_id_values_survive_the_cache_key_pass(corpus):
+    """Same hazard one level down: the ids themselves may be a generator."""
+    service = _service_for(corpus)
+    in_scope = corpus["note"][0]
+
+    results = _hybrid_keyword_rows(
+        service,
+        {
+            "source_type": {"note"},
+            "source_id": (value for value in [in_scope]),
+        },
+    )
+
+    assert _source_ids(results) == [in_scope], (
+        f"a one-shot source_id value left the leg unscoped: {_source_ids(results)}"
+    )
+
+
+def test_a_one_shot_scope_never_caches_unscoped_rows_under_its_key(corpus):
+    """The cache is where a drained scope does lasting damage.
+
+    The key is built from the scope, so an allowlist consumed during that
+    pass writes the UNSCOPED row set under the SCOPED key -- and every later
+    scoped search is served those rows, correctly-materialized or not.
+    """
+    service = _service_for(corpus, enable_cache=True)
+    in_scope = corpus["media"][0]
+
+    from_generator = asyncio.run(
+        service.search(
+            QUERY,
+            top_k=10,
+            search_type="hybrid",
+            metadata_allowlist=(entry for entry in [_entry("media", [in_scope])]),
+        )
+    )
+    # The same request, materialized: this one hits the entry the first wrote.
+    from_cache = asyncio.run(
+        service.search(
+            QUERY,
+            top_k=10,
+            search_type="hybrid",
+            metadata_allowlist=[_entry("media", [in_scope])],
+        )
+    )
+
+    assert _source_ids(from_generator) == [in_scope]
+    assert _source_ids(from_cache) == [in_scope], (
+        "the scoped key held unscoped rows: " f"{_source_ids(from_cache)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param([{}], id="lone-empty-entry"),
+        pytest.param(
+            [{"source_type": {"media"}, "source_id": {"1"}}, {}], id="empty-in-union"
+        ),
+    ],
+)
+def test_an_empty_entry_in_a_union_is_rejected(corpus, malformed):
+    """An AND-group that restricts nothing is a caller defect, not a scope.
+
+    Dropped silently, the two shapes above disagree: `[{}]` normalizes to "no
+    allowlist" (fail-OPEN -- every row returned) while `[{media}, {}]` reads
+    as "media only". `EffectiveScope` carries only non-empty entries, so
+    neither is reachable from `build_semantic_allowlists`; refusing both is
+    what keeps the fail-open direction from standing silent.
+    """
+    service = _service_for(corpus)
+
+    with pytest.raises(ValueError, match="non-empty"):
+        asyncio.run(
+            service.search(
+                QUERY, top_k=5, search_type="hybrid", metadata_allowlist=malformed
+            )
+        )
+
+
+def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(
+    corpus, warnings_captured
+):
+    """A silently empty keyword leg is the worst possible symptom.
+
+    Two ways to land here, both real: the Library's PLURAL spelling
+    (`notes`), and a source type that reaches the scope vocabulary before it
+    has an FTS sub-leg -- which is precisely B2's prompt sequencing. Both
+    sibling paths (`_resolve_keyword_source_types`, the Library's translation
+    map) name what they dropped; this one must too, or "why did my notes
+    vanish" has no thread to pull.
+    """
+    service = _service_for(corpus)
+
+    results = asyncio.run(
+        service._keyword_search(
+            QUERY,
+            top_k=10,
+            metadata_allowlist={
+                "source_type": {"notes", "prompt"},
+                "source_id": set(corpus["note"]),
+            },
+        )
+    )
+
+    assert results == []
+    named = [m for m in warnings_captured if "no keyword sub-leg serves" in m]
+    assert named, "an unservable scoped source type must leave a warning"
+    assert "'notes'" in named[0] and "'prompt'" in named[0], named[0]
 
 
 # --- Per-sub-leg id filtering, one test per source type ---------------------
@@ -523,14 +676,18 @@ def test_no_allowlist_leaves_the_keyword_leg_exactly_as_it_was(corpus):
 # --- The semantic leg stays scoped too --------------------------------------
 
 
-def _index_media_chunk(service, source_id, text):
+def _index_chunk(service, source_type, source_id, text):
     embedding = asyncio.run(service.embeddings.create_embeddings_async([text]))[0]
     service.vector_store.add(
-        ids=[f"media-{source_id}-chunk"],
+        ids=[f"{source_type}-{source_id}-chunk"],
         embeddings=[list(embedding)],
         documents=[text],
-        metadata=[{"source_id": str(source_id), "source_type": "media"}],
+        metadata=[{"source_id": str(source_id), "source_type": source_type}],
     )
+
+
+def _index_media_chunk(service, source_id, text):
+    _index_chunk(service, "media", source_id, text)
 
 
 def test_the_semantic_leg_is_scoped_by_the_same_allowlist(corpus):
@@ -558,6 +715,43 @@ def test_the_semantic_leg_is_scoped_by_the_same_allowlist(corpus):
         f"an out-of-scope vector row survived a scoped hybrid: {_source_ids(results)}"
     )
     assert _source_ids(results) == [in_scope]
+
+
+def test_a_multi_entry_allowlist_excludes_out_of_scope_vector_rows(corpus):
+    """The union case's ROW pin, not just its call-mechanics pin.
+
+    One entry per type, each with its own ids, and a vector index holding an
+    in-scope AND an out-of-scope chunk of each type. If the per-entry store
+    queries were merged from one pooled (or dropped) allowlist, the two
+    out-of-scope chunks would ride along -- and a union scope is precisely
+    where that mistake is easiest to make.
+    """
+    service = _service_for(corpus)
+    media_in, media_out = corpus["media"][0], corpus["media"][1]
+    note_in, note_out = corpus["note"][0], corpus["note"][1]
+    for source_type, source_id in (
+        ("media", media_in),
+        ("media", media_out),
+        ("note", note_in),
+        ("note", note_out),
+    ):
+        _index_chunk(service, source_type, source_id, f"{QUERY} passage {source_id}")
+
+    results = asyncio.run(
+        service.search(
+            QUERY,
+            top_k=10,
+            search_type="hybrid",
+            metadata_allowlist=[
+                _entry("media", [media_in]),
+                _entry("note", [note_in]),
+            ],
+        )
+    )
+
+    assert sorted(set(_source_ids(results))) == sorted([media_in, note_in]), (
+        f"out-of-scope vector rows survived a union scope: {_source_ids(results)}"
+    )
 
 
 def test_a_multi_entry_allowlist_queries_the_store_once_per_entry(corpus):
@@ -685,6 +879,52 @@ def test_a_thousand_note_ids_bind_as_one_json_parameter(corpus, monkeypatch):
         f"the ids did not bind as ONE json parameter: {len(params)} parameters"
     )
     assert json.loads(params[1]) == sorted(ids)
+
+
+def test_a_thousand_conversation_ids_bind_as_one_json_parameter(corpus, monkeypatch):
+    """The third sub-leg, asserted on its own SQL rather than by analogy.
+
+    It is the one that does NOT simply mirror the notes shape: it filters the
+    conversation (its unit of retrieval) inside a grouped query, and it runs
+    a second statement afterwards. Only a capture proves the filter landed on
+    `c.id` in the first statement and that the second stayed bounded by the
+    conversations that survived it.
+    """
+    service = _service_for(corpus)
+    executed: list[tuple[str, tuple]] = []
+    original = RAGService._connect_chacha_readonly
+
+    def recording(self, db_path):
+        return _RecordingConnection(original(self, db_path), executed)
+
+    monkeypatch.setattr(RAGService, "_connect_chacha_readonly", recording)
+
+    ids = [f"absent-conversation-{i}" for i in range(1500)] + [
+        corpus["conversation"][1]
+    ]
+    results = asyncio.run(
+        service._keyword_search(
+            QUERY,
+            top_k=10,
+            keyword_source_types={"conversation"},
+            metadata_allowlist=_entry("conversation", ids),
+        )
+    )
+
+    assert _source_ids(results) == [corpus["conversation"][1]]
+    grouped = [(sql, params) for sql, params in executed if "GROUP BY c.id" in sql]
+    assert len(grouped) == 1, grouped
+    sql, params = grouped[0]
+    assert "c.id IN (SELECT value FROM json_each(?))" in sql, sql
+    assert len(params) == 3, (
+        f"the ids did not bind as ONE json parameter: {len(params)} parameters"
+    )
+    assert json.loads(params[1]) == sorted(ids)
+
+    # The follow-up statement is bounded by the surviving conversations, so
+    # the 1500 absent ids never reach it as placeholders either.
+    messages = [(s, p) for s, p in executed if "m.conversation_id IN" in s]
+    assert len(messages) == 1 and len(messages[0][1]) == 2, messages
 
 
 def test_the_media_sub_leg_binds_its_ids_as_one_json_parameter(corpus):
