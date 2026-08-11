@@ -1,5 +1,5 @@
 ---
-id: TASK-14879
+id: TASK-15201
 title: 'Fleet panel: no View all tail and no auto-scroll to the expanded section'
 status: To Do
 assignee: []

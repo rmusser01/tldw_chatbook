@@ -1,10 +1,10 @@
 ---
-id: TASK-14878
+id: TASK-15200
 title: 'Fleet panel: historical rows lack elapsed time; stuck/cancelled rows unstyled'
 status: To Do
 assignee: []
 created_date: '2026-08-11 04:01'
-updated_date: '2026-08-11 13:43'
+updated_date: '2026-08-11 14:05'
 labels: []
 dependencies: []
 priority: low
@@ -20,6 +20,7 @@ Two cosmetic gaps disclosed and accepted during supervisor-fleet PR 2b Task 4. (
 <!-- AC:BEGIN -->
 - [ ] #1 Historical/resumed fleet rows show an elapsed time derived from the run's DB timestamps
 - [ ] #2 stuck and cancelled rows have their own color variants, distinct from running and from the default foreground
+- [ ] #3 A historical/resumed row's secondary line is restored from the sub-agent run's own persisted steps JSON — the same shape _summarize_persisted_step already reads for the primary's historical steps; _derive_historical_snapshot never reads it for subagent records and both historical row builders hardcode secondary_text=''
 <!-- AC:END -->
 
 ## Implementation Notes

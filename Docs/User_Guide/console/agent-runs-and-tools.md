@@ -237,7 +237,7 @@ because a fleet ran underneath it.
 **Known gaps** (filed, not fixed):
 - Historical/resumed rows never show elapsed time. The timestamps exist in
   the run database, but the code path that rebuilds a resumed row doesn't
-  read them yet (task-14878). The same task also covers `stuck` and
+  read them yet (task-15200). The same task also covers `stuck` and
   `cancelled` rows not getting their own status color — they still render
   distinctly by glyph (`⚠`/`✗`), just not by color, so they're
   distinguishable but not visually called out.
@@ -246,11 +246,14 @@ because a fleet ran underneath it.
   moment the whole turn finishes — so seconds after a reply completes,
   every row in that run reverts to name-and-task only, in the same session,
   without a restart. Verified live during PR 2b's own verification pass
-  (task-14878 covers restoring this detail from the run database).
+  (task-15200 covers restoring the elapsed time and the secondary line from
+  the run database; the token count cannot be restored that way at all —
+  `agent_runs` has no column for it — so that dimension stays live-only
+  until the schema gains one).
 - There is no "View all" tail, and expanding the panel does not scroll it
   into view. With a dozen-plus children, or several rail sections open
   above it, you may need to scroll the rail manually to reach the last
-  rows (task-14879).
+  rows (task-15201).
 
 ### Skills
 
