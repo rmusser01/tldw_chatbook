@@ -333,9 +333,131 @@ async def test_files_mode_carries_a_placement_sentence_relating_it_to_sync(
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await pilot.pause()
         purpose = _static_text(workspace, "#file-notes-purpose")
-        assert "Files mode" in purpose
+        assert "Files" in purpose
         assert "directly" in purpose
         assert "Sync" in purpose
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("size", "expected_height"),
+    (((160, 45), 1), ((120, 40), 1), ((60, 20), 2)),
+)
+@pytest.mark.asyncio
+async def test_file_notes_authority_copy_is_complete_and_bounded(
+    tmp_path: Path,
+    size: tuple[int, int],
+    expected_height: int,
+) -> None:
+    """Verify authority copy uses bounded rows at supported terminal sizes.
+
+    Args:
+        tmp_path: Temporary directory used as the linked File Notes root.
+        size: Terminal dimensions used to mount the workspace.
+        expected_height: Expected rendered height of the authority copy.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+    expected = (
+        "Files edits this folder directly. Sync mirrors files into Library."
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        purpose = workspace.query_one("#file-notes-purpose")
+        rendered = " ".join(
+            purpose.render_line(row).text.strip()
+            for row in range(purpose.region.height)
+        )
+        assert " ".join(rendered.split()) == expected
+        assert purpose.region.height == expected_height
+        assert purpose.region.height <= 2
+        assert workspace.query_one("#file-notes-body").region.height >= 8
+
+    replica.close()
+
+
+@pytest.mark.parametrize("size", ((160, 45), (120, 40), (60, 20)))
+@pytest.mark.asyncio
+async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Verify the persistent root row favors a friendly folder identity.
+
+    Args:
+        tmp_path: Temporary directory used to construct the linked root.
+        size: Terminal dimensions used to mount the workspace.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await pilot.pause()
+        summary = _static_text(workspace, "#file-notes-root-status")
+        assert summary == "Linked · Local folder: Research Notes"
+        assert str(root.resolve()) not in summary
+        assert str(root.resolve()) in workspace._root_status_detail
+        assert workspace.query_one("#file-notes-root-details", Button).display
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_root_details_preserve_exact_path_and_warning(
+    tmp_path: Path,
+) -> None:
+    """Verify root details retain exact telemetry and recovery warnings.
+
+    Args:
+        tmp_path: Temporary directory used to construct the linked root.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._runtime_warning = "Recovery unavailable: replica locked"
+        workspace._update_root_surface(offline=False)
+        await pilot.pause()
+
+        assert (
+            _static_text(workspace, "#file-notes-root-status")
+            == "Warning · Local folder: Research Notes"
+        )
+        tooltip = workspace.query_one("#file-notes-root-status").tooltip
+        assert tooltip is not None
+        assert str(root.resolve()) in str(tooltip)
+        assert "Recovery unavailable: replica locked" in str(tooltip)
+        details = workspace.query_one("#file-notes-root-details", Button)
+        details.press()
+        await pilot.pause()
+        exact = workspace.app.screen.query_one(
+            "#file-notes-root-details-text",
+            TextArea,
+        ).text
+        assert str(root.resolve()) in exact
+        assert "Recovery unavailable: replica locked" in exact
+
     replica.close()
 
 
