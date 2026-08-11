@@ -28,6 +28,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _select_llamacpp_console,
 )
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -559,6 +560,137 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
         ]
         assert system_copy == [expected_copy]
         assert "sentinel" not in repr(system_copy)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_copy"),
+    (
+        (
+            "network",
+            "The source image could not be uploaded. Please try again.",
+        ),
+        (
+            "batch",
+            "The image-edit operation did not complete. Please try again.",
+        ),
+    ),
+)
+async def test_unmounted_h3_failure_guidance_is_durable_once_across_real_reload(
+    monkeypatch,
+    tmp_path,
+    failure_kind,
+    expected_copy,
+):
+    _patch_h3_enabled(monkeypatch)
+    db = CharactersRAGDB(tmp_path / f"h3-failure-{failure_kind}.sqlite", "test_client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        host = ConsoleHarness(app)
+        started = threading.Event()
+        release = threading.Event()
+
+        def _failed_batch(**_kwargs):
+            started.set()
+            assert release.wait(2)
+            if failure_kind == "network":
+                raise ComfyUIImageEditError("source_upload")
+            raise RuntimeError("sentinel response body /private/source.png")
+
+        monkeypatch.setattr(chat_screen_module, "run_generation_batch", _failed_batch)
+        async with host.run_test(size=(160, 48)) as pilot:
+            old = host.screen_stack[-1]
+            await _wait_for_selector(old, pilot, "#console-native-composer")
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            old._console_chat_store = store
+            session = store.create_session(title="Durable H3 failure")
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="existing durable turn",
+                persist=True,
+            )
+            conversation_id = session.persisted_conversation_id
+            assert conversation_id is not None
+            source = _real_image_pending(
+                "source.png", attachment_id="durable-failure-source"
+            )
+            store.add_pending_attachment(session.id, source)
+            store.set_session_draft(session.id, "preserved failure draft")
+            old.query_one("#console-native-composer").load_draft(
+                "preserved failure draft"
+            )
+            caller = asyncio.create_task(
+                old._console_command_generate_image(
+                    CommandParse(
+                        kind="command",
+                        name="generate-image",
+                        args=":comfyui change it",
+                    )
+                )
+            )
+            assert await asyncio.to_thread(started.wait, 2)
+            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+
+            async def _stale_sync_tripwire():
+                raise AssertionError("unmounted screen UI sync")
+
+            old._sync_native_console_chat_ui = _stale_sync_tripwire
+            old._message._sync_native_console_chat_ui_fn = _stale_sync_tripwire
+            release.set()
+            await caller
+
+            assert store.pending_attachments(session.id) == [source]
+            assert store.session_draft(session.id) == "preserved failure draft"
+
+            def _build_reloaded_screen():
+                fresh = ChatScreen(app)
+                tree = ChatConversationService(db).get_conversation_tree(
+                    conversation_id, depth_cap=10_000, root_limit=10_000
+                )
+                all_nodes = fresh._console_messages_from_conversation_tree(tree)
+                fresh_store = ConsoleChatStore(
+                    persistence=ChatPersistenceService(db)
+                )
+                fresh._console_chat_store = fresh_store
+                restored = fresh_store.restore_persisted_session(
+                    title="Durable H3 failure",
+                    workspace_id=None,
+                    persisted_conversation_id=conversation_id,
+                    all_nodes=all_nodes,
+                    active_leaf_persisted_id=db.get_conversation_active_leaf(
+                        conversation_id
+                    ),
+                )
+                fresh._reconcile_h3_image_edit_completions(fresh_store)
+                fresh._reconcile_h3_image_edit_completions(fresh_store)
+                return fresh, fresh_store, restored.id
+
+            def _guidance(fresh_store, restored_session_id) -> list[str]:
+                return [
+                    message.content
+                    for message in fresh_store.messages_for_session(
+                        restored_session_id
+                    )
+                    if message.role is ConsoleMessageRole.SYSTEM
+                ]
+
+            fresh, fresh_store, restored_id = _build_reloaded_screen()
+            await host.push_screen(fresh)
+            await _wait_for_selector(fresh, pilot, "#console-native-composer")
+            assert _guidance(fresh_store, restored_id) == [expected_copy]
+            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+
+            remounted, remounted_store, remounted_id = _build_reloaded_screen()
+            await host.push_screen(remounted)
+            await _wait_for_selector(remounted, pilot, "#console-native-composer")
+            assert _guidance(remounted_store, remounted_id) == [expected_copy]
+            assert "sentinel" not in repr(
+                _guidance(remounted_store, remounted_id)
+            )
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.parametrize(

@@ -645,6 +645,79 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("persistence_failure_timing", "expected_attempts"),
+    (("before_append", [True, False]), ("after_append", [True])),
+)
+async def test_failure_guidance_persistence_error_falls_back_without_masking_primary(
+    monkeypatch,
+    persistence_failure_timing,
+    expected_attempts,
+):
+    store = ConsoleChatStore()
+    screen, composer = _screen_with_h3_store(store)
+    session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
+    pending = _pending()
+    store.add_pending_attachment(session.id, pending)
+    monkeypatch.setattr(chat_screen_module, "get_image_generation_config", _cfg)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "comfyui", "is_configured": True}],
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("primary sentinel response /private/source.png")
+        ),
+    )
+    privacy_logger = _PrivacyLogger()
+    monkeypatch.setattr(chat_screen_module, "logger", privacy_logger)
+    real_append = store.append_message
+    persist_attempts: list[bool] = []
+
+    def _append_with_durable_failure(*args, persist=False, **kwargs):
+        persist_attempts.append(persist)
+        if persist:
+            if persistence_failure_timing == "after_append":
+                real_append(*args, persist=False, **kwargs)
+            raise RuntimeError("secondary sentinel credential body")
+        return real_append(*args, persist=persist, **kwargs)
+
+    monkeypatch.setattr(store, "append_message", _append_with_durable_failure)
+
+    await screen._console_command_generate_image(
+        CommandParse(kind="command", name="generate-image", args=":comfyui change it")
+    )
+
+    assert persist_attempts == expected_attempts
+    messages = store.messages_for_session(session.id)
+    assert len(messages) == 1
+    assert messages[0].role.value == "system"
+    assert messages[0].content == (
+        "The image-edit operation did not complete. Please try again."
+    )
+    assert store.pending_attachments(session.id) == [pending]
+    assert composer.draft_text().endswith("preserve  internal   spacing")
+    assert privacy_logger.bindings == [
+        {
+            "component": "image_edit",
+            "phase": "history_polling",
+            "error_type": "RuntimeError",
+        },
+        {
+            "component": "image_edit",
+            "phase": "failure_guidance_persistence",
+            "error_type": "RuntimeError",
+        },
+    ]
+    assert "sentinel" not in repr(
+        (messages, privacy_logger.bindings, privacy_logger.messages)
+    )
+
+
+@pytest.mark.asyncio
 async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(monkeypatch):
     store = ConsoleChatStore()
     screen, composer = _screen_with_h3_store(store)

@@ -16902,9 +16902,30 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 role=ConsoleMessageRole.SYSTEM,
                 content=copy,
+                persist=True,
             )
         except KeyError:
             return
+        except Exception as exc:  # noqa: BLE001 - preserve the primary failure
+            logger.bind(
+                component="image_edit",
+                phase="failure_guidance_persistence",
+                error_type=type(exc).__name__,
+            ).error("Console image edit failure guidance persistence failed")
+            try:
+                guidance_present = any(
+                    message.role is ConsoleMessageRole.SYSTEM
+                    and message.content == copy
+                    for message in store.messages_for_session(session_id)
+                )
+                if not guidance_present:
+                    store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.SYSTEM,
+                        content=copy,
+                    )
+            except Exception:  # noqa: BLE001 - best-effort in-memory fallback
+                return
         ui_generations = getattr(self, "_console_h3_ui_generations", {})
         if (
             ui_generations.get(session_id) == generation
