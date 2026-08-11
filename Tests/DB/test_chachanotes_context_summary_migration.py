@@ -14,7 +14,7 @@ def test_fresh_db_is_v28_with_context_summary_columns(tmp_path):
         cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
     # Fresh databases always reach the current schema, not merely the version
     # where these columns were introduced.
-    assert version == 32
+    assert version == 33
     assert "context_summary" in cols
     assert "summary_boundary_message_id" in cols
 

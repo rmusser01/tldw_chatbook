@@ -33,6 +33,14 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
+from tldw_chatbook.Chat.console_prepared_request import (
+    PreparedConsoleRequest,
+    PreparedProviderRequest,
+    build_console_request,
+    prepare_provider_request,
+    resolve_request_capacity,
+    thaw_json,
+)
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
@@ -40,6 +48,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -354,7 +363,9 @@ def _freeze_auxiliary_value(value: Any) -> Any:
         if not math.isfinite(value):
             raise ValueError("Auxiliary numeric values must be finite.")
         return value
-    raise TypeError("Auxiliary values must be JSON-safe scalars, mappings, or sequences.")
+    raise TypeError(
+        "Auxiliary values must be JSON-safe scalars, mappings, or sequences."
+    )
 
 
 def _thaw_auxiliary_value(value: Any) -> Any:
@@ -437,6 +448,7 @@ class AuxiliaryCompletionResult:
     provider: str
     model: str
     text: str = field(repr=False)
+    usage: ProviderUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -747,9 +759,7 @@ class ConsoleProviderGateway:
         # loop; pruned proactively in `_prune_closed_loops` so a long-running
         # process that bridges many short-lived per-turn loops over time
         # doesn't accumulate dead entries waiting on GC alone.
-        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
-            weakref.WeakKeyDictionary()
-        )
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -809,6 +819,77 @@ class ConsoleProviderGateway:
 
         if current_client is not None:
             await current_client.aclose()
+
+    def prepare_chat_request(
+        self,
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]] | PreparedConsoleRequest,
+        *,
+        tools: list[Mapping[str, Any]] | None = None,
+        context_window_override_tokens: int | None = None,
+        apply_safety_window: bool = True,
+    ) -> PreparedProviderRequest:
+        """Prepare the one immutable payload later consumed by dispatch.
+
+        Model capability facts are read once here.  Unknown models remain
+        explicitly unverified; an optional user override is enforced as a
+        bound but never labeled as provider-verified.
+        """
+
+        semantic = (
+            messages
+            if isinstance(messages, PreparedConsoleRequest)
+            else build_console_request(messages, tools=tools or ())
+        )
+        if isinstance(messages, PreparedConsoleRequest) and tools is not None:
+            raise ValueError("tools are already owned by PreparedConsoleRequest")
+
+        capabilities: Mapping[str, Any] = {}
+        try:
+            from tldw_chatbook.model_capabilities import get_model_capabilities
+
+            capabilities = get_model_capabilities().get_model_capabilities(
+                resolution.provider,
+                resolution.model or "",
+            )
+        except Exception as exc:
+            logger.bind(
+                provider=resolution.provider,
+                model=resolution.model or "",
+                error=repr(exc),
+            ).debug("console_request_capability_lookup_failed")
+
+        def positive_cap(*names: str) -> int | None:
+            for name in names:
+                value = capabilities.get(name)
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                    return value
+            return None
+
+        capacity = resolve_request_capacity(
+            context_window_tokens=positive_cap("context_window"),
+            provider_input_cap_tokens=positive_cap(
+                "max_input_tokens", "input_token_limit", "provider_input_cap"
+            ),
+            provider_output_cap_tokens=positive_cap(
+                "max_output_tokens", "output_token_limit", "provider_output_cap"
+            ),
+            requested_response_tokens=resolution.max_tokens,
+            context_window_override_tokens=context_window_override_tokens,
+        )
+        wire_style = (
+            "distinct_roles"
+            if resolution.provider in {"llama_cpp", "local_llamacpp"}
+            else "single_preamble"
+        )
+        return prepare_provider_request(
+            semantic,
+            wire_style=wire_style,
+            model=resolution.model or "",
+            provider=resolution.provider,
+            capacity=capacity,
+            apply_safety_window=apply_safety_window,
+        )
 
     @staticmethod
     def _new_owned_http_client() -> httpx.AsyncClient:
@@ -1432,15 +1513,27 @@ class ConsoleProviderGateway:
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
 
+        usage: ProviderUsage | None = None
         if response is not _UNSUPPORTED_RESPONSE:
             text = self._auxiliary_response_text(response)
+            if isinstance(response, Mapping):
+                usage = ProviderUsage.from_provider_payload(
+                    response.get("usage"),
+                    provider=provider,
+                    model=model,
+                )
 
         if not isinstance(text, str):
             raise ChatProviderError(
                 "Provider returned an unsupported auxiliary response.",
                 provider=provider,
             )
-        return AuxiliaryCompletionResult(provider=provider, model=model, text=text)
+        return AuxiliaryCompletionResult(
+            provider=provider,
+            model=model,
+            text=text,
+            usage=usage,
+        )
 
     def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy."""
@@ -1523,7 +1616,9 @@ class ConsoleProviderGateway:
     async def stream_chat(
         self,
         resolution: ConsoleProviderResolution,
-        messages: list[Mapping[str, Any]],
+        messages: list[Mapping[str, Any]]
+        | PreparedConsoleRequest
+        | PreparedProviderRequest,
         tools: list | None = None,
         signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
@@ -1531,7 +1626,9 @@ class ConsoleProviderGateway:
 
         Args:
             resolution: Provider resolution produced by ``resolve_for_send``.
-            messages: OpenAI-compatible chat messages.
+            messages: Raw OpenAI-compatible messages, a semantic request, or
+                the already serialized provider request. Raw/semantic inputs
+                are prepared exactly once before accounting and dispatch.
             tools: Optional OpenAI-shape tool definitions. When omitted,
                 behavior is byte-identical to a plain Console send. When
                 provided, yields str chunks as before; if the provider
@@ -1552,17 +1649,45 @@ class ConsoleProviderGateway:
         try:
             if not resolution.ready or not resolution.model:
                 return
+            prepared = (
+                messages
+                if isinstance(messages, PreparedProviderRequest)
+                else self.prepare_chat_request(resolution, messages, tools=tools)
+            )
+            if isinstance(messages, PreparedProviderRequest) and tools is not None:
+                raise ValueError("tools are already owned by PreparedProviderRequest")
+            if prepared.provider and prepared.provider != resolution.provider:
+                raise ValueError("Prepared request provider does not match resolution.")
+            if prepared.model and prepared.model != resolution.model:
+                raise ValueError("Prepared request model does not match resolution.")
+            if prepared.known_overflow:
+                ceiling = prepared.capacity.effective_input_ceiling_tokens
+                raise ChatBadRequestError(
+                    "Mandatory Console request material exceeds the effective "
+                    f"input ceiling ({prepared.accounting.total_input_tokens} > "
+                    f"{ceiling}). Compaction cannot remove this material.",
+                    provider=resolution.provider,
+                )
+            effective_resolution = replace(
+                resolution,
+                max_tokens=(
+                    prepared.capacity.effective_response_tokens
+                    if resolution.max_tokens is not None
+                    else None
+                ),
+            )
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                wire_messages = [thaw_json(item) for item in prepared.messages]
                 if not resolution.streaming:
                     completion = await self.complete_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=resolution.model,
-                        messages=messages,
+                        messages=wire_messages,
                         temperature=resolution.temperature,
                         top_p=resolution.top_p,
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
-                        max_tokens=resolution.max_tokens,
+                        max_tokens=effective_resolution.max_tokens,
                     )
                     if completion:
                         yield completion
@@ -1570,18 +1695,18 @@ class ConsoleProviderGateway:
                 async for chunk in self.stream_llamacpp_chat(
                     base_url=resolution.base_url,
                     model=resolution.model,
-                    messages=messages,
+                    messages=wire_messages,
                     temperature=resolution.temperature,
                     top_p=resolution.top_p,
                     min_p=resolution.min_p,
                     top_k=resolution.top_k,
-                    max_tokens=resolution.max_tokens,
+                    max_tokens=effective_resolution.max_tokens,
                 ):
                     yield chunk
                 return
             if resolution.execution_key:
                 async for chunk in self._stream_generic_chat(
-                    resolution, messages, tools=tools, signals=signals
+                    effective_resolution, prepared, signals=signals
                 ):
                     yield chunk
                 return
@@ -1592,8 +1717,7 @@ class ConsoleProviderGateway:
     async def _stream_generic_chat(
         self,
         resolution: ConsoleProviderResolution,
-        messages: list[Mapping[str, Any]],
-        tools: list | None = None,
+        request: PreparedProviderRequest,
         signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
@@ -1609,9 +1733,9 @@ class ConsoleProviderGateway:
 
         def worker() -> None:
             try:
-                kwargs = self._chat_api_kwargs(resolution, messages, tools=tools)
+                kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
                 response = self._chat_api_call(**kwargs)
-                accumulator = _ToolCallAccumulator() if tools else None
+                accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
                 emitted_content = False
@@ -1770,6 +1894,41 @@ class ConsoleProviderGateway:
 
             return chat_api_call(**kwargs)
         return self._chat_api_call_fn(**kwargs)
+
+    @staticmethod
+    def _chat_api_kwargs_from_prepared(
+        resolution: ConsoleProviderResolution,
+        request: PreparedProviderRequest,
+    ) -> dict[str, Any]:
+        """Build adapter kwargs without re-serializing the prepared payload."""
+
+        kwargs = {
+            "api_endpoint": resolution.execution_key,
+            "system_message": request.system_message,
+            "messages_payload": [thaw_json(item) for item in request.messages_payload],
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": resolution.streaming,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": resolution.max_tokens,
+            "seed": resolution.seed,
+            "presence_penalty": resolution.presence_penalty,
+            "frequency_penalty": resolution.frequency_penalty,
+            "reasoning_effort": resolution.reasoning_effort,
+            "reasoning_summary": resolution.reasoning_summary,
+            "verbosity": resolution.verbosity,
+            "thinking_effort": resolution.thinking_effort,
+            "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "tools": thaw_json(request.tools) if request.tools else None,
+            "prompt_caching": resolution.prompt_caching,
+        }
+        if resolution.execution_key == "anthropic":
+            kwargs["api_base_url"] = resolution.base_url or None
+        return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
     def _chat_api_kwargs(

@@ -163,7 +163,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 32  # Enriches the seeded Default Assistant card with documentation-grade content, if still bare (task-2451).
+    _CURRENT_SCHEMA_VERSION = 33  # Local Console context policy, branch memory, and content-free auxiliary attempts (TASK-14811.1).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4743,6 +4743,50 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V31 to V32 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _migrate_from_v32_to_v33(self, conn: sqlite3.Connection) -> None:
+        """Add local-only Console context policy and memory ownership.
+
+        The migration also copies valid legacy ``context_summary`` rows into
+        inactive, reviewable memory records. They remain inactive because the
+        legacy columns lack the lineage and prefix digest required for safe
+        automatic selection. No table in this migration participates in sync.
+        """
+        if self._get_db_version(conn) != 32:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V32→V33] Migration requires schema version 32"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v32_to_v33_console_context_memory.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        cursor.execute(pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Console context-memory migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 33:
+                    raise SchemaError(
+                        "Console context-memory schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V32 to V33 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4905,6 +4949,7 @@ UPDATE db_schema_version
                     29: self._migrate_from_v29_to_v30,
                     30: self._migrate_from_v30_to_v31,
                     31: self._migrate_from_v31_to_v32,
+                    32: self._migrate_from_v32_to_v33,
                 }
 
                 if current_db_version == 0:

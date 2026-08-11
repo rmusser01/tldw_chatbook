@@ -134,7 +134,7 @@ def test_fresh_database_seeds_rich_content(tmp_path):
     assert row["alternate_greetings"] != BARE_ALTERNATE_GREETINGS
 
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == 33
     db.close_connection()
 
 
@@ -161,7 +161,7 @@ def test_migration_enriches_untouched_bare_row_and_bumps_version(tmp_path, monke
 
     db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
-    assert _version(connection) == 32
+    assert _version(connection) == 33
 
     row = db.get_character_card_by_id(1)
     assert row["name"] == BARE_NAME
@@ -264,7 +264,7 @@ def test_migration_preserves_row_with_single_field_edited(
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == 32  # migration still runs (DDL/version bump)
+    assert _version(connection2) == 33  # migration chain still runs
 
     post_migration_row = db2.get_character_card_by_id(1)
     # The edited field survives untouched.
@@ -298,7 +298,7 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
 
     db2 = CharactersRAGDB(db_path, client_id="migration-test")
     connection2 = db2.get_connection()
-    assert _version(connection2) == 32
+    assert _version(connection2) == 33
     row = connection2.execute(
         "SELECT description, deleted FROM character_cards WHERE id = 1"
     ).fetchone()
@@ -313,7 +313,7 @@ def test_migration_preserves_deleted_row(tmp_path, monkeypatch):
 
 
 def test_migration_is_idempotent_on_already_rich_row(tmp_path):
-    """A fresh database is already rich by the time it reaches v32 (the
+    """A fresh database is already rich by the time it reaches current schema (the
     enrichment happens at seed time, not via the migration). Re-running the
     same conditional UPDATE (as a second migration attempt would) must be a
     no-op: the WHERE clause no longer matches an enriched row."""
@@ -449,8 +449,8 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_current_schema_version_is_32():
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 32
+def test_current_schema_version_is_33():
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 33
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):

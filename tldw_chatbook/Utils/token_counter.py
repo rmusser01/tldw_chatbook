@@ -86,8 +86,8 @@ TOKENS_PER_CHAR_ESTIMATES = {
 }
 
 # Conservative chars-based estimate constants (used when no tokenizer is available).
-CJK_TOKENS_PER_CHAR = 1.0   # each CJK code point is >= ~1 token
-ESTIMATE_HEADROOM = 1.2     # documented headroom so estimates lean high (safe)
+CJK_TOKENS_PER_CHAR = 1.0  # each CJK code point is >= ~1 token
+ESTIMATE_HEADROOM = 1.2  # documented headroom so estimates lean high (safe)
 
 _CJK_RANGES = (
     (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
@@ -131,7 +131,9 @@ def _chars_estimate(text: str, provider: str) -> int:
     base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
         _norm_provider(provider) or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
     )
-    return max(1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM))
+    return max(
+        1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM)
+    )
 
 
 def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
@@ -300,6 +302,30 @@ def count_tokens_chat_history(
     return count_tokens_messages(messages, model, provider)
 
 
+def get_table_model_token_limit(model: str, provider: str = "openai") -> int | None:
+    """Return a known exact/prefix table limit without a provider fallback.
+
+    Settings uses this tier to distinguish a detected model window from the
+    deliberately conservative unknown-model fallback.
+    """
+
+    provider_key = _norm_provider(provider)
+    if provider_key == "openrouter" and "/" in model:
+        upstream_provider, upstream_model = model.split("/", 1)
+        return get_table_model_token_limit(upstream_model, upstream_provider)
+    if model in MODEL_TOKEN_LIMITS:
+        return MODEL_TOKEN_LIMITS[model]
+    best_limit = None
+    best_len = -1
+    for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
+        if model_prefix == "default":
+            continue
+        if model.startswith(model_prefix) and len(model_prefix) > best_len:
+            best_limit = limit
+            best_len = len(model_prefix)
+    return best_limit
+
+
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
     Get the input context-window token limit for a specific model.
@@ -312,10 +338,8 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
     provider_key = _norm_provider(provider)
 
-    # OpenRouter model IDs are "upstream_provider/model" (e.g. "openai/gpt-4o-mini");
-    # resolve against the upstream provider/model so they don't fall through to the
-    # generic default. Split once and re-dispatch -- the re-dispatch provider is the
-    # upstream (never "openrouter"), so this cannot recurse indefinitely.
+    # OpenRouter IDs carry the upstream provider. Re-dispatch the full
+    # resolution chain so an upstream provider fallback remains available.
     if provider_key == "openrouter" and "/" in model:
         upstream_provider, upstream_model = model.split("/", 1)
         return get_model_token_limit(upstream_model, upstream_provider)
@@ -330,21 +354,10 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
     except Exception as e:  # never let capability resolution break token limits
         logger.debug(f"context_window lookup failed for {provider}/{model}: {e}")
 
-    # 2. Exact table match.
-    if model in MODEL_TOKEN_LIMITS:
-        return MODEL_TOKEN_LIMITS[model]
-
-    # 3. Longest matching table prefix (so "gpt-4" can't shadow "gpt-4-turbo").
-    best_limit = None
-    best_len = -1
-    for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
-        if model_prefix == "default":
-            continue
-        if model.startswith(model_prefix) and len(model_prefix) > best_len:
-            best_limit = limit
-            best_len = len(model_prefix)
-    if best_limit is not None:
-        return best_limit
+    # 2-3. Exact or longest-prefix table match.
+    table_limit = get_table_model_token_limit(model, provider)
+    if table_limit is not None:
+        return table_limit
 
     # 4. Conservative provider default.
     provider_defaults = {

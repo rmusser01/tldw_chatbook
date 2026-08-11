@@ -45,9 +45,13 @@ def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
     root = "http://localhost:8080"
     assert normalize_llamacpp_base_url("http://localhost:8080/completion") == root
     assert normalize_llamacpp_base_url("http://localhost:8080/v1") == root
-    assert normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
+    assert (
+        normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
+    )
     assert normalize_llamacpp_base_url("http://localhost:8080") == root
-    assert normalize_llamacpp_base_url("localhost:8080/completion") == root  # scheme-less
+    assert (
+        normalize_llamacpp_base_url("localhost:8080/completion") == root
+    )  # scheme-less
     # a reverse-proxy prefix is NOT an exact suffix -> left unchanged
     assert (
         normalize_llamacpp_base_url("http://host/proxy/v1/chat/completions")
@@ -2142,6 +2146,7 @@ def test_active_http_client_creation_is_mutually_exclusive_across_threads():
             "thread's creation was still in flight -- the critical section "
             "is not atomic"
         )
+        release.set()
         assert second_done.wait(timeout=5)
     finally:
         # Always unblock thread A and drain both threads before touching
@@ -2361,9 +2366,9 @@ def test_concurrent_live_loops_never_close_each_others_client():
 
     assert errors == [], f"unexpected errors from worker threads: {errors!r}"
     assert "a" in obtained and "b" in obtained, "both loops must obtain a client"
-    assert obtained["a"] is not obtained["b"], (
-        "two live loops must never share the same owned http client"
-    )
+    assert (
+        obtained["a"] is not obtained["b"]
+    ), "two live loops must never share the same owned http client"
     assert obtained["a"].is_closed is False, (
         "loop A's client was closed while loop B was concurrently alive and "
         "touching the shared gateway -- a live loop must never close "
@@ -2872,12 +2877,11 @@ def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:
     kwargs_2 = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), turn_2)
 
     assert kwargs_1["system_message"] == kwargs_2["system_message"]
-    assert (
-        kwargs_1["system_message"].encode() == kwargs_2["system_message"].encode()
-    )
+    assert kwargs_1["system_message"].encode() == kwargs_2["system_message"].encode()
     # and the history prefix itself is untouched by the extraction
-    assert kwargs_2["messages_payload"][: len(kwargs_1["messages_payload"])] == (
-        kwargs_1["messages_payload"]
+    assert (
+        kwargs_2["messages_payload"][: len(kwargs_1["messages_payload"])]
+        == (kwargs_1["messages_payload"])
     )
 
 
@@ -3016,7 +3020,9 @@ async def test_anthropic_resolution_respects_caching_kill_switch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_anthropic_resolution_respects_kill_switch_in_load_settings_shape() -> None:
+async def test_anthropic_resolution_respects_kill_switch_in_load_settings_shape() -> (
+    None
+):
     """The live Console's config_provider is `load_settings()` output, which
     nests the raw TOML under COMPREHENSIVE_CONFIG_RAW and never projects
     `[caching]` to the top level the way it does `api_settings` (Qodo
@@ -3219,9 +3225,7 @@ async def test_stream_chat_records_usage_payload_from_sse_chunk() -> None:
     # The call ended, so its payload was closed out of the in-flight slot and
     # into the completed list -- one provider call, one billable payload.
     assert signals.usage_payload is None
-    assert signals.usage_payloads() == [
-        {"prompt_tokens": 100, "completion_tokens": 20}
-    ]
+    assert signals.usage_payloads() == [{"prompt_tokens": 100, "completion_tokens": 20}]
 
 
 @pytest.mark.asyncio
@@ -3241,7 +3245,9 @@ async def test_stream_chat_merges_split_usage_payloads() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet-4-6")
+        ConsoleProviderSelection(
+            provider="anthropic", explicit_model="claude-sonnet-4-6"
+        )
     )
     signals = ConsoleProviderStreamSignals()
     _ = [
@@ -3618,13 +3624,22 @@ async def test_auxiliary_completion_rejects_unsupported_response_shapes(
 async def test_auxiliary_completion_accepts_standard_provider_mapping_exactly() -> None:
     gateway = ConsoleProviderGateway(
         chat_api_call_fn=lambda **_kwargs: {
-            "choices": [{"message": {"content": " exact mapping text \n"}}]
+            "choices": [{"message": {"content": " exact mapping text \n"}}],
+            "usage": {
+                "prompt_tokens": 13,
+                "completion_tokens": 5,
+                "prompt_tokens_details": {"cached_tokens": 3},
+            },
         }
     )
 
     result = await gateway.complete_auxiliary(_auxiliary_request())
 
     assert result.text == " exact mapping text \n"
+    assert result.usage is not None
+    assert result.usage.uncached_input == 10
+    assert result.usage.cache_read == 3
+    assert result.usage.output == 5
 
 
 @pytest.mark.asyncio

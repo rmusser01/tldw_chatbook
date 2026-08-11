@@ -40,6 +40,15 @@ from tldw_chatbook.LLM_Calls.realtime.protocol import (
 )
 
 
+_WIRE_STEP_TIMEOUT_SECONDS = 30
+_SCRIPT_COMPLETION_TIMEOUT_SECONDS = 30
+
+
+def _transport_safe_error(exc: Exception) -> AssertionError:
+    """Copy exception diagnostics without retaining traceback locals."""
+    return AssertionError(f"{type(exc).__name__}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Scripted fake server
 # ---------------------------------------------------------------------------
@@ -82,7 +91,9 @@ class ScriptedServer:
         try:
             for kind, payload in self.script:
                 if kind == "expect":
-                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                    raw = await asyncio.wait_for(
+                        ws.recv(), timeout=_WIRE_STEP_TIMEOUT_SECONDS
+                    )
                     event = json.loads(raw)
                     self.received.append(event)
                     predicate: Callable[[dict], bool] = payload  # type: ignore[assignment]
@@ -110,11 +121,17 @@ class ScriptedServer:
                 else:
                     raise ValueError(f"unknown script step kind: {kind!r}")
         except Exception as exc:  # noqa: BLE001 - captured for the test to re-raise
-            self.error = exc
+            # Retaining ``exc`` also retains its traceback frame and the live
+            # ``ServerConnection`` local. pytest-xdist cannot serialize that
+            # object when this suite runs in parallel, so preserve only the
+            # diagnostic type and message in a transport-safe exception.
+            self.error = _transport_safe_error(exc)
         finally:
             self._done.set()
 
-    async def wait_done(self, timeout: float = 5) -> None:
+    async def wait_done(
+        self, timeout: float = _SCRIPT_COMPLETION_TIMEOUT_SECONDS
+    ) -> None:
         """Wait for the script to finish and re-raise any error it hit.
 
         Args:
@@ -275,6 +292,18 @@ async def _connect_and_handshake(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_transport_safe_error_discards_original_traceback():
+    try:
+        raise TimeoutError("wire receive exceeded its allowance")
+    except TimeoutError as exc:
+        assert exc.__traceback__ is not None
+        safe_error = _transport_safe_error(exc)
+
+    assert type(safe_error) is AssertionError
+    assert safe_error.__traceback__ is None
+    assert str(safe_error) == "TimeoutError: wire receive exceeded its allowance"
 
 
 async def test_connect_sends_session_update_and_fires_ready(fake_server):
