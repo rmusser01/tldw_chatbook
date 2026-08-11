@@ -1108,43 +1108,103 @@ async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
                 assert first_line.endswith("(2)"), first_line
 
 
+async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
+    """Poll the Details DB-sizes line until ``needle`` renders; return it."""
+    for _ in range(300):
+        widgets = list(screen.query("#library-details-db-sizes"))
+        if widgets and needle in str(widgets[0].render()):
+            return str(widgets[0].render())
+        await pilot.pause(0.01)
+    rendered = (
+        str(screen.query_one("#library-details-db-sizes", Static).render())
+        if list(screen.query("#library-details-db-sizes"))
+        else "<line never mounted>"
+    )
+    raise AssertionError(
+        f"Details DB-sizes line never showed {needle!r}; last render: {rendered!r}"
+    )
+
+
 @pytest.mark.asyncio
-async def test_details_shows_db_sizes_from_the_app_cache():
-    """F-014: the relocated DB-size telemetry surfaces in the rail's
-    Details disclosure (fed from the DBStatusManager's app-level cache),
-    not in the footer."""
+async def test_details_recomputes_db_sizes_on_open():
+    """F-014 relocation + task-4023 AC#3 (RC-09): the rail's Details
+    disclosure carries the DB-size telemetry (not the footer), and opening
+    it RECOMPUTES the sizes from disk -- WAL-sidecar-inclusive (task-2859)
+    -- instead of trusting the app-level cache. Mirrors the live evidence
+    pattern: stale cache -> open shows the real on-disk size; close ->
+    grow the WAL on disk -> reopen shows the new size.
+
+    (Rewritten by the whole-branch fix wave: the old pin asserted the
+    retired cache-fed behaviour and went red the moment RC-09 shipped.)
+    """
+    import os
+    import pwd
+
     app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    # Write real DB files (plus a prompts WAL sidecar) at the SAME paths
+    # DBStatusManager.update_db_sizes resolves at call time. Guard first:
+    # the conftest profile isolation must have redirected them out of the
+    # real user home (the live-config trap) before we write anything.
+    prompts_path = app_config.get_prompts_db_path()
+    chachanotes_path = app_config.get_chachanotes_db_path()
+    media_path = app_config.get_media_db_path()
+    real_home = pwd.getpwuid(os.getuid()).pw_dir
+    for db_path in (prompts_path, chachanotes_path, media_path):
+        assert not str(db_path).startswith(real_home + "/"), (
+            f"{db_path} resolves inside the real user profile -- refusing "
+            "to write DB fixtures there."
+        )
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    prompts_path.write_bytes(b"\0" * 2048)
+    prompts_wal = prompts_path.with_name(prompts_path.name + "-wal")
+    prompts_wal.write_bytes(b"\0" * 1024)  # 2048 + 1024 -> "3.0 KB"
+    chachanotes_path.write_bytes(b"\0" * 4096)  # "4.0 KB"
+    media_path.write_bytes(b"\0" * 5120)  # "5.0 KB"
+
+    # Stale cache: the retired behaviour would render this verbatim.
     app.db_sizes_status = {
         "prompts": "1.0 KB",
-        "chachanotes": "2.0 KB",
-        "media": "3.0 KB",
+        "chachanotes": "1.0 KB",
+        "media": "1.0 KB",
     }
-    _seed_conversations(app, _two_conversations())
-    host = LibraryHarness(app)
 
+    host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
+        # Deterministic starting point: details closed, then a real open
+        # through the header toggle (the RC-09 refresh trigger).
+        screen._set_library_rail_section("details", False)
+        await pilot.pause()
         screen.query_one("#console-rail-section-toggle-library-details", Button).press()
-        await pilot.pause()
-        await pilot.pause()
 
-        sizes = screen.query_one("#library-details-db-sizes", Static)
-        text = str(sizes.renderable)
+        text = await _wait_for_details_db_sizes(screen, pilot, "Prompts 3.0KB")
+        assert "Chats/Notes 4.0KB" in text
+        assert "Media 5.0KB" in text
+        assert "1.0KB" not in text  # the stale cache never renders
         # task-2859 item 5: the space between each size's number and its
-        # unit is now dropped entirely, so the rail never wraps mid-unit
+        # unit is dropped entirely, so the rail never wraps mid-unit
         # ("Prompts 144.0 / KB"). A non-breaking space was tried first and
         # does NOT work here -- Rich's word-wrap splitter's `\s` regex
         # matches U+00A0 same as an ordinary space (see
         # `_unbreakable_size_text`'s docstring for the live repro) -- so
         # this asserts the space is GONE, not merely a different kind of
         # space.
-        assert "Prompts 1.0KB" in text
-        assert "Chats/Notes 2.0KB" in text
-        assert "Media 3.0KB" in text
-        assert "1.0 KB" not in text
-        assert "1.0\N{NO-BREAK SPACE}KB" not in text
+        assert "3.0 KB" not in text
+        assert "3.0\N{NO-BREAK SPACE}KB" not in text
+
+        # Close, grow the WAL on disk, reopen: the RC-09 contract is that
+        # REOPENING recomputes -- the line must not keep the old reading.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        prompts_wal.write_bytes(b"\0" * 6144)  # 2048 + 6144 -> "8.0 KB"
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+
+        text = await _wait_for_details_db_sizes(screen, pilot, "Prompts 8.0KB")
+        assert "Prompts 3.0KB" not in text
 
 
 @pytest.mark.asyncio
