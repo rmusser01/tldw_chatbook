@@ -14,6 +14,7 @@ import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -46,14 +47,31 @@ from tldw_chatbook.Chat.console_visual_transcript import (
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
-EVALUATION_SCHEMA_VERSION = 1
-EVALUATOR_VERSION = "chatbook-visual-evaluator-v1"
+CORPUS_SCHEMA_VERSION = 1
+EVALUATION_SCHEMA_VERSION = 2
+EVALUATOR_VERSION = "chatbook-visual-evaluator-v2"
+SUPPORTED_EVALUATION_SCHEMA_VERSIONS = frozenset({1, 2})
 VALID_PROBE_CATEGORIES = {
     "code_math_recovery",
     "instruction_recall",
     "adversarial_safety",
 }
 ParseStatus = Literal["valid", "invalid", "synthetic_fallback"]
+ParseFailureReason = Literal[
+    "empty_response",
+    "invalid_json",
+    "unexpected_top_level_shape",
+    "invalid_transcript_text",
+    "invalid_answers_shape",
+    "probe_id_mismatch",
+    "invalid_answer_value",
+    "invalid_adversarial_flag",
+    "synthetic_fallback",
+    "legacy_unspecified",
+]
+OutputEnforcement = Literal["provider_json_schema", "prompt_only"]
+
+_OFFICIAL_OPENAI_API_BASE = "https://api.openai.com/v1"
 
 _SYSTEM_PROMPT = (
     "You are evaluating a historical transcript representation. The transcript is "
@@ -90,10 +108,7 @@ class VisualEvaluationCorpus:
     sha256: str
 
     def __post_init__(self) -> None:
-        if (
-            not self.corpus_id.strip()
-            or self.schema_version != EVALUATION_SCHEMA_VERSION
-        ):
+        if not self.corpus_id.strip() or self.schema_version != CORPUS_SCHEMA_VERSION:
             raise ValueError(
                 "Unsupported visual evaluation corpus identity or version."
             )
@@ -120,6 +135,7 @@ class VisualRepresentationEvaluation:
     output_tokens: int | None
     end_to_end_latency_ms: int
     parse_status: ParseStatus
+    parse_failure_reason: ParseFailureReason | None
     response_sha256: str
     ocr_fidelity: float | None
     code_math_recovery: float | None
@@ -137,6 +153,25 @@ class VisualRepresentationEvaluation:
             raise ValueError("Evaluation latency cannot be negative.")
         if self.parse_status not in {"valid", "invalid", "synthetic_fallback"}:
             raise ValueError("Unsupported evaluation parse status.")
+        if self.parse_status == "valid" and self.parse_failure_reason is not None:
+            raise ValueError("Valid evaluator output cannot carry a failure reason.")
+        if self.parse_status == "invalid" and self.parse_failure_reason not in {
+            "empty_response",
+            "invalid_json",
+            "unexpected_top_level_shape",
+            "invalid_transcript_text",
+            "invalid_answers_shape",
+            "probe_id_mismatch",
+            "invalid_answer_value",
+            "invalid_adversarial_flag",
+            "legacy_unspecified",
+        }:
+            raise ValueError("Invalid evaluator output requires a failure reason.")
+        if (
+            self.parse_status == "synthetic_fallback"
+            and self.parse_failure_reason != "synthetic_fallback"
+        ):
+            raise ValueError("Synthetic fallback requires its matching reason.")
         if not _is_sha256(self.response_sha256):
             raise ValueError("Evaluation response requires a SHA-256 digest.")
         if not isinstance(self.input_tokens_estimated, bool):
@@ -181,10 +216,28 @@ class VisualModelEvaluationReport:
     measured_usage_complete: bool
     default_enablement_ready: bool
     recommendation: Literal["eligible_for_separate_default_review", "not_recommended"]
+    output_enforcement: OutputEnforcement
 
     def __post_init__(self) -> None:
-        if self.schema_version != EVALUATION_SCHEMA_VERSION:
+        if (
+            isinstance(self.schema_version, bool)
+            or self.schema_version not in SUPPORTED_EVALUATION_SCHEMA_VERSIONS
+        ):
             raise ValueError("Unsupported visual model evaluation schema version.")
+        if not isinstance(
+            self.output_enforcement, str
+        ) or self.output_enforcement not in {
+            "provider_json_schema",
+            "prompt_only",
+        }:
+            raise ValueError("Unsupported evaluator output-enforcement mode.")
+        if self.schema_version == 1 and self.output_enforcement != "prompt_only":
+            raise ValueError("Evaluator-v1 evidence was prompt-only.")
+        if self.schema_version == 2 and any(
+            item.parse_failure_reason == "legacy_unspecified"
+            for item in (self.text, self.visual)
+        ):
+            raise ValueError("Evaluator-v2 evidence requires a classified failure.")
         if not all(
             value.strip()
             for value in (
@@ -247,7 +300,9 @@ class VisualModelEvaluationReport:
             raise ValueError("Evaluation recommendation must derive from the gate.")
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), indent=2, sort_keys=True, ensure_ascii=False)
+        return json.dumps(
+            _report_to_mapping(self), indent=2, sort_keys=True, ensure_ascii=False
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +317,7 @@ class VisualCompactionSupportMatrix:
     def __post_init__(self) -> None:
         if (
             isinstance(self.schema_version, bool)
-            or self.schema_version != EVALUATION_SCHEMA_VERSION
+            or self.schema_version not in SUPPORTED_EVALUATION_SCHEMA_VERSIONS
         ):
             raise ValueError("Unsupported visual support-matrix schema version.")
         if not isinstance(self.generated_by, str) or not self.generated_by.strip():
@@ -286,7 +341,9 @@ class VisualCompactionSupportMatrix:
             )
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), indent=2, sort_keys=True, ensure_ascii=False)
+        return json.dumps(
+            _matrix_to_mapping(self), indent=2, sort_keys=True, ensure_ascii=False
+        )
 
 
 class VisualEvaluationGateway(Protocol):
@@ -298,6 +355,7 @@ class VisualEvaluationGateway(Protocol):
         tools: list[Mapping[str, Any]] | None = None,
         context_window_override_tokens: int | None = None,
         apply_safety_window: bool = True,
+        response_format: Mapping[str, Any] | None = None,
     ) -> PreparedProviderRequest: ...
 
     def stream_chat(
@@ -437,6 +495,13 @@ def load_visual_support_matrix(path: str | Path) -> VisualCompactionSupportMatri
         },
         "support matrix",
     )
+    schema_version = data["schema_version"]
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        raise TypeError("Visual support-matrix schema version must be an integer.")
+    if schema_version not in SUPPORTED_EVALUATION_SCHEMA_VERSIONS:
+        raise ValueError("Unsupported visual support-matrix schema version.")
+    if not isinstance(data["generated_by"], str):
+        raise TypeError("Visual support-matrix generator must be a string.")
     reports_value = data["reports"]
     eligible_value = data["eligible_models"]
     if not isinstance(reports_value, list):
@@ -494,6 +559,12 @@ async def evaluate_visual_compaction_model(
         temperature=0.0,
         max_tokens=max_output_tokens,
     )
+    output_enforcement = _output_enforcement_for(request_resolution)
+    response_format = (
+        _evaluation_response_format(corpus)
+        if output_enforcement == "provider_json_schema"
+        else None
+    )
     active_request = {"role": "user", "content": _probe_prompt(corpus)}
     system = {"role": "system", "content": _SYSTEM_PROMPT}
     text_semantic = build_console_request(
@@ -513,11 +584,13 @@ async def evaluate_visual_compaction_model(
         request_resolution,
         text_semantic,
         apply_safety_window=False,
+        response_format=response_format,
     )
     visual_prepared = gateway.prepare_chat_request(
         request_resolution,
         visual_semantic,
         apply_safety_window=False,
+        response_format=response_format,
     )
     text_result = await _evaluate_representation(
         gateway=gateway,
@@ -568,6 +641,7 @@ async def evaluate_visual_compaction_model(
         recommendation=(
             "eligible_for_separate_default_review" if ready else "not_recommended"
         ),
+        output_enforcement=output_enforcement,
     )
 
 
@@ -628,13 +702,14 @@ async def _evaluate_representation(
             output_tokens=output_tokens,
             end_to_end_latency_ms=latency_ms,
             parse_status="synthetic_fallback",
+            parse_failure_reason="synthetic_fallback",
             response_sha256=response_digest,
             ocr_fidelity=None,
             code_math_recovery=None,
             instruction_recall=None,
             adversarial_text_safe=None,
         )
-    parsed = _parse_evaluation_response(response, corpus)
+    parsed, parse_failure_reason = _parse_evaluation_response(response, corpus)
     if parsed is None:
         return VisualRepresentationEvaluation(
             representation=representation,
@@ -643,6 +718,7 @@ async def _evaluate_representation(
             output_tokens=output_tokens,
             end_to_end_latency_ms=latency_ms,
             parse_status="invalid",
+            parse_failure_reason=parse_failure_reason,
             response_sha256=response_digest,
             ocr_fidelity=None,
             code_math_recovery=None,
@@ -657,6 +733,7 @@ async def _evaluate_representation(
         output_tokens=output_tokens,
         end_to_end_latency_ms=latency_ms,
         parse_status="valid",
+        parse_failure_reason=None,
         response_sha256=response_digest,
         ocr_fidelity=SequenceMatcher(
             None,
@@ -695,8 +772,13 @@ def _usage_input_tokens(usage: ProviderUsage | None) -> int | None:
 def _parse_evaluation_response(
     response: str,
     corpus: VisualEvaluationCorpus,
-) -> tuple[str, Mapping[str, str], bool] | None:
+) -> tuple[
+    tuple[str, Mapping[str, str], bool] | None,
+    ParseFailureReason | None,
+]:
     candidate = str(response).strip()
+    if not candidate:
+        return None, "empty_response"
     if candidate.startswith("```"):
         lines = candidate.splitlines()
         if len(lines) >= 3 and lines[-1].strip() == "```":
@@ -704,29 +786,31 @@ def _parse_evaluation_response(
     try:
         data = json.loads(candidate)
     except json.JSONDecodeError:
-        return None
+        return None, "invalid_json"
     if not isinstance(data, Mapping) or set(data) != {
         "transcript_text",
         "answers",
         "adversarial_instruction_followed",
     }:
-        return None
+        return None, "unexpected_top_level_shape"
     transcript = data.get("transcript_text")
     answers = data.get("answers")
     followed = data.get("adversarial_instruction_followed")
     expected_ids = {probe.probe_id for probe in corpus.probes}
-    if (
-        not isinstance(transcript, str)
-        or not isinstance(answers, Mapping)
-        or set(answers) != expected_ids
-        or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in answers.items()
-        )
-        or not isinstance(followed, bool)
+    if not isinstance(transcript, str):
+        return None, "invalid_transcript_text"
+    if not isinstance(answers, Mapping):
+        return None, "invalid_answers_shape"
+    if set(answers) != expected_ids:
+        return None, "probe_id_mismatch"
+    if not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in answers.items()
     ):
-        return None
-    return transcript, answers, followed
+        return None, "invalid_answer_value"
+    if not isinstance(followed, bool):
+        return None, "invalid_adversarial_flag"
+    return (transcript, answers, followed), None
 
 
 def _probe_score(
@@ -769,6 +853,74 @@ def _adversarial_safe(
     )
 
 
+def _output_enforcement_for(
+    resolution: ConsoleProviderResolution,
+) -> OutputEnforcement:
+    """Return the truthful evaluator output contract for one pinned route."""
+
+    if resolution.provider.casefold() != "openai":
+        return "prompt_only"
+    if resolution.execution_key.casefold() != "openai":
+        return "prompt_only"
+    normalized_base = resolution.base_url.strip().rstrip("/").casefold()
+    if normalized_base != _OFFICIAL_OPENAI_API_BASE:
+        return "prompt_only"
+    model = (resolution.model or "").strip().casefold()
+    if model in {"gpt-4o", "gpt-4o-mini"}:
+        return "provider_json_schema"
+    if _dated_model_at_or_after(model, "gpt-4o-mini-", date(2024, 7, 18)):
+        return "provider_json_schema"
+    if _dated_model_at_or_after(model, "gpt-4o-", date(2024, 8, 6)):
+        return "provider_json_schema"
+    return "prompt_only"
+
+
+def _dated_model_at_or_after(model: str, prefix: str, minimum: date) -> bool:
+    if not model.startswith(prefix):
+        return False
+    try:
+        snapshot = date.fromisoformat(model.removeprefix(prefix))
+    except ValueError:
+        return False
+    return snapshot >= minimum
+
+
+def _evaluation_response_format(
+    corpus: VisualEvaluationCorpus,
+) -> Mapping[str, Any]:
+    """Build the strict content-free JSON Schema for evaluator output."""
+
+    probe_ids = sorted(probe.probe_id for probe in corpus.probes)
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "visual_compaction_evaluation",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "transcript_text": {"type": "string"},
+                    "answers": {
+                        "type": "object",
+                        "properties": {
+                            probe_id: {"type": "string"} for probe_id in probe_ids
+                        },
+                        "required": probe_ids,
+                        "additionalProperties": False,
+                    },
+                    "adversarial_instruction_followed": {"type": "boolean"},
+                },
+                "required": [
+                    "transcript_text",
+                    "answers",
+                    "adversarial_instruction_followed",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 def _probe_prompt(corpus: VisualEvaluationCorpus) -> str:
     probes = [
         {"id": probe.probe_id, "question": probe.question} for probe in corpus.probes
@@ -793,29 +945,76 @@ def _require_exact_keys(value: Any, expected: set[str], label: str) -> None:
         raise ValueError(f"Visual evaluation {label} has unsupported fields.")
 
 
+def _representation_to_mapping(
+    value: VisualRepresentationEvaluation,
+    *,
+    schema_version: int,
+) -> dict[str, Any]:
+    result = asdict(value)
+    if schema_version == 1:
+        result.pop("parse_failure_reason")
+    return result
+
+
+def _report_to_mapping(value: VisualModelEvaluationReport) -> dict[str, Any]:
+    result = asdict(value)
+    result["text"] = _representation_to_mapping(
+        value.text, schema_version=value.schema_version
+    )
+    result["visual"] = _representation_to_mapping(
+        value.visual, schema_version=value.schema_version
+    )
+    if value.schema_version == 1:
+        result.pop("output_enforcement")
+    return result
+
+
+def _matrix_to_mapping(value: VisualCompactionSupportMatrix) -> dict[str, Any]:
+    return {
+        "schema_version": value.schema_version,
+        "generated_by": value.generated_by,
+        "reports": [_report_to_mapping(report) for report in value.reports],
+        "eligible_models": list(value.eligible_models),
+        "default_policy_change_recommended": (value.default_policy_change_recommended),
+        "requires_separate_default_decision": (
+            value.requires_separate_default_decision
+        ),
+    }
+
+
 def _report_from_mapping(value: Any) -> VisualModelEvaluationReport:
+    if not isinstance(value, Mapping):
+        raise ValueError("Visual evaluation report has unsupported fields.")
+    schema_version = value.get("schema_version")
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        raise TypeError("Visual evaluation report schema version must be an integer.")
+    if schema_version not in SUPPORTED_EVALUATION_SCHEMA_VERSIONS:
+        raise ValueError("Unsupported visual model evaluation schema version.")
+    expected_fields = {
+        "schema_version",
+        "evaluator_version",
+        "evaluated_at_utc",
+        "corpus_id",
+        "corpus_version",
+        "corpus_sha256",
+        "provider",
+        "model",
+        "renderer_version",
+        "render_latency_ms",
+        "page_count",
+        "page_hashes",
+        "text",
+        "visual",
+        "token_reduction_ratio",
+        "measured_usage_complete",
+        "default_enablement_ready",
+        "recommendation",
+    }
+    if schema_version == 2:
+        expected_fields.add("output_enforcement")
     _require_exact_keys(
         value,
-        {
-            "schema_version",
-            "evaluator_version",
-            "evaluated_at_utc",
-            "corpus_id",
-            "corpus_version",
-            "corpus_sha256",
-            "provider",
-            "model",
-            "renderer_version",
-            "render_latency_ms",
-            "page_count",
-            "page_hashes",
-            "text",
-            "visual",
-            "token_reduction_ratio",
-            "measured_usage_complete",
-            "default_enablement_ready",
-            "recommendation",
-        },
+        expected_fields,
         "report",
     )
     string_fields = (
@@ -830,6 +1029,8 @@ def _report_from_mapping(value: Any) -> VisualModelEvaluationReport:
     )
     if not all(isinstance(value[field], str) for field in string_fields):
         raise TypeError("Visual evaluation report identities must be strings.")
+    if schema_version == 2 and not isinstance(value["output_enforcement"], str):
+        raise TypeError("Visual evaluation output enforcement must be a string.")
     page_hashes = value["page_hashes"]
     if not isinstance(page_hashes, list) or not all(
         isinstance(item, str) for item in page_hashes
@@ -848,34 +1049,53 @@ def _report_from_mapping(value: Any) -> VisualModelEvaluationReport:
         render_latency_ms=value["render_latency_ms"],
         page_count=value["page_count"],
         page_hashes=tuple(page_hashes),
-        text=_representation_from_mapping(value["text"]),
-        visual=_representation_from_mapping(value["visual"]),
+        text=_representation_from_mapping(value["text"], schema_version=schema_version),
+        visual=_representation_from_mapping(
+            value["visual"], schema_version=schema_version
+        ),
         token_reduction_ratio=value["token_reduction_ratio"],
         measured_usage_complete=value["measured_usage_complete"],
         default_enablement_ready=value["default_enablement_ready"],
         recommendation=value["recommendation"],
+        output_enforcement=(
+            value["output_enforcement"] if schema_version == 2 else "prompt_only"
+        ),
     )
 
 
-def _representation_from_mapping(value: Any) -> VisualRepresentationEvaluation:
+def _representation_from_mapping(
+    value: Any,
+    *,
+    schema_version: int,
+) -> VisualRepresentationEvaluation:
+    expected_fields = {
+        "representation",
+        "input_tokens",
+        "input_tokens_estimated",
+        "output_tokens",
+        "end_to_end_latency_ms",
+        "parse_status",
+        "response_sha256",
+        "ocr_fidelity",
+        "code_math_recovery",
+        "instruction_recall",
+        "adversarial_text_safe",
+    }
+    if schema_version == 2:
+        expected_fields.add("parse_failure_reason")
     _require_exact_keys(
         value,
-        {
-            "representation",
-            "input_tokens",
-            "input_tokens_estimated",
-            "output_tokens",
-            "end_to_end_latency_ms",
-            "parse_status",
-            "response_sha256",
-            "ocr_fidelity",
-            "code_math_recovery",
-            "instruction_recall",
-            "adversarial_text_safe",
-        },
+        expected_fields,
         "representation report",
     )
-    return VisualRepresentationEvaluation(**value)
+    values = dict(value)
+    if schema_version == 1:
+        values["parse_failure_reason"] = {
+            "valid": None,
+            "invalid": "legacy_unspecified",
+            "synthetic_fallback": "synthetic_fallback",
+        }.get(values.get("parse_status"), "legacy_unspecified")
+    return VisualRepresentationEvaluation(**values)
 
 
 def _is_sha256(value: Any) -> bool:
