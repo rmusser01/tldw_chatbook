@@ -130,28 +130,27 @@ def _workspace_memory(_tmp_path: Path):
     return db._held_connection(), db.close
 
 
+# task-15466 ported these three DBs to held thread-local connections, so
+# these factories read the pragmas off the connection the DB actually USES
+# (`_held_connection`) rather than off a throwaway extra open.
 def _library_collections_file(tmp_path: Path):
     db = LibraryCollectionsDB(tmp_path / "collections.db")
-    conn = db._get_connection()
-    return conn, conn.close
+    return db._held_connection(), db.close
 
 
 def _library_collections_memory(_tmp_path: Path):
     db = LibraryCollectionsDB(":memory:")
-    conn = db._get_connection()
-    return conn, conn.close
+    return db._held_connection(), db.close
 
 
 def _rag_indexing_file(tmp_path: Path):
     db = RAGIndexingDB(tmp_path / "rag_indexing.db")
-    conn = db._get_connection()
-    return conn, conn.close
+    return db._held_connection(), db.close
 
 
 def _rag_indexing_memory(_tmp_path: Path):
     db = RAGIndexingDB(":memory:")
-    conn = db._get_connection()
-    return conn, conn.close
+    return db._held_connection(), db.close
 
 
 def _scheduled_tasks_file(tmp_path: Path):
@@ -167,19 +166,17 @@ def _scheduled_tasks_memory(_tmp_path: Path):
 
 
 def _client_notifications_file(tmp_path: Path):
-    # The file branch of `_get_connection` opens a fresh, DB-untracked
-    # connection each call (unlike the `:memory:` branch, which caches one on
-    # `self._memory_conn`) -- close the connection object itself rather than
-    # `db.close()`, which only tears down the memory-cached connection.
+    # File-backed stores hold one connection per thread (task-15466);
+    # `db.close()` tears down this thread's.
     db = ClientNotificationsDB(tmp_path / "notifications.db")
-    conn = db._get_connection()
-    return conn, conn.close
+    return db._held_connection(), db.close
 
 
 def _client_notifications_memory(_tmp_path: Path):
+    # The `:memory:` branch deliberately keeps ONE shared connection (an
+    # in-memory DB lives inside its connection), so this is that connection.
     db = ClientNotificationsDB(":memory:")
-    conn = db._get_connection()
-    return conn, db.close
+    return db._held_connection(), db.close
 
 
 def _chachanotes_file(tmp_path: Path):

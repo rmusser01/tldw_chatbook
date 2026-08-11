@@ -364,7 +364,9 @@ class LocalLibraryCollectionsService:
         """Page active Collections with an exact total.
 
         Ordering matches ``list_collections`` (``created_at ASC, name
-        COLLATE NOCASE ASC``). Count and page are read in one transaction.
+        COLLATE NOCASE ASC``). Count and page are read in one read-only
+        snapshot (``read_transaction``), so this pure read never takes the
+        write lock (task-15466).
 
         Args:
             limit: Maximum number of Collections to return.
@@ -377,7 +379,7 @@ class LocalLibraryCollectionsService:
             LibraryCollectionsServiceError: If the local store cannot be read.
         """
         try:
-            with self.db.transaction() as conn:
+            with self.db.read_transaction() as conn:
                 total = conn.execute(
                     "SELECT COUNT(*) AS count FROM library_collections "
                     "WHERE deleted_at IS NULL"
@@ -447,7 +449,7 @@ class LocalLibraryCollectionsService:
             f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
         )
         try:
-            with self.db.transaction() as conn:
+            with self.db.read_transaction() as conn:
                 total = conn.execute(
                     f"SELECT COUNT(*) AS count FROM library_collections AS collection "
                     f"WHERE collection.deleted_at IS NULL AND ({where_clause})",
@@ -516,7 +518,7 @@ class LocalLibraryCollectionsService:
             LibraryCollectionsServiceError: If the local store cannot be read.
         """
         try:
-            with self.db.transaction() as conn:
+            with self.db.read_transaction() as conn:
                 collection = conn.execute(
                     """
                     SELECT collection_id, name, description, created_at, updated_at

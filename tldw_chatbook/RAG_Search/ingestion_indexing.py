@@ -54,6 +54,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
 )
 
 from loguru import logger
@@ -764,28 +765,40 @@ async def index_entries(
             summary["errors"].append(message)
             return summary
 
+    # Indexing-state rows for the whole batch, written in ONE transaction
+    # below rather than one open+commit per item (task-15466).
+    indexed_records: List[Tuple[str, str, Any, int]] = []
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
             summary["indexed"] += 1
             if indexing_db is not None:
-                try:
-                    indexing_db.mark_item_indexed(
+                indexed_records.append(
+                    (
                         entry.item_id,
                         entry.item_type,
-                        last_modified=entry.last_modified,
-                        chunk_count=result.chunks_created,
+                        entry.last_modified,
+                        result.chunks_created,
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not record indexing state for {entry.item_type} {entry.item_id}: {e}"
-                    )
+                )
         else:
             error = getattr(result, "error", None) or "no indexing result returned"
             summary["failed"] += 1
             summary["errors"].append(f"{entry.item_type} {entry.item_id}: {error}")
             logger.error(
                 f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}"
+            )
+
+    if indexed_records:
+        try:
+            indexing_db.mark_items_indexed(indexed_records)
+        except Exception as e:
+            # Tracking stays best-effort, exactly as the per-item form was:
+            # the documents ARE indexed, so `indexed` is not decremented; an
+            # unrecorded item is simply re-indexed on the next run.
+            logger.warning(
+                f"Could not record indexing state for {len(indexed_records)} "
+                f"item(s) in this batch: {e}"
             )
 
     return summary
