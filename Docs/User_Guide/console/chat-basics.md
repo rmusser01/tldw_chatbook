@@ -61,8 +61,11 @@ you do not need to restart the app.
 - **Neutral** keeps role labels but removes role-specific row and prose color.
 - **Role accents** (the default) gives user and assistant or character rows
   distinct, restrained backgrounds and speaker-label accents.
-- **Immersive RP** keeps those role cues and also accents the prose for a more
-  character-chat-forward presentation.
+- **Immersive RP** keeps those role cues and gives assistant or character
+  Markdown a roleplay-forward reading grammar: quoted dialogue, italicized
+  actions or inner monologue, strong emphasis, and narration each have a
+  distinct treatment. Markdown structure and the original message text remain
+  unchanged.
 
 The colors adapt to light and dark themes. Speaker names remain visible, so
 role identity does not depend on color alone, and selected, failed, system,

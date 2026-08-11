@@ -3831,39 +3831,76 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Immersive RP is opt-in: prose follows the semantic speaker accent while
    Markdown's own code/link nodes retain their more specific readable styles. */
 .console-transcript-message-immersive-user > .console-transcript-message-body,
-.console-transcript-message-immersive-user > Markdown {
+.console-transcript-message-immersive-user > .console-markdown-body {
     color: $ds-chat-user-accent;
 }
 
 .-dark-mode .console-transcript-message-immersive-user > .console-transcript-message-body,
-.-dark-mode .console-transcript-message-immersive-user > Markdown {
+.-dark-mode .console-transcript-message-immersive-user > .console-markdown-body {
     color: $ds-chat-user-accent-dark;
 }
 
 .-light-mode .console-transcript-message-immersive-user > .console-transcript-message-body,
-.-light-mode .console-transcript-message-immersive-user > Markdown {
+.-light-mode .console-transcript-message-immersive-user > .console-markdown-body {
     color: $ds-chat-user-accent-light;
 }
 
 .console-transcript-message-immersive-assistant > .console-transcript-message-body,
-.console-transcript-message-immersive-assistant > Markdown,
+.console-transcript-message-immersive-assistant > .console-markdown-body,
 .console-transcript-message-immersive-character > .console-transcript-message-body,
-.console-transcript-message-immersive-character > Markdown {
+.console-transcript-message-immersive-character > .console-markdown-body {
     color: $ds-chat-user-accent;
 }
 
 .-dark-mode .console-transcript-message-immersive-assistant > .console-transcript-message-body,
-.-dark-mode .console-transcript-message-immersive-assistant > Markdown,
+.-dark-mode .console-transcript-message-immersive-assistant > .console-markdown-body,
 .-dark-mode .console-transcript-message-immersive-character > .console-transcript-message-body,
-.-dark-mode .console-transcript-message-immersive-character > Markdown {
+.-dark-mode .console-transcript-message-immersive-character > .console-markdown-body {
     color: $ds-chat-assistant-accent-dark;
 }
 
 .-light-mode .console-transcript-message-immersive-assistant > .console-transcript-message-body,
-.-light-mode .console-transcript-message-immersive-assistant > Markdown,
+.-light-mode .console-transcript-message-immersive-assistant > .console-markdown-body,
 .-light-mode .console-transcript-message-immersive-character > .console-transcript-message-body,
-.-light-mode .console-transcript-message-immersive-character > Markdown {
+.-light-mode .console-transcript-message-immersive-character > .console-markdown-body {
     color: $ds-chat-assistant-accent-light;
+}
+
+/* TASK-1990.1: flavor assistant / character prose without rewriting Markdown.
+   Quoted speech, emphasis-as-action, and strong emphasis are Content component
+   spans; labels and Markdown structure continue to carry meaning without color. */
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
+    color: $ds-chat-rp-speech-dark;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
+    color: $ds-chat-rp-speech-light;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-action {
+    color: $ds-chat-rp-action-dark;
+    text-style: italic;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-action {
+    color: $ds-chat-rp-action-light;
+    text-style: italic;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-strong,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-chat-rp-strong-dark;
+    text-style: bold;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-strong,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-chat-rp-strong-light;
+    text-style: bold;
 }
 
 /* Failure is operational state, so it outranks roleplay identity tinting. */
@@ -3878,7 +3915,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-transcript-message-failed > .console-transcript-message-body,
-.console-transcript-message-failed > Markdown {
+.console-transcript-message-failed > .console-markdown-body {
+    color: $ds-text-primary;
+}
+
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-text-primary;
 }
 
@@ -3897,8 +3940,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 
 .console-transcript-message-selected > .console-transcript-message-body,
-.console-transcript-message-selected > Markdown {
+.console-transcript-message-selected > .console-markdown-body {
     color: $ds-focus-fg;
+}
+
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* TASK-1846: this is the record of what an agent did to the user's machine

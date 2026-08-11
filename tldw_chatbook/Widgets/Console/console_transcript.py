@@ -14,13 +14,26 @@ from rich_pixels import Pixels
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.content import Content
+from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.message_pump import NoActiveAppError
+from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
+from textual.widgets._markdown import (
+    MarkdownBlock,
+    MarkdownH1,
+    MarkdownH2,
+    MarkdownH3,
+    MarkdownH4,
+    MarkdownH5,
+    MarkdownH6,
+    MarkdownParagraph,
+    MarkdownTD,
+    MarkdownTH,
+)
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -335,6 +348,18 @@ _BOLD_STYLE = "bold #f7d774"
 _SPEECH_STYLE = "#8ecdf7"
 _ACTION_STYLE = "italic #b596d8"
 
+_CONSOLE_RP_SPEECH_COMPONENT = "console-rp-speech"
+_CONSOLE_RP_ACTION_COMPONENT = "console-rp-action"
+_CONSOLE_RP_STRONG_COMPONENT = "console-rp-strong"
+_CONSOLE_RP_COMPONENTS = frozenset(
+    {
+        _CONSOLE_RP_SPEECH_COMPONENT,
+        _CONSOLE_RP_ACTION_COMPONENT,
+        _CONSOLE_RP_STRONG_COMPONENT,
+    }
+)
+_ROLEPLAY_SPEECH_RE = re.compile(r'"[^"\n]+"|“[^”\n]+”')
+
 
 def _inline_markdown_spans(line: str) -> list:
     """Split one line into Content segments, styling inline flavor.
@@ -399,6 +424,158 @@ def _markdown_body_spans(body: str) -> list:
         else:
             segments.extend(_inline_markdown_spans(line))
     return segments
+
+
+def _roleplay_flavor_content(content: Content) -> Content:
+    """Annotate rendered Markdown text with semantic roleplay components.
+
+    Standard Markdown emphasis already supplies ``.em`` and ``.strong``
+    spans after stripping its markers. This projection adds Console-owned
+    component spans for those roles and for closed straight or curly quoted
+    speech. Inline code and links are carved out of speech ranges so their
+    existing operational styling remains authoritative. The raw Markdown
+    source is never rewritten.
+
+    Args:
+        content: Textual's literal inline rendering of one Markdown block.
+
+    Returns:
+        The same text with additional semantic component spans.
+    """
+    protected_ranges: list[tuple[int, int]] = []
+    semantic_ranges: list[tuple[int, int, str]] = []
+    for span in content.spans:
+        if span.style == ".code_inline":
+            protected_ranges.append((span.start, span.end))
+        elif isinstance(span.style, Style) and span.style.meta.get("@click"):
+            protected_ranges.append((span.start, span.end))
+        elif span.style == ".em":
+            semantic_ranges.append(
+                (span.start, span.end, _CONSOLE_RP_ACTION_COMPONENT)
+            )
+        elif span.style == ".strong":
+            semantic_ranges.append(
+                (span.start, span.end, _CONSOLE_RP_STRONG_COMPONENT)
+            )
+
+    def unprotected_ranges(start: int, end: int) -> list[tuple[int, int]]:
+        """Carve code and link spans out of one flavor range."""
+        remaining = [(start, end)]
+        for protected_start, protected_end in protected_ranges:
+            next_ranges: list[tuple[int, int]] = []
+            for range_start, range_end in remaining:
+                if protected_end <= range_start or protected_start >= range_end:
+                    next_ranges.append((range_start, range_end))
+                    continue
+                if range_start < protected_start:
+                    next_ranges.append((range_start, protected_start))
+                if protected_end < range_end:
+                    next_ranges.append((protected_end, range_end))
+            remaining = next_ranges
+        return remaining
+
+    flavor_spans: list[Span] = []
+    for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain):
+        flavor_spans.extend(
+            Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
+            for start, end in unprotected_ranges(match.start(), match.end())
+            if start < end
+        )
+    # Action / emphasis follows speech so nested Markdown emphasis retains its
+    # more specific role instead of inheriting the surrounding dialogue color.
+    for semantic_start, semantic_end, component in semantic_ranges:
+        flavor_spans.extend(
+            Span(start, end, f".{component}")
+            for start, end in unprotected_ranges(semantic_start, semantic_end)
+            if start < end
+        )
+    return content.add_spans(flavor_spans)
+
+
+class _ConsoleRoleplayFlavorBlockMixin:
+    """Add roleplay component spans to an inline-capable Markdown block."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+    def _token_to_content(self, token) -> Content:
+        # Textual's TCSS type selectors match the concrete widget type. These
+        # blocks intentionally subclass its private Markdown block classes, so
+        # give every flavored block a stable public CSS hook as well.
+        self.add_class("console-roleplay-markdown-block")
+        return _roleplay_flavor_content(super()._token_to_content(token))
+
+
+class _ConsoleRoleplayMarkdownParagraph(
+    _ConsoleRoleplayFlavorBlockMixin, MarkdownParagraph
+):
+    """Paragraph with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH1(_ConsoleRoleplayFlavorBlockMixin, MarkdownH1):
+    """Level-one heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH2(_ConsoleRoleplayFlavorBlockMixin, MarkdownH2):
+    """Level-two heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH3(_ConsoleRoleplayFlavorBlockMixin, MarkdownH3):
+    """Level-three heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH4(_ConsoleRoleplayFlavorBlockMixin, MarkdownH4):
+    """Level-four heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH5(_ConsoleRoleplayFlavorBlockMixin, MarkdownH5):
+    """Level-five heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownH6(_ConsoleRoleplayFlavorBlockMixin, MarkdownH6):
+    """Level-six heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownTH(_ConsoleRoleplayFlavorBlockMixin, MarkdownTH):
+    """Table heading with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class _ConsoleRoleplayMarkdownTD(_ConsoleRoleplayFlavorBlockMixin, MarkdownTD):
+    """Table cell with Console roleplay inline components."""
+
+    COMPONENT_CLASSES = MarkdownBlock.COMPONENT_CLASSES | _CONSOLE_RP_COMPONENTS
+
+
+class ConsoleRoleplayMarkdown(Markdown):
+    """Full Markdown renderer with semantic, source-preserving RP flavor spans."""
+
+    BLOCKS = {
+        **Markdown.BLOCKS,
+        "h1": _ConsoleRoleplayMarkdownH1,
+        "h2": _ConsoleRoleplayMarkdownH2,
+        "h3": _ConsoleRoleplayMarkdownH3,
+        "h4": _ConsoleRoleplayMarkdownH4,
+        "h5": _ConsoleRoleplayMarkdownH5,
+        "h6": _ConsoleRoleplayMarkdownH6,
+        "paragraph_open": _ConsoleRoleplayMarkdownParagraph,
+        "th_open": _ConsoleRoleplayMarkdownTH,
+        "td_open": _ConsoleRoleplayMarkdownTD,
+    }
 
 
 def _speaker_label(
@@ -529,8 +706,7 @@ def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> b
 
     TASK-1990: assistant replies render through Textual's ``Markdown`` widget
     by default. This config switch restores the span-subset renderer
-    (TASK-372) for sessions that prefer its roleplay flavor styling (speech /
-    action colors), which plain markdown does not reproduce.
+    (TASK-372) for sessions that prefer its literal safe-subset presentation.
 
     Args:
         app_config: The loaded application config dict (``app.app_config``).
@@ -734,7 +910,11 @@ class ConsoleMarkdownMessage(Vertical):
             ),
             markup=False,
         )
-        yield Markdown(self._body_text, open_links=False)
+        yield ConsoleRoleplayMarkdown(
+            self._body_text,
+            classes="console-markdown-body",
+            open_links=False,
+        )
         footer_content = _assistant_markdown_footer(self._message)
         footer = Static(
             footer_content or "",
