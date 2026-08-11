@@ -630,9 +630,7 @@ def test_resume_tolerates_null_and_garbage_usage_json():
 
         store, session = _resume_into_store(db, conversation_id)
 
-        assert all(
-            m.usage is None for m in store.messages_for_session(session.id)
-        )
+        assert all(m.usage is None for m in store.messages_for_session(session.id))
     finally:
         db.close_connection()
 
@@ -836,9 +834,7 @@ def test_resume_tolerates_null_and_garbage_metadata_json():
 
         store, session = _resume_into_store(db, conversation_id)
 
-        assert all(
-            m.metadata is None for m in store.messages_for_session(session.id)
-        )
+        assert all(m.metadata is None for m in store.messages_for_session(session.id))
     finally:
         db.close_connection()
 
@@ -918,6 +914,76 @@ def test_character_screen_state_round_trips_roleplay_identity_fields_exactly():
     assert restored.user_display_name_override == "Captain Rowan"
     assert restored.character_system_template == "Speak with {{user}}."
     assert restored.identity_revision == original.identity_revision
+
+
+def test_console_task_state_round_trip_preserves_holes_and_id_high_water():
+    """Navigation restores task records without reusing a deleted task ID."""
+    original = ConsoleChatSession(title="Task state")
+    original.todo_store.create(content="One")
+    original.todo_store.create(content="Two")
+    original.todo_store.create(content="Three")
+    original.todo_store.update(task_id="2", expected_version=1, status="deleted")
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+
+    assert restored.todo_store.export_snapshot() == {
+        "next_id": 4,
+        "tasks": [
+            {"id": "1", "version": 1, "content": "One", "status": "pending"},
+            {
+                "id": "3",
+                "version": 1,
+                "content": "Three",
+                "status": "pending",
+            },
+        ],
+    }
+    assert restored.todo_store.create(content="Four")["id"] == "4"
+
+
+def test_console_task_state_missing_legacy_key_starts_empty_without_warning():
+    """Pre-task screen state is a normal legacy payload, not corruption."""
+    from loguru import logger as loguru_logger
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = controller._console_session_to_state(ConsoleChatSession())
+    payload.pop("todo_state", None)
+    warnings: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        restored = controller._console_session_from_state(payload)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="First")["id"] == "1"
+    assert warnings == []
+
+
+def test_console_task_state_malformed_key_starts_empty_with_fixed_warning():
+    """Corrupt task state fails soft without reflecting payload material."""
+    from loguru import logger as loguru_logger
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = controller._console_session_to_state(ConsoleChatSession())
+    payload["todo_state"] = {"sentinel": "private-task-payload"}
+    warnings: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        restored = controller._console_session_from_state(payload)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="First")["id"] == "1"
+    assert warnings == ["Console task state invalid; starting empty."]
+    assert "private-task-payload" not in "".join(warnings)
 
 
 @pytest.mark.parametrize(

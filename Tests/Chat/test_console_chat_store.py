@@ -735,6 +735,25 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     assert persistence.created_messages[0]["image_mime_type"] is None
 
 
+def test_durable_resume_starts_with_a_fresh_empty_todo_store():
+    """Session tasks are process-navigation state, not durable Chat data."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    live = store.ensure_session(title="Chat with tasks")
+    live.todo_store.create(content="Keep only in process memory")
+    conversation_id = store.persist_session_if_needed(live.id)
+
+    restored = store.restore_persisted_session(
+        title=live.title,
+        workspace_id=live.workspace_id,
+        persisted_conversation_id=conversation_id,
+        all_nodes=[],
+    )
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="Fresh after restart")["id"] == "1"
+
+
 def test_persist_session_if_needed_passes_system_prompt_from_settings():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -2270,6 +2289,7 @@ def test_one_shot_prefill_is_per_session():
     store.set_session_one_shot_prefill(session_a.id, "only A")
     assert store.session_one_shot_prefill(session_b.id) is None
 
+
 def test_rename_session_persists_conversation_title_when_saved():
     """TASK-341: renaming a saved conversation's tab must rename the
     persisted conversation, not just the ephemeral tab label."""
@@ -2595,9 +2615,7 @@ def test_tool_markers_survive_the_next_message():
 
     assert len(markers()) == 2, "precondition: both markers present during the run"
 
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="follow-up"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="follow-up")
     assert markers() == ["⚙ read_file → data", "⚙ search → 3 hits"], (
         "the follow-up message erased the tool trace"
     )
@@ -2691,7 +2709,9 @@ def test_set_message_usage_on_a_streaming_message_defers_persistence():
         session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
     )
     store.append_stream_chunk(message.id, "hi")
-    usage = ProviderUsage(uncached_input=10, output=5, provider="openai", model="gpt-4o")
+    usage = ProviderUsage(
+        uncached_input=10, output=5, provider="openai", model="gpt-4o"
+    )
 
     updated = store.set_message_usage(message.id, usage)
 
@@ -2909,7 +2929,8 @@ def test_regenerating_again_after_a_stopped_regenerate_records_usage_normally():
     store.begin_variant_stream(message.id)
     store.mark_message_stopped(message.id)
     store.set_message_usage(
-        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+        message.id,
+        ProviderUsage(output=7, provider="anthropic", model="m", partial=True),
     )
 
     # Second regenerate, this one succeeds.
@@ -2942,7 +2963,8 @@ def test_failed_regenerate_keeps_the_original_answers_usage():
     store.append_stream_chunk(message.id, "half a")
     store.mark_message_failed(message.id)
     store.set_message_usage(
-        message.id, ProviderUsage(output=7, provider="anthropic", model="m", partial=True)
+        message.id,
+        ProviderUsage(output=7, provider="anthropic", model="m", partial=True),
     )
 
     assert store.get_message(message.id).usage == original_usage
@@ -3322,7 +3344,9 @@ def test_session_override_is_not_console_session_settings():
     session = ConsoleChatSession(user_display_name_override="Rowan")
 
     assert session.user_display_name_override == "Rowan"
-    assert not hasattr(ConsoleSessionSettings(provider="llama_cpp"), "user_display_name_override")
+    assert not hasattr(
+        ConsoleSessionSettings(provider="llama_cpp"), "user_display_name_override"
+    )
 
 
 def test_first_persist_flushes_roleplay_context_after_conversation_exists():
@@ -3418,7 +3442,9 @@ def test_editing_derived_greeting_persists_cleared_metadata():
 
     store.update_message_content(greeting.id, "Hello there.")
 
-    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
 
 
 def test_falsy_projection_write_reports_unpersisted_without_sync():
@@ -3445,7 +3471,9 @@ def test_falsy_system_prompt_write_reports_unpersisted():
 
     persistence = RefusingPersistence()
     store = ConsoleChatStore(persistence=persistence)
-    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp")
+    )
     store.persist_session_if_needed(session.id)
 
     _updated, persisted = store.set_session_system_prompt(session.id, "Be concise.")
@@ -3461,7 +3489,9 @@ def test_successful_regeneration_clears_greeting_provenance():
     completed = store.finalize_variant_stream(greeting.id)
 
     assert completed.metadata == MessageMetadata()
-    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
 
 
 def test_stopped_regeneration_restores_greeting_provenance():
@@ -3503,7 +3533,10 @@ def test_character_name_and_seed_are_idempotent_when_unchanged():
 
     assert session.identity_revision == revision
     assert store.payload_revision(session.id) == payload
-    assert store.presentation_context(session.id, "Captain Rowan").character_name == "Alraune"
+    assert (
+        store.presentation_context(session.id, "Captain Rowan").character_name
+        == "Alraune"
+    )
 
 
 def test_character_roleplay_swap_persists_only_the_final_projection_and_context():
@@ -3621,17 +3654,25 @@ def test_durable_clear_replaces_previously_persisted_greeting_provenance():
 
     store.update_message_content(greeting.id, "Manual greeting.")
 
-    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    assert (
+        persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+    )
 
 
 def test_stale_refresh_rematerializes_and_reports_success_once():
     store, persistence, session, greeting = _seeded_roleplay_store()
 
-    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is True
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is True
+    )
     assert store.get_message(greeting.id).content == "Hello Rowan."
     writes = len(persistence.updated_messages)
     revision = store.payload_revision(session.id)
-    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is True
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is True
+    )
     assert len(persistence.updated_messages) == writes
     assert store.payload_revision(session.id) == revision
 
@@ -3701,11 +3742,14 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
             assistant_id="console",
             system_prompt="Speak with Alpha.",
         )
-        assert service.update_conversation_roleplay_context(
-            conversation_id=conversation_id,
-            user_name_override=None,
-            character_system_template="Speak with {{user}}.",
-        ) is True
+        assert (
+            service.update_conversation_roleplay_context(
+                conversation_id=conversation_id,
+                user_name_override=None,
+                character_system_template="Speak with {{user}}.",
+            )
+            is True
+        )
         greeting_metadata = MessageMetadata(
             template_kind="character_greeting",
             template_source="Hello {{user}}.",
@@ -3835,9 +3879,7 @@ def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
     )
     store.sync_v2_chat_producer = producer
     store.sync_v2_server_profile_id = "profile-1"
-    stable_key = (
-        f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
-    )
+    stable_key = f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
     baseline = producer.enqueue_chat_message(
         server_profile_id="profile-1",
         conversation_id=session.persisted_conversation_id,
@@ -3853,14 +3895,17 @@ def test_accepted_roleplay_sync_rebases_c_from_latest_owned_outbox_hash(
     )
     assert plan_b is not None
     result_b = store.persist_roleplay_projection_plan(plan_b)
-    assert len(
-        repository.list_pending_sync_v2_outbox_envelopes(
-            server_profile_id="profile-1",
-            authenticated_principal_id=None,
-            workspace_scope=None,
-            dataset_id="dataset-1",
+    assert (
+        len(
+            repository.list_pending_sync_v2_outbox_envelopes(
+                server_profile_id="profile-1",
+                authenticated_principal_id=None,
+                workspace_scope=None,
+                dataset_id="dataset-1",
+            )
         )
-    ) == 1
+        == 1
+    )
     if execute_b:
         assert store.accept_roleplay_projection_persistence_result(result_b) is True
     plan_c = store.prepare_session_roleplay_projection_refresh(
@@ -3929,9 +3974,7 @@ def test_stale_projection_after_manual_greeting_edit_never_enqueues_sync(tmp_pat
     )
     store.sync_v2_chat_producer = producer
     store.sync_v2_server_profile_id = "profile-1"
-    stable_key = (
-        f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
-    )
+    stable_key = f"{session.persisted_conversation_id}:{greeting.persisted_message_id}"
     baseline = producer.enqueue_chat_message(
         server_profile_id="profile-1",
         conversation_id=session.persisted_conversation_id,
@@ -3939,9 +3982,9 @@ def test_stale_projection_after_manual_greeting_edit_never_enqueues_sync(tmp_pat
         role="assistant",
         content="Hello User.",
     )
-    store._sync_v2_message_versions[stable_key] = baseline["outbox_entry"][
-        "envelope"
-    ]["payload_hash"]
+    store._sync_v2_message_versions[stable_key] = baseline["outbox_entry"]["envelope"][
+        "payload_hash"
+    ]
 
     plan_b = store.prepare_session_roleplay_projection_refresh(
         session.id, global_default="Bravo"
@@ -3994,6 +4037,7 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
         template_kind="character_greeting",
         template_source="Hello {{user}}.",
     )
+
     class PartialPersistence:
         def __init__(self) -> None:
             self.fail_system = failed_component == "system"
@@ -4060,9 +4104,7 @@ def test_partial_projection_failure_retains_real_durable_ancestor_for_repair(
     assert db.get_conversation_by_id(conversation_id)["system_prompt"] == (
         "Speak with Cecelia."
     )
-    assert db.get_message_by_id(persisted_message_id)["content"] == (
-        "Hello Cecelia."
-    )
+    assert db.get_message_by_id(persisted_message_id)["content"] == ("Hello Cecelia.")
     db.close_connection()
 
 
@@ -4073,7 +4115,10 @@ def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raise
 
     store, _unused, session, greeting = _seeded_roleplay_store()
     store.persistence = RefusingPersistence()
-    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is False
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is False
+    )
     assert store.get_message(greeting.id).content == "Hello Rowan."
 
     class RaisingPersistence(FakePersistence):
@@ -4082,7 +4127,10 @@ def test_stale_refresh_keeps_live_projection_when_durable_write_refuses_or_raise
 
     store, _unused, session, greeting = _seeded_roleplay_store()
     store.persistence = RaisingPersistence()
-    assert store.refresh_session_roleplay_projections(session.id, global_default="Rowan") is False
+    assert (
+        store.refresh_session_roleplay_projections(session.id, global_default="Rowan")
+        is False
+    )
     assert store.get_message(greeting.id).content == "Hello Rowan."
 
 
