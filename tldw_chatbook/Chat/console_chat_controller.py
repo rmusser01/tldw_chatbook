@@ -1262,9 +1262,16 @@ class ConsoleChatController:
         #: controller-only tests) disables recording.
         self.prompt_history: PromptHistory | None = None
         self.prompt_queue_registry = ConsolePromptQueueRegistry()
+        context_epoch = getattr(self.store, "conversation_context_epoch", None)
+        if not callable(context_epoch):
+            # Narrow compatibility seam for minimal controller test doubles
+            # and embedders that do not exercise queue progression. The real
+            # ConsoleChatStore always supplies the authoritative epoch.
+            def context_epoch(_session_id: str) -> int:
+                return 0
         self.prompt_queue_coordinator = ConsolePromptQueueCoordinator(
             registry=self.prompt_queue_registry,
-            context_epoch=self.store.conversation_context_epoch,
+            context_epoch=context_epoch,
             run_status=lambda session_id: self.run_state_for(session_id).status,
             submit_queued=self._submit_queued_entry,
             has_staged_rider=self._queued_staged_rider_present,
