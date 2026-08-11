@@ -35,7 +35,10 @@ read-only, and no task tool is registered without Console session state. Stable
 session-local IDs, exact expected-version checks, and atomic mutation preserve
 concurrent parent/fleet changes. State remains process-memory-only; the Console
 screen snapshot carries pure task records and the next-ID high-water mark solely
-across in-process navigation.
+across in-process navigation. Public task-ID numeric values and versions remain
+in the portable JSON exact-integer domain `1..2**53-1`; attempting an ID or
+version increment beyond that domain fails atomically with a fixed bounded
+exhaustion error.
 
 **Addendum (TASK-14807, 2026-08-10): catalog availability defaults on.** The
 Console registers the standard local provider (workspace file, read-only Git,

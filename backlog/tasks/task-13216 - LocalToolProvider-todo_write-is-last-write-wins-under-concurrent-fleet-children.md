@@ -23,7 +23,7 @@ PR2a Task 8's provider thread-safety audit found LocalToolProvider safe for conc
 - [ ] #1 `todo_write` is replaced by `todo_create`, `todo_update`, `todo_get`, and `todo_list` operations over stable session-local task IDs shared by the parent and fleet children
 - [ ] #2 Concurrent creates and jointly valid updates to different task IDs preserve every successful caller's change without exceeding the live-task cap
 - [ ] #3 `todo_update` and deletion require an expected task version; a stale caller receives an explicit conflict and cannot overwrite the winning update
-- [ ] #4 Concurrent task operations preserve the one-`in_progress` invariant, return defensive bounded results, and produce ordered transcript snapshots
+- [ ] #4 Concurrent task operations preserve the one-`in_progress` invariant, keep public IDs and versions within the portable JSON exact-integer domain `1..2**53-1`, return complete defensive results within the provider cap, and produce ordered transcript snapshots
 - [ ] #5 Deterministic concurrency tests cover create, different-task update, same-task conflict, capacity, callback reentrancy, and parent/fleet shared-state behavior
 - [ ] #6 Valid task records and the next-ID high-water mark survive ordinary in-process Console navigation without becoming durable across application restarts
 <!-- AC:END -->
@@ -38,8 +38,8 @@ PR2a Task 8's provider thread-safety audit found LocalToolProvider safe for conc
 ## Implementation Plan
 
 1. Amend ADR-032 and the existing local-agent-tool designs before production changes so the stable-ID/CAS contract is the governing boundary.
-2. Add a stdlib-only `SessionTodoStore` with strict validation, stable IDs, defensive navigation snapshots, atomic compare-and-swap mutation, and the two-lock callback-ordering protocol.
-3. Replace conditional `todo_write` registration with strict `todo_create`, `todo_update`, `todo_get`, and byte-aware `todo_list` provider handlers and schemas.
+2. Add a stdlib-only `SessionTodoStore` with strict validation, stable IDs and versions bounded to `1..2**53-1`, a private `2**53` exhausted-ID sentinel, defensive navigation snapshots, fixed atomic numeric exhaustion, compare-and-swap mutation, and the two-lock callback-ordering protocol.
+3. Replace conditional `todo_write` registration with strict `todo_create`, `todo_update`, `todo_get`, and byte-aware `todo_list` provider handlers and schemas that enforce the same portable ID/version/cursor ceiling and return complete bounded JSON.
 4. Make `ConsoleChatSession` own the store, wire it into provider reconstruction, and preserve its pure-data records/high-water counter through in-process screen navigation only.
 5. Harden transcript rendering, migrate real find/load/permission and parent/fleet tests, and pin external MCP/Hub absence when no Console store exists.
 6. Run focused/reachability/full tests, static/security gates, mutation probes, independent review, and only then complete the task record.

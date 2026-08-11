@@ -51,6 +51,7 @@ Keep these in `session_todo_store.py` and import them into the provider/tests ra
 ```python
 MAX_TODO_ITEMS = 50
 MAX_TODO_CONTENT_CHARS = 500
+MAX_TODO_NUMBER = (1 << 53) - 1
 TODO_STATUSES = ("pending", "in_progress", "completed")
 
 TodoRecord = dict[str, object]
@@ -80,6 +81,9 @@ Stable session-local IDs, exact expected-version checks, and atomic mutation
 preserve concurrent parent/fleet changes. State remains process-memory-only;
 the Console screen snapshot carries pure task records and the next-ID
 high-water mark solely across in-process navigation.
+Public task-ID numeric values and versions stay in the portable JSON
+exact-integer domain `1..2**53-1`; fixed atomic exhaustion applies when an ID
+or version increment would exceed that domain.
 ```
 
 - [ ] **Step 2: Amend the older local-tool designs**
@@ -117,7 +121,13 @@ git commit -m "docs(todo): amend local task permission contract"
 
 - [ ] **Step 1: Write failing record and validation tests**
 
-Cover create/get/ordered list, defensive copies, 50-task capacity, one `in_progress`, exact built-in integer versions, canonical decimal IDs, 500-character content/activeForm bounds, unknown statuses, blank content, and strict UTF-8 rejection. Pin atomic rejection:
+Cover create/get/ordered list, defensive copies, 50-task capacity, one
+`in_progress`, exact built-in integer versions in `1..MAX_TODO_NUMBER`,
+canonical decimal IDs in the same numeric domain, 500-character
+content/activeForm bounds, unknown statuses, blank content, and strict UTF-8
+rejection. Test exact maximum, one-over, and 100,000-digit IDs; exact maximum,
+one-over, and very-large versions/`next_id` integers; reject oversized ID text
+lexically before decimal conversion. Pin atomic rejection:
 
 ```python
 def test_create_rejects_lone_surrogate_without_allocating_an_id():
@@ -184,16 +194,22 @@ Validation helpers must use exact built-in types where required:
 
 ```python
 def _canonical_id(value: object, *, field: str = "id") -> str:
-    if type(value) is not str or not value.isascii() or not value.isdecimal():
-        raise TodoStoreError(f"{field} must be a canonical positive decimal string")
-    if value == "0" or value.startswith("0"):
-        raise TodoStoreError(f"{field} must be a canonical positive decimal string")
+    maximum = str(MAX_TODO_NUMBER)
+    if type(value) is not str or not value or len(value) > len(maximum):
+        raise TodoStoreError(f"invalid {field}")
+    if (
+        not value.isascii()
+        or not value.isdecimal()
+        or value[0] == "0"
+        or (len(value) == len(maximum) and value > maximum)
+    ):
+        raise TodoStoreError(f"invalid {field}")
     return value
 
 
 def _version(value: object) -> int:
-    if type(value) is not int or value < 1:
-        raise TodoStoreError("expected_version must be an integer at least 1")
+    if type(value) is not int or not 1 <= value <= MAX_TODO_NUMBER:
+        raise TodoStoreError("invalid expected_version")
     return value
 
 
@@ -213,11 +229,28 @@ Do not log or interpolate the rejected value or exception.
 
 - [ ] **Step 4: Add snapshot import/export tests before implementing restore**
 
-Test exact valid round trip, missing/deleted ID high-water preservation, duplicate IDs, noncanonical IDs, invalid types/fields, over-cap input, multiple `in_progress`, and `next_id <= max(live ids)`. Mutating exported input/output must not alias internal state.
+Test exact valid round trip, missing/deleted ID high-water preservation,
+duplicate IDs, noncanonical IDs, invalid types/fields, over-cap input, multiple
+`in_progress`, and `next_id <= max(live ids)`. Add boundary snapshots proving:
+live IDs and versions accept `MAX_TODO_NUMBER` but reject one-over and
+very-long values; `next_id` accepts `1..MAX_TODO_NUMBER + 1` but rejects either
+side; the upper sentinel may sit above a live maximum ID; and existing
+creation-order and deleted-ID-gap semantics remain unchanged. Mutating exported
+input/output must not alias internal state.
 
 - [ ] **Step 5: Implement snapshot import/export**
 
-Validate into temporary local values first and assign only after the full payload passes. The accepted payload has exact keys `next_id` and `tasks`; each task has only public record keys. `next_id` is an exact positive integer and must exceed every live numeric ID.
+Validate into temporary local values first and assign only after the full
+payload passes. The accepted payload has exact keys `next_id` and `tasks`; each
+task has only public record keys. Each live ID and version is bounded by
+`MAX_TODO_NUMBER`. `next_id` is an exact built-in integer in
+`1..MAX_TODO_NUMBER + 1` and must exceed every live numeric ID; the upper value
+is the exhaustion sentinel, never a live public ID. Creation at
+`next_id == MAX_TODO_NUMBER` issues the final ID once and commits the sentinel.
+Any later create raises the fixed `task id space exhausted` error without
+state change or callback; after full request validation, check exhaustion
+before the live-task capacity condition so every sentinel-state create has that
+fixed result.
 
 - [ ] **Step 6: Run focused tests and mutation probes**
 
@@ -227,7 +260,11 @@ Run:
 ../../.venv/bin/python -m pytest Tests/Agents/test_session_todo_store.py -q
 ```
 
-Then temporarily weaken and restore each guard: return the live record instead of a copy; accept `isinstance(version, int)`; skip strict UTF-8; reset `next_id` from only current live count. Each corresponding focused test must fail before the code is restored.
+Then temporarily weaken and restore each guard: return the live record instead
+of a copy; accept `isinstance(version, int)`; skip strict UTF-8; reset `next_id`
+from only current live count; remove the `MAX_TODO_NUMBER` lexical/numeric
+checks; and allow create past the exhaustion sentinel. Each corresponding
+focused test must fail before the code is restored.
 
 - [ ] **Step 7: Commit the state model**
 
@@ -245,7 +282,17 @@ git commit -m "feat(todo): add session task state model"
 
 - [ ] **Step 1: Write failing update/delete semantics tests**
 
-Cover partial patch, same-value patch increments once, activeForm removal with `None`, delete-only behavior, delete result `{id, deleted, version}`, update-after-delete not found, stale conflict with fixed non-reflective message, and the one-`in_progress` invariant. Ensure validation/not-found/conflict emits no callback and changes no state.
+Cover partial patch, same-value patch increments once, activeForm removal with
+`None`, delete-only behavior, delete result `{id, deleted, version}`, update-
+after-delete not found, stale conflict with fixed non-reflective message, and
+the one-`in_progress` invariant. Seed boundary records through validated
+snapshots: update and delete at `MAX_TODO_NUMBER - 1` must return version
+`MAX_TODO_NUMBER`; either operation on a record already at the maximum must
+raise fixed `task version exhausted` with no state change or callback. Pin the
+existing precedence: complete input validation, not-found, conflict, version
+exhaustion, then proposed-record/global-invariant validation. Ensure every
+validation/not-found/conflict/exhaustion failure emits no callback and changes
+no state.
 
 - [ ] **Step 2: Write deterministic concurrency RED tests**
 
@@ -292,15 +339,28 @@ def test_callback_serializes_mutation_commit_and_return():
     assert second_done.is_set()
 ```
 
-`ObservedLock` is a test-only context-manager wrapper around the real lock; it must delegate `__enter__`/`__exit__` without changing production. Also force: two creates; two jointly-valid updates on different IDs; same-ID stale conflict; two different IDs racing to `in_progress`; and 49 tasks plus two creates (one success, one fixed capacity error, exactly 50 live tasks).
+`ObservedLock` is a test-only context-manager wrapper around the real lock; it
+must delegate `__enter__`/`__exit__` without changing production. Also force:
+two creates; two jointly-valid updates on different IDs; same-ID stale
+conflict; two different IDs racing to `in_progress`; and 49 tasks plus two
+creates (one success, one fixed capacity error, exactly 50 live tasks). Use a
+test-only parking mapping to stop the first contender inside the selected real
+`len`/`get`/`setitem` state operation, then observe the second immediately
+before its real mutation-lock acquisition. This forced interleaving makes each
+concurrency test fail if either lock disappears and avoids scheduler-delay
+evidence.
 
 Add explicit callback contracts:
 
 - successive successful mutations produce snapshots in commit order;
 - mutating a received snapshot cannot mutate store state or a later snapshot;
 - failed validation/conflict/not-found emits no callback;
-- a raising callback leaves the mutation committed and returns the created/updated record; and
-- a credential/path-shaped callback exception produces exactly the fixed payload-free warning with no structured exception field or private fragments.
+- a raising callback leaves the mutation committed and returns the created/updated record;
+- a credential/path-shaped callback exception produces exactly the fixed payload-free warning with no structured exception field or private fragments;
+- same-thread create/update/delete attempted inside a callback fail fast with
+  one fixed payload-free error rather than deadlocking or mutating state; and
+- callback containment covers `BaseException`, preserving the never-raise seam
+  after commit.
 
 - [ ] **Step 3: Run RED**
 
@@ -317,22 +377,47 @@ def _mutate(self, commit, on_change):
             result = commit()
             snapshot = self._snapshot_locked()
         if on_change is not None:
+            was_active = getattr(self._callback_context, "active", False)
+            self._callback_context.active = True
             try:
                 on_change(snapshot)
-            except Exception:
+            except BaseException:
                 _LOG.warning("Session todo change callback failed.")
+            finally:
+                self._callback_context.active = was_active
         return _copy_record(result)
 ```
 
-The state lock must be released before callback execution. The mutation lock remains held through the callback. Reads take only the state lock. Do not expose either lock.
+Call `_reject_callback_mutation()` at the start of each public mutation before
+validation or lock acquisition. The state lock must be released before
+callback execution. The mutation lock remains held through the callback. Reads
+take only the state lock. Do not expose either lock.
 
 - [ ] **Step 5: Add the direct/cross-thread callback read deadlock test**
 
-Run the callback test in a `multiprocessing` subprocess with a bounded join. Define the child entry point at module scope so it remains picklable under macOS/Windows `spawn`. Inside the callback, call `store.get()` directly and have another thread call `store.list_after(None)`; both must complete before callback returns. If the child is still alive at the deadline, terminate it and fail. This turns holding `_state_lock` across callback into a deterministic failure without hanging pytest. Also make a raising callback contain a credential/path-shaped sentinel; assert the mutation succeeds and the one fixed warning contains no exception, content, path, or credential fragments.
+Run the callback read and reentrant-mutation tests with an explicit
+`multiprocessing.get_context("spawn")` and bounded joins. Define every child
+entry point at module scope so it remains picklable under macOS/Windows spawn.
+Inside the read callback, call `store.get()` directly and have another thread
+call `store.list_after(None)`; both must complete before callback returns. In a
+`finally`, terminate and then kill a stuck child if needed, join it, and close
+both process and queue handles on success, timeout, and start failure. Add
+regressions proving that timeout reaps the child and start failure closes every
+constructed handle. This turns holding `_state_lock` across callback into a
+deterministic failure without hanging or leaking pytest children. Also make a
+raising callback contain a credential/path-shaped sentinel; assert the mutation
+succeeds and the one fixed warning contains no exception, content, path, or
+credential fragments.
 
 - [ ] **Step 6: Verify GREEN and kill the guards**
 
-Run the whole store file. Then temporarily remove, one at a time, the mutation lock, state lock, version equality, defensive-copy operation, and one-in-progress check. Each required focused test must turn red; restore after each probe.
+Run the whole store file. Then temporarily remove, one at a time, the mutation
+lock, state lock, version equality, numeric-exhaustion checks, callback
+reentrancy guard, defensive-copy operation, and one-in-progress check. Each
+required focused test must turn red; restore after each probe. The Task 3 review
+hardening—fail-fast callback mutation, forced real-operation interleavings, and
+spawn cleanup on all exits—is part of the accepted plan, not disposable test
+scaffolding.
 
 - [ ] **Step 7: Commit atomic mutation behavior**
 
@@ -369,11 +454,24 @@ def test_task_tools_are_conditional_and_todo_write_is_removed(tmp_path):
     assert with_store.hub_tool_for("todo_list").tags == ()
 ```
 
-Pin exact schema required fields, enums, nullable activeForm, bounds, and `additionalProperties: false` for all four tools.
+Pin exact schema required fields, enums, nullable activeForm, bounds, and
+`additionalProperties: false` for all four tools. The `id` and `cursor` string
+schemas must accept exactly canonical decimal values in
+`1..MAX_TODO_NUMBER`—including an exact upper-bound pattern, not merely a
+16-character limit—and `expected_version` must declare integer
+`minimum: 1`/`maximum: MAX_TODO_NUMBER`. Schema tests accept the exact boundary
+and reject one-over before handler invocation.
 
 - [ ] **Step 2: Write table-driven raw-boundary RED tests**
 
-Invoke handlers directly through `provider.invoke()` with missing/unknown keys, bool expected_version, integer ID/cursor, zero/leading-zero/signed cursor, null activeForm on create, empty update, delete plus another mutation field, caller-supplied version/status/id on create, and lone surrogates. Assert failed `ToolResult`, fixed/bounded error, no state or callback.
+Invoke handlers directly through `provider.invoke()` with missing/unknown keys,
+bool or `int`-subclass `expected_version`, integer ID/cursor,
+zero/leading-zero/signed ID/cursor, null activeForm on create, empty update,
+delete plus another mutation field, caller-supplied version/status/id on
+create, and lone surrogates. For ID, expected version, and cursor, test the
+exact `MAX_TODO_NUMBER` boundary, one-over, and a very-long string/integer.
+Assert schema and raw invocation agree: only the exact boundary is accepted;
+every failure returns a fixed bounded `ToolResult` with no state or callback.
 
 Add a provider-level callback-failure test: inject a callback that raises a credential/path-shaped sentinel, invoke `todo_create`, and assert `ToolResult.ok is True`, the compact JSON result is the committed record, the store contains it, and the one fixed diagnostic contains none of the sentinel fragments. This proves the store's containment remains true at the public provider boundary.
 
@@ -405,6 +503,12 @@ def _exact_args(args: object, *, allowed: set[str], required: set[str]) -> dict:
     return args
 ```
 
+After exact-key validation, route `todo_get`/`todo_update` IDs and `todo_list`
+cursors through the store's bounded canonical-ID validator before numeric
+conversion, and route `expected_version` through the exact built-in bounded
+integer validator. Mirror those ceilings in the schemas. Reject very-long ID
+and cursor strings lexically before decimal conversion is attempted.
+
 Handlers call `store.create/update/get/list_after` and serialize every success using:
 
 ```python
@@ -419,7 +523,12 @@ No task response may pass through `_fit_result` in an oversized form; the handle
 
 - [ ] **Step 5: Implement byte-aware `todo_list` pages**
 
-Build candidate pages in creation order and append a task only if the complete `{tasks, next_cursor}` candidate stays within `_MAX_RESULT_BYTES`. Use the returned task's ID as `next_cursor` only when more live tasks remain. Accept a canonical positive cursor as an exclusive numeric lower bound even if deleted/unissued/future.
+Build candidate pages in creation order and append a task only if the complete
+`{tasks, next_cursor}` candidate stays within `_MAX_RESULT_BYTES`. Use the
+returned task's ID as `next_cursor` only when more live tasks remain. Accept a
+bounded canonical cursor as an exclusive numeric lower bound even if
+deleted/unissued/future; a never-issued/future cursor is valid only through
+`MAX_TODO_NUMBER`.
 
 - [ ] **Step 6: Add maximum ASCII/multibyte pagination tests**
 
@@ -430,11 +539,19 @@ payload = json.loads(result.content)
 assert len(result.content.encode("utf-8")) <= 32 * 1024
 ```
 
-Assert exact once-only ID coverage; delete a page-ending task before continuation; create after the first page and assert it appears once; future cursor yields `{tasks: [], next_cursor: None}`.
+Assert exact once-only ID coverage; delete a page-ending task before
+continuation; create after the first page and assert it appears once; the
+maximum-domain future cursor yields `{tasks: [], next_cursor: None}`. Serialize
+boundary ID/version/tombstone/list responses and parse each with `json.loads`;
+assert every result is complete valid JSON, every public task number is in
+`1..MAX_TODO_NUMBER`, and every UTF-8 result remains within the 32-KiB cap.
 
 - [ ] **Step 7: Verify provider tests and mutations**
 
-Run all provider tests. Mutation-check removal of `additionalProperties`, bool rejection, complete-response byte measurement, and `ensure_ascii=False`; each corresponding test must fail, then restore.
+Run all provider tests. Mutation-check removal of `additionalProperties`, bool
+rejection, the schema/raw `MAX_TODO_NUMBER` checks, very-long lexical rejection,
+complete-response byte measurement, and `ensure_ascii=False`; each
+corresponding test must fail, then restore.
 
 - [ ] **Step 8: Commit the provider migration**
 
