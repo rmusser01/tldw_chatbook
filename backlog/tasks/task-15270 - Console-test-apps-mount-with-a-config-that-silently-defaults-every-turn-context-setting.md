@@ -74,10 +74,37 @@ no longer disagree.
 **Blast radius, measured.** All 241 modules that use the factory (6,016 tests)
 were run with the fix, then the 51 modules containing failures were re-run with
 the legacy config behind a temporary env switch. 31 tests were genuinely
-newly-red; 14 are closed here and 17 handed off with a per-test diagnosis (see
-the task report). Two tests went from red to green: `test_happy_path_stages_then_
-send_consumes` and `test_send_proceeds_when_auto_retrieve_fails` -- the vacuous
-pair from task-15210, which now actually fire retrieval.
+newly-red across that whole sweep. Two tests went from red to green:
+`test_happy_path_stages_then_send_consumes` and
+`test_send_proceeds_when_auto_retrieve_fails` -- the vacuous pair from
+task-15210, which now actually fire retrieval.
+
+**Per-test outcome, re-measured at the rebase.** The 10 modules this branch
+touches were run whole against the branch and again against `origin/dev`, so
+"newly-red" here means red on the branch AND green on dev -- 9 tests (the wider
+sweep's 31 covers 241 modules, most of them outside this branch). Five are fixed
+outright: the two Ollama ones were opening a real socket to 127.0.0.1:11434
+because a URL-based provider now has an endpoint and readiness takes the
+task-191 live-probe branch (stubbed at the seam the sibling probe tests already
+stub, rather than marked `allow_network`); the two privacy ones asserted
+absolute sensitive-field counts over the WHOLE config, so they now scrub the
+config first and count only what they arranged; and
+`..._tolerates_missing_provider_values` was patching `_provider_setting_values`,
+a seam this path does not read -- it calls `_provider_setting_values_mapping()`
+-- so the stub was dead and the "missing values" premise had been supplied for
+free by the empty config.
+
+The remaining four are xfail(strict=True) against two filed product bugs, not
+silenced: **task-15510** (navigation preselect applies the provider, which is
+itself what marks the category dirty, so the deferred apply hits its
+unsaved-changes guard and drops the model -- measured: dirty=False before,
+dirty=True and model unchanged after) and **task-15511** (a completed
+non-streaming send leaves `run_state` at IDLE, stable across ~0.8s so not a
+race; and an inline image row vanishes on the pixels -> graphics toggle).
+
+Note for anyone re-running this: five further failures in
+`test_settings_configuration_hub.py` and `test_console_workbench_contract.py`
+reproduce on `origin/dev` untouched and are NOT from this change.
 
 Recurring cause among the newly-red: a test arranged state through a seam the
 shipping app does not read, and only the empty config let it look effective.
