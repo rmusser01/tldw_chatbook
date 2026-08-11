@@ -36,10 +36,16 @@ Measured attribution (P2ab Task 7 review round, reproduced twice):
 Exactly the weighting arc's proven form: enumerate candidate MATCH
 constructions, run each over the full gated matrix (extending the
 existing sweep machinery in `Tests/RAG_Eval/harness/fusion_sweep.py`
-with a match-construction axis — same cache-key discipline: the
-construction MUST enter the search cache key or the sweep measures
-nothing; that lesson is paid for), and pick by a mechanical rule
-written BEFORE the sweep runs.
+with a match-construction axis), and pick by a mechanical rule written
+BEFORE the sweep runs. Sweep-blindness discipline (corrected at
+review): the construction is CODE, not a config knob, so it cannot
+enter the cache key the way rrf_k did — the sweep varies it through a
+test-side injection seam and MUST rebuild the runtime or
+`clear_cache()` between passes (the Task-6 counterfactual precedent),
+with a sweep self-check that the control row reproduces the shipped
+census (20/60) so a cache-blinded sweep cannot silently report
+"construction doesn't matter". If the construction ever becomes
+runtime-variable, it enters the key that day.
 
 ### Candidate constructions (the spec pre-registers these four)
 
@@ -48,18 +54,28 @@ written BEFORE the sweep runs.
    fixed English stopword list; falls back to full AND if trimming
    empties the query). Expected ~1/40 per the attribution — included
    so the sweep RECORDS its inadequacy rather than folklore-izing it.
-3. **`or`** — OR-of-tokens (each token still individually quoted).
-   Expected +10/−1; the −1 is disqualifying under the decision rule
-   unless the rule's protected cells say otherwise — included as the
-   upper bound on recall and the measured warning against shipping it.
+3. **`or`** — OR over CONTENT tokens (each still individually quoted;
+   stopwords trimmed from the OR form — review finding: a raw
+   OR-of-all-tokens matches every document containing "the", flooding
+   negatives and precision alike; bm25's IDF discounts ubiquitous
+   terms in RANKING but not in the row COUNT, and the fallback's
+   entire risk surface is junk rows entering fusion). If trimming
+   empties the token list, return no rows — honest, never a syntax
+   error. Expected +10/−1; the −1 is disqualifying under the rule —
+   included as the recall upper bound and the measured warning.
 4. **`and_then_or` (the data's own suggestion)** — per sub-leg query:
    run AND first; if AND yields zero rows for that sub-leg, rerun as
-   OR. Preserves every current AND hit BY CONSTRUCTION (a nonempty
-   AND never falls back — `kw-plant-maintenance-record` keeps its
-   unique rank-1 resolution untouched), widens only where today's
-   construction returns nothing (which can only add). Cost: one extra
-   FTS query per zero-row sub-leg (FTS5 on these DBs is milliseconds;
-   measure and record anyway).
+   the content-token OR of construction 3. Preserves every current
+   AND hit BY CONSTRUCTION (a nonempty AND never falls back —
+   `kw-plant-maintenance-record`'s engine-leg resolution and hence
+   its hybrid rescue stay untouched), widens only where today's
+   construction returns nothing. Cost: one extra FTS query per
+   zero-row sub-leg (FTS5 here is milliseconds; measure and record
+   anyway). Note the deliberate mixed-mode interleave: one query may
+   carry AND rows from one sub-leg and fallback-OR rows from another;
+   provenance must record which rows came from the fallback so
+   mechanism prose stays table-derived (the arc's prose-is-an-oracle
+   lesson).
 
 A fifth axis worth one probe each, not a full matrix row: FTS5 `NEAR`
 and prefix (`token*`) variants — probe-recorded, promoted to a full row
@@ -67,16 +83,36 @@ only if a probe beats `and_then_or` on any failing category.
 
 ### Pre-registered decision rule (mechanical; the winner is computed)
 
+- SCOPE FACT the constraints are built on (code-verified at review):
+  the gated PLAIN cells ride the Library's four-seam path
+  (`library_local_rag_search_service.py` ~L287/913 — "NOT the
+  engine's keyword leg"), which this arc does not touch. An engine-leg
+  construction change can move ONLY hybrid cells (and the leg-level
+  census). The vector-blind fixture's plain rank 1 is therefore
+  untouchable here, not a constraint — its LIVE protected cell is the
+  hybrid rescue.
 - HARD CONSTRAINTS (any violation disqualifies): (a) the vector-blind
-  fixture `kw-plant-maintenance-record` keeps plain rank 1 AND its
-  hybrid rescue; (b) no gated cell regresses > 0.02 in any mode
-  (recall/MRR/NDCG; precision cells are gate-inert as established);
-  (c) `Tests/RAG_Search/test_fts5_query_escaping.py` stays green
-  byte-for-byte (injection quoting is load-bearing — every candidate
-  keeps per-token quoting);
-  (d) the negative category stays honest (plain returns nothing for
-  absent topics — an OR construction that surfaces junk for negatives
-  regresses (d); measure results-returned@k on negatives explicitly).
+  fixture `kw-plant-maintenance-record` keeps its hybrid rescue (for
+  `and_then_or` this holds by construction; for `or` it is the
+  measured loss); (b) no gated cell regresses > 0.02 in any mode
+  (recall/MRR/NDCG; precision cells are gate-inert as established —
+  this also covers displacement: new FTS rows entering fusion can
+  displace targets sitting at ranks 9-10, exactly where the scoped
+  fixtures live); (c) `Tests/RAG_Search/test_fts5_query_escaping.py`
+  stays green with every candidate keeping per-token quoting.
+- NEGATIVE-COMPOSITION RECORD (review finding — the gate is blind
+  here, so the sweep must not be): the gated negative probes
+  (`docs_at_k`, `top_score`) will NOT move under `and_then_or` for
+  hybrid — the vector leg already fills k on negatives and a fallback
+  FTS row's fused 0.05 cannot beat the vector rank-1's 0.7/6 ≈ 0.117 —
+  but the COMPOSITION changes: fallback junk rows can enter hybrid
+  top-10 at the rescue slots (~9) for absent-topic queries. The sweep
+  records, per candidate, the count of FTS-only fallback rows inside
+  hybrid top-10 across the 7 negatives. This is a RECORDED metric
+  feeding the tie-break (fewer is better), not a hard constraint — a
+  partial-match row at rank 9 of an absent-topic query is ordinary IR
+  behavior, but it must be a measured, named tradeoff, never a
+  surprise.
 - WINNER: the candidate that, subject to the constraints, maximizes the
   count of golden queries whose target enters the keyword leg's top-10
   (the census number, 20 today); ties broken by fewest extra FTS
@@ -145,8 +181,10 @@ only if a probe beats `and_then_or` on any failing category.
 
 1. The sweep machinery's extension point (how fusion_sweep parameterizes
    a strategy — add a construction axis without duplicating the runner).
-2. Where the construction must enter the cache key (`_make_key`'s
-   composition — the weighting arc's lesson).
+2. The injection seam's exact form (constructor arg vs class attribute
+   on RAGService; whether the cache is per-service-instance — if so a
+   fresh runtime per pass needs no clearing at all; verify by reading
+   how the service constructs its SimpleRAGCache).
 3. FTS5 `rank` ordering semantics under OR (bm25 handles OR fine — but
    verify ORDER BY rank is well-defined for OR queries on all four
    sub-leg schemas, incl. prompts_fts's multi-column weighting).
