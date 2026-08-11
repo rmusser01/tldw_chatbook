@@ -707,23 +707,34 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
             self._closed = False
 
         def __next__(self) -> Any:
-            with self._close_lock:
-                if self._closed:
-                    raise StopIteration
+            if self._is_closed():
+                raise StopIteration
             try:
                 item = next(response)
             except BaseException:
                 self.close()
                 raise
+            if self._is_closed():
+                raise StopIteration
             try:
-                with self._close_lock:
-                    if self._closed:
-                        raise StopIteration
-                    accumulator.feed_payload(_decode_stream_item(item))
+                payload = _decode_stream_item(item)
             except BaseException:
                 self.close()
                 raise
+            if self._is_closed():
+                raise StopIteration
+            try:
+                accumulator.feed_payload(payload)
+            except BaseException:
+                self.close()
+                raise
+            if self._is_closed():
+                raise StopIteration
             return item
+
+        def _is_closed(self) -> bool:
+            with self._close_lock:
+                return self._closed
 
         def close(self) -> None:
             with self._close_lock:

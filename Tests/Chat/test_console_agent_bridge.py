@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     SubAgentSummary,
     _StreamingModelAdapter,
+    _openai_usage_from_provider_call,
     compose_agent_system_prompt,
     format_agent_step_marker,
     format_todo_marker,
@@ -1024,6 +1025,130 @@ def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
     assert store.get_message(aid).content == "answer"
     assert signals.synthetic_fallback_emitted is False
     assert signals.usage_payloads() == [usage]
+
+
+@pytest.mark.parametrize(
+    ("cache_creation_input_tokens", "expected_total"),
+    [(0, 10_954), (111, 11_065)],
+    ids=("cache-read", "cache-read-and-creation"),
+)
+def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
+    tmp_path,
+    monkeypatch,
+    cache_creation_input_tokens,
+    expected_total,
+):
+    estimator_calls: list[str] = []
+    captured_usage: list[dict] = []
+
+    def fail_estimator(*_args, **_kwargs):
+        estimator_calls.append("called")
+        raise AssertionError("provider usage must bypass the local estimator")
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
+    monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+    real_usage_total_tokens = agent_service._usage_total_tokens
+
+    def capture_usage(response):
+        captured_usage.append(response["usage"])
+        return real_usage_total_tokens(response)
+
+    monkeypatch.setattr(agent_service, "_usage_total_tokens", capture_usage)
+    input_usage = {
+        "input_tokens": 3_571,
+        "cache_read_input_tokens": 6_656,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+    }
+    output_usage = {"output_tokens": 727}
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [], "usage": input_usage},
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": output_usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="Anthropic",
+        base_url="",
+        model="claude-sonnet-4-6",
+        ready=True,
+        readiness_key="anthropic",
+        execution_key="anthropic",
+        api_key="anthropic-test-key",
+        streaming=True,
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="claude-sonnet-4-6",
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "answer"
+    assert outcome.total_tokens == expected_total
+    assert estimator_calls == []
+    assert captured_usage == [
+        {
+            "prompt_tokens": 3_571 + 6_656 + cache_creation_input_tokens,
+            "prompt_tokens_details": {"cached_tokens": 6_656},
+            "completion_tokens": 727,
+            "total_tokens": expected_total,
+        }
+    ]
+    assert signals.synthetic_fallback_emitted is False
+    assert signals.usage_payloads() == [{**input_usage, **output_usage}]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"tokens": 12},
+        {"prompt_tokens": "not-a-number", "completion_tokens": -5},
+    ],
+)
+def test_provider_usage_handoff_omits_absent_or_nonpositive_payloads(payload):
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+def test_openai_usage_handoff_preserves_chat_completion_cache_details():
+    assert _openai_usage_from_provider_call(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        },
+        provider="openai",
+        model="gpt-4.1",
+    ) == {
+        "prompt_tokens": 100,
+        "prompt_tokens_details": {"cached_tokens": 80},
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }
 
 
 def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_path):

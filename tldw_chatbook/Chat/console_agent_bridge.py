@@ -73,6 +73,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
@@ -1104,39 +1105,38 @@ class _ModelCallLifeline:
 
 def _openai_usage_from_provider_call(
     payload: Mapping[str, Any] | None,
+    *,
+    provider: str,
+    model: str,
 ) -> dict[str, Any] | None:
-    if payload is None:
+    if not isinstance(payload, Mapping):
+        return None
+    normalized = ProviderUsage.from_provider_payload(
+        payload,
+        provider=provider,
+        model=model,
+    )
+    if normalized is None or normalized.total_tokens <= 0:
         return None
 
-    def token_count(*keys: str) -> int | None:
-        for key in keys:
-            value = payload.get(key)
-            if type(value) is int and value >= 0:
-                return value
-        return None
-
-    prompt_tokens = token_count("prompt_tokens", "input_tokens")
-    completion_tokens = token_count("completion_tokens", "output_tokens")
-    total_tokens = token_count("total_tokens")
-    if (
-        total_tokens is None
-        and prompt_tokens is not None
-        and completion_tokens is not None
-    ):
-        total_tokens = prompt_tokens + completion_tokens
-    if total_tokens is None or total_tokens <= 0:
-        return None
-
-    usage: dict[str, Any] = {"total_tokens": total_tokens}
-    if prompt_tokens is not None:
-        usage["prompt_tokens"] = prompt_tokens
-    if completion_tokens is not None:
-        usage["completion_tokens"] = completion_tokens
+    prompt_tokens = (
+        normalized.uncached_input + normalized.cache_read + normalized.cache_write
+    )
+    usage: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": normalized.output,
+        "total_tokens": normalized.total_tokens,
+    }
     prompt_details = payload.get(
         "prompt_tokens_details", payload.get("input_tokens_details")
     )
-    if isinstance(prompt_details, Mapping):
-        usage["prompt_tokens_details"] = dict(prompt_details)
+    normalized_prompt_details = (
+        dict(prompt_details) if isinstance(prompt_details, Mapping) else {}
+    )
+    if "cached_tokens" in normalized_prompt_details or normalized.cache_read:
+        normalized_prompt_details["cached_tokens"] = normalized.cache_read
+    if normalized_prompt_details:
+        usage["prompt_tokens_details"] = normalized_prompt_details
     completion_details = payload.get(
         "completion_tokens_details", payload.get("output_tokens_details")
     )
@@ -1435,7 +1435,11 @@ class _StreamingModelAdapter:
             message["tool_calls"] = native_calls
         response: dict[str, Any] = {"choices": [{"message": message}]}
         if call_signals is not None:
-            usage = _openai_usage_from_provider_call(call_signals.usage_snapshot())
+            usage = _openai_usage_from_provider_call(
+                call_signals.usage_snapshot(),
+                provider=self._resolution.provider,
+                model=self._resolution.model or model or "",
+            )
             if usage is not None:
                 response["usage"] = usage
         return response

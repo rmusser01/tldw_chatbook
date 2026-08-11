@@ -3177,6 +3177,18 @@ class _CloseableMapping(dict):
             raise self.close_failure
 
 
+class _BlockingAccumulator:
+    def __init__(self) -> None:
+        self.feed_entered = threading.Event()
+        self.release_feed = threading.Event()
+        self.payloads: list[object] = []
+
+    def feed_payload(self, payload: object) -> None:
+        self.feed_entered.set()
+        self.release_feed.wait(timeout=5)
+        self.payloads.append(payload)
+
+
 def test_tee_tool_calls_explicit_close_stops_future_iteration() -> None:
     underlying = _CloseTrackingIterator([{"content": "late"}])
     accumulator = _RecordingAccumulator()
@@ -3214,6 +3226,92 @@ def test_tee_tool_calls_discards_item_returned_after_concurrent_close() -> None:
     assert len(outcomes) == 1 and isinstance(outcomes[0], StopIteration)
     assert underlying.close_calls == 1
     assert accumulator.payloads == []
+
+
+def test_tee_tool_calls_close_is_prompt_while_accumulator_feed_is_blocked() -> None:
+    payload = {"choices": [{"delta": {"content": "late"}}]}
+    underlying = _CloseTrackingIterator([payload])
+    accumulator = _BlockingAccumulator()
+    tee = gateway_module._tee_tool_calls(underlying, accumulator)
+    outcomes: list[object] = []
+    close_finished = threading.Event()
+
+    def consume() -> None:
+        try:
+            outcomes.append(next(tee))
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            outcomes.append(exc)
+
+    def close() -> None:
+        tee.close()
+        close_finished.set()
+
+    consumer = threading.Thread(target=consume)
+    closer = threading.Thread(target=close)
+    consumer.start()
+    assert accumulator.feed_entered.wait(timeout=1)
+    closer.start()
+    try:
+        assert close_finished.wait(timeout=0.5)
+        assert underlying.close_calls == 1
+    finally:
+        accumulator.release_feed.set()
+        consumer.join(timeout=1)
+        closer.join(timeout=1)
+
+    assert not consumer.is_alive()
+    assert not closer.is_alive()
+    assert len(outcomes) == 1 and isinstance(outcomes[0], StopIteration)
+    # The feed was already running when close sealed the tee, so it may finish
+    # its own work; the sealed item must still never be returned.
+    assert accumulator.payloads == [payload]
+    tee.close()
+    assert underlying.close_calls == 1
+
+
+@pytest.mark.parametrize("close_stage", ["decode", "feed"])
+def test_tee_tool_calls_reentrant_close_does_not_deadlock(
+    close_stage,
+    monkeypatch,
+) -> None:
+    payload = {"choices": [{"delta": {"content": "late"}}]}
+    underlying = _CloseTrackingIterator([payload])
+    accumulator = _RecordingAccumulator()
+    tee_holder: dict[str, object] = {}
+
+    if close_stage == "decode":
+
+        def close_during_decode(item):
+            tee_holder["tee"].close()
+            return item
+
+        monkeypatch.setattr(gateway_module, "_decode_stream_item", close_during_decode)
+    else:
+
+        def close_during_feed(item):
+            tee_holder["tee"].close()
+            accumulator.payloads.append(item)
+
+        accumulator.feed_payload = close_during_feed
+
+    tee = gateway_module._tee_tool_calls(underlying, accumulator)
+    tee_holder["tee"] = tee
+    outcomes: list[object] = []
+
+    def consume() -> None:
+        try:
+            outcomes.append(next(tee))
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            outcomes.append(exc)
+
+    consumer = threading.Thread(target=consume, daemon=True)
+    consumer.start()
+    consumer.join(timeout=0.5)
+
+    assert not consumer.is_alive()
+    assert len(outcomes) == 1 and isinstance(outcomes[0], StopIteration)
+    assert underlying.close_calls == 1
+    assert accumulator.payloads == ([] if close_stage == "decode" else [payload])
 
 
 @pytest.mark.parametrize("failure_stage", ["decode", "feed"])
