@@ -489,10 +489,37 @@ class LibraryFileNotesWorkspace(Vertical):
         padding-left: 1;
     }
 
+    #file-notes-search-row,
+    #file-notes-path-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    .file-notes-field-label {
+        height: 3;
+        min-height: 3;
+        color: $text-muted;
+        text-style: bold;
+        content-align: left middle;
+        padding-right: 1;
+        text-wrap: nowrap;
+    }
+
+    #file-notes-search-label {
+        width: 8;
+        min-width: 8;
+    }
+
+    #file-notes-path-label {
+        width: 17;
+        min-width: 17;
+    }
+
+    #file-notes-search,
+    #file-notes-path {
+        width: 1fr;
     }
 
     #file-notes-tree,
@@ -531,7 +558,7 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
-    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path {
+    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path-row {
         display: none;
     }
 
@@ -856,6 +883,14 @@ class LibraryFileNotesWorkspace(Vertical):
         """Return whether the editor pane is currently displayed."""
         return self.query_one("#file-notes-editor-pane").display
 
+    def _path_field_label_copy(self) -> str:
+        """Describe the action context currently represented by the path field."""
+        if self._selected_deleted_path:
+            return "Restore path"
+        if self._opened is not None:
+            return "New / move path"
+        return "New path"
+
     def compose(self) -> ComposeResult:
         # LIB-19: Database mode, Files mode (this surface), and the Sync
         # sub-canvas are three folder-notes concepts never related to each
@@ -888,11 +923,18 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         with Horizontal(id="file-notes-body"):
             with Vertical(id="file-notes-navigator"):
-                yield Input(
-                    placeholder="Search file contents…",
-                    id="file-notes-search",
-                    value=self._search_query,
-                )
+                with Horizontal(id="file-notes-search-row"):
+                    yield Static(
+                        "Search",
+                        id="file-notes-search-label",
+                        classes="file-notes-field-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        placeholder="File contents…",
+                        id="file-notes-search",
+                        value=self._search_query,
+                    )
                 yield Tree[object]("Files", id="file-notes-tree")
                 search_results = Tree[object](
                     "Search results",
@@ -924,11 +966,18 @@ class LibraryFileNotesWorkspace(Vertical):
                     id="file-notes-save-status",
                     markup=False,
                 )
-                yield Input(
-                    placeholder="relative/path.md",
-                    id="file-notes-path",
-                    value=self._selected_deleted_path or self._current_path,
-                )
+                with Horizontal(id="file-notes-path-row"):
+                    yield Static(
+                        self._path_field_label_copy(),
+                        id="file-notes-path-label",
+                        classes="file-notes-field-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        placeholder="relative/path.md",
+                        id="file-notes-path",
+                        value=self._selected_deleted_path or self._current_path,
+                    )
                 yield self._editor_widget
                 with Horizontal(
                     id="file-notes-file-actions",
@@ -1498,7 +1547,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Show one retained navigator surface without remounting its peers."""
         if not self._active or not self.is_mounted:
             return
-        search = self.query_one("#file-notes-search", Input)
+        search_row = self.query_one("#file-notes-search-row")
         tree = self.query_one("#file-notes-tree", Tree)
         results = self.query_one("#file-notes-search-results", Tree)
         entry = self.query_one("#file-notes-session-changes", Button)
@@ -1508,7 +1557,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         git_visible = self._navigator_mode == "git"
         panel.display = git_visible
-        search.display = not git_visible
+        search_row.display = not git_visible
         entry.display = not git_visible
         tree.display = not git_visible and self._navigator_mode == "files"
         results.display = not git_visible and self._navigator_mode == "search"
@@ -3561,6 +3610,9 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
+        self.query_one("#file-notes-path-label", Static).update(
+            self._path_field_label_copy()
+        )
         transitioning = self._root_transitioning or self._path_transitioning
         binding = self._session_binding
         mutation_active = (

@@ -17,7 +17,7 @@ from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Button, Input, TextArea, Tree
+from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
@@ -352,6 +352,100 @@ def _tree_labels(tree: Tree) -> list[str]:
 
     visit(tree.root)
     return labels
+
+
+@pytest.mark.asyncio
+async def test_file_notes_field_labels_persist_and_follow_path_context(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "open.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "File Notes did not finish its initial scan",
+        )
+        search_label = workspace.query_one("#file-notes-search-label", Static)
+        path_label = workspace.query_one("#file-notes-path-label", Static)
+        search = workspace.query_one("#file-notes-search", Input)
+        path = workspace.query_one("#file-notes-path", Input)
+
+        assert str(search_label.renderable) == "Search"
+        assert str(path_label.renderable) == "New path"
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        assert not workspace.query_one("#file-notes-search-row").display
+        workspace._navigator_mode = "files"
+        workspace._sync_navigator_mode()
+        assert workspace.query_one("#file-notes-search-row").display
+        search.value = "body"
+        path.value = "created.md"
+        await pilot.pause()
+        assert str(search_label.renderable) == "Search"
+        assert str(path_label.renderable) == "New path"
+
+        assert await workspace.open_path("open.md")
+        assert str(path_label.renderable) == "New / move path"
+        path.value = "moved.md"
+        await pilot.pause()
+        assert str(path_label.renderable) == "New / move path"
+
+        workspace._deleted_paths = ("deleted.md",)
+        assert workspace.select_deleted("deleted.md")
+        assert str(path_label.renderable) == "Restore path"
+        assert path.value == "deleted.md"
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+async def test_file_notes_field_labels_preserve_input_geometry_and_tab_access(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "open.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "File Notes did not finish its initial scan",
+        )
+        search_label = workspace.query_one("#file-notes-search-label", Static)
+        search = workspace.query_one("#file-notes-search", Input)
+        for _ in range(80):
+            if search.has_focus:
+                break
+            await pilot.press("tab")
+        assert search.has_focus
+        assert search_label.region.width > 0
+        assert search.region.width >= 10
+        assert search_label.region.right <= search.region.x
+        assert search.region.right <= workspace.region.right
+
+        assert await workspace.open_path("open.md")
+        await pilot.pause()
+        path_label = workspace.query_one("#file-notes-path-label", Static)
+        path = workspace.query_one("#file-notes-path", Input)
+        for _ in range(80):
+            if path.has_focus:
+                break
+            await pilot.press("tab")
+        assert path.has_focus
+        assert path_label.region.width > 0
+        assert path.region.width >= 10
+        assert path_label.region.right <= path.region.x
+        assert path.region.right <= workspace.region.right
+
+    await workspace.shutdown()
 
 
 def _replace_editor_text(editor: TextArea, text: str) -> None:
