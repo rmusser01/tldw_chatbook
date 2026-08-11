@@ -41,6 +41,35 @@ def _strict_json_loads(value: str) -> Any:
         return _JSON_DECODE_FAILED
 
 
+def _strict_json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON-like values without Python's bool/int coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, Mapping):
+        right_items = list(cast(Mapping[Any, Any], right).items())
+        if len(left) != len(right_items):
+            return False
+        for left_key, left_value in left.items():
+            for index, (right_key, right_value) in enumerate(right_items):
+                if _strict_json_equal(left_key, right_key) and _strict_json_equal(
+                    left_value, right_value
+                ):
+                    del right_items[index]
+                    break
+            else:
+                return False
+        return True
+    if isinstance(left, Sequence) and not isinstance(left, (str, bytes)):
+        right_sequence = cast(Sequence[Any], right)
+        return len(left) == len(right_sequence) and all(
+            _strict_json_equal(left_value, right_value)
+            for left_value, right_value in zip(left, right_sequence, strict=True)
+        )
+    if left is None or isinstance(left, (str, bool, int, float)):
+        return bool(left == right)
+    return False
+
+
 def _required_index(event: Mapping[str, Any], name: str) -> int:
     value = event.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -61,6 +90,7 @@ def _required_string(
 class _OutputItemState:
     item_id: str
     item_type: str
+    done_status: str | None = None
 
 
 @dataclass
@@ -95,8 +125,6 @@ class QwenResponsesStreamTranslator:
 
     def feed(self, event: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
         """Consume one decoded Responses event and return normalized chunks."""
-        if self._terminal:
-            _raise_malformed("QwenCloud stream event arrived after the terminal event.")
         if not isinstance(event, Mapping):
             _raise_malformed("QwenCloud stream event must be an object.")
         event_copy = deepcopy(dict(event))
@@ -105,9 +133,11 @@ class QwenResponsesStreamTranslator:
             _raise_malformed("QwenCloud stream sequence number is malformed.")
         previous = self._seen_sequences.get(sequence)
         if previous is not None:
-            if previous == event_copy:
+            if _strict_json_equal(previous, event_copy):
                 return ()
             _raise_malformed("QwenCloud stream sequence replay conflicts.")
+        if self._terminal:
+            _raise_malformed("QwenCloud stream event arrived after the terminal event.")
         if sequence <= self._highest_sequence:
             _raise_malformed("QwenCloud stream sequence number decreased.")
         self._seen_sequences[sequence] = event_copy
@@ -161,6 +191,8 @@ class QwenResponsesStreamTranslator:
             _raise_malformed("QwenCloud stream output item is malformed.")
         item_id = _required_string(item, "id")
         item_type = _required_string(item, "type")
+        if item.get("status") != "in_progress":
+            _raise_malformed("QwenCloud stream output item status is malformed.")
         if output_index in self._output_items:
             _raise_malformed("QwenCloud stream output index was reused.")
         if any(state.item_id == item_id for state in self._output_items.values()):
@@ -362,12 +394,21 @@ class QwenResponsesStreamTranslator:
         self,
         output_index: int,
         item: Mapping[str, Any],
+        *,
+        allowed_statuses: frozenset[str],
+        mark_done: bool = False,
     ) -> tuple[dict[str, Any], ...]:
         item_state = self._output_items.get(output_index)
         if item_state is None or item_state.item_type != "message":
             _raise_malformed("QwenCloud stream message output was not established.")
         if item.get("type") != "message" or item.get("id") != item_state.item_id:
             _raise_malformed("QwenCloud stream message output identity conflicts.")
+        self._validate_item_status(
+            item_state,
+            item,
+            allowed_statuses=allowed_statuses,
+            mark_done=mark_done,
+        )
         content = item.get("content")
         if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
             _raise_malformed("QwenCloud stream message content is malformed.")
@@ -391,7 +432,28 @@ class QwenResponsesStreamTranslator:
             for key in self._text_parts
         ):
             _raise_malformed("QwenCloud stream terminal text parts are incomplete.")
+        if mark_done:
+            item_state.done_status = cast(str, item.get("status"))
         return tuple(chunks)
+
+    @staticmethod
+    def _validate_item_status(
+        item_state: _OutputItemState,
+        item: Mapping[str, Any],
+        *,
+        allowed_statuses: frozenset[str],
+        mark_done: bool,
+    ) -> None:
+        status = item.get("status")
+        if not isinstance(status, str) or status not in allowed_statuses:
+            _raise_malformed("QwenCloud stream output item status is malformed.")
+        if item_state.done_status is not None:
+            if mark_done:
+                _raise_malformed(
+                    "QwenCloud stream output item completed more than once."
+                )
+            if status != item_state.done_status:
+                _raise_malformed("QwenCloud stream output item status conflicts.")
 
     def _handle_output_item_done(
         self, event: Mapping[str, Any]
@@ -401,20 +463,53 @@ class QwenResponsesStreamTranslator:
         if not isinstance(item, Mapping):
             _raise_malformed("QwenCloud stream completed output item is malformed.")
         if item.get("type") == "reasoning":
-            item_state = self._output_items.get(output_index)
-            if (
-                item_state is None
-                or item_state.item_type != "reasoning"
-                or item.get("id") != item_state.item_id
-            ):
-                _raise_malformed("QwenCloud stream reasoning identity conflicts.")
-            return ()
+            return self._validate_reasoning_item(
+                output_index,
+                item,
+                allowed_statuses=frozenset({"completed", "incomplete"}),
+                mark_done=True,
+            )
         if item.get("type") == "function_call":
-            return self._validate_function_item(output_index, item)
-        return self._validate_message_item(output_index, item)
+            return self._validate_function_item(output_index, item, mark_done=True)
+        return self._validate_message_item(
+            output_index,
+            item,
+            allowed_statuses=frozenset({"completed", "incomplete"}),
+            mark_done=True,
+        )
+
+    def _validate_reasoning_item(
+        self,
+        output_index: int,
+        item: Mapping[str, Any],
+        *,
+        allowed_statuses: frozenset[str],
+        mark_done: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
+        item_state = self._output_items.get(output_index)
+        if (
+            item_state is None
+            or item_state.item_type != "reasoning"
+            or item.get("type") != "reasoning"
+            or item.get("id") != item_state.item_id
+        ):
+            _raise_malformed("QwenCloud stream reasoning identity conflicts.")
+        self._validate_item_status(
+            item_state,
+            item,
+            allowed_statuses=allowed_statuses,
+            mark_done=mark_done,
+        )
+        if mark_done:
+            item_state.done_status = cast(str, item.get("status"))
+        return ()
 
     def _validate_function_item(
-        self, output_index: int, item: Mapping[str, Any]
+        self,
+        output_index: int,
+        item: Mapping[str, Any],
+        *,
+        mark_done: bool = False,
     ) -> tuple[dict[str, Any], ...]:
         item_state = self._output_items.get(output_index)
         call_state = self._function_calls.get(output_index)
@@ -428,7 +523,16 @@ class QwenResponsesStreamTranslator:
             or item.get("name") != call_state.name
         ):
             _raise_malformed("QwenCloud stream completed function identity conflicts.")
-        return self._accept_final_arguments(call_state, item.get("arguments"))
+        self._validate_item_status(
+            item_state,
+            item,
+            allowed_statuses=frozenset({"completed"}),
+            mark_done=mark_done,
+        )
+        chunks = self._accept_final_arguments(call_state, item.get("arguments"))
+        if mark_done:
+            item_state.done_status = cast(str, item.get("status"))
+        return chunks
 
     def _handle_terminal(
         self, event_type: str, event: Mapping[str, Any]
@@ -456,19 +560,31 @@ class QwenResponsesStreamTranslator:
             terminal_indexes.add(output_index)
             item_type = item.get("type")
             if item_type == "reasoning":
-                item_state = self._output_items.get(output_index)
-                if item_state is not None and (
-                    item_state.item_type != "reasoning"
-                    or item.get("id") != item_state.item_id
-                ):
-                    _raise_malformed("QwenCloud stream reasoning identity conflicts.")
+                reasoning_statuses = (
+                    frozenset({"completed"})
+                    if status == "completed"
+                    else frozenset({"completed", "incomplete"})
+                )
+                chunks.extend(
+                    self._validate_reasoning_item(
+                        output_index,
+                        item,
+                        allowed_statuses=reasoning_statuses,
+                    )
+                )
                 continue
             if item_type == "function_call":
                 chunks.extend(self._validate_function_item(output_index, item))
                 continue
             if item_type != "message":
                 _raise_malformed("QwenCloud stream terminal output is unsupported.")
-            chunks.extend(self._validate_message_item(output_index, item))
+            chunks.extend(
+                self._validate_message_item(
+                    output_index,
+                    item,
+                    allowed_statuses=frozenset({status}),
+                )
+            )
         if set(self._output_items) != terminal_indexes:
             _raise_malformed("QwenCloud stream terminal output is incomplete.")
 
@@ -578,7 +694,12 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
             return next(self._records)
         except StopIteration:
             return _STREAM_END
-        except (TypeError, UnicodeDecodeError, ValueError):
+        except (
+            TypeError,
+            UnicodeDecodeError,
+            ValueError,
+            requests.exceptions.RequestException,
+        ):
             return _STREAM_READ_FAILED
 
     def close(self) -> None:

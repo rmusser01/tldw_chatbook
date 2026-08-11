@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import requests
+from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
@@ -44,6 +45,23 @@ class _ByteStreamResponse:
         assert chunk_size > 0
         self.iter_content_calls += 1
         yield from self.chunks
+
+
+class _FailingByteStreamResponse(_ByteStreamResponse):
+    def __init__(
+        self,
+        chunks: list[bytes],
+        *,
+        error: requests.exceptions.RequestException,
+    ) -> None:
+        super().__init__(chunks)
+        self.error = error
+
+    def iter_content(self, chunk_size: int) -> Any:
+        assert chunk_size > 0
+        self.iter_content_calls += 1
+        yield from self.chunks
+        raise self.error
 
 
 class _ByteStreamSession:
@@ -100,12 +118,19 @@ def _function_added(
     item_id: str,
     call_id: str,
     name: str,
+    *,
+    status: str | None = "in_progress",
 ) -> dict[str, Any]:
+    item = _function_item(item_id, call_id, name, "", status="in_progress")
+    if status is None:
+        del item["status"]
+    else:
+        item["status"] = status
     return {
         "type": "response.output_item.added",
         "sequence_number": sequence,
         "output_index": output_index,
-        "item": _function_item(item_id, call_id, name, "", status="in_progress"),
+        "item": item,
     }
 
 
@@ -139,18 +164,48 @@ def _arguments_done(
     }
 
 
-def _message_added(sequence: int, output_index: int, item_id: str) -> dict[str, Any]:
+def _message_added(
+    sequence: int,
+    output_index: int,
+    item_id: str,
+    *,
+    status: str | None = "in_progress",
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": item_id,
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+    }
+    if status is not None:
+        item["status"] = status
     return {
         "type": "response.output_item.added",
         "sequence_number": sequence,
         "output_index": output_index,
-        "item": {
-            "id": item_id,
-            "type": "message",
-            "role": "assistant",
-            "status": "in_progress",
-            "content": [],
-        },
+        "item": item,
+    }
+
+
+def _reasoning_item(item_id: str, *, status: str | None) -> dict[str, Any]:
+    item: dict[str, Any] = {"id": item_id, "type": "reasoning", "summary": []}
+    if status is not None:
+        item["status"] = status
+    return item
+
+
+def _reasoning_added(
+    sequence: int,
+    output_index: int,
+    item_id: str,
+    *,
+    status: str | None = "in_progress",
+) -> dict[str, Any]:
+    return {
+        "type": "response.output_item.added",
+        "sequence_number": sequence,
+        "output_index": output_index,
+        "item": _reasoning_item(item_id, status=status),
     }
 
 
@@ -395,6 +450,59 @@ def test_responses_sequence_duplicate_conflict_and_decrease() -> None:
         QwenResponsesStreamTranslator().feed({"type": "response.created"})
 
 
+def test_responses_terminal_replay_is_strict_and_finish_safe() -> None:
+    translator = QwenResponsesStreamTranslator()
+    translator.feed(_message_added(0, 0, "msg_replay"))
+    translator.feed(_content_added(1, 0, "msg_replay"))
+    translator.feed(_text_delta(2, 0, "msg_replay", "safe"))
+    completed = _terminal(
+        3,
+        [_message_item("msg_replay", "safe")],
+        usage={"input_tokens": 0, "output_tokens": 1, "total_tokens": 1},
+    )
+
+    assert translator.feed(completed)[-1]["choices"][0]["finish_reason"] == "stop"
+    assert translator.feed(deepcopy(completed)) == ()
+    assert translator.finish() == ()
+
+    with pytest.raises(ChatProviderError, match="object"):
+        translator.feed([])  # type: ignore[arg-type]
+    with pytest.raises(ChatProviderError, match="sequence"):
+        translator.feed({"type": "response.in_progress"})
+    with pytest.raises(ChatProviderError, match="terminal"):
+        translator.feed(
+            {
+                "type": "response.in_progress",
+                "sequence_number": 4,
+                "response": {"status": "in_progress", "output": []},
+            }
+        )
+
+
+@pytest.mark.parametrize("replacement", (False, 0.0), ids=("bool", "float"))
+def test_responses_sequence_replay_uses_type_sensitive_json_equality(
+    replacement: bool | float,
+) -> None:
+    translator = QwenResponsesStreamTranslator()
+    event = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_strict",
+            "status": "in_progress",
+            "output": [{"index": 0}],
+        },
+    }
+    assert translator.feed(event) == ()
+    conflict = deepcopy(event)
+    conflict["response"]["output"][0]["index"] = replacement
+
+    with pytest.raises(ChatProviderError, match="sequence") as exc_info:
+        translator.feed(conflict)
+
+    assert exc_info.value.provider == "qwencloud"
+
+
 def test_responses_terminal_usage_finish_and_empty_delta() -> None:
     usage = {
         "input_tokens": 9,
@@ -628,6 +736,200 @@ def test_responses_partial_or_mismatched_call_never_surfaces() -> None:
     assert terminal_info.value.provider == "qwencloud"
 
 
+@pytest.mark.parametrize("source", ("output-item-done", "terminal-only"))
+@pytest.mark.parametrize(
+    "status", ("incomplete", "failed", "cancelled", "unknown", None)
+)
+def test_responses_function_status_cannot_become_successful_execution(
+    source: str,
+    status: str | None,
+) -> None:
+    translator = QwenResponsesStreamTranslator()
+    chunks = list(
+        translator.feed(_function_added(0, 0, "fc_status", "call_status", "lookup"))
+    )
+    item = _function_item("fc_status", "call_status", "lookup", '{"safe":true}')
+    if status is None:
+        del item["status"]
+    else:
+        item["status"] = status
+    event = (
+        _output_done(1, 0, item)
+        if source == "output-item-done"
+        else _terminal(1, [item])
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        chunks.extend(translator.feed(event))
+
+    assert exc_info.value.provider == "qwencloud"
+    assert all(
+        chunk["choices"][0].get("finish_reason") != "tool_calls" for chunk in chunks
+    )
+
+
+@pytest.mark.parametrize("status", ("failed", "cancelled", "unknown", None))
+def test_responses_completed_message_status_must_be_completed(
+    status: str | None,
+) -> None:
+    translator = QwenResponsesStreamTranslator()
+    translator.feed(_message_added(0, 0, "msg_status"))
+    translator.feed(_content_added(1, 0, "msg_status"))
+    translator.feed(_text_delta(2, 0, "msg_status", "safe"))
+    item = _message_item("msg_status", "safe")
+    if status is None:
+        del item["status"]
+    else:
+        item["status"] = status
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        translator.feed(_terminal(3, [item]))
+
+    assert exc_info.value.provider == "qwencloud"
+
+
+@pytest.mark.parametrize("item_type", ("message", "function_call", "reasoning"))
+@pytest.mark.parametrize("status", ("completed", "incomplete", "unknown", None))
+def test_responses_output_item_added_requires_in_progress_status(
+    item_type: str,
+    status: str | None,
+) -> None:
+    if item_type == "message":
+        event = _message_added(0, 0, "item_status", status=status)
+    elif item_type == "function_call":
+        event = _function_added(
+            0,
+            0,
+            "item_status",
+            "call_status",
+            "lookup",
+            status=status,
+        )
+    else:
+        event = _reasoning_added(0, 0, "item_status", status=status)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        QwenResponsesStreamTranslator().feed(event)
+
+    assert exc_info.value.provider == "qwencloud"
+
+
+def test_responses_done_terminal_and_incomplete_statuses_are_consistent() -> None:
+    done_mismatch = QwenResponsesStreamTranslator()
+    done_mismatch.feed(_message_added(0, 0, "msg_done"))
+    done_mismatch.feed(_content_added(1, 0, "msg_done"))
+    done_mismatch.feed(_text_delta(2, 0, "msg_done", "safe"))
+    done_mismatch.feed(
+        _output_done(3, 0, _message_item("msg_done", "safe", status="completed"))
+    )
+    with pytest.raises(ChatProviderError):
+        done_mismatch.feed(
+            _terminal(
+                4,
+                [_message_item("msg_done", "safe", status="incomplete")],
+                event_type="response.incomplete",
+                status="incomplete",
+                incomplete_reason="max_output_tokens",
+            )
+        )
+
+    terminal_mismatch = QwenResponsesStreamTranslator()
+    terminal_mismatch.feed(_message_added(0, 0, "msg_partial"))
+    terminal_mismatch.feed(_content_added(1, 0, "msg_partial"))
+    terminal_mismatch.feed(_text_delta(2, 0, "msg_partial", "partial"))
+    with pytest.raises(ChatProviderError):
+        terminal_mismatch.feed(
+            _terminal(
+                3,
+                [_message_item("msg_partial", "partial", status="completed")],
+                event_type="response.incomplete",
+                status="incomplete",
+                incomplete_reason="max_output_tokens",
+            )
+        )
+
+    valid_partial = QwenResponsesStreamTranslator()
+    valid_partial.feed(_message_added(0, 0, "msg_partial"))
+    valid_partial.feed(_content_added(1, 0, "msg_partial"))
+    valid_partial.feed(_text_delta(2, 0, "msg_partial", "partial"))
+    assert (
+        valid_partial.feed(
+            _terminal(
+                3,
+                [_message_item("msg_partial", "partial", status="incomplete")],
+                event_type="response.incomplete",
+                status="incomplete",
+                incomplete_reason="max_output_tokens",
+            )
+        )[-1]["choices"][0]["finish_reason"]
+        == "length"
+    )
+
+
+def test_responses_reasoning_status_is_validated_without_surface() -> None:
+    translator = QwenResponsesStreamTranslator()
+    assert translator.feed(_reasoning_added(0, 0, "reasoning_safe")) == ()
+    assert translator.feed(_message_added(1, 1, "msg_safe")) == ()
+    assert translator.feed(_content_added(2, 1, "msg_safe")) == ()
+    assert translator.feed(_text_delta(3, 1, "msg_safe", "safe"))
+    with pytest.raises(ChatProviderError):
+        translator.feed(
+            _output_done(
+                4,
+                0,
+                _reasoning_item("reasoning_safe", status="failed"),
+            )
+        )
+
+    terminal = QwenResponsesStreamTranslator()
+    terminal.feed(_reasoning_added(0, 0, "reasoning_safe"))
+    terminal.feed(_message_added(1, 1, "msg_safe"))
+    terminal.feed(_content_added(2, 1, "msg_safe"))
+    terminal.feed(_text_delta(3, 1, "msg_safe", "safe"))
+    with pytest.raises(ChatProviderError):
+        terminal.feed(
+            _terminal(
+                4,
+                [
+                    _reasoning_item("reasoning_safe", status="unknown"),
+                    _message_item("msg_safe", "safe"),
+                ],
+            )
+        )
+
+    valid = QwenResponsesStreamTranslator()
+    assert valid.feed(_reasoning_added(0, 0, "reasoning_safe")) == ()
+    assert valid.feed(_message_added(1, 1, "msg_safe")) == ()
+    assert valid.feed(_content_added(2, 1, "msg_safe")) == ()
+    text = valid.feed(_text_delta(3, 1, "msg_safe", "safe"))
+    assert (
+        valid.feed(
+            _output_done(
+                4,
+                0,
+                _reasoning_item("reasoning_safe", status="completed"),
+            )
+        )
+        == ()
+    )
+    terminal_chunks = valid.feed(
+        _terminal(
+            5,
+            [
+                _reasoning_item("reasoning_safe", status="completed"),
+                _message_item("msg_safe", "safe"),
+            ],
+        )
+    )
+    assert text == ({"choices": [{"delta": {"content": "safe"}}]},)
+    assert terminal_chunks == (
+        {
+            "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+            "usage": {},
+        },
+    )
+
+
 def test_chat_stream_preserves_openai_deltas_and_usage() -> None:
     events = [
         {
@@ -751,6 +1053,74 @@ def test_stream_retries_only_before_first_consumed_byte(
     assert len(session.posts) == 2
     assert replay_canary.iter_content_calls == 0
     assert malformed_after_body.close_calls == 1
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.Timeout,
+    ),
+)
+@pytest.mark.parametrize(
+    "after_event", (False, True), ids=("before-bytes", "after-event")
+)
+def test_stream_body_read_failures_are_typed_closed_and_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[requests.exceptions.RequestException],
+    after_event: bool,
+) -> None:
+    canary = "RAW-STREAM-READ-CANARY"
+    chunks = (
+        [b'data: {"choices":[{"delta":{"content":"safe"}}]}\n\n'] if after_event else []
+    )
+    response = _FailingByteStreamResponse(chunks, error=error_type(canary))
+    session = _ByteStreamSession([response])
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(
+            values={
+                "api_settings": {
+                    "qwencloud": {"timeout": 3, "retries": 3, "retry_delay": 0}
+                }
+            }
+        ),
+    )
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        stream = qwencloud.chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model="qwen3.8-max",
+            api_key="key",
+            streaming=True,
+            api_base_url="https://qwen.example/v1",
+            api_mode="chat_completions",
+        )
+        if after_event:
+            assert next(stream)["choices"][0]["delta"]["content"] == "safe"
+        with pytest.raises(ChatProviderError) as exc_info:
+            next(stream)
+    finally:
+        logger.remove(sink_id)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    disclosure = str(exc_info.value) + "".join(records)
+    assert canary not in disclosure
+    assert "data:" not in disclosure
+    assert len(session.posts) == 1
+    assert response.iter_content_calls == 1
+    assert response.close_calls == 1
     assert session.close_calls == 1
 
 
