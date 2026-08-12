@@ -8727,13 +8727,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entirely (every test that seeds `ItemsPane.items` with a synthetic
         dict already carrying `content`, e.g.
         `test_selecting_an_item_renders_it_in_the_content_region`), keeps
-        working unchanged. `item is None` (nothing selected) and any
-        failure fetching content (the active backend does not support
-        single-item reads, the row no longer exists, a transient DB error)
-        are both silently absorbed: content is the reader's body, not a
-        status the caller is relying on this to report -- see
-        `content_pane.render_for`'s own docstring on the same "never take
-        the app down over a reader nicety" rule.
+        working unchanged.
+
+        `item is None` (nothing selected) is a silent no-op -- there is
+        nothing to report. An actual FETCH failure (the active backend does
+        not support single-item reads, the row no longer exists, a transient
+        DB error) never raises into the caller -- content is the reader's
+        body, not a status `handle_item_selected` is relying on this to
+        report, matching `content_pane.render_for`'s own "never take the app
+        down over a reader nicety" rule -- but it is not silent either: this
+        is a background `_load*` read (`test_watchlists_check_now_failure.
+        py`'s structural contract), and that exemption from the
+        user-initiated-action "log at warning" rule is paid for with a
+        toast, exactly like the sibling `_load_items`/`_load_run_detail`
+        immediately around it. Without one, a denied `items.detail` policy
+        or a database locked by a concurrent write would render
+        byte-identically to "this item just has no body" -- an empty reader
+        with nothing said.
 
         Args:
             item: The item about to be opened, or `None`. Mutated in place
@@ -8744,6 +8754,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         item_id = item.get("id")
         if item_id is None:
             return
+        notify = getattr(self.app_instance, "notify", None)
         try:
             fetched = await self._controller.get_item_content(
                 runtime_backend=self.runtime_backend,
@@ -8753,6 +8764,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Failed to load watchlist item content for the reader."
             )
+            if callable(notify):
+                notify(
+                    "Failed to load this item's full content.",
+                    severity="error",
+                )
             return
         if fetched is not None:
             item["content"] = fetched
