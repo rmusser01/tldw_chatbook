@@ -3037,11 +3037,20 @@ class RAGService:
         """Create a single keyword result with citations.
 
         Citation spans come from ``_keyword_citation_spans``, which reads
-        the SAME token list ``_escape_fts5_query`` built this search's MATCH
-        expression from. Locating the raw query as one contiguous substring
-        instead (what this did before) assumed phrase semantics the keyword
-        leg no longer has, so every multi-token hit whose tokens are
-        scattered lost its citations entirely.
+        the FULL token list ``_fts5_query_tokens`` returns for the query --
+        every token the user typed, not necessarily the same tokens the
+        MATCH expression required. At the shipped ``and_stopword_trim``
+        construction the MATCH runs over a strict SUBSET of that list
+        (content tokens only; see ``_fts5_match_expressions``), so citations
+        evidence the full typed query while the match itself may have needed
+        only some of its tokens. Verified NOT a behavioural regression: the
+        spans themselves are unchanged, and a row that matched is guaranteed
+        to carry the content tokens the MATCH required, so a matched row's
+        citations are never missing evidence for the match. Locating the raw
+        query as one contiguous substring instead (what this did before)
+        assumed phrase semantics the keyword leg no longer has, so every
+        multi-token hit whose tokens are scattered lost its citations
+        entirely.
 
         Args:
             item: One raw sub-leg row.
@@ -3153,13 +3162,17 @@ class RAGService:
     def _fts5_query_tokens(query: str) -> List[str]:
         """Tokenize a raw user query -- the ONE tokenization of the keyword leg.
 
-        Two consumers must agree on this list or the leg contradicts itself:
-        ``_escape_fts5_query`` builds the FTS5 MATCH expression from it, and
-        ``_keyword_citation_spans`` locates the citation spans from it. They
-        used to tokenize independently (per-token quoting on one side, a raw
-        whole-query substring lookup on the other), which is exactly how a
-        row could match the query and then be reported with no evidence for
-        it -- see ``_keyword_citation_spans``.
+        Both MATCH construction and citation building start from this ONE
+        list. ``_fts5_match_expressions`` builds the MATCH expression from it
+        -- the full list under ``and``, but a content-token SUBSET under
+        ``and_stopword_trim`` and ``or`` (see that method) -- while
+        ``_keyword_citation_spans`` always locates the citation spans from
+        the FULL list, so a matched row's citations can cite tokens the
+        MATCH itself did not require. They used to tokenize independently
+        (per-token quoting on one side, a raw whole-query substring lookup on
+        the other), which is exactly how a row could match the query and
+        then be reported with no evidence for it -- see
+        ``_keyword_citation_spans``.
 
         Tokens are whitespace-separated runs that contain at least one
         alphanumeric character. FTS5's default tokenizer indexes only
@@ -3549,7 +3562,7 @@ class RAGService:
     def _keyword_citation_spans(
         content: str, tokens: List[str]
     ) -> List[Tuple[int, int, frozenset]]:
-        """Locate the citation spans for a keyword hit, from the SAME tokens.
+        """Locate the citation spans for a keyword hit, from the query's tokens.
 
         TASK-3996 follow-up (Qodo, PR #1469). Before TASK-3995 the keyword
         leg used phrase semantics, so a hit guaranteed the raw query was one
@@ -3559,11 +3572,14 @@ class RAGService:
         lookup found nothing, and the rows the fix had just made reachable
         came back with ``citations=[]``.
 
-        Spans are located per token, case-insensitively, from the token list
-        ``_escape_fts5_query`` built the MATCH expression from. A token is
-        matched as its alphanumeric runs separated by non-alphanumerics
-        ("Obsidian-3" -> ``Obsidian`` then ``3``), which is how FTS5 reads a
-        quoted token: a phrase over the runs, adjacency required.
+        Spans are located per token, case-insensitively, from the FULL token
+        list ``_fts5_query_tokens`` returns for the query (not necessarily
+        the subset ``_fts5_match_expressions`` required for the MATCH itself
+        under the shipped ``and_stopword_trim`` construction -- see that
+        method). A token is matched as its alphanumeric runs separated by
+        non-alphanumerics ("Obsidian-3" -> ``Obsidian`` then ``3``), which is
+        how FTS5 reads a quoted token: a phrase over the runs, adjacency
+        required.
 
         Spans that overlap, or that are separated only by non-alphanumeric
         characters, are merged -- so a query whose tokens ARE contiguous in

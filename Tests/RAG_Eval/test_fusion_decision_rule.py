@@ -930,8 +930,9 @@ def test_the_construction_round_trips_through_apply():
 
 
 def test_every_pre_15400_strategy_still_means_exactly_what_it_meant():
-    """The axis defaults to the shipped construction, so the fusion matrix
-    that already ran keeps measuring what it measured."""
+    """The axis defaults to the pre-15400 construction (`and`), not the
+    shipped one (`and_stopword_trim`), so the fusion matrix that already ran
+    keeps measuring what it measured."""
     for strategy in (*BASE_STRATEGIES, *ALPHA_COMBO_STRATEGIES):
         assert strategy.fts_match_construction == "and", strategy.name
     # ...and one tuple, spelled out: the control is still the 4110 control.
@@ -1113,11 +1114,11 @@ def test_scoped_queries_are_part_of_the_census_population():
     """The population decision, pinned — it was not, and a mutation excluding
     scoped queries left every other test green.
 
-    Scoped queries count because they HIT today (7/7 of the shipped 20 are
+    Scoped queries count because they HIT today (7/7 of the control's 20 are
     scoped), so dropping them would silently move the number the whole
     decision rule is calibrated against. The census asks them UNSCOPED — a
     leg-level question about the whole corpus — which is also how the
-    shipped 20 was measured.
+    control's 20 was measured.
     """
     scoped = GoldenQuery(
         id="sc-scoped",

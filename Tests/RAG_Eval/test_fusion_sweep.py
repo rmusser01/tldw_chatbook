@@ -156,9 +156,10 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
 
     What this test DOES assert is that the experiment was valid: every row
     ran, every pass routed through hybrid, no query erred, the control row
-    reproduced the shipped keyword-leg census (the alarm that a
-    cache-blinded sweep cannot pass), and the caller's service came back on
-    the construction it started with.
+    reproduced its own expected keyword-leg census (the alarm that a
+    cache-blinded sweep cannot pass — not a claim about the shipped
+    construction's census, which is a different number), and the caller's
+    service came back on the construction it started with.
 
     The NEAR/prefix probes run afterwards over the control's own zero-row
     queries — report-only, promoted to a matrix row only if one beats the
@@ -231,8 +232,8 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
     )
     assert report.control().strategy.name == CONSTRUCTION_CONTROL_NAME
     assert control.census_hits == SHIPPED_CONTROL_CENSUS, (
-        "the control row did not reproduce the shipped census, and the "
-        "sweep's own self-check should already have raised on it"
+        "the control row did not reproduce its expected control census, and "
+        "the sweep's own self-check should already have raised on it"
     )
 
     for entry in report.entries:

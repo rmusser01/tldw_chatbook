@@ -57,7 +57,9 @@ KEYWORD LEG finds at all, and the semantic leg masks that for every source
 type except prompts. `keyword_leg_census` therefore calls the engine's
 `_keyword_search` directly, once per golden query, and counts the queries
 whose target lands in the leg's own top-k. That is the number the spec's
-decision rule maximizes (20 today, over the 53 non-negative queries).
+decision rule maximizes: the control (pre-arc `and`) scores 20 over the 53
+non-negative queries, and the shipped `and_stopword_trim` construction the
+rule picked scores 21.
 
 *The control row self-checks before anything else runs — and it is not a
 cache alarm.* Be precise about what that check can and cannot see, because
@@ -66,7 +68,7 @@ calls `_keyword_search`, which NEVER touches `self.cache` (only `search()`
 does — `rag_service.py:1240/:1334`), so a stale cache cannot move the census
 in either direction. What the control row actually catches is **census-method
 drift**: the counting method, the corpus or the golden set having moved out
-from under the shipped 20, and — via `_validate_constructions` beside it —
+from under the control's 20, and — via `_validate_constructions` beside it —
 a construction VOCABULARY drift that would silently degrade rows 2-4 to the
 control and report all four censuses equal.
 
@@ -238,8 +240,15 @@ class Strategy:
         fts_match_construction: ``config.search.fts_match_construction`` —
             the keyword leg's FTS5 MATCH construction (TASK-15400), one of
             ``and`` / ``and_stopword_trim`` / ``or`` / ``and_then_or``. It
-            defaults to the shipped ``and``, which is what keeps every
-            pre-15400 strategy tuple meaning exactly what it meant.
+            defaults to the pre-15400 ``and``, which is what keeps every
+            pre-15400 strategy tuple meaning exactly what it meant — and,
+            deliberately, what `BASE_STRATEGIES` and
+            `ALPHA_COMBO_STRATEGIES` still run under: the fusion/rrf_k
+            matrix's construction axis is pinned to the PRE-ARC construction
+            for comparability with the P2ab weighting arc. Those rows
+            therefore no longer measure the shipped retrieval path, and a
+            future rrf_k re-tune read off them would be optimizing a
+            construction that does not ship.
     """
 
     name: str
@@ -1225,8 +1234,8 @@ def run_near_prefix_probes(
     Report-only by the spec's own scoping: these are one probe each, not
     matrix rows, and are promoted to a full row only if a probe's census
     beats the best swept candidate's. Running them over the queries the
-    shipped construction already answers would measure nothing — those
-    queries are not what either variant is for.
+    control already answers would measure nothing — those queries are not
+    what either variant is for.
 
     Args:
         runtime: A live `EvalRuntime`.
@@ -1350,7 +1359,7 @@ def rescued_zero_row_queries(
 def _check_control_census(
     strategy: Strategy, census: LegCensus, expected: int
 ) -> None:
-    """Raise unless the shipped construction reproduces its shipped census.
+    """Raise unless the control row reproduces its expected control census.
 
     A METHOD check, not a cache alarm: `_keyword_search` never reads
     `self.cache`, so nothing about cache state can move this number (see the
@@ -1367,11 +1376,13 @@ def _check_control_census(
     raise ValueError(
         f"the control row {strategy.name!r} "
         f"({strategy.fts_match_construction}) scored a keyword-leg census of "
-        f"{census.hits}/{census.scoreable}, not the shipped {expected}. The "
+        f"{census.hits}/{census.scoreable}, not the CONTROL's expected "
+        f"{expected} (this is the control row's own number, not the shipped "
+        "construction's — the shipped construction scores differently). The "
         "counting method, the corpus or the golden set has moved away from "
         "the number this arc's decision rule is calibrated against — "
-        "reconcile the method against the shipped census before trusting any "
-        "row, and do NOT edit the expected number to match. Per category: "
+        "reconcile the method against the control census before trusting "
+        "any row, and do NOT edit the expected number to match. Per category: "
         f"{ {name: f'{hit}/{total}' for name, (hit, total) in census.per_category.items()} }; "
         f"{len(census.zero_row_queries)} of {census.queries} queries returned "
         "no rows at all."
@@ -1407,8 +1418,10 @@ def run_fusion_sweep(
         seam: Optional pre-built `LibraryLocalRagSearchService`; built from
             ``runtime.app`` when omitted.
         control_name: Which row the report's `control()` resolves to. The
-            construction matrix names its control after the shipped
-            construction (`and`) rather than "control".
+            construction matrix names its control after the PRE-ARC
+            construction (`and`, the arc's BEFORE state) rather than
+            "control" — it is not the shipped construction, which is
+            `and_stopword_trim`.
         instrument: Record TASK-15400's per-row instrumentation (the
             keyword-leg census and the negative composition). Off for the
             fusion matrix, which never measured either.
@@ -1555,8 +1568,9 @@ def run_construction_sweep(
             (a) is read off its verdict).
         target_slug: That fixture's document.
         seam: Optional pre-built seam.
-        expected_control_census: The shipped census the control row must
-            reproduce; ``None`` disables the self-check.
+        expected_control_census: The census the control row must reproduce
+            (`SHIPPED_CONTROL_CENSUS` — the control's own number, not the
+            shipped construction's); ``None`` disables the self-check.
 
     Returns:
         A `SweepReport` whose entries carry the census and the negative
