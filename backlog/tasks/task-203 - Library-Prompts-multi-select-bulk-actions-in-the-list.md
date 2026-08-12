@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-12 22:21'
-updated_date: '2026-08-12 20:40'
+updated_date: '2026-08-12 21:21'
 labels:
   - ux
   - library
@@ -35,8 +35,19 @@ this task; Prompt collections already provide the current organization surface.
 - [ ] #7 Keyboard focus, literal labels, disabled explanations, loading/error recovery, and every selection/bulk action remain reachable and readable at both 64x24 and 120x40 with exactly the existing scroll ownership
 <!-- AC:END -->
 
-## Related Decisions
+## Implementation Plan
 
-- [ADR-055: One reversibility rule for Library destructive actions](../decisions/055-library-destructive-action-reversibility-rule.md)
-- [ADR-057: Portable Chatbook Prompt Records](../decisions/057-portable-chatbook-prompt-records.md)
-- [ADR-060: Atomic local Prompt batch mutations](../decisions/060-atomic-local-prompt-batch-mutations.md)
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/060-atomic-local-prompt-batch-mutations.md
+Reason: TASK-203 introduces an atomic multi-row conflict policy and typed database-to-service result contract.
+
+1. Add strict immutable batch DTOs and the pure cross-search selection basket with RED-first constructor/state tests.
+2. Refactor Prompt delete/restore into transaction-local helpers and add BEGIN IMMEDIATE all-or-nothing batch APIs while preserving legacy single signatures and results.
+3. Add typed local/scope batch pass-through with local-only validation and exactly one existing RuntimePolicy decision per batch.
+4. Render selection mode, disabled markers/reasons, checked rows, progress, and plural receipts in the existing Prompt canvas without a new scroll owner.
+5. Wire persistent selection lifecycle and exact selected ExportScope string IDs through the existing Library export canvas.
+6. Route editor single delete and selected bulk delete through one screen mutation path, implement atomic Undo, and veto all Library/app navigation while the receipt owner is settling.
+7. Run integrated accessibility, compositor, privacy, diagnostic-inventory, mutation, static, typing, and CSS gates; change layout only for a proven RED.
+8. Update the Prompt guide, run the frozen affected and full suites, complete self/YAGNI review, record evidence, check ACs, and mark TASK-203 Done.
+<!-- SECTION:PLAN:END -->
