@@ -3214,3 +3214,22 @@ negatively on what should not; (2) assert the plan is non-empty, or an empty res
 satisfies every "not in" assertion; (3) check EVERY branch of a compound query; and
 (4) keep one timing arm whose expected value is ~zero (a lookup with no hits) — a
 scan cannot hide from that, and it is what caught this one.
+
+---
+
+## An absent catalog surface still needs its synthetic identity reserved
+
+**TASK-13216, 2026-08-12.** The replacement Console task tools were correctly absent
+from the external MCP and Hub inventories, and every literal-name absence test passed.
+Review still found that an external MCP profile could use the reserved `__local__`
+profile ID. Its projected Hub key then collided with the synthetic workspace provider's
+`local:__local__` permission identity. The same review found a current guide describing
+"session-todo tools" without any literal `todo_write` or replacement name, so the stale
+name scan also reported clean while the documented inventory was wrong.
+
+**What to do.** For a synthetic catalog namespace, reserve its normalized identity at
+every ingress and projection seam: save/import, load, runtime composition, and raw
+catalog conversion. Prove the derived permission key cannot be forged, while pinning
+nearby valid and case-distinct IDs. For negative documentation contracts, pair literal
+stale-name scans with an exact positive sentence describing the current boundary;
+synonyms can preserve a stale claim without preserving any searched token.
