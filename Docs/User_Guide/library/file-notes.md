@@ -78,13 +78,22 @@ to go, then press the relevant button.
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
 | **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Conflict or Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
 | **Save draft as copy** | Writes the complete editor draft to the typed path; only enabled while the save status is Dirty, Conflict, or Error |
 | **Export exact copy** | Replaces **Save draft as copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
 Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
 file changes on disk underneath you, the status shows Conflict and keeps the
-draft in the editor. **Discard draft and reload** first reads the current disk
+draft in the editor. **Compare** identifies Base (the body loaded into the
+editor or last saved), Draft (the current editor body), and Disk (the latest
+readable file body). It shows bounded Base-to-Draft and Base-to-Disk unified
+comparisons; oversized sides keep their exact sizes and SHA-256 identities and
+report that diff output was omitted or elided. A deleted or unreadable Disk side
+is named explicitly. Closing Compare returns to the conflict without resolving
+it or changing any side.
+
+**Discard draft and reload** first reads the current disk
 version and asks for confirmation. **Cancel** or **Escape** preserves the exact
 draft and conflict; confirming rechecks the root, file, editing session, and
 disk version before it replaces the draft. If any of those changed, reload
