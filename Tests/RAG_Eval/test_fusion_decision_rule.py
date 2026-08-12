@@ -16,6 +16,9 @@ one an over-eager reading of "it rescued the fixture!" would break first.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -24,20 +27,35 @@ from Tests.RAG_Eval.harness import fusion_sweep
 from Tests.RAG_Eval.harness.fusion_sweep import (
     ALPHA_COMBO_STRATEGIES,
     BASE_STRATEGIES,
+    CONSTRUCTION_CONTROL_NAME,
+    CONSTRUCTION_STRATEGIES,
     CONTROL,
     CONTROL_NAME,
+    FTS_MATCH_OR_FORM,
     LEVER_PRECEDENCE,
+    NEAR_PROBE_DISTANCE,
+    SHIPPED_CONTROL_CENSUS,
     WARN_BAND,
+    LegCensus,
+    NegativeComposition,
     Qualification,
     RescueVerdict,
     Strategy,
     StrategyReport,
     SweepReport,
     combined_strategy,
+    format_construction_matrix,
+    format_probe_table,
     fts_only_beats_vector_rank,
+    keyword_leg_census,
     lever_rank,
+    near_probe_expression,
+    negative_composition,
+    prefix_probe_expression,
     qualify,
+    run_construction_sweep,
     run_fusion_sweep,
+    run_near_prefix_probes,
     select_winner,
     worst_regression,
 )
@@ -563,6 +581,9 @@ class FakeSearchConfig:
         self.hybrid_pool_multiplier = 2
         self.hybrid_alpha = 0.7
         self.default_search_mode = "semantic"
+        # Present because the real `SearchConfig` has carried it since
+        # TASK-15400's seam landed, and the sweep now saves/restores it.
+        self.fts_match_construction = "and"
 
     def snapshot(self) -> tuple:
         return (
@@ -771,3 +792,587 @@ def test_the_sweep_refuses_an_empty_strategy_matrix(monkeypatch):
     monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
     with pytest.raises(ValueError):
         run_fusion_sweep(FakeRuntime(), GOLDEN, (), k=K, seam=FakeSeam([]))
+
+
+# ---------------------------------------------------------------------------
+# TASK-15400: the MATCH-construction axis, its instrumentation, and the
+# self-check that stops a cache-blinded sweep from reporting "no difference".
+#
+# Everything here is synthetic — fake service, fake leg, fake seam — except
+# the two FTS5 syntax pins, which run real SQLite because the thing they
+# check is FTS5's own parse.
+# ---------------------------------------------------------------------------
+
+
+def leg_row(source_type: str, source_id: str, **metadata) -> SimpleNamespace:
+    """One engine-leg `SearchResult`-shaped row (what `_keyword_search` returns)."""
+    return SimpleNamespace(
+        id=f"{source_type}_{source_id}",
+        score=1.0,
+        document="...",
+        metadata={"source_type": source_type, "source_id": source_id, **metadata},
+    )
+
+
+NOTE_ROW = leg_row("note", "1")
+OTHER_ROW = leg_row("media", "99")
+
+CENSUS_GOLDEN = (
+    GoldenQuery(
+        id="kw-hit",
+        query="wombat kiln",
+        category="keyword",
+        relevant_slugs=("note-saltmarsh-hide",),
+    ),
+    GoldenQuery(
+        id="pm-miss",
+        query="how do I write a shift log",
+        category="paraphrase",
+        relevant_slugs=("media-shift",),
+    ),
+    GoldenQuery(
+        id="neg-absent",
+        query="quantum wombat futures",
+        category="negative",
+        relevant_slugs=(),
+    ),
+)
+
+CENSUS_SLUGS = {"note-saltmarsh-hide": ("note", "1"), "media-shift": ("media", "7")}
+
+#: The leg's answers for `CENSUS_GOLDEN`: one query finds its target, one
+#: returns nothing at all, and the negative returns a row that is nobody's
+#: target (so it is neither a hit nor a zero-row query).
+CENSUS_ROWS = {
+    "wombat kiln": [NOTE_ROW],
+    "how do I write a shift log": [],
+    "quantum wombat futures": [OTHER_ROW],
+}
+
+
+class FakeLegService(FakeService):
+    """A service whose keyword leg is a dictionary, plus a cache that lies.
+
+    ``stale_rows`` models a runtime handed to the sweep WARM: until
+    `clear_cache` runs, every leg call returns the same stale answer no
+    matter which construction was just applied. That is the exact shape of
+    the failure the control-row self-check exists to catch (TASK-4110's
+    "k doesn't matter" report, one arc earlier).
+    """
+
+    def __init__(self, rows_by_query=None, *, stale_rows=None) -> None:
+        super().__init__()
+        self.config.search.fts_match_construction = "and"
+        self.rows_by_query = dict(rows_by_query or {})
+        self.stale_rows = stale_rows
+        self.async_leg_calls: list[tuple[str, int]] = []
+        self.sync_leg_calls = 0
+        self.constructions_seen: list[str] = []
+
+    async def _keyword_search(self, query, top_k, include_citations=True, **kwargs):
+        self.async_leg_calls.append((query, top_k))
+        self.constructions_seen.append(self.config.search.fts_match_construction)
+        rows = (
+            self.stale_rows
+            if self.stale_rows is not None
+            else self.rows_by_query.get(query, [])
+        )
+        return list(rows)[:top_k]
+
+    def keyword_search_sync(self, *args, **kwargs):
+        """The SYNC twin (`simple_cache.py:483`/`:711` render the "and" key for
+        every construction). Nothing in the sweep may reach it."""
+        self.sync_leg_calls += 1
+        return []
+
+    def clear_cache(self) -> None:
+        super().clear_cache()
+        self.stale_rows = None
+
+
+class FakeLegRuntime:
+    """A `FakeRuntime` whose `run` actually drives coroutines."""
+
+    def __init__(self, service, slug_to_source=None) -> None:
+        self.service = service
+        self.slug_to_source = dict(slug_to_source or CENSUS_SLUGS)
+        self.app = object()
+
+    def run(self, awaitable):
+        if inspect.isawaitable(awaitable):
+            return asyncio.run(awaitable)
+        return awaitable
+
+
+# ---------------------------------------------------------------------------
+# The axis itself
+# ---------------------------------------------------------------------------
+
+
+def test_the_construction_round_trips_through_apply():
+    config = FakeSearchConfig()
+    config.fts_match_construction = "and"
+
+    Strategy(
+        "and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+        fts_match_construction="and_then_or",
+    ).apply(config)
+
+    assert config.fts_match_construction == "and_then_or"
+    assert (config.rrf_k, config.hybrid_pool_multiplier, config.hybrid_alpha) == (
+        5, 2, 0.7,
+    )
+
+
+def test_every_pre_15400_strategy_still_means_exactly_what_it_meant():
+    """The axis defaults to the shipped construction, so the fusion matrix
+    that already ran keeps measuring what it measured."""
+    for strategy in (*BASE_STRATEGIES, *ALPHA_COMBO_STRATEGIES):
+        assert strategy.fts_match_construction == "and", strategy.name
+    # ...and one tuple, spelled out: the control is still the 4110 control.
+    assert CONTROL == Strategy(
+        "control", rrf_k=60, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+        fts_match_construction="and",
+    )
+    assert Strategy("pool5", 60, 5, 0.7).changed_fields(CONTROL) == (
+        "hybrid_pool_multiplier",
+    )
+
+
+def test_the_construction_is_a_changed_field_but_never_a_weighting_lever():
+    """It changes which documents the keyword leg FINDS, not how fusion weighs
+    them — the same argument that keeps pool widening out of `changed_levers`."""
+    construction = Strategy("and_or", 60, 2, 0.7, "and_then_or")
+
+    assert construction.changed_fields(CONTROL) == ("fts_match_construction",)
+    assert construction.changed_levers(CONTROL) == ()
+
+
+def test_the_sweep_restores_the_construction_it_found(monkeypatch):
+    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
+    runtime = FakeRuntime()
+    runtime.service.config.search.fts_match_construction = "and"
+
+    run_fusion_sweep(
+        runtime,
+        GOLDEN,
+        (Strategy("or", 5, 2, 0.7, "or"),),
+        k=K,
+        seam=FakeSeam([TARGET_ROW]),
+    )
+
+    assert runtime.service.config.search.fts_match_construction == "and", (
+        "a sweep that leaves the caller's service on the last construction it "
+        "tried would silently re-point every later search in the process"
+    )
+
+
+def test_the_construction_matrix_is_the_four_the_spec_pre_registered():
+    names = tuple(s.name for s in CONSTRUCTION_STRATEGIES)
+    assert names == ("and", "and_trim", "or", "and_or")
+    assert names[0] == CONSTRUCTION_CONTROL_NAME, "the control row must be first"
+    assert all(len(name) <= 10 for name in names), "the matrix column is 10 wide"
+    assert tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES) == (
+        "and", "and_stopword_trim", "or", "and_then_or",
+    )
+    # The SHIPPED fusion parameters, held fixed: this arc measures the
+    # construction, and a row that also moved rrf_k would confound the two.
+    for strategy in CONSTRUCTION_STRATEGIES:
+        assert (strategy.rrf_k, strategy.hybrid_pool_multiplier, strategy.hybrid_alpha) == (
+            5, 2, 0.7,
+        ), strategy.name
+
+
+def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
+    """Read off `SearchConfig`, not copied from the spec's prose."""
+    from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
+
+    shipped = SearchConfig()
+    control = CONSTRUCTION_STRATEGIES[0]
+    assert (
+        control.rrf_k,
+        control.hybrid_pool_multiplier,
+        control.hybrid_alpha,
+        control.fts_match_construction,
+    ) == (
+        shipped.rrf_k,
+        shipped.hybrid_pool_multiplier,
+        shipped.hybrid_alpha,
+        shipped.fts_match_construction,
+    )
+
+
+def test_the_or_form_stamp_is_the_engines_own_constant():
+    """The negative-composition counter reads `metadata["fts_match"]`; a rename
+    on the engine side must not leave this module counting a dead string."""
+    from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_OR
+
+    assert FTS_MATCH_OR_FORM == FTS_MATCH_OR
+
+
+# ---------------------------------------------------------------------------
+# The census — leg-level, the number the whole decision rule maximizes
+# ---------------------------------------------------------------------------
+
+
+def test_the_census_counts_targets_inside_the_keyword_legs_top_k():
+    service = FakeLegService(CENSUS_ROWS)
+    census = keyword_leg_census(FakeLegRuntime(service), CENSUS_GOLDEN, k=K)
+
+    assert isinstance(census, LegCensus)
+    assert census.hits == 1
+    assert census.hit_queries == ("kw-hit",)
+    # The denominator is every NON-NEGATIVE query: a negative has no target,
+    # so counting it would put a query that cannot be right into a rate that
+    # says how often the leg is right.
+    assert census.scoreable == 2
+    assert census.queries == 3
+    assert census.per_category["keyword"] == (1, 1)
+    assert census.per_category["paraphrase"] == (0, 1)
+
+
+def test_the_census_records_zero_row_queries_across_the_whole_set():
+    """The 40-of-60 number the arc was raised on counts negatives too — they
+    are the queries the probes are then run over."""
+    service = FakeLegService({**CENSUS_ROWS, "quantum wombat futures": []})
+    census = keyword_leg_census(FakeLegRuntime(service), CENSUS_GOLDEN, k=K)
+
+    assert census.zero_row_queries == ("pm-miss", "neg-absent")
+    assert census.hits == 1
+
+
+def test_a_row_no_fixture_claims_is_not_a_census_hit():
+    service = FakeLegService({**CENSUS_ROWS, "how do I write a shift log": [OTHER_ROW]})
+    census = keyword_leg_census(FakeLegRuntime(service), CENSUS_GOLDEN, k=K)
+
+    assert census.hits == 1, "an unclaimed row occupies a slot; it is not a hit"
+    assert census.zero_row_queries == ()
+
+
+def test_the_census_drives_the_async_keyed_leg_and_never_a_sync_twin():
+    """The handover from Task 1: `simple_cache.py`'s SYNC twins render the
+    "and" key for EVERY construction, so a census that ever reached them
+    would report the same number four times."""
+    service = FakeLegService(CENSUS_ROWS)
+    keyword_leg_census(FakeLegRuntime(service), CENSUS_GOLDEN, k=K)
+
+    assert [query for query, _ in service.async_leg_calls] == [
+        query.query for query in CENSUS_GOLDEN
+    ]
+    assert all(top_k == K for _, top_k in service.async_leg_calls)
+    assert service.sync_leg_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# The negative-composition record
+# ---------------------------------------------------------------------------
+
+
+def hybrid_row(source_id: str, *, fts_rank, vector_rank, fts_match="and") -> dict:
+    provenance = {
+        "source_type": "note",
+        "hybrid_fusion": {"fts_rank": fts_rank, "vector_rank": vector_rank},
+    }
+    if fts_match is not None:
+        provenance["fts_match"] = fts_match
+    return {"source_id": source_id, "provenance": provenance}
+
+
+NEGATIVE_GOLDEN = (
+    GoldenQuery("neg-one", "quantum wombat futures", "negative", ()),
+)
+
+
+def test_only_fts_only_rows_in_the_or_form_count_as_fallback_rows():
+    rows = [
+        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),   # counted
+        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),  # AND form
+        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),      # merged
+        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),   # vector
+    ]
+    composition = negative_composition(
+        FakeSeam(rows), FakeRuntime(), NEGATIVE_GOLDEN, K, ("media",)
+    )
+
+    assert isinstance(composition, NegativeComposition)
+    assert composition.fallback_rows == 1
+    assert composition.fts_only_rows == 2, (
+        "the denominator the fallback count is read against — how many rows "
+        "the keyword leg put into these results at all"
+    )
+    assert composition.queries == 1
+
+
+def test_the_negative_composition_only_looks_at_negative_queries():
+    composition = negative_composition(
+        FakeSeam([hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or")]),
+        FakeRuntime(),
+        CENSUS_GOLDEN,
+        K,
+        ("media",),
+    )
+    assert composition.queries == 1, "only `neg-absent` is a negative"
+    assert composition.fallback_rows == 1
+
+
+# ---------------------------------------------------------------------------
+# The control-row self-check — the cache-blindness alarm
+# ---------------------------------------------------------------------------
+
+
+def _construction_rows(*constructions: str) -> tuple[Strategy, ...]:
+    return tuple(
+        Strategy(name, 5, 2, 0.7, name if name != "and_or" else "and_then_or")
+        for name in constructions
+    )
+
+
+def _run_instrumented(monkeypatch, service, *, expected, strategies=None, seen=None):
+    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval(seen if seen is not None else []))
+    return run_construction_sweep(
+        FakeLegRuntime(service),
+        CENSUS_GOLDEN,
+        strategies if strategies is not None else _construction_rows("and", "or"),
+        k=K,
+        seam=FakeSeam([hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or")]),
+        rescue_query_id="kw-hit",
+        target_slug="note-saltmarsh-hide",
+        expected_control_census=expected,
+    )
+
+
+def test_a_control_census_that_matches_lets_the_sweep_proceed(monkeypatch):
+    service = FakeLegService(CENSUS_ROWS)
+    seen: list[tuple] = []
+
+    report = _run_instrumented(monkeypatch, service, expected=1, seen=seen)
+
+    assert [e.strategy.name for e in report.entries] == ["and", "or"]
+    assert report.control().strategy.name == CONSTRUCTION_CONTROL_NAME
+    assert report.entries[0].census_hits == 1
+    assert report.entries[0].negative_fallback_rows == 1
+    assert len(seen) == 2, "both rows ran their scored pass"
+
+
+def test_a_control_census_mismatch_raises_before_any_other_row_runs(monkeypatch):
+    service = FakeLegService(CENSUS_ROWS)
+    seen: list[tuple] = []
+
+    with pytest.raises(ValueError, match="census"):
+        _run_instrumented(monkeypatch, service, expected=20, seen=seen)
+
+    assert seen == [], (
+        "the alarm must fire BEFORE the matrix spends five minutes producing "
+        "numbers nobody can trust"
+    )
+    assert service.constructions_seen == ["and"] * len(CENSUS_GOLDEN), (
+        "no other construction may have reached the leg"
+    )
+
+
+def test_a_warm_cache_cannot_blind_the_control_census(monkeypatch):
+    """THE MUTATION TEST for `clear_cache` in the pass loop.
+
+    The fake is handed over warm: until the cache is cleared its leg returns
+    a stale answer whose census is NOT the shipped number. With the clear in
+    the loop the control row reproduces its census and the sweep runs; drop
+    the clear and this test reds with the self-check's own ValueError, which
+    is exactly the alarm firing when the sweep is blinded.
+    """
+    stale = [OTHER_ROW]
+    service = FakeLegService(CENSUS_ROWS, stale_rows=list(stale))
+
+    # The fake really is blinding: served stale, the control census is wrong.
+    blinded = keyword_leg_census(
+        FakeLegRuntime(FakeLegService(CENSUS_ROWS, stale_rows=list(stale))),
+        CENSUS_GOLDEN,
+        k=K,
+    )
+    assert blinded.hits == 0
+
+    report = _run_instrumented(monkeypatch, service, expected=1)
+    assert report.entries[0].census_hits == 1
+
+
+def test_the_self_check_needs_the_control_row_first(monkeypatch):
+    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
+    with pytest.raises(ValueError, match="control"):
+        run_construction_sweep(
+            FakeLegRuntime(FakeLegService(CENSUS_ROWS)),
+            CENSUS_GOLDEN,
+            _construction_rows("or", "and"),
+            k=K,
+            seam=FakeSeam([]),
+            rescue_query_id="kw-hit",
+            target_slug="note-saltmarsh-hide",
+            expected_control_census=1,
+        )
+
+
+def test_the_shipped_control_census_is_the_number_task_7_measured():
+    assert SHIPPED_CONTROL_CENSUS == 20
+
+
+# ---------------------------------------------------------------------------
+# The NEAR / prefix probes — report-only, and FTS5's real syntax
+# ---------------------------------------------------------------------------
+
+
+def test_the_near_probe_uses_fts5s_function_form():
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    expression = near_probe_expression(RAGService, "the shift log summary")
+
+    assert expression == f'NEAR("shift" "log" "summary", {NEAR_PROBE_DISTANCE})'
+
+
+def test_the_prefix_probe_puts_the_star_after_the_closing_quote():
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    assert prefix_probe_expression(RAGService, "the shift log") == '"shift"* "log"*'
+
+
+def test_an_all_stopword_query_probes_to_nothing_rather_than_a_syntax_error():
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    # `NEAR(, 10)` is an FTS5 syntax error; "" is the leg's existing
+    # "return no rows without a database lookup" contract.
+    assert near_probe_expression(RAGService, "the and of") == ""
+    assert prefix_probe_expression(RAGService, "the and of") == ""
+
+
+def test_fts5_reads_an_infix_near_as_a_bare_token_not_as_proximity():
+    """WHY the probe builds `NEAR(a b, N)` and not `"a" NEAR "b"`.
+
+    FTS5 (unlike FTS3/4) has no infix NEAR: `"a" NEAR "b"` parses as an
+    implicit AND over three terms, one of which is the literal word "near".
+    It does not raise — it silently returns nothing — so a probe written that
+    way would have reported "NEAR rescues 0 of 40" for a reason that has
+    nothing to do with proximity.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    db = sqlite3.connect(":memory:")
+    try:
+        db.execute("CREATE VIRTUAL TABLE t USING fts5(body)")
+        db.execute("INSERT INTO t(body) VALUES ('the shift log summary for supervisors')")
+
+        def hits(expression: str) -> int:
+            return len(
+                db.execute("SELECT rowid FROM t WHERE t MATCH ?", (expression,)).fetchall()
+            )
+
+        assert hits('"shift" NEAR "log"') == 0, "infix NEAR is not proximity here"
+        assert hits('"shift" "near" "log"') == 0, "...it is this AND, exactly"
+        assert hits(near_probe_expression(RAGService, "shift log")) == 1
+    finally:
+        db.close()
+
+
+def test_fts5_prefix_syntax_is_the_star_outside_the_quotes():
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    db = sqlite3.connect(":memory:")
+    try:
+        db.execute("CREATE VIRTUAL TABLE t USING fts5(body)")
+        db.execute("INSERT INTO t(body) VALUES ('templates of building rough turns')")
+
+        def hits(expression: str) -> int:
+            return len(
+                db.execute("SELECT rowid FROM t WHERE t MATCH ?", (expression,)).fetchall()
+            )
+
+        # The shipped AND misses the plural; the prefix form is what widens it.
+        assert hits('"template" "building"') == 0
+        assert hits(prefix_probe_expression(RAGService, "template building")) == 1
+
+        # Injection safety survives the star, and the star is what makes the
+        # difference visible: appended to a BARE token FTS5 parses the token
+        # as column syntax and raises, which is the failure mode a probe
+        # that built its own expressions would have shipped.
+        with pytest.raises(sqlite3.OperationalError, match="no such column"):
+            hits("templ-3*")
+        assert hits(prefix_probe_expression(RAGService, "templ-3")) == 0
+        assert prefix_probe_expression(RAGService, "templ-3") == '"templ-3"*'
+        # An embedded quote is doubled, not escaped out of: the user's `OR`
+        # stays a word (and is trimmed as the stopword it is), never an
+        # operator that would have made this hostile query match.
+        hostile = prefix_probe_expression(RAGService, 'templates" OR "wombat')
+        assert hostile == '"templates"""* """wombat"*'
+        assert hits(hostile) == 0
+    finally:
+        db.close()
+
+
+def with_engine_tokenizer(service: FakeLegService) -> FakeLegService:
+    """Lend the fake leg the ENGINE's real tokenizer, quoter and stopword test.
+
+    They are `@staticmethod`s, so they can be borrowed without standing a
+    service up — and borrowing them rather than faking them is the point: a
+    fake quoter would let a probe builder pass this test while producing
+    an expression the real engine would never send.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    service._fts5_query_tokens = RAGService._fts5_query_tokens
+    service._quote_fts5_token = RAGService._quote_fts5_token
+    service._is_fts5_stopword = RAGService._is_fts5_stopword
+    return service
+
+
+def test_the_probes_run_only_the_named_queries_and_restore_the_builder():
+    service = with_engine_tokenizer(FakeLegService(CENSUS_ROWS))
+    service._fts5_match_expressions = lambda query: ("original", None)
+    original = service._fts5_match_expressions
+
+    probes = run_near_prefix_probes(
+        FakeLegRuntime(service), CENSUS_GOLDEN, ("pm-miss",), k=K
+    )
+
+    assert [probe.name for probe in probes] == ["near", "prefix"]
+    assert all(probe.queries == 1 for probe in probes)
+    assert [query for query, _ in service.async_leg_calls] == [
+        "how do I write a shift log"
+    ] * 2, "only the zero-row queries the caller named may be probed"
+    assert service._fts5_match_expressions is original, (
+        "a probe that leaves the injection seam patched would silently change "
+        "every later row of the sweep"
+    )
+
+
+def test_the_probe_report_is_readable_on_its_own():
+    service = with_engine_tokenizer(
+        FakeLegService({"how do I write a shift log": [leg_row("media", "7")]})
+    )
+
+    probes = run_near_prefix_probes(
+        FakeLegRuntime(service), CENSUS_GOLDEN, ("pm-miss",), k=K
+    )
+    rendered = format_probe_table(probes, census_to_beat=1)
+
+    assert "near" in rendered and "prefix" in rendered
+    assert "report-only" in rendered
+    assert probes[0].hits == 1
+
+
+# ---------------------------------------------------------------------------
+# The construction table
+# ---------------------------------------------------------------------------
+
+
+def test_the_construction_matrix_prints_the_census_and_the_composition(monkeypatch):
+    service = FakeLegService(CENSUS_ROWS)
+    report = _run_instrumented(monkeypatch, service, expected=1)
+
+    rendered = format_construction_matrix(report)
+
+    assert "and_or" not in rendered, "only the rows that ran are in the table"
+    for name in ("and", "or"):
+        assert name in rendered
+    assert "census" in rendered
+    assert "keyword leg" in rendered
+    # The 4110 rule (`qualify`) does NOT decide this arc: its winner is the
+    # biggest census subject to the spec's hard constraints, applied in
+    # writing. A table that printed "QUALIFIES" here would answer a question
+    # nobody asked.
+    assert "QUALIFIES" not in rendered and "WINNER" not in rendered

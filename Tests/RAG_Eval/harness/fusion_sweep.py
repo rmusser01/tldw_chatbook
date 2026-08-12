@@ -45,18 +45,50 @@ pool size). `qualify` therefore requires a *weighting* lever to have moved as
 its own clause, and `Strategy.changed_levers` deliberately does not count the
 pool multiplier as one.
 
+**TASK-15400 added a second axis to the same machinery**: the keyword leg's
+FTS5 MATCH construction (`SearchConfig.fts_match_construction`). It rides
+`Strategy` like the fusion knobs — one field, written by `apply`, restored in
+`finally` — but it is measured by a different rule, and three things about
+that are load-bearing.
+
+*The census is leg-level.* The fusion arc's question was about fusion, so
+its numbers came out of `run_eval`. This arc's question is about what the
+KEYWORD LEG finds at all, and the semantic leg masks that for every source
+type except prompts. `keyword_leg_census` therefore calls the engine's
+`_keyword_search` directly, once per golden query, and counts the queries
+whose target lands in the leg's own top-k. That is the number the spec's
+decision rule maximizes (20 today, over the 53 non-negative queries).
+
+*The control row self-checks before anything else runs.* A sweep whose
+passes share a cache reports "the construction makes no difference" — the
+exact failure TASK-4110's fusion sweep was nearly published with. The
+instrumented loop clears the cache per pass AND re-counts the shipped
+construction's census first; a mismatch raises before the second row spends
+a minute producing numbers nobody could trust.
+
+*The 4110 decision rule does not apply to this axis.* `qualify` /
+`select_winner` / `format_matrix` implement the FUSION rule (a weighting
+lever moved, the structural threshold, the vector-blind rescue). The
+construction sweep renders through `format_construction_matrix`, and its
+winner — biggest census subject to the spec's hard constraints — is applied
+in writing against that table. `changed_levers` deliberately does not count
+the construction, for the same reason it does not count pool widening: it
+changes which documents fusion SEES, never how fusion weighs them.
+
 Nothing here is imported by the application.
 """
 from __future__ import annotations
 
 import math
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Collection, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
 
 from loguru import logger
 
 from Tests.RAG_Eval.harness.canonicalize import rows_to_doc_ids, slug_lookup_from
-from Tests.RAG_Eval.harness.goldenset import GoldenQuery
+from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, GoldenQuery
 from Tests.RAG_Eval.harness.runner import (
     SOURCE_TYPES,
     ModeReport,
@@ -72,14 +104,22 @@ from Tests.RAG_Eval.harness.runner import (
 __all__ = [
     "ALPHA_COMBO_STRATEGIES",
     "BASE_STRATEGIES",
+    "CONSTRUCTION_CONTROL_NAME",
+    "CONSTRUCTION_STRATEGIES",
     "CONTROL",
     "CONTROL_NAME",
     "DEFAULT_K",
+    "FTS_MATCH_OR_FORM",
     "HYBRID_MODE",
     "LEVER_PRECEDENCE",
+    "NEAR_PROBE_DISTANCE",
     "REGRESSION_METRICS",
     "RESCUE_QUERY_ID",
     "RESCUE_TARGET_SLUG",
+    "SHIPPED_CONTROL_CENSUS",
+    "LegCensus",
+    "NegativeComposition",
+    "ProbeCensus",
     "Qualification",
     "RescueVerdict",
     "Strategy",
@@ -87,12 +127,20 @@ __all__ = [
     "SweepReport",
     "WARN_BAND",
     "combined_strategy",
+    "format_construction_matrix",
     "format_matrix",
+    "format_probe_table",
     "fts_only_beats_vector_rank",
+    "keyword_leg_census",
     "lever_rank",
+    "near_probe_expression",
+    "negative_composition",
+    "prefix_probe_expression",
     "qualify",
+    "run_construction_sweep",
     "run_full_matrix",
     "run_fusion_sweep",
+    "run_near_prefix_probes",
     "select_winner",
     "worst_regression",
 ]
@@ -130,12 +178,31 @@ REGRESSION_METRICS: tuple[str, ...] = ("recall", "mrr", "ndcg")
 #: fixed here so a later task cannot quietly reorder it to suit a result.
 LEVER_PRECEDENCE: tuple[str, ...] = ("rrf_k", "quota", "hybrid_alpha")
 
-#: Config fields the sweep writes, and therefore must put back.
+#: Config fields the sweep writes, and therefore must put back. The
+#: construction joined them with TASK-15400: it is a live `SearchConfig`
+#: field, so a sweep that did not restore it would re-point every later
+#: search in the process at whichever candidate ran last.
 _RESTORED_FIELDS: tuple[str, ...] = (
     "rrf_k",
     "hybrid_pool_multiplier",
     "hybrid_alpha",
     "default_search_mode",
+    "fts_match_construction",
+)
+
+#: The knobs `Strategy` moves, in report order. `deviation` reads only the
+#: three NUMERIC ones — the construction is categorical, so "how far is
+#: `or` from `and`" has no answer to put on a scale with rrf_k.
+_STRATEGY_FIELDS: tuple[str, ...] = (
+    "rrf_k",
+    "hybrid_pool_multiplier",
+    "hybrid_alpha",
+    "fts_match_construction",
+)
+_NUMERIC_FIELDS: tuple[str, ...] = (
+    "rrf_k",
+    "hybrid_pool_multiplier",
+    "hybrid_alpha",
 )
 
 
@@ -155,24 +222,31 @@ class Strategy:
             is ``top_k * this``.
         hybrid_alpha: ``config.search.hybrid_alpha`` — the vector leg's blend
             weight.
+        fts_match_construction: ``config.search.fts_match_construction`` —
+            the keyword leg's FTS5 MATCH construction (TASK-15400), one of
+            ``and`` / ``and_stopword_trim`` / ``or`` / ``and_then_or``. It
+            defaults to the shipped ``and``, which is what keeps every
+            pre-15400 strategy tuple meaning exactly what it meant.
     """
 
     name: str
     rrf_k: int
     hybrid_pool_multiplier: int
     hybrid_alpha: float
+    fts_match_construction: str = "and"
 
     def apply(self, search_config: Any) -> None:
-        """Write this strategy's three knobs onto a live `SearchConfig`."""
+        """Write this strategy's knobs onto a live `SearchConfig`."""
         search_config.rrf_k = self.rrf_k
         search_config.hybrid_pool_multiplier = self.hybrid_pool_multiplier
         search_config.hybrid_alpha = self.hybrid_alpha
+        search_config.fts_match_construction = self.fts_match_construction
 
     def changed_fields(self, baseline: "Strategy") -> tuple[str, ...]:
         """Config fields this strategy moves relative to ``baseline``."""
         return tuple(
             field
-            for field in ("rrf_k", "hybrid_pool_multiplier", "hybrid_alpha")
+            for field in _STRATEGY_FIELDS
             if getattr(self, field) != getattr(baseline, field)
         )
 
@@ -183,9 +257,17 @@ class Strategy:
         candidate pool changes which documents fusion sees, never how fusion
         weighs them, so it cannot satisfy AC#4's structural guarantee. Its
         exclusion here is the single place that rule is enforced.
+
+        `fts_match_construction` (TASK-15400) is excluded for exactly the
+        same reason and must stay excluded: it changes which documents the
+        keyword leg FINDS. Counting it as a weighting lever would let a
+        construction row satisfy AC#4's first clause — a guarantee about
+        fusion arithmetic — by changing something fusion never reads.
         """
         return tuple(
-            field for field in self.changed_fields(baseline) if field != "hybrid_pool_multiplier"
+            field
+            for field in self.changed_fields(baseline)
+            if field not in ("hybrid_pool_multiplier", "fts_match_construction")
         )
 
     def deviation(self, baseline: "Strategy") -> float:
@@ -195,7 +277,7 @@ class Strategy:
         0.15 move in `hybrid_alpha` are on one scale at all.
         """
         total = 0.0
-        for field in ("rrf_k", "hybrid_pool_multiplier", "hybrid_alpha"):
+        for field in _NUMERIC_FIELDS:
             base = float(getattr(baseline, field))
             mine = float(getattr(self, field))
             total += abs(mine - base) / abs(base) if base else abs(mine - base)
@@ -242,6 +324,58 @@ ALPHA_COMBO_STRATEGIES: tuple[Strategy, ...] = (
     Strategy("a.60+k20", rrf_k=20, hybrid_pool_multiplier=2, hybrid_alpha=0.60),
     Strategy("a.55", rrf_k=60, hybrid_pool_multiplier=2, hybrid_alpha=0.55),
 )
+
+
+# ---------------------------------------------------------------------------
+# TASK-15400: the MATCH-construction axis
+# ---------------------------------------------------------------------------
+
+#: The construction sweep's control row — the SHIPPED construction, named
+#: after it rather than "control" so the table reads as what it is.
+CONSTRUCTION_CONTROL_NAME = "and"
+
+#: What the shipped construction scores on the leg-level census: the golden
+#: queries whose target enters the KEYWORD LEG's own top-10. Measured in
+#: TASK-15020/B2's authoring pass and recorded in the spec (`keyword` 13/16
+#: + `scoped` 7/7 = 20; every other category 0, and the 7 negatives have no
+#: target to find). The control row must reproduce it or the sweep is
+#: measuring something other than the construction — see
+#: `_check_control_census`.
+SHIPPED_CONTROL_CENSUS = 20
+
+#: `metadata["fts_match"]`'s OR-form value, mirrored from the engine's
+#: `rag_service.FTS_MATCH_OR`. Mirrored rather than imported so the harness's
+#: ALWAYS-ON tests do not drag the engine module in at import time; the two
+#: are pinned equal by `test_the_or_form_stamp_is_the_engines_own_constant`.
+#:
+#: It names the FORM that matched a row, never its position: under the `or`
+#: construction every keyword row carries it as a PRIMARY, and only under
+#: `and_then_or` does it mean "the fallback fired". Fallback-ness is
+#: therefore a function of (construction, form), which is why the negative
+#: composition is recorded per row and read beside the construction column.
+FTS_MATCH_OR_FORM = "or"
+
+#: The four pre-registered candidates, at the SHIPPED fusion parameters
+#: (`SearchConfig`'s own defaults: rrf_k 5, pool x2, alpha 0.7 — pinned
+#: against that class rather than copied from the spec's prose). Holding
+#: fusion fixed is what makes the census column attributable to the
+#: construction alone; a row that also moved rrf_k would confound the two
+#: arcs' levers in one number. Names stay <= 10 characters — the matrix
+#: column width is the dataclass's own stated rule.
+CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
+    Strategy("and", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="and"),
+    Strategy("and_trim", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="and_stopword_trim"),
+    Strategy("or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="or"),
+    Strategy("and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="and_then_or"),
+)
+
+#: The token distance the NEAR probe asks for. FTS5's default is also 10;
+#: it is written out because a probe's parameter belongs in the report.
+NEAR_PROBE_DISTANCE = 10
 
 
 def fts_only_beats_vector_rank(alpha: float, rrf_k: int) -> Optional[int]:
@@ -334,12 +468,118 @@ class RescueVerdict:
 
 
 @dataclass(frozen=True, slots=True)
+class LegCensus:
+    """What the KEYWORD LEG alone found, over the whole golden set.
+
+    The number TASK-15400's decision rule maximizes. It is deliberately not
+    a `run_eval` number: the semantic leg masks the keyword leg's misses for
+    every source type except prompts, so a fused metric cannot answer "what
+    does the keyword leg find at all".
+
+    Attributes:
+        k: The leg's top-k the count was taken inside.
+        hits: Queries whose target appears in the leg's top-k.
+        scoreable: Queries that HAVE a target (every non-negative query) —
+            the census's denominator. A negative has nothing to find, so
+            counting it would put a query that cannot be right into a rate
+            about how often the leg is right.
+        queries: Every query run, negatives included.
+        hit_queries: The ids behind `hits`, so a candidate's gains and
+            losses can be attributed query by query rather than by delta.
+        zero_row_queries: Ids the leg returned NOTHING for, negatives
+            included — the 40-of-60 set the arc was raised on, and exactly
+            the set the NEAR/prefix probes run over.
+        per_category: category -> (hits, scoreable in that category).
+    """
+
+    k: int
+    hits: int
+    scoreable: int
+    queries: int
+    hit_queries: tuple[str, ...]
+    zero_row_queries: tuple[str, ...]
+    per_category: Mapping[str, tuple[int, int]]
+
+
+@dataclass(frozen=True, slots=True)
+class NegativeComposition:
+    """What the keyword leg put into hybrid's top-k for absent-topic queries.
+
+    The spec's NEGATIVE-COMPOSITION RECORD: the gated negative probes cannot
+    move here (the vector leg already fills k and a fused FTS-only row
+    cannot outscore the vector rank-1), but the composition can — junk rows
+    can take the rescue slots. Recorded, not gated: fewer is better, and it
+    feeds the tie-break as a named trade-off rather than a surprise.
+
+    Attributes:
+        queries: Negative queries measured.
+        fallback_rows: FTS-only rows inside the top-k carrying the OR form.
+            Under `and_then_or` these ARE fallback rows; under `or` they are
+            that construction's primaries — the construction column
+            disambiguates, which is why this counts the FORM and says so.
+        fts_only_rows: All FTS-only rows inside the top-k, whatever form
+            matched them. The denominator `fallback_rows` is read against.
+    """
+
+    queries: int
+    fallback_rows: int
+    fts_only_rows: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeCensus:
+    """One report-only MATCH variant, run over the zero-row queries.
+
+    The spec's fifth axis: `NEAR` and prefix get one probe each, not a
+    matrix row, and are promoted to a full row only if a probe beats the
+    best swept candidate's census.
+
+    Attributes:
+        name: ``near`` or ``prefix``.
+        expression_sample: One rendered expression, so the report shows what
+            was actually asked rather than what the code was meant to ask.
+        queries: Zero-row queries probed.
+        queries_with_rows: How many returned anything at all.
+        hits: How many returned their target inside the leg's top-k — the
+            census-comparable number.
+        negative_queries_with_rows: How many of the probed NEGATIVES started
+            returning rows; a variant's noise cost, in the same units the
+            negative-composition record uses.
+    """
+
+    name: str
+    expression_sample: str
+    queries: int
+    queries_with_rows: int
+    hits: int
+    negative_queries_with_rows: int
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyReport:
-    """One strategy's whole result: hybrid metrics + the rescue verdict."""
+    """One strategy's whole result: hybrid metrics + the rescue verdict.
+
+    The last four fields are TASK-15400's instrumentation and are populated
+    only by an instrumented (construction) pass; they stay ``None`` for the
+    fusion matrix, which never measured them.
+    """
 
     strategy: Strategy
     hybrid: ModeReport
     rescue: RescueVerdict
+    census: Optional[LegCensus] = None
+    negatives: Optional[NegativeComposition] = None
+    elapsed_s: Optional[float] = None
+
+    @property
+    def census_hits(self) -> Optional[int]:
+        """Golden queries whose target entered the keyword leg's top-k."""
+        return None if self.census is None else self.census.hits
+
+    @property
+    def negative_fallback_rows(self) -> Optional[int]:
+        """OR-form FTS-only rows inside hybrid top-k across the negatives."""
+        return None if self.negatives is None else self.negatives.fallback_rows
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,6 +939,345 @@ def _rescue_probe(
     )
 
 
+# ---------------------------------------------------------------------------
+# TASK-15400's instrumentation: the leg census, the negative composition,
+# and the two report-only probes
+# ---------------------------------------------------------------------------
+
+
+def _leg_rows(results: Iterable[Any]) -> list[Mapping[str, Any]]:
+    """Engine `SearchResult`s -> the row shape `rows_to_doc_ids` reads.
+
+    The engine leg returns objects with a `metadata` dict; the seam returns
+    dicts with a `provenance` block. Canonicalization is the harness's ONE
+    definition of "which fixture is this row" (prefix-stripping and the
+    source-type alias table included), so the leg is adapted into that shape
+    rather than given a second, subtly different resolver.
+    """
+    rows: list[Mapping[str, Any]] = []
+    for result in results:
+        metadata = getattr(result, "metadata", None)
+        metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
+        rows.append(
+            {
+                # `_resolve`'s prefix retry is what makes the bare-id and the
+                # `media_7` form both land on the same fixture.
+                "source_id": metadata.get("source_id") or getattr(result, "id", ""),
+                "provenance": metadata,
+            }
+        )
+    return rows
+
+
+def keyword_leg_census(
+    runtime: Any,
+    golden: Sequence[GoldenQuery],
+    k: int = DEFAULT_K,
+    *,
+    lookup: Optional[Mapping[tuple[str, str], str]] = None,
+) -> LegCensus:
+    """Count the golden queries whose target the KEYWORD LEG itself returns.
+
+    One direct `RAGService._keyword_search` call per query — the private
+    method on purpose, and for the same reason `_extract_rows` is imported
+    from the runner: this is the harness's contract with the leg, and a
+    second implementation of it here would drift. Going through the seam
+    instead would measure fusion, which is precisely what this number must
+    not do.
+
+    The call is the ASYNC keyed path, driven through ``runtime.run``. The
+    sync cache twins (`simple_cache.py`'s `get_sync`/`set_sync`) render the
+    ``and`` key for every construction, so a census that ever reached them
+    would report one number four times — the exact shape of the failure the
+    control-row self-check exists to catch.
+
+    Note for a future editor: do NOT turn this into a rank-ORDER assertion
+    on a small corpus. bm25's IDF term goes to zero when a term appears in
+    every document, so on a handful of documents every OR-form row scores
+    -0.0 and their order is an artefact of the fixture, not of the
+    construction (TASK-15400, Task 1 review).
+
+    Args:
+        runtime: A live `EvalRuntime`.
+        golden: The validated golden query set.
+        k: The leg's top-k, and the window a target must land inside.
+        lookup: Optional pre-built slug lookup; built from the runtime when
+            omitted.
+
+    Returns:
+        A `LegCensus` over every query, with the hit count taken only over
+        the ones that have a target.
+    """
+    if lookup is None:
+        lookup = slug_lookup_from(runtime.slug_to_source)
+
+    hits: list[str] = []
+    zero_rows: list[str] = []
+    per_category: dict[str, list[int]] = {}
+    scoreable = 0
+    for query in golden:
+        results = runtime.run(
+            runtime.service._keyword_search(
+                query.query, top_k=k, include_citations=False
+            )
+        )
+        doc_ids = rows_to_doc_ids(_leg_rows(results), lookup)
+        if not doc_ids:
+            zero_rows.append(query.id)
+        if query.category == NEGATIVE_CATEGORY:
+            # A negative has no target (the golden-set validator enforces
+            # that): it is in `queries` and can be in `zero_row_queries`, but
+            # it can never be a hit and is not part of the denominator.
+            # Classified by CATEGORY, the harness's own single definition of
+            # what a negative is (`runner.NEGATIVE_CATEGORY`).
+            continue
+        scoreable += 1
+        cell = per_category.setdefault(query.category, [0, 0])
+        cell[1] += 1
+        if any(slug in doc_ids[:k] for slug in query.relevant_slugs):
+            hits.append(query.id)
+            cell[0] += 1
+
+    return LegCensus(
+        k=k,
+        hits=len(hits),
+        scoreable=scoreable,
+        queries=len(golden),
+        hit_queries=tuple(hits),
+        zero_row_queries=tuple(zero_rows),
+        per_category={
+            category: (cell[0], cell[1]) for category, cell in sorted(per_category.items())
+        },
+    )
+
+
+def negative_composition(
+    seam: Any,
+    runtime: Any,
+    golden: Sequence[GoldenQuery],
+    k: int = DEFAULT_K,
+    source_types: Sequence[str] = SOURCE_TYPES,
+) -> NegativeComposition:
+    """Count the keyword leg's rows inside hybrid top-k for the negatives.
+
+    Re-runs each negative through the seam the scored pass just ran, so the
+    search cache serves it (same query, same top_k, same key) and the rows
+    are the ones that pass actually produced. `run_eval`'s `NegativeProbe`
+    records how MANY documents came back; this records where they came
+    from, which is the thing the gate is blind to.
+
+    Args:
+        seam: The `LibraryLocalRagSearchService` the pass used.
+        runtime: The live `EvalRuntime`.
+        golden: The golden set (negatives are selected out of it here).
+        k: Result cap.
+        source_types: Library scope identifiers to search.
+
+    Returns:
+        A `NegativeComposition` over the negative queries.
+    """
+    scope = tuple(source_types)
+    negatives = [
+        query for query in golden if query.category == NEGATIVE_CATEGORY
+    ]
+    fallback_rows = 0
+    fts_only_rows = 0
+    for query in negatives:
+        result = runtime.run(seam.search(query.query, scope, "rag", top_k=k))
+        rows, _backend, _error = _extract_rows(result)
+        for row in rows[:k]:
+            fusion = _fusion_block(row)
+            if fusion is None:
+                continue
+            if fusion.get("fts_rank") is None or fusion.get("vector_rank") is not None:
+                continue
+            fts_only_rows += 1
+            provenance = row.get("provenance")
+            form = (
+                provenance.get("fts_match") if isinstance(provenance, Mapping) else None
+            )
+            if form == FTS_MATCH_OR_FORM:
+                fallback_rows += 1
+    return NegativeComposition(
+        queries=len(negatives),
+        fallback_rows=fallback_rows,
+        fts_only_rows=fts_only_rows,
+    )
+
+
+def _content_tokens(service: Any, query: str) -> list[str]:
+    """The query's content tokens, quoted by the ENGINE's own quoter.
+
+    Both probes are one-variable-at-a-time moves off the `and_trim` row
+    (the content-token AND), so they share its token set: what the probe
+    changes is the JOIN (proximity) or the term (prefix), never the
+    quoting — the injection safety of TASK-3995 is the engine's, borrowed
+    here rather than reimplemented.
+    """
+    return [
+        service._quote_fts5_token(token)
+        for token in service._fts5_query_tokens(query)
+        if not service._is_fts5_stopword(token)
+    ]
+
+
+def near_probe_expression(service: Any, query: str) -> str:
+    """FTS5 proximity over the content tokens, in the FUNCTION form.
+
+    FTS5 has no infix `NEAR` (FTS3/4 did): ``"a" NEAR "b"`` parses as an
+    implicit AND over three terms, one of them the literal word "near". It
+    does not raise — it silently matches nothing — so a probe written that
+    way would report "NEAR rescues nothing" for a reason with no connection
+    to proximity. Pinned against real SQLite in
+    `test_fts5_reads_an_infix_near_as_a_bare_token_not_as_proximity`.
+
+    Returns:
+        ``NEAR("a" "b", N)``, or ``""`` when the query has no content tokens
+        (``NEAR(, 10)`` is a syntax error; ``""`` is the leg's existing
+        "no rows, no database lookup" contract).
+    """
+    quoted = _content_tokens(service, query)
+    if not quoted:
+        return ""
+    return f"NEAR({' '.join(quoted)}, {NEAR_PROBE_DISTANCE})"
+
+
+def prefix_probe_expression(service: Any, query: str) -> str:
+    """Implicit AND over PREFIX terms — the star goes outside the quotes.
+
+    FTS5 reads ``"tok"*`` as "a phrase whose last token is a prefix"; the
+    star inside the quotes would be part of the literal string and match
+    nothing. Pinned against real SQLite in
+    `test_fts5_prefix_syntax_is_the_star_outside_the_quotes`.
+    """
+    quoted = _content_tokens(service, query)
+    if not quoted:
+        return ""
+    return " ".join(f"{token}*" for token in quoted)
+
+
+#: The probes, in report order.
+_PROBE_BUILDERS: tuple[tuple[str, Callable[[Any, str], str]], ...] = (
+    ("near", near_probe_expression),
+    ("prefix", prefix_probe_expression),
+)
+
+
+@contextmanager
+def _probe_expression_seam(
+    service: Any, builder: Callable[[Any, str], str]
+) -> Iterator[None]:
+    """Drive every sub-leg with a probe expression, then put the seam back.
+
+    All four sub-legs build their MATCH through `_fts5_match_expressions`,
+    so patching that one bound attribute reaches the whole leg — including
+    the early-exit check — without a second copy of the sub-leg fan-out.
+    The restore is unconditional: a probe that left the seam patched would
+    silently change every later row of the sweep.
+    """
+    attribute = "_fts5_match_expressions"
+    had_own = attribute in vars(service)
+    original = vars(service).get(attribute)
+    setattr(service, attribute, lambda query: (builder(service, query), None))
+    try:
+        yield
+    finally:
+        if had_own:
+            setattr(service, attribute, original)
+        else:
+            delattr(service, attribute)
+
+
+def run_near_prefix_probes(
+    runtime: Any,
+    golden: Sequence[GoldenQuery],
+    query_ids: Collection[str],
+    k: int = DEFAULT_K,
+    *,
+    lookup: Optional[Mapping[tuple[str, str], str]] = None,
+) -> tuple[ProbeCensus, ...]:
+    """Run the NEAR and prefix variants over the zero-row queries only.
+
+    Report-only by the spec's own scoping: these are one probe each, not
+    matrix rows, and are promoted to a full row only if a probe's census
+    beats the best swept candidate's. Running them over the queries the
+    shipped construction already answers would measure nothing — those
+    queries are not what either variant is for.
+
+    Args:
+        runtime: A live `EvalRuntime`.
+        golden: The golden set.
+        query_ids: The zero-row query ids (a control census's
+            `zero_row_queries`).
+        k: The leg's top-k.
+        lookup: Optional pre-built slug lookup.
+
+    Returns:
+        One `ProbeCensus` per variant, in report order.
+    """
+    if lookup is None:
+        lookup = slug_lookup_from(runtime.slug_to_source)
+    wanted = set(query_ids)
+    probed = [query for query in golden if query.id in wanted]
+    service = runtime.service
+
+    censuses: list[ProbeCensus] = []
+    for name, builder in _PROBE_BUILDERS:
+        sample = ""
+        with_rows = 0
+        hits = 0
+        negatives_with_rows = 0
+        with _probe_expression_seam(service, builder):
+            for query in probed:
+                sample = sample or builder(service, query.query)
+                results = runtime.run(
+                    service._keyword_search(query.query, top_k=k, include_citations=False)
+                )
+                doc_ids = rows_to_doc_ids(_leg_rows(results), lookup)
+                if doc_ids:
+                    with_rows += 1
+                    if query.category == NEGATIVE_CATEGORY:
+                        negatives_with_rows += 1
+                if any(slug in doc_ids[:k] for slug in query.relevant_slugs):
+                    hits += 1
+        censuses.append(
+            ProbeCensus(
+                name=name,
+                expression_sample=sample,
+                queries=len(probed),
+                queries_with_rows=with_rows,
+                hits=hits,
+                negative_queries_with_rows=negatives_with_rows,
+            )
+        )
+    return tuple(censuses)
+
+
+def _check_control_census(
+    strategy: Strategy, census: LegCensus, expected: int
+) -> None:
+    """The cache-blindness alarm: raise unless the control reproduces itself.
+
+    Raised from inside the pass loop, on the FIRST row, before its scored
+    pass runs — so a blinded matrix costs one census rather than a whole
+    gated run's worth of numbers nobody can trust.
+    """
+    if census.hits == expected:
+        return
+    raise ValueError(
+        f"the control row {strategy.name!r} "
+        f"({strategy.fts_match_construction}) scored a keyword-leg census of "
+        f"{census.hits}/{census.scoreable}, not the shipped {expected}. "
+        "Either the sweep is not reaching the leg it thinks it is (a warm "
+        "cache serving every construction one answer — the failure this "
+        "check exists for), or the corpus/golden set moved under the "
+        "census. Per category: "
+        f"{ {name: f'{hit}/{total}' for name, (hit, total) in census.per_category.items()} }; "
+        f"{len(census.zero_row_queries)} of {census.queries} queries returned "
+        "no rows at all."
+    )
+
+
 def run_fusion_sweep(
     runtime: Any,
     golden: Sequence[GoldenQuery],
@@ -709,6 +1288,9 @@ def run_fusion_sweep(
     rescue_query_id: str = RESCUE_QUERY_ID,
     target_slug: str = RESCUE_TARGET_SLUG,
     seam: Any = None,
+    control_name: str = CONTROL_NAME,
+    instrument: bool = False,
+    expected_control_census: Optional[int] = None,
 ) -> SweepReport:
     """Run the golden set through hybrid once per strategy.
 
@@ -724,6 +1306,15 @@ def run_fusion_sweep(
         target_slug: The fixture document that query must surface.
         seam: Optional pre-built `LibraryLocalRagSearchService`; built from
             ``runtime.app`` when omitted.
+        control_name: Which row the report's `control()` resolves to. The
+            construction matrix names its control after the shipped
+            construction (`and`) rather than "control".
+        instrument: Record TASK-15400's per-row instrumentation (the
+            keyword-leg census and the negative composition). Off for the
+            fusion matrix, which never measured either.
+        expected_control_census: The census the control row must reproduce.
+            ``None`` skips the self-check entirely (and is what the fusion
+            matrix passes, since it has no census at all).
 
     Returns:
         A `SweepReport`. It has no control entry unless `strategies` contains
@@ -731,13 +1322,24 @@ def run_fusion_sweep(
         scored on their own.
 
     Raises:
-        ValueError: Empty matrix, ``k < 1``, or no golden query with
-            `rescue_query_id`.
+        ValueError: Empty matrix, ``k < 1``, no golden query with
+            `rescue_query_id`, a self-check whose control row is not first,
+            or a control row whose census does not reproduce
+            `expected_control_census`.
     """
     if k < 1:
         raise ValueError(f"k must be at least 1, got {k}")
     if not strategies:
         raise ValueError("refusing to run a sweep over an empty strategy matrix")
+    if expected_control_census is not None and strategies[0].name != control_name:
+        # The self-check's whole value is that it fires BEFORE the rest of
+        # the matrix runs; a control row buried at position three would turn
+        # it into a post-mortem.
+        raise ValueError(
+            f"the control row {control_name!r} must be the FIRST strategy of a "
+            f"self-checked sweep, but the matrix starts with "
+            f"{strategies[0].name!r}"
+        )
     rescue_query = next((q for q in golden if q.id == rescue_query_id), None)
     if rescue_query is None:
         raise ValueError(
@@ -755,13 +1357,30 @@ def run_fusion_sweep(
     entries: list[StrategyReport] = []
     try:
         for strategy in strategies:
+            started = time.perf_counter()
             strategy.apply(search_config)
             # Belt-and-braces: Task 3 put the three resolved fusion values in
             # the hybrid cache key, so passes can no longer share an entry;
             # clearing anyway keeps a long matrix's memory flat and means a
             # future cache-key regression cannot silently flatten the sweep.
+            # TASK-15400 made this load-bearing rather than merely prudent:
+            # the construction axis is measured across passes on ONE runtime,
+            # and the control row's census is what proves the clearing works
+            # (`test_a_warm_cache_cannot_blind_the_control_census`).
             runtime.service.clear_cache()
             logger.info(f"fusion sweep: {strategy.name} ({strategy.describe()})")
+            census: Optional[LegCensus] = None
+            if instrument:
+                census = keyword_leg_census(runtime, golden, k=k, lookup=lookup)
+                logger.info(
+                    f"  keyword-leg census: {census.hits}/{census.scoreable} "
+                    f"({len(census.zero_row_queries)} zero-row queries)"
+                )
+                if (
+                    strategy.name == control_name
+                    and expected_control_census is not None
+                ):
+                    _check_control_census(strategy, census, expected_control_census)
             report = run_eval(
                 runtime, golden, k=k, modes=(HYBRID_MODE,), source_types=scope
             )
@@ -772,7 +1391,21 @@ def run_fusion_sweep(
             verdict = _rescue_probe(
                 seam, runtime, lookup, rescue_query, k, scope, target_slug, hybrid
             )
-            entries.append(StrategyReport(strategy, hybrid, verdict))
+            composition = (
+                negative_composition(seam, runtime, golden, k, scope)
+                if instrument
+                else None
+            )
+            entries.append(
+                StrategyReport(
+                    strategy,
+                    hybrid,
+                    verdict,
+                    census=census,
+                    negatives=composition,
+                    elapsed_s=time.perf_counter() - started,
+                )
+            )
     finally:
         for field, value in saved.items():
             setattr(search_config, field, value)
@@ -790,6 +1423,58 @@ def run_fusion_sweep(
         source_types=scope,
         num_queries=len(golden),
         num_scored=count_scored(golden),
+        control_name=control_name,
+    )
+
+
+def run_construction_sweep(
+    runtime: Any,
+    golden: Sequence[GoldenQuery],
+    strategies: Sequence[Strategy] = CONSTRUCTION_STRATEGIES,
+    k: int = DEFAULT_K,
+    *,
+    source_types: Sequence[str] = SOURCE_TYPES,
+    rescue_query_id: str = RESCUE_QUERY_ID,
+    target_slug: str = RESCUE_TARGET_SLUG,
+    seam: Any = None,
+    expected_control_census: Optional[int] = SHIPPED_CONTROL_CENSUS,
+) -> SweepReport:
+    """TASK-15400's matrix: the same pass loop, instrumented and self-checked.
+
+    A thin wrapper on purpose. The config restore, the per-pass cache clear
+    and the rescue probe are disciplines this arc inherits rather than
+    reimplements — a second loop would be a second place for them to rot.
+
+    Args:
+        runtime: A live `EvalRuntime`.
+        golden: The validated golden query set.
+        strategies: The construction matrix; the control row must be first.
+        k: Result cap and metric @k.
+        source_types: Library scope identifiers to search.
+        rescue_query_id: The vector-blind fixture's query (hard constraint
+            (a) is read off its verdict).
+        target_slug: That fixture's document.
+        seam: Optional pre-built seam.
+        expected_control_census: The shipped census the control row must
+            reproduce; ``None`` disables the self-check.
+
+    Returns:
+        A `SweepReport` whose entries carry the census and the negative
+        composition. Render it with `format_construction_matrix` — the
+        fusion rule (`format_matrix`) answers a different arc's question.
+    """
+    return run_fusion_sweep(
+        runtime,
+        golden,
+        strategies,
+        k=k,
+        source_types=source_types,
+        rescue_query_id=rescue_query_id,
+        target_slug=target_slug,
+        seam=seam,
+        control_name=CONSTRUCTION_CONTROL_NAME,
+        instrument=True,
+        expected_control_census=expected_control_census,
     )
 
 
@@ -974,5 +1659,188 @@ def format_matrix(report: SweepReport) -> str:
             f"  clause (c): deviation {winner.strategy.deviation(baseline):.3f}, "
             f"levers {list(winner.strategy.changed_levers(baseline))}, "
             f"fields {list(winner.strategy.changed_fields(baseline))}."
+        )
+    return "\n".join(lines)
+
+
+def format_construction_matrix(report: SweepReport) -> str:
+    """Render TASK-15400's decision table: one row per MATCH construction.
+
+    Deliberately NOT `format_matrix`. That table applies the fusion arc's
+    decision rule (`qualify`), whose clauses are about weighting levers and
+    RRF arithmetic — every construction row would fail its first clause for
+    a reason that says nothing about this arc. The winner here is the
+    biggest census subject to the spec's hard constraints, and it is applied
+    in writing against these numbers.
+
+    Args:
+        report: An instrumented sweep (`run_construction_sweep`).
+
+    Returns:
+        The table: census, gated cells, the vector-blind fixture's verdict
+        and the negative composition, per construction.
+    """
+    control = report.control()
+    lines: list[str] = []
+    lines.append(
+        f"MATCH construction sweep @k={report.k} — hybrid mode only, "
+        f"{report.num_queries} golden queries ({report.num_scored} scored) over "
+        f"{'/'.join(report.source_types)}"
+    )
+    lines.append(
+        f"control = {control.strategy.name} "
+        f"({control.strategy.fts_match_construction}; "
+        f"{control.strategy.describe()}); rescue fixture = "
+        f"{report.rescue_query_id} -> {report.target_slug}"
+    )
+    denominator = (
+        "" if control.census is None
+        else f" out of {control.census.scoreable} non-negative queries"
+    )
+    lines.append(
+        "'census' = golden queries whose target enters the keyword leg's own "
+        f"top-{report.k}{denominator}, measured leg-level (a direct "
+        "`_keyword_search` pass, no fusion); 'zero' = queries the leg returned "
+        "nothing for, negatives included."
+    )
+    lines.append("")
+
+    header = (
+        f"{'row':<10}{'construction':>19}{'census':>8}{'zero':>6}"
+        f"{'P@k':>8}{'R@k':>8}{'MRR':>8}{'NDCG':>8}{'docs':>6}"
+        f"{'rescue':>8}{'rank':>6}{'mech':>11}"
+        f"{'neg-or':>8}{'neg-fts':>8}{'secs':>7}"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for entry in report.entries:
+        strategy = entry.strategy
+        overall = entry.hybrid.overall
+        census = entry.census
+        negatives = entry.negatives
+        lines.append(
+            f"{strategy.name:<10}{strategy.fts_match_construction:>19}"
+            f"{('-' if census is None else census.hits):>8}"
+            f"{('-' if census is None else len(census.zero_row_queries)):>6}"
+            f"{_cell(overall.get('precision'))}{_cell(overall.get('recall'))}"
+            f"{_cell(overall.get('mrr'))}{_cell(overall.get('ndcg'))}"
+            f"{entry.hybrid.mean_docs_at_k:>6.1f}"
+            f"{('yes' if entry.rescue.present else 'NO'):>8}"
+            f"{(entry.rescue.rank if entry.rescue.rank is not None else '-'):>6}"
+            f"{entry.rescue.mechanism:>11}"
+            f"{('-' if negatives is None else negatives.fallback_rows):>8}"
+            f"{('-' if negatives is None else negatives.fts_only_rows):>8}"
+            f"{(0.0 if entry.elapsed_s is None else entry.elapsed_s):>7.1f}"
+        )
+    lines.append(
+        "'neg-or' = FTS-only rows carrying the OR form inside hybrid top-k "
+        "across the negatives ('neg-fts' = all FTS-only rows there). Under "
+        "`and_then_or` those OR rows are fallbacks; under `or` they are that "
+        "construction's primaries — the construction column disambiguates. "
+        "Recorded for the tie-break (fewer is better), never gated."
+    )
+    lines.append(
+        "'rescue' is hard constraint (a): the vector-blind fixture must keep "
+        "its hybrid rescue. A 'NO' disqualifies the row whatever its census."
+    )
+
+    census_entries = [entry for entry in report.entries if entry.census is not None]
+    if census_entries:
+        categories = sorted(
+            {
+                category
+                for entry in census_entries
+                for category in entry.census.per_category
+            }
+        )
+        lines.append("")
+        lines.append(f"keyword-leg census by category (hits/scoreable) @k={report.k}")
+        column = f"{'category':<24}" + "".join(
+            f"{entry.strategy.name:>11}" for entry in census_entries
+        )
+        lines.append(column)
+        lines.append("-" * len(column))
+        for category in categories:
+            cells = ""
+            for entry in census_entries:
+                cell = entry.census.per_category.get(category)
+                cells += f"{('-' if cell is None else f'{cell[0]}/{cell[1]}'):>11}"
+            lines.append(f"{category:<24}{cells}")
+
+    categories = sorted(
+        {
+            category
+            for entry in report.entries
+            for category in entry.hybrid.per_category
+        }
+    )
+    if categories:
+        lines.append("")
+        lines.append(f"per-category cells (hybrid) @k={report.k}")
+        column = f"{'category/metric':<30}" + "".join(
+            f"{entry.strategy.name:>11}" for entry in report.entries
+        )
+        lines.append(column)
+        lines.append("-" * len(column))
+        for category in categories:
+            for metric in ("recall", "mrr", "ndcg", "precision"):
+                cells = "".join(
+                    _cell(
+                        entry.hybrid.per_category.get(category, {}).get(metric),
+                        width=11,
+                    )
+                    for entry in report.entries
+                )
+                lines.append(f"{category + '/' + metric:<30}{cells}")
+
+    lines.append("")
+    lines.append(
+        "DECISION: not computed here. TASK-15400's rule is 'the biggest "
+        "census subject to the hard constraints (vector-blind rescue kept; "
+        f"no gated cell down more than {WARN_BAND:.3f}; per-token quoting "
+        "intact), ties broken by fewest extra FTS queries then smallest code "
+        "delta' — applied in writing against this table, with the negative "
+        "composition named as the trade-off it is."
+    )
+    return "\n".join(lines)
+
+
+def format_probe_table(
+    probes: Sequence[ProbeCensus], *, census_to_beat: Optional[int] = None
+) -> str:
+    """Render the NEAR/prefix probe results.
+
+    Args:
+        probes: The probe censuses, in report order.
+        census_to_beat: The best swept candidate's census, when known. The
+            spec promotes a probe to a full matrix row only if it beats that
+            number, so the comparison belongs on the face of the report.
+
+    Returns:
+        The probe table, labelled report-only.
+    """
+    lines = [
+        "NEAR / prefix probes (report-only) — run over the zero-row queries "
+        "ONLY, as one-variable moves off the content-token AND: 'near' adds "
+        f"proximity (NEAR(..., {NEAR_PROBE_DISTANCE})), 'prefix' adds prefix "
+        "matching. Promoted to a full matrix row only if a probe's census "
+        "beats the best swept candidate's."
+    ]
+    header = (
+        f"{'probe':<8}{'queries':>9}{'with rows':>11}{'census':>8}"
+        f"{'negatives w/ rows':>20}  example expression"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for probe in probes:
+        lines.append(
+            f"{probe.name:<8}{probe.queries:>9}{probe.queries_with_rows:>11}"
+            f"{probe.hits:>8}{probe.negative_queries_with_rows:>20}  "
+            f"{probe.expression_sample or '(no content tokens)'}"
+        )
+    if census_to_beat is not None:
+        lines.append(
+            f"the number to beat is {census_to_beat} (the best swept "
+            "candidate's census); a probe at or below it stays a probe."
         )
     return "\n".join(lines)
