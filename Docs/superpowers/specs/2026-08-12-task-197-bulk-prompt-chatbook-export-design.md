@@ -133,7 +133,11 @@ It never returns source identity or lifecycle values.
 ### 2. Legacy record compatibility
 
 If both version markers are absent and the payload has the historical
-`name`/`description`/`content` shape, decode it using the established behavior:
+`name`/`description`/`content` shape, decode it using the established behavior.
+The exact known legacy key set additionally permits the historically emitted
+optional `id`, `created_at`, and `updated_at` fields. When present, `id` must be
+an exact integer (not bool) and each timestamp must be a string or `null`; all
+three are then ignored:
 
 - `name` → name;
 - `description` → details;
@@ -144,8 +148,9 @@ If both version markers are absent and the payload has the historical
 - format → legacy.
 
 A payload with one version marker missing, an unknown version, a mix of new and
-legacy-only keys, or an invalid field type is not treated as legacy. It fails
-closed with bounded recovery copy and no Prompt mutation.
+legacy-only keys, an unknown extra legacy key, or an invalid field type is not
+treated as legacy. It fails closed with bounded recovery copy and no Prompt
+mutation.
 
 ### 3. Archive-local identity
 
@@ -153,43 +158,68 @@ Source database IDs are input selectors only. While collecting Prompts, the
 creator assigns deterministic archive-local ordinals in selection order:
 
 ```text
-prompt-000001
-prompt-000002
+item-000001
+item-000002
 ...
 ```
 
 The ordinal becomes the manifest `ContentItem.id` and the filename
-`content/prompts/prompt-000001.json`. No source ID, UUID, version, client ID, or
-timestamp is written. The manifest item uses the Prompt name as title, details
-as description, and no created/updated timestamp.
+`content/prompts/prompt_item-000001.json`, matching the unchanged importer rule
+`prompt_<manifest-id>.json`. No source ID, UUID, version, client ID, or source
+timestamp value is written. The manifest item uses the Prompt name as title,
+details as description, and its required v1 `created_at`/`updated_at` slots
+serialize as `null`.
 
 The importer continues to locate files through manifest Prompt item IDs, so
 legacy numeric IDs and new archive-local IDs both work.
 
 ### 4. Export collection and failure semantics
 
-`ChatbookCreator._collect_prompts` fetches each selected row with
-`PromptsDatabase.fetch_prompt_details`, not `get_prompt_by_id`, so keywords ride
-the same record. It encodes and writes one record, appends the manifest item,
+Add `PromptsDatabase.fetch_prompt_chatbook_snapshot(prompt_id)`. It opens one
+SQLite read transaction, uses one local cursor to read the active Prompt row
+and its active keyword membership, and returns one detached mapping. It does not
+route through `transaction`, `execute_query`, `get_prompt_by_id`, or
+`fetch_keywords_for_prompt`: the generic transaction helper logs rollback
+exception text/tracebacks, the generic query diagnostics include source
+parameters, and the existing separate reads are not a coherent snapshot. The
+method owns `BEGIN`, commit, and best-effort rollback directly without logging
+failure details. SQLite or shape failures become one fixed `DatabaseError` with
+no exception chaining, message, source ID, or traceback in this task-owned
+seam.
+
+`ChatbookCreator._collect_prompts` fetches each selected row through that
+snapshot method. It encodes and writes one record, appends the manifest item,
 and advances progress.
 
 Unlike the historical collector, it does not catch-and-continue. A missing
-selected row, database error, validation failure, cancellation, or write error
-raises a bounded Prompt-export error to the creator. The creator's existing
-temporary-work-directory and atomic `.partial` → destination replacement
-boundary ensures no successful partial archive is finalized.
+selected row, database error, validation failure, or write error is wrapped as
+a repr-safe `PromptChatbookExportError` containing only the archive-local item
+ID and exception category. `create_chatbook` catches that type before its
+existing broad traceback/message handler, emits only a fixed category-level
+diagnostic, and returns fixed recovery copy. Cancellation retains its existing
+separate path. The creator's existing temporary-work-directory and atomic
+`.partial` → destination replacement boundary ensures no successful partial
+archive is finalized.
 
-Diagnostics use fixed operation names, archive-local ordinals, counts, and
-exception categories only. They never include Prompt names, descriptions,
-lanes, keywords, definitions, source IDs, exception messages, or tracebacks.
+Diagnostics added or modified for TASK-197 use fixed operation names,
+archive-local ordinals, counts, and exception categories only. They never
+include Prompt names, descriptions, lanes, keywords, definitions, source IDs,
+exception messages, or tracebacks.
+
+The Library screen's count and both inline/worker selection-resolution recovery
+branches are tightened at the same boundary. They log only the validated scope
+kind and exception category, never `scope!r`, explicit IDs, exception text, or
+`exception=True`; user-facing selection failure copy is fixed and does not
+interpolate the exception.
 
 ### 5. Import behavior
 
 `ChatbookImporter._import_prompts` loads JSON, dispatches through the shared
 codec, applies the existing optional `[Imported]` prefix, and writes through
 `PromptsDatabase.add_prompt`. Validation completes before the write. Destination
-identity, version, timestamps, sync event, FTS rows, and keyword links are
-created by the ordinary database path.
+identity, version, timestamps, sync event, FTS rows, keyword links, and the one
+ordinary destination `create` history snapshot are created by the normal
+database path.
 
 The existing same-name behavior remains unchanged for TASK-197: a conflict is
 reported for that item rather than silently overwriting current content.
@@ -267,7 +297,7 @@ Chatbook ZIP
 - **No active Prompts:** count settles to zero, existing empty-scope copy is
   shown, and Export remains disabled.
 - **Count failure:** existing quiet all-zero recovery behavior applies and the
-  form remains safe; diagnostics carry no Prompt data.
+  form remains safe; diagnostics carry only scope kind and exception category.
 - **Prompt disappears after counting:** export fails with fixed copy; Retry
   re-resolves fresh IDs and counts.
 - **Unknown record version:** import reports an unsupported Prompt-record
@@ -305,6 +335,9 @@ Chatbook ZIP
   invalid keywords, and invalid optional values fail closed.
 - Legacy payload compatibility remains exact.
 - Repr/log capture contains no body or definition sentinels on failure.
+- Adversarial explicit-ID and exception-message sentinels are absent from
+  count/selection, snapshot, collector, and importer logs/status copy; no task
+  path emits a traceback.
 
 ### Database and scope
 
@@ -327,11 +360,14 @@ Export a mixed set containing:
 - more than one 50-row Prompt browse page;
 - one deleted control row.
 
-Open the actual ZIP and assert no source IDs, UUIDs, versions, client IDs, or
-timestamps appear in Prompt filenames, manifest items, or payloads. Import it
-into the destination and compare every portable content field. Assert new
-destination identity/lifecycle fields and absence of deleted/history/collection
-state.
+Open the actual ZIP and assert the exact Prompt payload key set, deterministic
+archive-local manifest IDs, `prompt_<manifest-id>.json` paths, null manifest
+timestamp slots, and absence of source lifecycle keys. Do not use raw substring
+absence across arbitrary Prompt text, because a user may legitimately place an
+ID-looking value in a lane. Import into the destination and compare every
+portable content field. Assert new destination identity/lifecycle fields,
+exactly one ordinary destination-created history snapshot, and absence of
+source deleted/history/collection state.
 
 Mutate one selected source row away between scope resolution and collection;
 the export must fail without a finalized partial archive. Add invalid-version
@@ -345,7 +381,9 @@ and legacy-archive fixtures through the real importer.
 - Prompt scope hides media-quality controls.
 - At 64x24 and a normal viewport under the generated app stylesheet, Sort,
   Import, and Export remain painted, focusable, and inside the Prompt toolbar;
-  the export canvas actions remain reachable.
+  the export canvas actions remain reachable. Add
+  `library-prompts-export` to the Prompt focus-identity allowlist and verify the
+  rendered compositor/frame in addition to widget regions.
 - Button labels and scope/error text render literal Unicode/markup-looking
   content where applicable.
 

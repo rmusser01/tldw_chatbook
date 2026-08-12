@@ -22,7 +22,7 @@ Deferred from the 2026-07-12 Library Prompts spec: v1 ships per-prompt .md expor
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Chatbook prompt records preserve the portable content of every active current Prompt and Recipe: name, author, details, separate System and User lanes, canonical keywords, artifact type, prompt format, schema version, and stored definition.
-- [ ] #2 Prompt records exclude local database identity and lifecycle state: row IDs, UUIDs, client IDs, optimistic/sync versions, timestamps, soft-deleted rows, retained history, and collection memberships are not exported or restored.
+- [ ] #2 Prompt records exclude local database identity and lifecycle state: row IDs, UUIDs, client IDs, optimistic/sync versions, source timestamp values, soft-deleted rows, source retained history, and collection memberships are not exported or restored; required v1 manifest timestamp slots remain null and import creates only ordinary destination-owned lifecycle state.
 - [ ] #3 The Chatbook importer accepts both the new versioned lossless prompt record and the legacy single-`content` prompt payload; unknown record versions and invalid records fail closed without partially mutating that Prompt.
 - [ ] #4 Library Export exposes a local-only Prompts scope from the Prompt list and includes Prompts in Everything; counts and selections come from fresh uncapped active-ID database queries rather than the rendered Prompt page.
 - [ ] #5 A Prompt-scoped export uses the existing Library export canvas, destination, progress, cancellation, Retry, and overwrite behavior; a selected Prompt that disappears or cannot be represented aborts the archive rather than producing a silent partial success.
