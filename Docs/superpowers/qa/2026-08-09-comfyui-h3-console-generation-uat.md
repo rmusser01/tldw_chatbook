@@ -33,7 +33,7 @@ TASK-3401.14 tests the packaged Base and Spectrum H3 workflows through the real 
 - Explicit inline-preview activation was followed by an app-level unhandled `AttributeError` and shutdown in the isolated persistent log. The log contained no prompt or media bytes.
 - These issues are tracked atomically in TASK-3401.17, TASK-3401.18, and TASK-3401.19. No production fix was made inside this UAT task.
 - A follow-up run after those tasks completed verified that identity persistence, preview lifecycle, remount retention, full-player launch, and save-copy no longer block this acceptance path.
-- The follow-up session's containment check also found a byte fingerprint change in the unrelated default config. Because unrelated concurrent activity existed, that observation did not prove that the isolated app's startup-to-approved-quit lifecycle wrote the file. Restoring the exact validated pre-run snapshot remained the appropriate precaution.
+- The follow-up session's containment check also found a byte fingerprint change in the unrelated default config: built-in default keys had appeared while existing values remained unchanged. Because unrelated concurrent activity existed, that observed delta did not identify its writer or prove that the isolated app's startup-to-approved-quit lifecycle wrote the file. Restoring the exact validated pre-run snapshot remained the appropriate precaution.
 - TASK-15674 later ran a controlled current-development reproduction with distinct effective and decoy configs. Approved-quit persistence ran, selected the exact effective profile path, and left the decoy default config byte-identical. No product fix was required; regression coverage now locks that verified boundary.
 
 ## Cleanup

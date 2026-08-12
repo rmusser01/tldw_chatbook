@@ -119,14 +119,17 @@ backstop because path isolation and proof of non-mutation are separate claims.
 **A fourth incident, same rule (TASK-3401.14 / TASK-15674).** After a long real
 Textual UAT session configured with a disposable profile, the unrelated default
 config's post-run byte fingerprint differed from its validated pre-run snapshot.
+The byte delta consisted of built-in default keys appearing while existing values
+remained unchanged.
 Restoring that exact snapshot before scratch cleanup was the right containment
 action. It was not, however, proof that the isolated app lifecycle caused the
 mutation: unrelated concurrent activity existed, so the fingerprint established
 that bytes changed, not which actor changed them.
 
 TASK-15674 tested attribution under controlled current-development conditions. It
-used a disposable `HOME`, every XDG directory, an effective scratch
-`TLDW_CONFIG_PATH`, a distinct decoy default config, a scratch `[paths].data_dir`,
+used a disposable `HOME`, the relevant XDG config, data, and cache directories, an
+effective scratch `TLDW_CONFIG_PATH`, a distinct decoy default config, a scratch
+`[paths].data_dir`,
 and disabled model-catalog networking. Through the real mounted app's
 startup-to-approved-quit lifecycle, persistence ran and selected only the exact
 effective profile path; the decoy remained byte-identical.
@@ -134,8 +137,9 @@ effective profile path; the decoy remained byte-identical.
 **What to do.** Keep a validated recovery snapshot and compare before deleting it;
 restore on unexplained drift. To identify the writer, separately reproduce with a
 distinct decoy default and effective profile under an isolated lifecycle. A
-fingerprint difference proves mutation, not actor identity, and should not be filed
-as a product defect until that causality is demonstrated.
+fingerprint difference proves mutation, not actor identity. Track sensitive
+unexplained mutation as an investigation or provisional defect, but do not label a
+confirmed cross-profile writer or actor until causality is demonstrated.
 
 ---
 
