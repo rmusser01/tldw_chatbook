@@ -1333,15 +1333,22 @@ async def test_space_in_items_search_input_still_types():
 
 @pytest.mark.asyncio
 async def test_typing_in_sources_search_survives_the_recompose():
-    """Typing in the sources search box keeps focus and value across recomposes.
+    """Typing in the sources search box keeps focus and value, end to end.
 
     task-3071: the SourcesPane sibling of the items-search bug pinned above.
-    `SourcesPane.search_query` is likewise `reactive(..., recompose=True)`,
-    so every keystroke rebuilt the pane and destroyed the focused input --
-    and its `recompose()` only re-homed CREATE-FORM focus, so the box was
-    lost (and with Textual's default `select_on_focus=True`, any
-    programmatic refocus would have selected-all, replacing the half-typed
-    query on the next keystroke).
+    `SourcesPane.search_query` was then `reactive(..., recompose=True)`, so
+    every keystroke rebuilt the pane and destroyed the focused input -- and
+    its `recompose()` only re-homed CREATE-FORM focus, so the box was lost
+    (and with Textual's default `select_on_focus=True`, any programmatic
+    refocus would have selected-all, replacing the half-typed query on the
+    next keystroke).
+
+    task-15460 removed that teardown entirely -- the filters are plain
+    reactives that re-populate the table in place -- so the property this
+    asserts now holds because nothing takes the focus rather than because
+    `recompose()` gives it back. The assertions are unchanged on purpose:
+    they are the user-facing outcome, and they must keep holding through
+    whichever mechanism is underneath.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -1359,9 +1366,11 @@ async def test_typing_in_sources_search_survives_the_recompose():
         await pilot.press("k", "r", "e", "b", "s")
         await pilot.pause(0.2)
 
-        # Re-query: each keystroke recomposes the pane, so the input that
-        # was focused at the start was destroyed; this is the live
-        # replacement.
+        # Re-query rather than reusing the reference: before task-15460
+        # every keystroke recomposed the pane and destroyed the input that
+        # was focused at the start, so only a fresh query saw the live one.
+        # Nothing replaces it today, but reading the DOM is what makes this
+        # test agnostic about that.
         search = pane.query_one("#sources-search-input", Input)
         assert search.value == "krebs"
         assert search.has_focus, "typing must not lose the sources search box"
