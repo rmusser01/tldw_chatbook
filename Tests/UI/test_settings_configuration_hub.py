@@ -5290,7 +5290,7 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "task-15603: navigation preselect applies the provider, which itself "
+        "task-15673: navigation preselect applies the provider, which itself "
     "marks Providers & Models dirty; the deferred "
     "_apply_navigation_provider_context then hits its unsaved-changes guard "
     "(settings_screen.py:14161) and returns without writing the model, so the "
@@ -5410,7 +5410,7 @@ async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "task-15603: navigation preselect applies the provider, which itself "
+        "task-15673: navigation preselect applies the provider, which itself "
     "marks Providers & Models dirty; the deferred "
     "_apply_navigation_provider_context then hits its unsaved-changes guard "
     "(settings_screen.py:14161) and returns without writing the model, so the "

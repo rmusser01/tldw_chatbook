@@ -1,5 +1,5 @@
 ---
-id: TASK-15602
+id: TASK-15672
 title: >-
   Lazy embeddings_rag dependency-check guard is order-dependent:
   DEPENDENCIES_AVAILABLE left False by an earlier suite
