@@ -2116,30 +2116,54 @@ class PromptsDatabase:
             raise ValueError("targets must use unique local IDs.")
         return tuple(sorted(validated, key=lambda target: target.local_id))
 
+    def _require_prompt_mutation_transaction_ownership(self) -> None:
+        """Reject public mutations that cannot own their durable commit."""
+        if self.get_connection().in_transaction:
+            raise DatabaseError("Prompt mutation transaction ownership unavailable.")
+
     @staticmethod
+    def _require_canonical_uuid(value: Any, error_message: str) -> str:
+        if type(value) is not str:
+            raise DatabaseError(error_message)
+        try:
+            parsed = uuid.UUID(value)
+        except (AttributeError, ValueError):
+            raise DatabaseError(error_message) from None
+        if str(parsed) != value:
+            raise DatabaseError(error_message)
+        return value
+
     def _active_prompt_keyword_rows(
-        conn: sqlite3.Connection, prompt_id: int
+        self, conn: sqlite3.Connection, prompt_id: int
     ) -> tuple[sqlite3.Row, ...]:
         rows = tuple(
-            conn.execute(
-                """
-                SELECT pkw.id, pkw.keyword, pkw.uuid AS keyword_uuid
-                FROM PromptKeywordLinks AS pkl
-                JOIN PromptKeywordsTable AS pkw ON pkl.keyword_id = pkw.id
-                WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                ORDER BY pkw.keyword COLLATE NOCASE, pkw.id ASC
-                """,
-                (prompt_id,),
-            ).fetchall()
+            sorted(
+                conn.execute(
+                    """
+                    SELECT pkw.id, pkw.keyword, pkw.uuid AS keyword_uuid
+                    FROM PromptKeywordLinks AS pkl
+                    JOIN PromptKeywordsTable AS pkw ON pkl.keyword_id = pkw.id
+                    WHERE pkl.prompt_id = ? AND pkw.deleted = 0
+                    ORDER BY pkw.keyword COLLATE NOCASE, pkw.id ASC
+                    """,
+                    (prompt_id,),
+                ).fetchall(),
+                key=lambda row: row["keyword"],
+            )
         )
         if any(
-            type(row["keyword"]) is not str
-            or not row["keyword"].strip()
-            or type(row["keyword_uuid"]) is not str
-            or not row["keyword_uuid"].strip()
+            type(row["keyword"]) is not str or not row["keyword"].strip()
             for row in rows
         ):
             raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+        keywords = [row["keyword"] for row in rows]
+        if self._canonicalize_prompt_keywords(keywords) != keywords:
+            raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+        for row in rows:
+            self._require_canonical_uuid(
+                row["keyword_uuid"],
+                "Prompt keyword recovery metadata is unavailable.",
+            )
         return rows
 
     def _restore_prompt_keyword_rows(
@@ -2195,8 +2219,6 @@ class PromptsDatabase:
             ).fetchone()
             if (
                 keyword_row is None
-                or type(keyword_row["keyword_uuid"]) is not str
-                or not keyword_row["keyword_uuid"].strip()
                 or type(keyword_row["version"]) is not int
                 or not 1 <= keyword_row["version"] <= self._SQLITE_SIGNED_INTEGER_MAX
                 or int(keyword_row["deleted"]) not in (0, 1)
@@ -2206,6 +2228,10 @@ class PromptsDatabase:
                 )
             ):
                 raise DatabaseError("Prompt keyword recovery metadata is unavailable.")
+            self._require_canonical_uuid(
+                keyword_row["keyword_uuid"],
+                "Prompt keyword recovery metadata is unavailable.",
+            )
             keyword_rows.append(keyword_row)
         return tuple(keyword_rows)
 
@@ -2216,6 +2242,9 @@ class PromptsDatabase:
         row: sqlite3.Row,
         expected_version: int,
     ) -> None:
+        self._require_canonical_uuid(
+            row["uuid"], "Prompt delete recovery metadata is unavailable."
+        )
         self._active_prompt_keyword_rows(conn, int(row["id"]))
         PromptDeleteReceiptEntry(
             local_id=int(row["id"]),
@@ -2231,8 +2260,9 @@ class PromptsDatabase:
         row: sqlite3.Row,
         expected_version: int,
     ) -> None:
-        if type(row["uuid"]) is not str or not row["uuid"].strip():
-            raise DatabaseError("Prompt tombstone recovery metadata is unavailable.")
+        self._require_canonical_uuid(
+            row["uuid"], "Prompt tombstone recovery metadata is unavailable."
+        )
         self._restore_prompt_keyword_rows(
             conn, row=row, expected_version=expected_version
         )
@@ -2264,7 +2294,7 @@ class PromptsDatabase:
         if cursor.rowcount != 1:
             raise ExpectedVersionConflictError("Prompt batch delete conflict.")
 
-        self._log_sync_event(
+        change_id = self._log_sync_event(
             conn,
             "Prompts",
             prompt_uuid,
@@ -2280,6 +2310,8 @@ class PromptsDatabase:
                 "keywords_captured": True,
             },
         )
+        if change_id is None:
+            raise DatabaseError("Prompt delete sync event is unavailable.")
         self._delete_fts_prompt(conn, prompt_id)
         if keywords:
             conn.execute(
@@ -2417,6 +2449,7 @@ class PromptsDatabase:
         """Atomically soft-delete one strict batch of active Prompt rows."""
         canonical_targets = self._canonical_prompt_batch_targets(targets)
         try:
+            self._require_prompt_mutation_transaction_ownership()
             with self.transaction(immediate=True) as conn:
                 prepared = []
                 for target in canonical_targets:
@@ -2475,6 +2508,7 @@ class PromptsDatabase:
         """Atomically restore one strict batch of Prompt tombstones."""
         canonical_targets = self._canonical_prompt_batch_targets(targets)
         try:
+            self._require_prompt_mutation_transaction_ownership()
             with self.transaction(immediate=True) as conn:
                 prepared = []
                 for target in canonical_targets:
@@ -2553,6 +2587,7 @@ class PromptsDatabase:
 
         deleted = False
         try:
+            self._require_prompt_mutation_transaction_ownership()
             with self.transaction(immediate=True) as conn:
                 row = conn.execute(
                     f"SELECT * FROM Prompts WHERE {col_name} = ? AND deleted = 0",
@@ -2613,6 +2648,7 @@ class PromptsDatabase:
             raise InputError(f"Invalid column name: {col_name}")
 
         try:
+            self._require_prompt_mutation_transaction_ownership()
             with self.transaction(immediate=True) as conn:
                 row = conn.execute(
                     f"SELECT * FROM Prompts WHERE {col_name} = ?",

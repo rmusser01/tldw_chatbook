@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import queue
 import sqlite3
+import threading
 
 import pytest
 from loguru import logger
@@ -78,6 +80,386 @@ def _assert_all_active_batch_rows(
     db: PromptsDatabase, local_ids: tuple[int, ...]
 ) -> None:
     assert all(_row_state(db, local_id)[0] == 0 for local_id in local_ids)
+
+
+def _complete_mutation_state(db: PromptsDatabase) -> dict[str, tuple[tuple, ...]]:
+    """Capture every row a prompt mutation is allowed to change."""
+    conn = db.get_connection()
+    return {
+        table: tuple(
+            tuple(row)
+            for row in conn.execute(
+                f'SELECT rowid, * FROM "{table}" ORDER BY rowid'
+            ).fetchall()
+        )
+        for table in (
+            "Prompts",
+            "PromptKeywordsTable",
+            "PromptKeywordLinks",
+            "sync_log",
+            "prompts_fts",
+            "prompt_keywords_fts",
+            "LocalPromptCollections",
+            "LocalPromptCollectionItems",
+        )
+    }
+
+
+def _add_collection_membership(db: PromptsDatabase, prompt_id: int, name: str) -> None:
+    LocalPromptService(db).create_prompt_collection(
+        {"name": name, "prompt_ids": [prompt_id]}
+    )
+
+
+def _insert_prompt_with_uuid(db: PromptsDatabase, malformed_uuid: str) -> int:
+    """Insert schema-admitted legacy data that public writers reject."""
+    keyword_id = db.add_keyword("canonical recovery keyword")
+    assert keyword_id is not None
+    now = db._get_current_utc_timestamp_str()
+    conn = db.get_connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO Prompts (
+            name, author, details, system_prompt, user_prompt, uuid,
+            last_modified, version, client_id, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
+        """,
+        (
+            "Malformed UUID prompt",
+            "Private author",
+            "private malformed UUID body",
+            "private system",
+            "private user",
+            malformed_uuid,
+            now,
+            "legacy-import",
+        ),
+    )
+    prompt_id = int(cursor.lastrowid)
+    conn.execute(
+        """
+        INSERT INTO prompts_fts (
+            rowid, name, author, details, system_prompt, user_prompt
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            prompt_id,
+            "Malformed UUID prompt",
+            "Private author",
+            "private malformed UUID body",
+            "private system",
+            "private user",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
+        (prompt_id, keyword_id),
+    )
+    conn.commit()
+    _add_collection_membership(db, prompt_id, "Malformed UUID collection")
+    return prompt_id
+
+
+def _corrupt_active_keyword(db: PromptsDatabase, malformed_keyword: str) -> int:
+    prompt_id, _ = _add_artifact(
+        db,
+        name="Malformed keyword prompt",
+        keywords=["canonical recovery keyword"],
+        body="private malformed keyword body",
+    )
+    _add_collection_membership(db, prompt_id, "Malformed keyword collection")
+    conn = db.get_connection()
+    keyword = conn.execute(
+        """
+        SELECT pkw.id, pkw.version
+        FROM PromptKeywordLinks AS pkl
+        JOIN PromptKeywordsTable AS pkw ON pkw.id = pkl.keyword_id
+        WHERE pkl.prompt_id = ?
+        """,
+        (prompt_id,),
+    ).fetchone()
+    assert keyword is not None
+    conn.execute(
+        """
+        UPDATE PromptKeywordsTable
+        SET keyword = ?, last_modified = ?, version = ?, client_id = ?
+        WHERE id = ?
+        """,
+        (
+            malformed_keyword,
+            db._get_current_utc_timestamp_str(),
+            int(keyword["version"]) + 1,
+            "legacy-import",
+            keyword["id"],
+        ),
+    )
+    conn.commit()
+    return prompt_id
+
+
+@pytest.mark.parametrize("surface", ["batch", "legacy"])
+@pytest.mark.parametrize("operation", ["delete", "restore"])
+def test_public_mutations_reject_caller_owned_transactions_before_writes(
+    db, surface, operation
+):
+    prompt_id, _ = _add_artifact(
+        db,
+        name=f"Ambient {surface} {operation}",
+        keywords=["ambient keyword"],
+        body="private ambient body",
+    )
+    _add_collection_membership(
+        db, prompt_id, f"Ambient {surface} {operation} collection"
+    )
+    if operation == "restore":
+        targets = db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),)).targets
+        expected_version = 2
+    else:
+        targets = (PromptBatchTarget(prompt_id, 1),)
+        expected_version = 1
+    baseline = _complete_mutation_state(db)
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    conn = db.get_connection()
+    conn.execute("BEGIN")
+    try:
+        with pytest.raises(DatabaseError) as caught:
+            if surface == "batch" and operation == "delete":
+                db.soft_delete_prompts(targets)
+            elif surface == "batch":
+                db.restore_deleted_prompts(targets)
+            elif operation == "delete":
+                db.soft_delete_prompt(prompt_id, expected_version=expected_version)
+            else:
+                db.restore_deleted_prompt(prompt_id, expected_version=expected_version)
+
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__ is True
+        assert _complete_mutation_state(db) == baseline
+    finally:
+        conn.rollback()
+        logger.remove(sink)
+
+    assert "committed operation" not in "\n".join(messages)
+
+
+@pytest.mark.parametrize("surface", ["batch", "legacy"])
+@pytest.mark.parametrize(
+    "malformed_uuid",
+    ["", "PRIVATE INVALID UUID VALUE", "123E4567-E89B-42D3-A456-426614174000"],
+)
+def test_delete_rejects_noncanonical_prompt_uuid_before_first_write(
+    db, monkeypatch, surface, malformed_uuid
+):
+    prompt_id = _insert_prompt_with_uuid(db, malformed_uuid)
+    baseline = _complete_mutation_state(db)
+    helper_calls: list[int] = []
+    original = db._delete_prompt_in_transaction
+
+    def record_helper(*args, **kwargs):
+        helper_calls.append(int(kwargs["row"]["id"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_delete_prompt_in_transaction", record_helper)
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        with pytest.raises(DatabaseError) as caught:
+            if surface == "batch":
+                db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),))
+            else:
+                db.soft_delete_prompt(prompt_id, expected_version=1)
+    finally:
+        logger.remove(sink)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    assert helper_calls == []
+    assert _complete_mutation_state(db) == baseline
+    rendered = "\n".join(messages)
+    assert "committed operation" not in rendered
+    assert malformed_uuid not in rendered or malformed_uuid == ""
+
+
+@pytest.mark.parametrize("surface", ["batch", "legacy"])
+@pytest.mark.parametrize("malformed_keyword", ["", " PRIVATE Keyword VALUE "])
+def test_delete_rejects_noncanonical_keyword_recovery_before_first_write(
+    db, monkeypatch, surface, malformed_keyword
+):
+    prompt_id = _corrupt_active_keyword(db, malformed_keyword)
+    baseline = _complete_mutation_state(db)
+    helper_calls: list[int] = []
+    original = db._delete_prompt_in_transaction
+
+    def record_helper(*args, **kwargs):
+        helper_calls.append(int(kwargs["row"]["id"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_delete_prompt_in_transaction", record_helper)
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        with pytest.raises(DatabaseError) as caught:
+            if surface == "batch":
+                db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),))
+            else:
+                db.soft_delete_prompt(prompt_id, expected_version=1)
+    finally:
+        logger.remove(sink)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    assert helper_calls == []
+    assert _complete_mutation_state(db) == baseline
+    rendered = "\n".join(messages)
+    assert "committed operation" not in rendered
+    assert malformed_keyword not in rendered or malformed_keyword == ""
+
+
+@pytest.mark.parametrize("corruption", ["uuid", "keyword"])
+def test_batch_delete_preflights_all_recovery_rows_before_first_mutation(
+    db, monkeypatch, corruption
+):
+    first_id, _ = _add_artifact(
+        db, name=f"First recovery preflight {corruption}", keywords=["first keyword"]
+    )
+    second_id = (
+        _insert_prompt_with_uuid(db, "PRIVATE INVALID SECOND UUID")
+        if corruption == "uuid"
+        else _corrupt_active_keyword(db, " PRIVATE Second Keyword ")
+    )
+    baseline = _complete_mutation_state(db)
+    helper_calls: list[int] = []
+    original = db._delete_prompt_in_transaction
+
+    def record_helper(*args, **kwargs):
+        helper_calls.append(int(kwargs["row"]["id"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_delete_prompt_in_transaction", record_helper)
+
+    with pytest.raises(DatabaseError):
+        db.soft_delete_prompts(
+            (PromptBatchTarget(first_id, 1), PromptBatchTarget(second_id, 1))
+        )
+
+    assert helper_calls == []
+    assert _complete_mutation_state(db) == baseline
+
+
+@pytest.mark.parametrize("surface", ["batch", "legacy"])
+def test_delete_requires_prompt_sync_event_before_success(db, monkeypatch, surface):
+    prompt_id, _ = _add_artifact(
+        db,
+        name=f"Required sync {surface}",
+        keywords=["required sync keyword"],
+        body="private required sync body",
+    )
+    _add_collection_membership(db, prompt_id, f"Required sync {surface} collection")
+    baseline = _complete_mutation_state(db)
+    original = db._log_sync_event
+
+    def drop_prompt_delete(conn, entity, entity_uuid, operation, version, payload=None):
+        if entity == "Prompts" and operation == "delete":
+            return None
+        return original(conn, entity, entity_uuid, operation, version, payload)
+
+    monkeypatch.setattr(db, "_log_sync_event", drop_prompt_delete)
+
+    with pytest.raises(DatabaseError) as caught:
+        if surface == "batch":
+            db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),))
+        else:
+            db.soft_delete_prompt(prompt_id, expected_version=1)
+
+    assert caught.value.__cause__ is None
+    assert _complete_mutation_state(db) == baseline
+
+
+def test_begin_immediate_validates_after_competing_writer_commits(db):
+    prompt_id, _ = _add_artifact(
+        db,
+        name="Writer race prompt",
+        keywords=["writer race keyword"],
+        body="writer race body",
+    )
+    _add_collection_membership(db, prompt_id, "Writer race collection")
+    baseline = _complete_mutation_state(db)
+    competitor = PromptsDatabase(db.db_path, client_id="competing-writer")
+    writer_reserved = threading.Event()
+    batch_begin_attempted = threading.Event()
+    allow_writer_commit = threading.Event()
+    writer_committed = threading.Event()
+    outcomes: queue.Queue[BaseException | object] = queue.Queue()
+
+    def writer() -> None:
+        try:
+            with competitor.transaction(immediate=True) as conn:
+                conn.execute(
+                    """
+                    UPDATE Prompts
+                    SET last_modified = ?, version = 2, client_id = ?
+                    WHERE id = ? AND version = 1 AND deleted = 0
+                    """,
+                    (
+                        competitor._get_current_utc_timestamp_str(),
+                        competitor.client_id,
+                        prompt_id,
+                    ),
+                )
+                writer_reserved.set()
+                if not allow_writer_commit.wait(5):
+                    raise AssertionError("batch never attempted BEGIN IMMEDIATE")
+            writer_committed.set()
+        except BaseException as exc:
+            outcomes.put(exc)
+        finally:
+            competitor.close_connection()
+
+    def batch_delete() -> None:
+        conn = db.get_connection()
+
+        def trace(statement: str) -> None:
+            if statement.strip().upper() == "BEGIN IMMEDIATE":
+                batch_begin_attempted.set()
+
+        conn.set_trace_callback(trace)
+        try:
+            outcomes.put(db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),)))
+        except BaseException as exc:
+            outcomes.put(exc)
+        finally:
+            conn.set_trace_callback(None)
+            db.close_connection()
+
+    writer_thread = threading.Thread(target=writer, name="prompt-competing-writer")
+    batch_thread = threading.Thread(target=batch_delete, name="prompt-batch-writer")
+    writer_thread.start()
+    assert writer_reserved.wait(5)
+    batch_thread.start()
+    assert batch_begin_attempted.wait(5)
+    assert not writer_committed.is_set()
+    allow_writer_commit.set()
+    writer_thread.join(5)
+    batch_thread.join(5)
+    assert not writer_thread.is_alive()
+    assert not batch_thread.is_alive()
+
+    observed = []
+    while not outcomes.empty():
+        observed.append(outcomes.get_nowait())
+    assert len(observed) == 1
+    assert isinstance(observed[0], ExpectedVersionConflictError)
+    current = _complete_mutation_state(db)
+    assert _row_state(db, prompt_id) == (0, 2)
+    assert current["PromptKeywordLinks"] == baseline["PromptKeywordLinks"]
+    assert current["sync_log"] == baseline["sync_log"]
+    assert current["prompts_fts"] == baseline["prompts_fts"]
+    assert current["prompt_keywords_fts"] == baseline["prompt_keywords_fts"]
+    assert current["LocalPromptCollections"] == baseline["LocalPromptCollections"]
+    assert (
+        current["LocalPromptCollectionItems"] == baseline["LocalPromptCollectionItems"]
+    )
 
 
 def test_batch_delete_and_restore_preserve_exact_database_state(db):
