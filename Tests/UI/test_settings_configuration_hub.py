@@ -2841,7 +2841,7 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
     (
         (
             httpx.ConnectError("All connection attempts failed"),
-            "unreachable: connection refused",
+            "unreachable: connection error",
         ),
         (httpx.ConnectTimeout("timed out"), "unreachable: timeout"),
         (httpx.ReadTimeout("timed out"), "unreachable: timeout"),

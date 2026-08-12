@@ -20,10 +20,26 @@ from tldw_chatbook.Chat.local_server_discovery import (
 # They never touch the network: every client below is an injected
 # httpx.MockTransport, which the socket guard independently confirms.
 pytestmark = pytest.mark.local_server_probe
+_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
 
 
 def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+class _TrackingAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, *chunks: bytes) -> None:
+        self.chunks = chunks
+        self.iterated_chunks = 0
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.iterated_chunks += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _openai_models_payload(*model_ids: str) -> dict:
@@ -287,6 +303,45 @@ async def test_probe_success_with_empty_model_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_probe_accepts_json_body_at_exact_byte_limit() -> None:
+    prefix = b'{"data":[]}'
+    body = prefix + b" " * (
+        _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix)
+    )
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(lambda request: httpx.Response(200, content=body)),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_local_probe_rejects_oversized_chunked_body_and_closes_response() -> None:
+    stream = _TrackingAsyncStream(
+        b"x" * _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES,
+        b"secret-over-limit",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099/secret-endpoint",
+            http_client=client,
+        )
+
+    assert result.ok is False
+    assert result.detail == "Models response is too large."
+    assert "secret" not in result.detail
+    assert stream.iterated_chunks == 2
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
 async def test_probe_connect_error_reports_honest_copy() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
@@ -340,6 +395,67 @@ async def test_probe_rejects_unusable_url_without_network() -> None:
 
     assert result.ok is False
     assert result.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entered", "canaries"),
+    (
+        (
+            "https://user:password@example.test/v1?token=unit-test-token",
+            ("user", "password", "token", "unit-test-token"),
+        ),
+        (
+            "https://example.test/path\u202esecret",
+            ("\u202e", "secret"),
+        ),
+        (
+            "https://example.test/path\ud800secret",
+            ("\ud800", "secret"),
+        ),
+    ),
+)
+async def test_invalid_probe_input_never_retains_raw_endpoint_or_secrets(
+    entered: str,
+    canaries: tuple[str, ...],
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("invalid input must not be requested")
+
+    result = await probe_models_endpoint(entered, http_client=_client(handler))
+    rendered = repr(result)
+
+    assert result.ok is False
+    assert result.base_url == ""
+    assert all(canary not in result.base_url for canary in canaries)
+    assert all(canary not in rendered for canary in canaries)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ("ollama", "Ollama", "local_ollama", "Local Ollama"),
+)
+async def test_local_probe_normalizes_ollama_provider_before_fallback(
+    provider_key: str,
+) -> None:
+    seen_paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/v1/models":
+            return httpx.Response(404)
+        return httpx.Response(200, json={"models": [{"name": "llama3"}]})
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:11434",
+        provider_key=provider_key,
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("llama3",)
+    assert seen_paths == ["/v1/models", "/api/tags"]
 
 
 @pytest.mark.asyncio

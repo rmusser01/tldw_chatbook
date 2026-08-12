@@ -17,12 +17,18 @@ callers may embed them directly in user-visible toasts.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
 
-from tldw_chatbook.Chat.local_server_discovery import model_ids_from_payload
+from tldw_chatbook.Chat.local_server_discovery import (
+    connect_error_is_refused,
+    model_ids_from_payload,
+    normalize_probe_provider_key,
+    read_bounded_model_response,
+)
 from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
 
 SETTINGS_ENDPOINT_PROBE_TIMEOUT_SECONDS = 2.5
@@ -43,6 +49,18 @@ EndpointProbeCategory = Literal[
     "invalid_payload",
     "connection_error",
 ]
+_ENDPOINT_PROBE_CATEGORIES = frozenset(
+    {
+        "timeout",
+        "connection_refused",
+        "unauthorized",
+        "forbidden",
+        "http_status",
+        "invalid_payload",
+        "connection_error",
+    }
+)
+_MODEL_IDS_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -65,7 +83,6 @@ class SettingsEndpointProbeOutcome:
     _legacy_model_count: int | None = field(
         default=None,
         repr=False,
-        compare=False,
     )
 
     def __init__(
@@ -73,30 +90,76 @@ class SettingsEndpointProbeOutcome:
         state: EndpointProbeState | None = None,
         summary: str = "",
         category: EndpointProbeCategory | None = None,
-        model_ids: tuple[str, ...] = (),
+        model_ids: tuple[str, ...] | object = _MODEL_IDS_UNSET,
         *,
         reachable: bool | None = None,
         model_count: int | None = None,
     ) -> None:
         """Build a structured outcome while accepting the legacy keywords."""
+        model_ids_provided = model_ids is not _MODEL_IDS_UNSET
+        try:
+            resolved_model_ids = (
+                tuple(model_ids) if model_ids_provided else ()
+            )
+        except TypeError:
+            raise ValueError("Model IDs are invalid.") from None
+        if any(not isinstance(model_id, str) for model_id in resolved_model_ids):
+            raise ValueError("Model IDs are invalid.")
+        if model_count is not None and (
+            isinstance(model_count, bool)
+            or not isinstance(model_count, int)
+            or model_count < 0
+        ):
+            raise ValueError("Model count must be a non-negative integer.")
+        if category is not None and (
+            not isinstance(category, str)
+            or category not in _ENDPOINT_PROBE_CATEGORIES
+        ):
+            raise ValueError("Endpoint probe category is invalid.")
+
         resolved_state: EndpointProbeState
         if state is None:
             resolved_state = "reachable" if reachable else "unreachable"
         else:
             resolved_state = state
             if reachable is not None and reachable != (state == "reachable"):
-                raise ValueError("reachable conflicts with state")
+                raise ValueError("Endpoint probe state conflicts with reachable.")
         if resolved_state not in {
             "reachable",
             "unreachable",
             "model_listing_unavailable",
         }:
-            raise ValueError("invalid endpoint probe state")
+            raise ValueError("Endpoint probe state is invalid.")
+
+        resolved_model_count: int | None = None
+        if resolved_state == "reachable":
+            if category is not None:
+                raise ValueError(
+                    "Reachable probe cannot include a failure category."
+                )
+            if (
+                model_ids_provided
+                and model_count is not None
+                and model_count != len(resolved_model_ids)
+            ):
+                raise ValueError("Reachable probe model data is inconsistent.")
+            resolved_model_count = (
+                len(resolved_model_ids) if model_ids_provided else model_count
+            )
+        elif resolved_state == "unreachable":
+            if resolved_model_ids or model_count is not None:
+                raise ValueError("Unreachable probe data must be empty.")
+        else:
+            if resolved_model_ids or model_count is not None:
+                raise ValueError("Model listing probe data must be empty.")
+            if category not in {None, "http_status"}:
+                raise ValueError("Model listing probe category is invalid.")
+
         object.__setattr__(self, "state", resolved_state)
         object.__setattr__(self, "summary", summary)
         object.__setattr__(self, "category", category)
-        object.__setattr__(self, "model_ids", tuple(model_ids))
-        object.__setattr__(self, "_legacy_model_count", model_count)
+        object.__setattr__(self, "model_ids", resolved_model_ids)
+        object.__setattr__(self, "_legacy_model_count", resolved_model_count)
 
     @property
     def reachable(self) -> bool:
@@ -106,17 +169,13 @@ class SettingsEndpointProbeOutcome:
     @property
     def model_count(self) -> int | None:
         """Compatibility count for old callers that did not retain model IDs."""
-        if self.model_ids:
-            return len(self.model_ids)
-        if self._legacy_model_count is not None:
-            return self._legacy_model_count
-        return 0 if self.state == "reachable" else None
+        return self._legacy_model_count
 
 
-def _reachable_outcome(response: httpx.Response) -> SettingsEndpointProbeOutcome:
+def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:
     try:
-        payload = response.json()
-    except ValueError:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
         return SettingsEndpointProbeOutcome(
             state="unreachable",
             category="invalid_payload",
@@ -155,36 +214,45 @@ async def _request_models(
     timeout: float,
 ) -> SettingsEndpointProbeOutcome:
     try:
-        response = await client.get(
+        async with client.stream(
+            "GET",
             url,
             timeout=timeout,
             follow_redirects=False,
-        )
+        ) as response:
+            if response.status_code == 404:
+                return SettingsEndpointProbeOutcome(
+                    state="model_listing_unavailable",
+                    category="http_status",
+                    summary="Model listing unavailable; chat endpoint not tested",
+                )
+            if response.status_code == 401:
+                return _failure("unauthorized", "unreachable: unauthorized")
+            if response.status_code == 403:
+                return _failure("forbidden", "unreachable: forbidden")
+            if response.status_code < 200 or response.status_code >= 300:
+                return _failure(
+                    "http_status",
+                    f"unreachable: HTTP {response.status_code}",
+                )
+            body = await read_bounded_model_response(response)
     except httpx.TimeoutException:
         return _failure("timeout", "unreachable: timeout")
-    except httpx.ConnectError:
-        return _failure("connection_refused", "unreachable: connection refused")
+    except httpx.ConnectError as error:
+        if connect_error_is_refused(error):
+            return _failure("connection_refused", "unreachable: connection refused")
+        return _failure("connection_error", "unreachable: connection error")
     except httpx.HTTPError:
         return _failure("connection_error", "unreachable: connection error")
     except Exception:  # noqa: BLE001 - this UI boundary must never leak or raise.
         return _failure("connection_error", "unreachable: connection error")
 
-    if response.status_code == 404:
-        return SettingsEndpointProbeOutcome(
-            state="model_listing_unavailable",
-            category="http_status",
-            summary="Model listing unavailable; chat endpoint not tested",
-        )
-    if response.status_code == 401:
-        return _failure("unauthorized", "unreachable: unauthorized")
-    if response.status_code == 403:
-        return _failure("forbidden", "unreachable: forbidden")
-    if response.status_code < 200 or response.status_code >= 300:
+    if body is None:
         return _failure(
-            "http_status",
-            f"unreachable: HTTP {response.status_code}",
+            "invalid_payload",
+            "unreachable: models response too large",
         )
-    return _reachable_outcome(response)
+    return _reachable_outcome(body)
 
 
 async def probe_settings_endpoint(
@@ -212,7 +280,8 @@ async def probe_settings_endpoint(
     Returns:
         The probe outcome with a toast-ready ``summary`` fragment.
     """
-    resolution = resolve_provider_endpoint(provider, base_url)
+    provider_key = normalize_probe_provider_key(provider)
+    resolution = resolve_provider_endpoint(provider_key, base_url)
     if resolution.models_url is None:
         return SettingsEndpointProbeOutcome(
             state="unreachable",
@@ -226,7 +295,7 @@ async def probe_settings_endpoint(
             resolution.models_url,
             timeout,
         )
-        if outcome.state == "model_listing_unavailable" and provider in {
+        if outcome.state == "model_listing_unavailable" and provider_key in {
             "ollama",
             "local_ollama",
         }:
