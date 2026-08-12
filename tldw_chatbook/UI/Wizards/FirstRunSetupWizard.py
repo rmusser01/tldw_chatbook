@@ -128,6 +128,12 @@ class SetupRadioButton(RadioButton):
 class SetupWizardProgress(WizardProgress):
     """Progress indicator rendered from the resolved first-run track."""
 
+    _NUMBER_WIDTH = 4
+    _TITLE_HORIZONTAL_MARGIN = 2
+    _ITEM_HORIZONTAL_MARGIN = 2
+    _CONNECTOR_WIDTH = 4
+    _ITEM_SAFETY_WIDTH = 1
+
     def __init__(
         self,
         items: tuple[wizard_state.SetupProgressItem, ...],
@@ -158,9 +164,40 @@ class SetupWizardProgress(WizardProgress):
         self.items = items
         self._sync_compatibility_state()
         if self.is_mounted:
+            self._sync_compact_mode()
             self.refresh(recompose=True)
+            self.call_after_refresh(self._sync_compact_mode)
+
+    def on_mount(self) -> None:
+        self.call_after_refresh(self._sync_compact_mode)
+
+    def on_resize(self) -> None:
+        self._sync_compact_mode()
+
+    def _titled_track_width(self) -> int:
+        """Return the minimum safe width for the fully titled tracker."""
+
+        item_width = sum(
+            self._NUMBER_WIDTH
+            + self._TITLE_HORIZONTAL_MARGIN
+            + self._ITEM_HORIZONTAL_MARGIN
+            + self._ITEM_SAFETY_WIDTH
+            + len(item.title)
+            for item in self.items
+        )
+        connector_width = self._CONNECTOR_WIDTH * max(len(self.items) - 1, 0)
+        return item_width + connector_width
+
+    def _sync_compact_mode(self) -> None:
+        compact = self.size.width < self._titled_track_width()
+        self.set_class(compact, "-compact")
+        for title in self.query(".step-title"):
+            title.display = not compact
+        for connector in self.query(".step-connector"):
+            connector.display = not compact
 
     def compose(self) -> ComposeResult:
+        compact = self.has_class("-compact")
         for index, item in enumerate(self.items):
             state_class = f"-{item.state}"
             with Container(
@@ -172,15 +209,19 @@ class SetupWizardProgress(WizardProgress):
                     "✓" if item.state == "complete" else str(index + 1),
                     classes=number_classes,
                 )
-                yield Label(
+                title = Label(
                     item.title,
                     classes=f"step-title {item.state}",
                 )
+                title.display = not compact
+                yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
                     if item.state == "complete":
                         connector_classes += " complete"
-                    yield Static("", classes=connector_classes)
+                    connector = Static("", classes=connector_classes)
+                    connector.display = not compact
+                    yield connector
 
 
 _SETUP_STEP_FAILURE_REASONS = frozenset({"compose_failed", "render_failed"})

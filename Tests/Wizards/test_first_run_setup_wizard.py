@@ -3290,6 +3290,56 @@ async def test_setup_progress_renders_projection_state_classes_and_dynamic_total
 
 @pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
 @pytest.mark.parametrize("size", ((80, 24), (120, 40), (177, 45)))
+@pytest.mark.parametrize("include_protect", (False, True))
+@pytest.mark.asyncio
+async def test_full_track_progress_content_stays_inside_non_overlapping_items(
+    theme: str,
+    size: tuple[int, int],
+    include_protect: bool,
+):
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)
+    app.theme = theme
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_FULL)
+        if include_protect:
+            container.note_key_entered()
+        await pilot.pause(0.1)
+
+        rows = list(wizard.query(".setup-progress-item"))
+        assert len(rows) == (10 if include_protect else 9)
+        assert sum(row.has_class("-active") for row in rows) == 1
+        assert all(
+            row.has_class("-active")
+            or row.has_class("-complete")
+            or row.has_class("-upcoming")
+            for row in rows
+        )
+
+        for row in rows:
+            number = row.query_one(".step-number")
+            title = row.query_one(".step-title")
+            assert number.region.x >= row.region.x
+            assert number.region.right <= row.region.right
+            assert number.region.y >= row.region.y
+            assert number.region.bottom <= row.region.bottom
+            if title.display:
+                assert title.region.x >= row.region.x
+                assert title.region.right <= row.region.right
+                assert title.region.y >= row.region.y
+                assert title.region.bottom <= row.region.bottom
+            else:
+                assert wizard.query_one(".wizard-progress").has_class("-compact")
+
+        for current, following in zip(rows, rows[1:]):
+            assert current.region.right <= following.region.x
+
+
+@pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
+@pytest.mark.parametrize("size", ((80, 24), (120, 40), (177, 45)))
 @pytest.mark.asyncio
 async def test_first_run_provider_layout_stays_ordered_across_sizes_and_themes(
     theme: str, size: tuple[int, int]
