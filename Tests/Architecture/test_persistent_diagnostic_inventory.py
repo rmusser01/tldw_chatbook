@@ -49,9 +49,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Local_Ingestion/audio_processing.py": {
         "Time-range trim could not be converted": (),
     },
-    "tldw_chatbook/Media_Playback/frame_source.py": {
-        "decode stopped early": ("type(exc).__name__",),
-    },
     "tldw_chatbook/RAG_Search/eval/regression.py": {
         "Saved metric baseline": ("len(metrics)",),
     },
@@ -70,11 +67,11 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
     },
     "tldw_chatbook/UI/Screens/chat_screen.py": {
-        "retention sweep failed": (),
-        "Video generation raised": ("type(exc).__name__",),
-        "video play failed": ("type(exc).__name__",),
-        "save-video copy failed": (),
-        "Video regeneration raised": ("type(exc).__name__",),
+        # TASK-15600: the per-operation video failure events were consolidated
+        # into one "Console video operation={} failed error_type={}" family
+        # whose first argument is shared across ~14 call sites, so they cannot
+        # be pinned individually by this registry's unique-label contract; the
+        # inventory manifest owns them.
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
@@ -103,7 +100,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "could not parse video-generation config": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/video_player_screen.py": {
-        "frame render skipped": ("type(exc).__name__",),
+        "component=modal_player": ("phase", "type(exc).__name__"),
     },
     "tldw_chatbook/Video_Generation/adapter_registry.py": {
         "Failed to initialize video adapter": ("name", "type(exc).__name__"),
@@ -120,8 +117,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "keyring lookup failed": ("backend", "type(e).__name__"),
     },
     "tldw_chatbook/Video_Generation/video_store.py": {
-        "VideoStore: saved": ("len(content)",),
-        "VideoStore: failed to remove": ("type(exc).__name__",),
+        "VideoStore: startup removal failed": ("type(exc).__name__",),
+        "failed to remove unpublished sibling": ("'OSError'",),
+        "VideoStore: lease close failed": ("type(exc).__name__",),
+        "VideoStore: lease unlock failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Video_Generation/video_templates.py": {
         "is not a table": (),
@@ -129,9 +128,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "has no prompt_suffix": (),
     },
     "tldw_chatbook/Widgets/Console/console_video_preview.py": {
-        "peer pause failed": (),
-        "decode loop ended early": ("type(exc).__name__",),
-        "frame render skipped": ("type(exc).__name__",),
+        "component=inline_preview": ("phase", "type(error).__name__"),
     },
     "tldw_chatbook/Widgets/settings_agents_panel.py": {
         "could not open agent runs database": ("type(exc).__name__",),
@@ -1795,41 +1792,73 @@ def test_task_15103_review_ledger_canonical_schema_and_arithmetic(
     assert sum(pair[1] for pair in reconciled.values()) == 91
 
 
-def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:
-    """Task 7 fail-close: live source equals the ledger's reviewed end state.
+def _task_15103_population_canonical_digest(population: Counter[str]) -> str:
+    content = sorted([digest, count] for digest, count in population.items())
+    return hashlib.sha256(
+        json.dumps(content, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
-    Three bindings, each against the REAL inventory (no monkeypatched
-    candidates): the checked manifest equals the regenerated inventory, every
-    owner's ``reviewed_final`` evidence equals live source, and each owner's
-    live semantic population equals its recorded baseline population plus
-    exactly the ledger's net proposed-minus-removed atom multiset. A repair
-    that drifted from a frozen group contract, an unledgered new diagnostic,
-    or a reverted repair all fail here by digest or by multiset.
+
+def _task_15103_checkpoint_aggregate(owners: list[dict[str, Any]]) -> dict[str, Any]:
+    content = sorted(
+        [
+            owner["path"],
+            owner["evidence"]["call_count"],
+            owner["evidence"]["semantic_digest"],
+        ]
+        for owner in owners
+    )
+    return {
+        "call_count": sum(owner["evidence"]["call_count"] for owner in owners),
+        "semantic_digest": hashlib.sha256(
+            json.dumps(content, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:
+    """Task 7/8 fail-close: the reviewed end state is pinned, not floating.
+
+    Every read here is a Git read at a PINNED, branch-reachable revision or a
+    pure ledger computation — deliberately no live-tree or live-manifest
+    reads, so this node cannot rot when later reviewed incidents move the
+    inventory (the live boundary belongs to
+    ``test_production_diagnostic_inventory_and_sink_topology_are_unchanged``).
+
+    Three bindings:
+
+    1. Close algebra: each owner's recorded baseline population plus the
+       ledger's net atom delta (clamped at zero — a drift-introduced unsafe
+       atom appears in its group only as a removal, its introduction lives in
+       the Git transition record) must equal the ``pre_rebase`` checkpoint
+       evidence frozen at the incident close.
+    2. Rebase carry: populations at ``post_rebase.head`` must equal the
+       ``post_rebase`` checkpoint evidence.
+    3. Manifest evidence: each owner's ``reviewed_final`` pair must equal the
+       manifest pair at ``post_rebase.head``.
+
+    ``pre_rebase.head`` names the pre-rebase close commit for provenance but
+    is never read — it is unreachable after the rebase; its evidence was
+    verified against that tree once, when frozen, and stays checkable forever
+    through binding 1.
     """
     ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
     assert ledger["review_status"] == "reviewed", (
         "the checked-in ledger must stay reviewed after Task 7"
     )
-    stored_inventory = json.loads(
-        diagnostic_inventory.INVENTORY_PATH.read_text(encoding="utf-8")
+    checkpoint = ledger.get("integration_checkpoint")
+    assert checkpoint is not None and checkpoint["state"] == "post_rebase", (
+        "Task 8 integration requires a post_rebase checkpoint"
     )
-    current_inventory = diagnostic_inventory.build_inventory()
-    assert (
-        stored_inventory["persistent_sink_topology"]
-        == current_inventory["persistent_sink_topology"]
+    pre = checkpoint["pre_rebase"]
+    post = checkpoint["post_rebase"]
+    assert post["base"] == ledger["incident"]["final_base"], (
+        "post_rebase.base must equal the reviewed final_base"
     )
-    stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
-    current_rows = {row["path"]: row for row in current_inventory["owners"]}
-    assert stored_rows == current_rows, (
-        "the checked manifest must equal the regenerated live inventory"
-    )
-    for owner in ledger["owners"]:
-        path = owner["path"]
-        live = current_rows[path]
-        assert (live["call_count"], live["diagnostic_digest"]) == (
-            owner["reviewed_final"]["call_count"],
-            owner["reviewed_final"]["diagnostic_digest"],
-        ), f"{path} reviewed_final evidence must match live source"
+    pre_evidence = {owner["path"]: owner["evidence"] for owner in pre["owners"]}
+    post_evidence = {owner["path"]: owner["evidence"] for owner in post["owners"]}
+    assert pre["aggregate"] == _task_15103_checkpoint_aggregate(pre["owners"])
+    assert post["aggregate"] == _task_15103_checkpoint_aggregate(post["owners"])
 
     history = _task_15103_complete_history(ledger["incident"]["planning_base"])
     groups_by_owner: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1845,26 +1874,34 @@ def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:
             _task_15103_group_atom_counter(groups_by_owner[path], "proposed_surviving")
         )
         net.subtract(_task_15103_group_atom_counter(groups_by_owner[path], "removed"))
-        live_population, _live_details = _task_15103_population(
-            tuple(
-                discover_diagnostic_calls(
-                    (REPO_ROOT / path).read_text(encoding="utf-8"), module=path
-                )
-            )
+        expected: Counter[str] = Counter()
+        for digest in set(recorded) | set(net):
+            count = max(0, recorded.get(digest, 0) + net.get(digest, 0))
+            if count:
+                expected[digest] = count
+        assert (
+            sum(expected.values()),
+            _task_15103_population_canonical_digest(expected),
+        ) == (
+            pre_evidence[path]["call_count"],
+            pre_evidence[path]["semantic_digest"],
+        ), f"{path} close algebra must equal the frozen pre_rebase evidence"
+
+        carried, _carried_details = _task_15103_population_and_details_at(
+            post["head"], path
         )
-        # Per-digest identity: live == max(0, recorded + net). The clamp is
-        # exact, not lenient: a drift-INTRODUCED unsafe atom appears in its
-        # group only as a removal (its introduction is recorded as a Git
-        # transition, not an atom), so recorded+net lands at -1 for exactly
-        # those digests and the reviewed final state must hold zero of them.
-        for digest in sorted(set(recorded) | set(net) | set(live_population)):
-            expected_count = max(0, recorded.get(digest, 0) + net.get(digest, 0))
-            assert live_population.get(digest, 0) == expected_count, (
-                f"{path} digest {digest[:16]} count "
-                f"{live_population.get(digest, 0)} != reviewed expectation "
-                f"{expected_count} (recorded {recorded.get(digest, 0)}, "
-                f"ledger net {net.get(digest, 0)})"
-            )
+        assert (
+            sum(carried.values()),
+            _task_15103_population_canonical_digest(carried),
+        ) == (
+            post_evidence[path]["call_count"],
+            post_evidence[path]["semantic_digest"],
+        ), f"{path} population at post_rebase.head must equal its evidence"
+
+        assert _task_15103_manifest_pair_at(post["head"], path) == (
+            owner["reviewed_final"]["call_count"],
+            owner["reviewed_final"]["diagnostic_digest"],
+        ), f"{path} reviewed_final must match the manifest pair at post_rebase.head"
 
 
 def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None:
