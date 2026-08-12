@@ -460,7 +460,9 @@ class ProfileMigrationBoundaryDestination:
     __slots__ = (
         "__connection",
         "__file_identity",
+        "__file_fd",
         "__parent_identity",
+        "__parent_fd",
         "__path",
         "__schema_version",
         "__state",
@@ -473,7 +475,9 @@ class ProfileMigrationBoundaryDestination:
         *,
         connection: sqlite3.Connection,
         file_identity: os.stat_result,
+        file_fd: int = -1,
         parent_identity: os.stat_result,
+        parent_fd: int = -1,
         path: Path,
         schema_version: int,
     ) -> None:
@@ -481,7 +485,9 @@ class ProfileMigrationBoundaryDestination:
             raise SQLitePrivateDestinationError()
         self.__connection: sqlite3.Connection | None = connection
         self.__file_identity = file_identity
+        self.__file_fd = file_fd
         self.__parent_identity = parent_identity
+        self.__parent_fd = parent_fd
         self.__path = path
         self.__schema_version = schema_version
         self.__state = "open"
@@ -1774,8 +1780,208 @@ def _close_profile_migration_destination(
             "_ProfileMigrationBoundaryDestination__state",
             "closed",
         )
+    errors: list[BaseException] = []
     if connection is not None:
-        connection.close()
+        try:
+            connection.close()
+        except BaseException as close_error:
+            errors.append(close_error)
+    for attribute in ("__file_fd", "__parent_fd"):
+        private_name = f"_ProfileMigrationBoundaryDestination{attribute}"
+        descriptor = cast(int, object.__getattribute__(destination, private_name))
+        if descriptor >= 0:
+            object.__setattr__(destination, private_name, -1)
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                errors.append(close_error)
+    for pending_error in errors:
+        if not isinstance(pending_error, Exception):
+            raise pending_error
+    if errors:
+        raise errors[0]
+
+
+def close_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+) -> None:
+    """Close and revoke one opaque migration destination."""
+
+    error: BaseException | None = None
+    try:
+        _close_profile_migration_destination(destination)
+    except BaseException as caught:
+        error = caught
+    if error is not None:
+        _raise_private_destination_failure(error)
+
+
+def discard_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    tombstone_key: object,
+) -> None:
+    """Descriptor-verify, quarantine, and wipe one unpublished candidate."""
+
+    body_error: BaseException | None = None
+    try:
+        from tldw_chatbook.TTS.profile_migration_namespace import (
+            MigrationTombstoneKey,
+            ParentAuthority,
+            remove_exact,
+        )
+
+        if (
+            type(destination) is not ProfileMigrationBoundaryDestination
+            or type(tombstone_key) is not MigrationTombstoneKey
+        ):
+            raise ValueError
+        connection = object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__connection",
+        )
+        if connection is not None:
+            connection.close()
+            object.__setattr__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__connection",
+                None,
+            )
+        selected = cast(
+            Path,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__path",
+            ),
+        )
+        identity = cast(
+            os.stat_result,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_identity",
+            ),
+        )
+        parent = cast(
+            os.stat_result,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_identity",
+            ),
+        )
+        file_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_fd",
+            ),
+        )
+        if file_fd < 0 or not private_paths._same_identity(os.fstat(file_fd), identity):
+            raise ValueError
+        os.ftruncate(file_fd, 0)
+        os.fsync(file_fd)
+        remove_exact(
+            selected,
+            parent_authority=ParentAuthority(parent),
+            file_identity=identity,
+            tombstone_key=tombstone_key,
+        )
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "discarded",
+        )
+    except BaseException as error:
+        body_error = error
+    close_error: BaseException | None = None
+    try:
+        _close_profile_migration_destination(destination)
+    except BaseException as error:
+        close_error = error
+    for pending in (body_error, close_error):
+        if pending is not None and not isinstance(pending, Exception):
+            raise pending
+    if body_error is not None or close_error is not None:
+        raise SQLitePrivateDestinationError() from None
+
+
+def open_canonical_profile_migration_destination(
+    path: str | os.PathLike[str],
+    *,
+    schema_version: int,
+    tombstone_key: object,
+) -> ProfileMigrationBoundaryDestination:
+    """Acquire one fixed migration leaf while retaining exact descriptors."""
+
+    error: BaseException | None = None
+    connection: sqlite3.Connection | None = None
+    parent_fd = -1
+    file_fd = -1
+    destination: ProfileMigrationBoundaryDestination | None = None
+    try:
+        if type(schema_version) is not int or not 0 <= schema_version <= 4:
+            raise ValueError
+        selected = _private_destination(path)
+        parent_result = secure_private_directory(
+            selected.parent,
+            create=False,
+            application_owned=True,
+        )
+        if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+            raise ValueError
+        from tldw_chatbook.TTS.profile_migration_namespace import (
+            MigrationTombstoneKey,
+            ParentAuthority,
+            open_new_or_reused_private_file,
+        )
+
+        if type(tombstone_key) is not MigrationTombstoneKey:
+            raise ValueError
+        parent_fd, file_fd, file_identity, authority = open_new_or_reused_private_file(
+            selected,
+            parent_authority=ParentAuthority(selected.parent.lstat()),
+            tombstone_key=tombstone_key,
+        )
+        connection = _connect_registered_sqlite(
+            _PROFILE_MIGRATION_BOUNDARY_OWNER,
+            selected,
+            must_exist=True,
+            timeout=0,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        destination = ProfileMigrationBoundaryDestination(
+            _PROFILE_DESTINATION_FACTORY_TOKEN,
+            connection=connection,
+            file_identity=file_identity,
+            file_fd=file_fd,
+            parent_identity=authority.identity,
+            parent_fd=parent_fd,
+            path=selected,
+            schema_version=schema_version,
+        )
+        _verify_profile_migration_destination(destination, require_empty=True)
+        connection = None
+        parent_fd = -1
+        file_fd = -1
+    except BaseException as caught:
+        error = caught
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            if error is None or not isinstance(close_error, Exception):
+                error = close_error
+    for descriptor in (file_fd, parent_fd):
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                if error is None or not isinstance(close_error, Exception):
+                    error = close_error
+    if error is not None:
+        _raise_private_destination_failure(error)
+    assert destination is not None
+    return destination
 
 
 def open_profile_migration_boundary_destination(
@@ -2039,6 +2245,132 @@ def backup_profile_migration_boundary(
     for pending in (body_error, close_error):
         if pending is not None and not isinstance(pending, Exception):
             raise pending
+    raise SQLitePrivateDestinationError() from None
+
+
+def migrate_profile_store_to_candidate(
+    source: sqlite3.Connection,
+    destination: ProfileMigrationBoundaryDestination,
+    *,
+    migrate: Callable[[sqlite3.Connection], Any],
+    validate: Callable[[sqlite3.Connection], None],
+    progress_guard: Callable[[], None] | None = None,
+) -> Any:
+    """Copy and migrate one candidate while its exact descriptors stay pinned."""
+
+    connection: sqlite3.Connection | None = None
+    result: Any = None
+    body_error: BaseException | None = None
+    try:
+        if (
+            not callable(migrate)
+            or not callable(validate)
+            or (progress_guard is not None and not callable(progress_guard))
+            or source.in_transaction
+        ):
+            raise ValueError
+        if progress_guard is not None:
+            progress_guard()
+        connection = _verify_profile_migration_destination(
+            destination,
+            require_empty=True,
+        )
+        _backup_pages(
+            source,
+            connection,
+            restore=False,
+            progress_guard=progress_guard,
+        )
+        _verify_profile_migration_destination(destination, require_empty=False)
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__connection",
+            None,
+        )
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "migrating",
+        )
+        result = migrate(connection)
+        connection = None  # The migration callback owns and closes it.
+        if progress_guard is not None:
+            progress_guard()
+        file_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_fd",
+            ),
+        )
+        parent_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_fd",
+            ),
+        )
+        if file_fd < 0 or parent_fd < 0:
+            raise ValueError
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+        immutable = connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            file_fd,
+            isolation_level=None,
+        )
+        try:
+            immutable.row_factory = sqlite3.Row
+            immutable.execute("PRAGMA foreign_keys = ON")
+            immutable.execute("PRAGMA query_only = ON")
+            validate(immutable)
+            if progress_guard is not None:
+                progress_guard()
+        finally:
+            immutable.close()
+        selected = cast(
+            Path,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__path",
+            ),
+        )
+        parent_check, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=False,
+        )
+        try:
+            if not _profile_destination_namespace_holds(
+                destination,
+                parent_check,
+                file_fd,
+                leaf,
+            ):
+                raise ValueError
+        finally:
+            os.close(parent_check)
+        object.__setattr__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__state",
+            "ready",
+        )
+        return result
+    except BaseException as error:
+        body_error = error
+    object.__setattr__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__state",
+        "failed",
+    )
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            if body_error is None or not isinstance(close_error, Exception):
+                body_error = close_error
+    assert body_error is not None
+    if not isinstance(body_error, Exception):
+        raise body_error
     raise SQLitePrivateDestinationError() from None
 
 
@@ -2358,9 +2690,13 @@ __all__ = [
     "backup_connection_to_private",
     "backup_open_connections_to_private",
     "backup_profile_migration_boundary",
+    "close_profile_migration_destination",
     "connect_private_sqlite",
     "connect_private_sqlite_descriptor",
     "copy_private_sqlite",
+    "discard_profile_migration_destination",
+    "migrate_profile_store_to_candidate",
+    "open_canonical_profile_migration_destination",
     "open_profile_migration_boundary_destination",
     "restore_private_sqlite",
 ]

@@ -28,6 +28,7 @@ from tldw_chatbook.DB.private_sqlite import (
     copy_private_sqlite,
     restore_private_sqlite,
 )
+from tldw_chatbook.TTS.profile_migration_namespace import MigrationTombstoneKey
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 
 
@@ -442,6 +443,201 @@ def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
     source.close()
     assert sidecar.is_symlink()
     assert sidecar.readlink() == missing
+
+
+def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    tombstone = tmp_path / ".profile-migration-active-candidate.tombstone"
+    first = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    first_inode = target.stat().st_ino
+
+    private_sqlite.discard_profile_migration_destination(
+        first,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+
+    assert not target.exists()
+    assert tombstone.read_bytes() == b""
+    assert tombstone.stat().st_ino == first_inode
+    assert (
+        object.__getattribute__(
+            first,
+            "_ProfileMigrationBoundaryDestination__file_fd",
+        )
+        == -1
+    )
+    assert (
+        object.__getattribute__(
+            first,
+            "_ProfileMigrationBoundaryDestination__parent_fd",
+        )
+        == -1
+    )
+
+    second = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    try:
+        assert target.stat().st_ino == first_inode
+    finally:
+        private_sqlite.discard_profile_migration_destination(
+            second,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+
+def test_canonical_migration_candidate_pins_exact_file_through_migration(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
+    source.execute("INSERT INTO private_data VALUES ('exact-copy')")
+    source.commit()
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+
+    def migrate(connection: sqlite3.Connection) -> str:
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+        connection.close()
+        return "migrated"
+
+    result = private_sqlite.migrate_profile_store_to_candidate(
+        source,
+        destination,
+        migrate=migrate,
+        validate=lambda connection: (
+            connection.execute("SELECT value FROM private_data").fetchone()[0]
+            == "exact-copy"
+            or pytest.fail("immutable validation missed candidate content")
+        ),
+    )
+    source.close()
+    private_sqlite.close_profile_migration_destination(destination)
+
+    assert result == "migrated"
+    with sqlite3.connect(target) as reopened:
+        assert reopened.execute("PRAGMA user_version").fetchone() == (4,)
+        assert reopened.execute("SELECT value FROM private_data").fetchone() == (
+            "exact-copy",
+        )
+
+
+def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    retained = tmp_path / "retained.sqlite3"
+    replacement = b"foreign replacement"
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
+    source.execute("INSERT INTO private_data VALUES ('must-be-wiped')")
+    source.commit()
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    real_backup = private_sqlite._backup_pages
+
+    def substitute_then_backup(*args: object, **kwargs: object) -> None:
+        target.rename(retained)
+        target.write_bytes(replacement)
+        target.chmod(0o600)
+        real_backup(*args, **kwargs)
+
+    monkeypatch.setattr(private_sqlite, "_backup_pages", substitute_then_backup)
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+        private_sqlite.migrate_profile_store_to_candidate(
+            source,
+            destination,
+            migrate=lambda connection: connection.close(),
+            validate=lambda _connection: None,
+        )
+    source.close()
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.discard_profile_migration_destination(
+            destination,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert target.read_bytes() == replacement
+    assert retained.read_bytes() == b""
+    assert (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__file_fd",
+        )
+        == -1
+    )
+    assert (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__parent_fd",
+        )
+        == -1
+    )
+
+
+def test_canonical_migration_candidate_close_error_still_revokes_descriptors(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    connection.close()
+
+    class FailingClose:
+        def close(self) -> None:
+            raise RuntimeError("PRIVATE close detail")
+
+    object.__setattr__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+        FailingClose(),
+    )
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+        private_sqlite.close_profile_migration_destination(destination)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in repr(caught.value)
+    assert (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__file_fd",
+        )
+        == -1
+    )
+    assert (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__parent_fd",
+        )
+        == -1
+    )
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)

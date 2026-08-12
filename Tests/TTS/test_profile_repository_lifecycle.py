@@ -7,7 +7,6 @@ import gc
 import importlib
 import os
 import sqlite3
-import stat
 import sys
 import threading
 import traceback
@@ -25,6 +24,7 @@ import pytest
 import tldw_chatbook.DB.private_sqlite as private_sqlite
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _raw_migrate_v1_to_v2
+from tldw_chatbook.TTS.migrations.v2_to_v3 import migrate as _raw_migrate_v2_to_v3
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
@@ -328,6 +328,332 @@ def _build_populated_v2_store_at(path: Path, *, display_name: str = "Legacy") ->
         connection.close()
 
 
+def _build_populated_v3_store_at(path: Path, *, display_name: str = "Legacy") -> None:
+    _build_populated_v2_store_at(path, display_name=display_name)
+    connection = sqlite3.connect(path)
+    try:
+        _raw_migrate_v2_to_v3(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_version", [1, 2, 3])
+async def test_repository_open_recovers_before_access_and_publishes_exact_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_version: int,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    if source_version == 1:
+        _build_populated_v1_store_at(database_path)
+    elif source_version == 2:
+        _build_populated_v2_store_at(database_path)
+    else:
+        _build_populated_v3_store_at(database_path)
+    events: list[str] = []
+    real_recover = module.recover_profile_migration_publication
+    real_connect = module.connect_private_sqlite
+    real_peek = module.peek_profile_store_schema_version
+    real_open = module.open_profile_store
+    real_schema_connect = module._profile_schema.connect_private_sqlite
+
+    def tracked_recover(path: Path) -> bool:
+        events.append("recover")
+        return real_recover(path)
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        events.append("sqlite")
+        assert events[0] == "recover"
+        return real_connect(*args, **kwargs)
+
+    def tracked_peek(*args: object, **kwargs: object) -> int | None:
+        events.append("peek")
+        assert events[0] == "recover"
+        return real_peek(*args, **kwargs)
+
+    def tracked_open(*args: object, **kwargs: object) -> sqlite3.Connection:
+        events.append("open")
+        assert events[0] == "recover"
+        return real_open(*args, **kwargs)
+
+    def tracked_schema_connect(
+        *args: object,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        events.append("schema_sqlite")
+        assert events[0] == "recover"
+        return real_schema_connect(*args, **kwargs)
+
+    monkeypatch.setattr(
+        module, "recover_profile_migration_publication", tracked_recover
+    )
+    monkeypatch.setattr(module, "connect_private_sqlite", tracked_connect)
+    monkeypatch.setattr(module, "peek_profile_store_schema_version", tracked_peek)
+    monkeypatch.setattr(module, "open_profile_store", tracked_open)
+    monkeypatch.setattr(
+        module._profile_schema, "connect_private_sqlite", tracked_schema_connect
+    )
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    assert events[0] == "recover"
+    with sqlite3.connect(database_path) as active:
+        assert active.execute("PRAGMA user_version").fetchone() == (4,)
+    if source_version <= 2:
+        with sqlite3.connect(
+            database_path.with_name("profiles.sqlite3.pre-v3.sqlite3")
+        ) as pre_v3:
+            assert pre_v3.execute("PRAGMA user_version").fetchone() == (2,)
+            assert (
+                _stored_profile_name(
+                    database_path.with_name("profiles.sqlite3.pre-v3.sqlite3")
+                )
+                == "Legacy"
+            )
+    with sqlite3.connect(
+        database_path.with_name("profiles.sqlite3.pre-v4.sqlite3")
+    ) as pre_v4:
+        assert pre_v4.execute("PRAGMA user_version").fetchone() == (3,)
+
+
+@pytest.mark.asyncio
+async def test_repository_open_never_migrates_the_active_store_in_place(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v3_store_at(database_path)
+    active_before = database_path.read_bytes()
+    real_open = module.open_profile_store
+
+    def guarded_open(path: Path, **kwargs: object) -> sqlite3.Connection:
+        if path == database_path and not kwargs.get("must_exist"):
+            assert database_path.read_bytes() == active_before
+            raise AssertionError("active store must not be opened for migration")
+        return real_open(path, **kwargs)
+
+    monkeypatch.setattr(module, "open_profile_store", guarded_open)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+
+
+@pytest.mark.asyncio
+async def test_restore_v2_uses_transactional_publication_with_exact_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(candidate_path, display_name="Restored")
+    publications = 0
+    real_publish = module.publish_profile_migration
+
+    def tracked_publish(**kwargs: object) -> None:
+        nonlocal publications
+        publications += 1
+        real_publish(**kwargs)
+
+    monkeypatch.setattr(module, "publish_profile_migration", tracked_publish)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        await repository.restore_from(candidate_path)
+    finally:
+        await repository.close()
+
+    assert publications == 1
+    assert _stored_profile_name(database_path) == "Restored"
+    pre_v3 = database_path.with_name("profiles.sqlite3.pre-v3.sqlite3")
+    pre_v4 = database_path.with_name("profiles.sqlite3.pre-v4.sqlite3")
+    assert _stored_profile_name(pre_v3) == "Restored"
+    assert _stored_profile_name(pre_v4) == "Restored"
+    with sqlite3.connect(pre_v3) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
+    with sqlite3.connect(pre_v4) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (3,)
+
+
+@pytest.mark.asyncio
+async def test_prepublication_migration_failure_wipes_canonical_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v3_store_at(database_path)
+    active_before = database_path.read_bytes()
+    real_step = module.step_profile_migration_candidate
+
+    def fail_step(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("private migration failure")
+
+    monkeypatch.setattr(module, "step_profile_migration_candidate", fail_step)
+    repository = module.TTSProfileRepository(database_path)
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        await repository.open()
+    assert database_path.read_bytes() == active_before
+    assert not tuple(tmp_path.glob(".profile-migration-*.candidate.sqlite3"))
+    tombstones = tuple(tmp_path.glob(".profile-migration-*.tombstone"))
+    assert tombstones
+    assert all(path.read_bytes() == b"" for path in tombstones)
+    active_tombstone = tmp_path / ".profile-migration-active-candidate.tombstone"
+    reused_inode = active_tombstone.stat().st_ino
+
+    monkeypatch.setattr(module, "step_profile_migration_candidate", real_step)
+    await repository.open()
+    await repository.close()
+
+    assert database_path.stat().st_ino == reused_inode
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancel_stage", "published_name", "recovery_count"),
+    [
+        ("preflight", "Original", 0),
+        ("ponr", "Candidate", 1),
+    ],
+)
+async def test_restore_control_flow_settles_publication_before_redelivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_stage: str,
+    published_name: str,
+    recovery_count: int,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    await _create_profile_store(candidate_path, "Candidate")
+    real_publish = module.publish_profile_migration
+    cancellation = _ControlFlow()
+
+    def cancel_publication(**kwargs: object) -> None:
+        repository_hook = kwargs.pop("stage_hook", None)
+
+        def stage_hook(stage: object) -> None:
+            if cancel_stage == "preflight" and stage.value == cancel_stage:
+                raise cancellation
+            if repository_hook is not None:
+                repository_hook(stage)
+            if cancel_stage == "ponr" and stage.value == cancel_stage:
+                raise cancellation
+
+        real_publish(**kwargs, stage_hook=stage_hook)
+
+    monkeypatch.setattr(module, "publish_profile_migration", cancel_publication)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        with pytest.raises(_ControlFlow) as caught:
+            await repository.restore_from(candidate_path)
+
+        assert caught.value is cancellation
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert _stored_profile_name(database_path) == published_name
+        assert (
+            len(tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3")))
+            == recovery_count
+        )
+        assert not tuple(tmp_path.glob("*.migration-publication.json"))
+        assert not tuple(tmp_path.glob("*.rollback.sqlite3"))
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_post_ponr_failure_restores_active_and_retains_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    await _create_profile_store(candidate_path, "Candidate")
+    real_publish = module.publish_profile_migration
+
+    def fail_after_active_replace(**kwargs: object) -> None:
+        repository_hook = kwargs.pop("stage_hook", None)
+
+        def stage_hook(stage: object) -> None:
+            if repository_hook is not None:
+                repository_hook(stage)
+            if stage.value == "active_replaced":
+                raise OSError("publication fault")
+
+        real_publish(**kwargs, stage_hook=stage_hook)
+
+    monkeypatch.setattr(module, "publish_profile_migration", fail_after_active_replace)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+            await repository.restore_from(candidate_path)
+
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert _stored_profile_name(database_path) == "Original"
+        recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert len(recoveries) == 1
+        validate_profile_candidate(recoveries[0])
+        assert not tuple(tmp_path.glob("*.migration-publication.json"))
+        assert not tuple(tmp_path.glob("*.rollback.sqlite3"))
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_deadline_during_candidate_copy_preserves_active_without_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    await _create_profile_store(candidate_path, "Candidate")
+    real_migrate = module.migrate_profile_store_to_candidate
+    expired = False
+
+    def clock() -> float:
+        return 10.0 if expired else 0.0
+
+    def expire_during_copy(*args: object, **kwargs: object) -> object:
+        nonlocal expired
+        expired = True
+        return real_migrate(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_monotonic", clock)
+    monkeypatch.setattr(
+        module, "migrate_profile_store_to_candidate", expire_during_copy
+    )
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+            await repository.restore_from(candidate_path, timeout_seconds=5)
+
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert _stored_profile_name(database_path) == "Original"
+        assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert not tuple(tmp_path.glob("*.migration-publication.json"))
+    finally:
+        await repository.close()
+
+
 def test_restore_candidate_uses_path_free_version_stepper_without_touching_active(
     tmp_path: Path,
 ) -> None:
@@ -393,64 +719,6 @@ def _stored_profile_name(path: Path) -> str:
 
 
 @pytest.mark.asyncio
-async def test_v2_migration_retains_private_online_backup_before_migration(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    events: list[str] = []
-    modes: list[ProfileStoreLockMode] = []
-    real_backup = module.backup_open_connections_to_private
-    real_open = module.open_profile_store
-    real_lease = module.ProfileStoreLease
-
-    def tracked_backup(*args: object, **kwargs: object) -> None:
-        events.append("backup")
-        real_backup(*args, **kwargs)
-
-    def tracked_open(*args: object, **kwargs: object) -> sqlite3.Connection:
-        if backup_path.exists():
-            events.append("migrate")
-        return real_open(*args, **kwargs)
-
-    def tracked_lease(
-        path: Path, mode: ProfileStoreLockMode, **kwargs: object
-    ) -> ProfileStoreLease:
-        modes.append(mode)
-        return real_lease(path, mode, **kwargs)
-
-    monkeypatch.setattr(module, "backup_open_connections_to_private", tracked_backup)
-    monkeypatch.setattr(module, "open_profile_store", tracked_open)
-    monkeypatch.setattr(module, "ProfileStoreLease", tracked_lease)
-
-    repository = module.TTSProfileRepository(database_path)
-    await repository.open()
-    await repository.close()
-
-    assert events[:2] == ["backup", "migrate"]
-    assert modes[:2] == [ProfileStoreLockMode.EXCLUSIVE, ProfileStoreLockMode.SHARED]
-    assert backup_path.is_file()
-    if os.name == "posix":
-        assert stat.S_IMODE(backup_path.stat().st_mode) == 0o600
-    backup = sqlite3.connect(backup_path)
-    try:
-        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert (
-            backup.execute("SELECT count(*) FROM tts_generation_profiles").fetchone()[0]
-            == 1
-        )
-    finally:
-        backup.close()
-    migrated = sqlite3.connect(database_path)
-    try:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
-    finally:
-        migrated.close()
-
-
 @pytest.mark.asyncio
 async def test_uncertain_version_peek_cannot_bypass_exclusive_v2_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -507,252 +775,6 @@ async def test_v2_migration_reuses_equivalent_retained_backup(
 
 
 @pytest.mark.asyncio
-async def test_v2_migration_atomically_replaces_stale_retained_backup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    _test_online_backup(database_path, backup_path)
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
-    )
-    connection.commit()
-    connection.close()
-    backup_calls = 0
-    real_backup = module.backup_open_connections_to_private
-
-    def tracked_backup(*args: object, **kwargs: object) -> None:
-        nonlocal backup_calls
-        backup_calls += 1
-        real_backup(*args, **kwargs)
-
-    monkeypatch.setattr(module, "backup_open_connections_to_private", tracked_backup)
-
-    repository = module.TTSProfileRepository(database_path)
-    await repository.open()
-    await repository.close()
-
-    assert backup_calls == 1
-    assert _stored_profile_name(backup_path) == "Updated"
-
-
-@pytest.mark.asyncio
-async def test_v2_migration_directory_fsync_failure_restores_prior_backup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    _test_online_backup(database_path, backup_path)
-    prior_backup = backup_path.read_bytes()
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
-    )
-    connection.commit()
-    connection.close()
-
-    def fail_directory_fsync(_path: Path) -> None:
-        raise RuntimeError("PRIVATE directory fsync detail")
-
-    monkeypatch.setattr(module, "_fsync_directory", fail_directory_fsync)
-    repository = module.TTSProfileRepository(database_path)
-
-    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
-        await repository.open()
-    await repository.close()
-
-    assert caught.value.__cause__ is None
-    assert caught.value.__context__ is None
-    assert backup_path.read_bytes() == prior_backup
-    assert _stored_profile_name(backup_path) == "Legacy"
-    assert list(tmp_path.glob(f".{backup_path.name}.*.rollback")) == []
-    source = sqlite3.connect(database_path)
-    try:
-        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert (
-            source.execute(
-                "SELECT display_name FROM tts_generation_profiles"
-            ).fetchone()[0]
-            == "Updated"
-        )
-    finally:
-        source.close()
-
-
-@pytest.mark.asyncio
-async def test_v2_migration_durably_orders_backup_rollback_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    _test_online_backup(database_path, backup_path)
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
-    )
-    connection.commit()
-    connection.close()
-    events: list[str] = []
-    real_link = module.os.link
-    real_replace = module.os.replace
-    real_fsync_directory = module._fsync_directory
-    real_unlink = Path.unlink
-
-    def tracked_link(*args: object, **kwargs: object) -> None:
-        real_link(*args, **kwargs)
-        events.append("link")
-
-    def tracked_replace(source: object, destination: object) -> None:
-        real_replace(source, destination)
-        if Path(destination) == backup_path:
-            events.append("replace")
-
-    def tracked_fsync_directory(path: Path) -> None:
-        real_fsync_directory(path)
-        events.append("fsync")
-
-    def tracked_unlink(path: Path, *args: object, **kwargs: object) -> None:
-        real_unlink(path, *args, **kwargs)
-        if path.suffix == ".rollback" and "link" in events:
-            events.append("unlink")
-
-    monkeypatch.setattr(module.os, "link", tracked_link)
-    monkeypatch.setattr(module.os, "replace", tracked_replace)
-    monkeypatch.setattr(module, "_fsync_directory", tracked_fsync_directory)
-    monkeypatch.setattr(Path, "unlink", tracked_unlink)
-
-    repository = module.TTSProfileRepository(database_path)
-    await repository.open()
-    await repository.close()
-
-    assert events == ["link", "fsync", "replace", "fsync", "unlink", "fsync"]
-    assert _stored_profile_name(backup_path) == "Updated"
-
-
-@pytest.mark.asyncio
-async def test_v2_migration_backup_failure_preserves_source_and_prior_backup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "PRIVATE profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    _test_online_backup(database_path, backup_path)
-    prior_backup = backup_path.read_bytes()
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        "UPDATE tts_generation_profiles SET display_name = 'Updated', normalized_name = 'updated'"
-    )
-    connection.commit()
-    connection.close()
-
-    def fail_backup(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("PRIVATE raw backup detail")
-
-    monkeypatch.setattr(module, "backup_open_connections_to_private", fail_backup)
-    repository = module.TTSProfileRepository(database_path)
-
-    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
-        await repository.open()
-
-    assert caught.value.__cause__ is None
-    assert caught.value.__context__ is None
-    assert "PRIVATE" not in repr(caught.value)
-    assert backup_path.read_bytes() == prior_backup
-    source = sqlite3.connect(database_path)
-    try:
-        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert (
-            source.execute(
-                "SELECT display_name FROM tts_generation_profiles"
-            ).fetchone()[0]
-            == "Updated"
-        )
-    finally:
-        source.close()
-
-
-@pytest.mark.asyncio
-async def test_v2_migration_failure_retains_completed_backup_and_v2_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    real_open = module.open_profile_store
-
-    def fail_migration(path: Path, **kwargs: object) -> sqlite3.Connection:
-        if path == database_path and not kwargs.get("must_exist"):
-            raise ProfileRepositoryError("migration_failed")
-        return real_open(path, **kwargs)
-
-    monkeypatch.setattr(module, "open_profile_store", fail_migration)
-    repository = module.TTSProfileRepository(database_path)
-
-    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
-        await repository.open()
-    await repository.close()
-
-    assert backup_path.is_file()
-    backup = sqlite3.connect(backup_path)
-    source = sqlite3.connect(database_path)
-    try:
-        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
-        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
-    finally:
-        source.close()
-        backup.close()
-
-
-@pytest.mark.asyncio
-async def test_v2_migration_destination_validation_failure_leaves_no_partial(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    backup_path = module._v2_migration_backup_path(database_path)
-    real_validate = module.TTSProfileRepository._worker_validate_v2_connection
-    validation_calls = 0
-
-    def fail_destination_validation(
-        self: object, connection: sqlite3.Connection
-    ) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
-        nonlocal validation_calls
-        validation_calls += 1
-        if validation_calls == 2:
-            raise RuntimeError("PRIVATE destination detail")
-        return real_validate(self, connection)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(
-        module.TTSProfileRepository,
-        "_worker_validate_v2_connection",
-        fail_destination_validation,
-    )
-    repository = module.TTSProfileRepository(database_path)
-
-    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
-        await repository.open()
-
-    assert caught.value.__cause__ is None
-    assert caught.value.__context__ is None
-    assert backup_path.exists() is False
-    assert list(tmp_path.glob(f".{backup_path.name}.*.backup")) == []
-    source = sqlite3.connect(database_path)
-    try:
-        assert source.execute("PRAGMA user_version").fetchone()[0] == 2
-    finally:
-        source.close()
-
-
 @pytest.mark.asyncio
 async def test_v2_migration_source_close_failure_blocks_migration_context_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -771,7 +793,7 @@ async def test_v2_migration_source_close_failure_blocks_migration_context_free(
         if (
             owner_id == "tts.profile_migration_backup"
             and Path(cast(str | os.PathLike[str], database)) == database_path
-            and not kwargs.get("read_only")
+            and kwargs.get("read_only") is True
         ):
             source_proxy = _CloseFailingSQLiteProxy(
                 connection,
@@ -803,56 +825,6 @@ async def test_v2_migration_source_close_failure_blocks_migration_context_free(
 
 
 @pytest.mark.asyncio
-async def test_v2_migration_destination_close_failure_retains_cleanup_ownership(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    _build_populated_v2_store_at(database_path)
-    real_connect = module.connect_private_sqlite
-    destination_proxy: _CloseFailingSQLiteProxy | None = None
-
-    def close_failing_connect(
-        owner_id: str, database: object, **kwargs: object
-    ) -> sqlite3.Connection:
-        nonlocal destination_proxy
-        connection = real_connect(owner_id, database, **kwargs)
-        selected = Path(cast(str | os.PathLike[str], database))
-        if (
-            owner_id == "tts.profile_migration_backup"
-            and selected != database_path
-            and not kwargs.get("read_only")
-        ):
-            destination_proxy = _CloseFailingSQLiteProxy(
-                connection,
-                "PRIVATE destination close detail",
-            )
-            return cast(sqlite3.Connection, destination_proxy)
-        return connection
-
-    monkeypatch.setattr(module, "connect_private_sqlite", close_failing_connect)
-    repository = module.TTSProfileRepository(database_path)
-
-    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
-        await repository.open()
-
-    assert caught.value.__cause__ is None
-    assert caught.value.__context__ is None
-    assert "PRIVATE" not in repr(caught.value)
-    assert destination_proxy is not None
-    assert repository._connection is destination_proxy
-    assert repository._lease is not None
-    assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
-    assert repository._residual_cleanup_paths
-    residual_paths = repository._residual_cleanup_paths
-    destination_proxy.fail_close = False
-
-    await repository.close()
-
-    assert repository._residual_cleanup_paths == ()
-    assert all(not path.exists() for path in residual_paths)
-
-
 @pytest.mark.asyncio
 async def test_populated_v1_store_upgrades_under_exclusive_lease_through_repository(
     tmp_path: Path,
@@ -3819,44 +3791,6 @@ async def test_recovery_backup_failure_cleans_stage_and_rebinds_original(
 
 
 @pytest.mark.asyncio
-async def test_replace_failure_retains_recovery_cleans_stage_and_rebinds_original(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    secret = str(tmp_path / "secret-replace-failure")
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    real_replace = os.replace
-
-    def fail_live_replace(source: object, destination: object) -> None:
-        if Path(destination) == database_path.resolve():
-            raise OSError(secret)
-        real_replace(source, destination)
-
-    monkeypatch.setattr(module.os, "replace", fail_live_replace)
-    with pytest.raises(ProfileRepositoryError) as caught:
-        await repository.restore_from(candidate)
-
-    _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
-    assert repository.state is ProfileRepositoryState.OPEN
-    assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
-    recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
-    assert len(recoveries) == 1
-    validate_profile_candidate(recoveries[0])
-    page = await repository.list_profiles()
-    assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-    await repository.close()
-
-
-@pytest.mark.asyncio
 async def test_post_replace_shared_reacquire_failure_is_unavailable_with_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3925,7 +3859,13 @@ async def test_post_replace_long_lived_reopen_failure_is_unavailable_without_bla
         UUID("00000000-0000-4000-8000-000000000099"),
     )
     real_open = module.open_profile_store
-    strict_calls = 0
+    real_publish = module.publish_profile_migration
+    publication_complete = False
+
+    def tracked_publish(**kwargs: object) -> None:
+        nonlocal publication_complete
+        real_publish(**kwargs)
+        publication_complete = True
 
     def injected_open(
         path: Path,
@@ -3933,23 +3873,20 @@ async def test_post_replace_long_lived_reopen_failure_is_unavailable_without_bla
         must_exist: bool = False,
         check_deadline: Callable[[], None] | None = None,
     ) -> sqlite3.Connection:
-        nonlocal strict_calls
-        if must_exist:
-            strict_calls += 1
-            if strict_calls == 3:
-                raise RuntimeError(secret)
+        if must_exist and publication_complete:
+            raise RuntimeError(secret)
         return real_open(
             path,
             must_exist=must_exist,
             check_deadline=check_deadline,
         )
 
+    monkeypatch.setattr(module, "publish_profile_migration", tracked_publish)
     monkeypatch.setattr(module, "open_profile_store", injected_open)
     with pytest.raises(ProfileRepositoryError) as caught:
         await repository.restore_from(candidate)
 
     _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
-    assert strict_calls == 3
     assert repository.state is ProfileRepositoryState.UNAVAILABLE
     assert repository._connection is None
     assert repository._lease is None
@@ -4100,52 +4037,6 @@ async def test_restore_handoff_rejects_domain_invalid_authoritative_winner(
 
 
 @pytest.mark.asyncio
-async def test_restore_failure_rebind_rejects_domain_invalid_original_and_keeps_recovery(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    secret = str(tmp_path / "secret-replace")
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    real_replace = module.os.replace
-
-    def corrupt_then_fail_replace(source: object, destination: object) -> None:
-        if Path(destination) == database_path:
-            invalid = sqlite3.connect(database_path, isolation_level=None)
-            invalid.execute("UPDATE tts_generation_profiles SET revision = 0")
-            invalid.close()
-            raise OSError(secret)
-        real_replace(source, destination)
-
-    monkeypatch.setattr(module.os, "replace", corrupt_then_fail_replace)
-
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.restore_from(candidate)
-
-        _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
-        assert repository.state is ProfileRepositoryState.UNAVAILABLE
-        assert repository.generation == 2
-        assert repository._connection is None
-        assert repository._lease is None
-        assert repository._active_database_path is None
-        assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
-        recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
-        assert len(recoveries) == 1
-        validate_profile_candidate(recoveries[0])
-    finally:
-        await repository.close()
-
-
-@pytest.mark.asyncio
 async def test_restore_preclose_failure_does_not_reopen_domain_invalid_shared_pair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4274,8 +4165,6 @@ async def test_established_store_retry_does_not_recreate_missing_postreplace_dat
     ("boundary", "expected_mode"),
     [
         ("recovery_source", ProfileStoreLockMode.EXCLUSIVE),
-        ("scoped_replacement", ProfileStoreLockMode.EXCLUSIVE),
-        ("pre_rebind", ProfileStoreLockMode.SHARED),
         ("post_rebind", ProfileStoreLockMode.SHARED),
     ],
 )
@@ -4298,8 +4187,14 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
     )
     real_open = module.open_profile_store
     real_counts = repository._worker_store_counts
-    strict_calls = 0
+    real_publish = module.publish_profile_migration
+    publication_complete = False
     proxies: list[_CloseFailingSQLiteProxy] = []
+
+    def tracked_publish(**kwargs: object) -> None:
+        nonlocal publication_complete
+        real_publish(**kwargs)
+        publication_complete = True
 
     def injected_open(
         path: Path,
@@ -4307,24 +4202,19 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
         must_exist: bool = False,
         check_deadline: Callable[[], None] | None = None,
     ) -> sqlite3.Connection:
-        nonlocal strict_calls
         connection = real_open(
             path,
             must_exist=must_exist,
             check_deadline=check_deadline,
         )
-        if must_exist:
-            strict_calls += 1
-            target_call = {
-                "recovery_source": 1,
-                "scoped_replacement": 2,
-                "pre_rebind": 1,
-                "post_rebind": 3,
-            }[boundary]
-            if strict_calls == target_call:
-                proxy = _CloseFailingSQLiteProxy(connection, secret)
-                proxies.append(proxy)
-                return cast(sqlite3.Connection, proxy)
+        should_proxy = must_exist and (
+            (boundary == "recovery_source" and not publication_complete)
+            or (boundary == "post_rebind" and publication_complete)
+        )
+        if should_proxy:
+            proxy = _CloseFailingSQLiteProxy(connection, secret)
+            proxies.append(proxy)
+            return cast(sqlite3.Connection, proxy)
         return connection
 
     def injected_counts(
@@ -4332,18 +4222,11 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
         *,
         deadline: float | None = None,
     ) -> tuple[int, int]:
-        if boundary in {"pre_rebind", "post_rebind"} and any(
-            connection is proxy for proxy in proxies
-        ):
+        if boundary == "post_rebind" and any(connection is proxy for proxy in proxies):
             raise RuntimeError(secret)
         return real_counts(connection, deadline=deadline)
 
-    if boundary == "pre_rebind":
-        monkeypatch.setattr(
-            repository,
-            "_worker_create_recovery_backup",
-            lambda _restored_at, _deadline: (_ for _ in ()).throw(RuntimeError(secret)),
-        )
+    monkeypatch.setattr(module, "publish_profile_migration", tracked_publish)
     monkeypatch.setattr(module, "open_profile_store", injected_open)
     monkeypatch.setattr(repository, "_worker_store_counts", injected_counts)
 
@@ -4387,8 +4270,9 @@ async def test_restore_release_failure_retains_residual_lease_for_later_cleanup(
     await _create_profile_store(candidate, "Candidate")
     repository = _repository(database_path)
     await repository.open()
-    real_open = module.open_profile_store
-    strict_calls = 0
+    real_counts = repository._worker_store_counts
+    real_publish = module.publish_profile_migration
+    publication_complete = False
     retained: list[Any] = []
 
     class ControlledReleaseLease(real_lease_type):
@@ -4407,25 +4291,23 @@ async def test_restore_release_failure_retains_residual_lease_for_later_cleanup(
                 raise RuntimeError(secret)
             super().release()
 
-    def injected_open(
-        path: Path,
+    def tracked_publish(**kwargs: object) -> None:
+        nonlocal publication_complete
+        real_publish(**kwargs)
+        publication_complete = True
+
+    def injected_counts(
+        connection: sqlite3.Connection,
         *,
-        must_exist: bool = False,
-        check_deadline: Callable[[], None] | None = None,
-    ) -> sqlite3.Connection:
-        nonlocal strict_calls
-        if must_exist:
-            strict_calls += 1
-            if boundary == "rebound_release" and strict_calls == 3:
-                raise RuntimeError(secret)
-        return real_open(
-            path,
-            must_exist=must_exist,
-            check_deadline=check_deadline,
-        )
+        deadline: float | None = None,
+    ) -> tuple[int, int]:
+        if boundary == "rebound_release" and publication_complete:
+            raise RuntimeError(secret)
+        return real_counts(connection, deadline=deadline)
 
     monkeypatch.setattr(module, "ProfileStoreLease", ControlledReleaseLease)
-    monkeypatch.setattr(module, "open_profile_store", injected_open)
+    monkeypatch.setattr(module, "publish_profile_migration", tracked_publish)
+    monkeypatch.setattr(repository, "_worker_store_counts", injected_counts)
 
     with pytest.raises(ProfileRepositoryError) as caught:
         await repository.restore_from(candidate)
@@ -4516,7 +4398,7 @@ async def test_restore_preclose_failure_keeps_usable_original_shared_pair_open(
 
 
 @pytest.mark.asyncio
-async def test_restore_fsyncs_recovery_directory_entry_before_live_replace(
+async def test_restore_fsyncs_recovery_directory_entry_before_publication_ponr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4526,10 +4408,10 @@ async def test_restore_fsyncs_recovery_directory_entry_before_live_replace(
     await _create_profile_store(candidate, "Candidate")
     repository = _repository(database_path)
     await repository.open()
-    events: list[tuple[str, Path]] = []
+    events: list[tuple[str, Path | None]] = []
     real_fsync_file = module._fsync_file
     real_fsync_directory = module._fsync_directory
-    real_replace = module.os.replace
+    real_publish = module.publish_profile_migration
 
     def observed_fsync_file(path: Path) -> None:
         events.append(("file", path))
@@ -4539,13 +4421,20 @@ async def test_restore_fsyncs_recovery_directory_entry_before_live_replace(
         events.append(("directory", path))
         real_fsync_directory(path)
 
-    def observed_replace(source: object, destination: object) -> None:
-        events.append(("replace", Path(destination)))
-        real_replace(source, destination)
+    def observed_publish(**kwargs: object) -> None:
+        repository_hook = kwargs.pop("stage_hook", None)
+
+        def stage_hook(stage: object) -> None:
+            if repository_hook is not None:
+                repository_hook(stage)
+            if stage.value == "ponr":
+                events.append(("ponr", None))
+
+        real_publish(**kwargs, stage_hook=stage_hook)
 
     monkeypatch.setattr(module, "_fsync_file", observed_fsync_file)
     monkeypatch.setattr(module, "_fsync_directory", observed_fsync_directory)
-    monkeypatch.setattr(module.os, "replace", observed_replace)
+    monkeypatch.setattr(module, "publish_profile_migration", observed_publish)
 
     try:
         await repository.restore_from(candidate)
@@ -4555,13 +4444,11 @@ async def test_restore_fsyncs_recovery_directory_entry_before_live_replace(
             for index, (kind, path) in enumerate(events)
             if kind == "file" and path.name.endswith(".recovery.sqlite3")
         )
-        live_replace_index = next(
-            index
-            for index, (kind, path) in enumerate(events)
-            if kind == "replace" and path == database_path
+        ponr_index = next(
+            index for index, (kind, _path) in enumerate(events) if kind == "ponr"
         )
         assert events[recovery_file_index + 1] == ("directory", tmp_path)
-        assert recovery_file_index < live_replace_index
+        assert recovery_file_index < ponr_index
     finally:
         await repository.close()
 
@@ -4869,67 +4756,8 @@ async def test_restore_refuses_live_rollback_journal_without_deleting_it(
     assert repository.state is ProfileRepositoryState.OPEN
     page = await repository.list_profiles()
     assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-    assert len(tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))) == 1
+    assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
     await repository.close()
-
-
-@pytest.mark.asyncio
-async def test_stage_cleanup_failure_does_not_block_original_shared_rebind(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    secret = str(tmp_path / "secret-stage-cleanup")
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    real_replace = module.os.replace
-    real_remove_temporary = repository._worker_remove_temporary_store
-    retained_stage: Path | None = None
-
-    def fail_replace(source: object, destination: object) -> None:
-        if Path(destination) == database_path.resolve():
-            raise OSError(secret)
-        real_replace(source, destination)
-
-    def fail_stage_cleanup(path: Path) -> list[BaseException]:
-        nonlocal retained_stage
-        if path.name.endswith(".restore-stage.sqlite3"):
-            retained_stage = path
-            return [RuntimeError(secret)]
-        return real_remove_temporary(path)
-
-    monkeypatch.setattr(module.os, "replace", fail_replace)
-    monkeypatch.setattr(
-        repository,
-        "_worker_remove_temporary_store",
-        fail_stage_cleanup,
-    )
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.restore_from(candidate)
-
-        _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
-        assert repository.state is ProfileRepositoryState.OPEN
-        assert repository._connection is not None
-        assert repository._lease is not None
-        assert repository._lease.mode is ProfileStoreLockMode.SHARED
-        assert retained_stage is not None and retained_stage.exists()
-        assert len(tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))) == 1
-        page = await repository.list_profiles()
-        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-    finally:
-        if retained_stage is not None:
-            for error in real_remove_temporary(retained_stage):
-                if isinstance(error, Exception):
-                    raise error
-        await repository.close()
 
 
 @pytest.mark.asyncio
@@ -5183,197 +5011,6 @@ async def test_restore_expired_immediately_after_exclusive_acquire_does_not_stag
         await repository.backup_to(followup_backup)
         validate_profile_candidate(followup_backup)
         await _assert_exclusive_lease_blocked(database_path)
-    finally:
-        await repository.close()
-
-
-@pytest.mark.asyncio
-async def test_restore_stage_consuming_deadline_does_not_create_recovery_or_replace(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    now = 0.0
-    real_stage = repository._worker_stage_candidate
-    recovery_called = False
-    replace_called = False
-    real_replace = module.os.replace
-
-    def expiring_stage(
-        candidate_snapshot: object,
-        deadline: float,
-    ) -> Path:
-        nonlocal now
-        stage = real_stage(candidate_snapshot, deadline)  # type: ignore[arg-type]
-        now = 11.0
-        return stage
-
-    def unexpected_recovery(
-        _restored_at: datetime,
-        _deadline: float,
-    ) -> Path:
-        nonlocal recovery_called
-        recovery_called = True
-        raise AssertionError("recovery must not run after the deadline")
-
-    def observed_replace(source: object, destination: object) -> None:
-        nonlocal replace_called
-        replace_called = True
-        real_replace(source, destination)
-
-    monkeypatch.setattr(module, "_monotonic", lambda: now)
-    monkeypatch.setattr(repository, "_worker_stage_candidate", expiring_stage)
-    monkeypatch.setattr(
-        repository,
-        "_worker_create_recovery_backup",
-        unexpected_recovery,
-    )
-    monkeypatch.setattr(module.os, "replace", observed_replace)
-
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.restore_from(candidate, timeout_seconds=10.0)
-
-        _assert_safe_error(caught.value, "restore_failed", str(database_path))
-        assert recovery_called is False
-        assert replace_called is False
-        assert repository.state is ProfileRepositoryState.OPEN
-        assert repository.generation == 2
-        assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
-        assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
-        page = await repository.list_profiles()
-        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-        await _assert_exclusive_lease_blocked(database_path)
-    finally:
-        await repository.close()
-
-
-@pytest.mark.asyncio
-async def test_restore_deadline_expiring_during_pre_replace_path_check_does_not_replace(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    now = 0.0
-    path_checks = 0
-    pre_replace_check_seen = False
-    replace_called = False
-    real_path_check = repository._require_configured_path_matches
-    real_replace = module.os.replace
-
-    def expiring_path_check(active_path: Path, failure_code: str) -> None:
-        nonlocal now, path_checks, pre_replace_check_seen
-        real_path_check(active_path, failure_code)
-        path_checks += 1
-        if path_checks == 6:
-            pre_replace_check_seen = True
-            now = 11.0
-
-    def observed_replace(source: object, destination: object) -> None:
-        nonlocal replace_called
-        replace_called = True
-        real_replace(source, destination)
-
-    monkeypatch.setattr(module, "_monotonic", lambda: now)
-    monkeypatch.setattr(
-        repository,
-        "_require_configured_path_matches",
-        expiring_path_check,
-    )
-    monkeypatch.setattr(module.os, "replace", observed_replace)
-
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.restore_from(candidate, timeout_seconds=10.0)
-
-        _assert_safe_error(caught.value, "restore_failed", str(database_path))
-        assert pre_replace_check_seen is True
-        assert replace_called is False
-        assert repository.state is ProfileRepositoryState.OPEN
-        assert repository.generation == 2
-        page = await repository.list_profiles()
-        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
-        await _assert_exclusive_lease_blocked(database_path)
-    finally:
-        await repository.close()
-
-
-@pytest.mark.asyncio
-async def test_restore_deadline_expiring_during_final_path_check_does_not_publish(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    database_path = tmp_path / "profiles.sqlite3"
-    candidate = tmp_path / "candidate.sqlite3"
-    await _create_profile_store(candidate, "Candidate")
-    repository = _repository(database_path)
-    await repository.open()
-    await repository.create_profile(
-        _draft("Original"),
-        UUID("00000000-0000-4000-8000-000000000099"),
-    )
-    now = 0.0
-    count_calls = 0
-    rebound_counts_complete = False
-    final_path_check_seen = False
-    real_counts = repository._worker_store_counts
-    real_path_check = repository._require_configured_path_matches
-
-    def observed_counts(
-        connection: sqlite3.Connection,
-        *,
-        deadline: float | None = None,
-    ) -> tuple[int, int]:
-        nonlocal count_calls, rebound_counts_complete
-        result = real_counts(connection, deadline=deadline)
-        count_calls += 1
-        if count_calls == 2:
-            rebound_counts_complete = True
-        return result
-
-    def expiring_path_check(active_path: Path, failure_code: str) -> None:
-        nonlocal now, final_path_check_seen
-        real_path_check(active_path, failure_code)
-        if rebound_counts_complete:
-            final_path_check_seen = True
-            now = 11.0
-
-    monkeypatch.setattr(module, "_monotonic", lambda: now)
-    monkeypatch.setattr(repository, "_worker_store_counts", observed_counts)
-    monkeypatch.setattr(
-        repository,
-        "_require_configured_path_matches",
-        expiring_path_check,
-    )
-
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.restore_from(candidate, timeout_seconds=10.0)
-
-        _assert_safe_error(caught.value, "restore_failed")
-        assert count_calls == 2
-        assert final_path_check_seen is True
-        assert repository.state is ProfileRepositoryState.UNAVAILABLE
-        assert repository.generation == 2
     finally:
         await repository.close()
 
