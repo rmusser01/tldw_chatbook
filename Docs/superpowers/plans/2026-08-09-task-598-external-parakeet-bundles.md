@@ -804,7 +804,7 @@ If there are no findings, do not create an empty commit.
 - Create after successful remote evidence: Docs/STT_Evaluation/task-598/platform-evidence.json
 - Modify after all lanes pass: backlog/tasks/task-598 - Use-descriptor-verified-external-Parakeet-ONNX-bundles.md
 
-- [ ] **Step 1: Write the focused RED tests before the probe or workflow exists**
+- [x] **Step 1: Write the focused RED tests before the probe or workflow exists**
 
 Add one CI test file. Read the workflow as text, following the existing CI-shape
 tests, and import the probe only after asserting its path exists. Cover:
@@ -849,7 +849,7 @@ Run: ../../.venv/bin/python -m pytest -q Tests/CI/test_task598_external_parakeet
 
 Expected: FAIL because the probe and workflow do not exist.
 
-- [ ] **Step 2: Implement the smallest supervised, path-private probe**
+- [x] **Step 2: Implement the smallest supervised, path-private probe**
 
 Use only stdlib imports at module import time. Provide parent, worker, and
 validate CLI modes. Parent mode creates the scratch profile/config/data/cache
@@ -889,7 +889,7 @@ checked-out git revision and workflow run identity. Always write JSON atomically
 Validation walks every string recursively and rejects forbidden roots,
 credentials, usernames, and temporary-directory names.
 
-- [ ] **Step 3: Make RED tests GREEN and mutation-check the guards**
+- [x] **Step 3: Make RED tests GREEN and mutation-check the guards**
 
 Implement the label-gated workflow with contents read permission, the exact
 matrix, max-parallel 2, bounded job timeout, and Python 3.12. Checkout the
@@ -908,7 +908,7 @@ remove macOS Intel or v3; leak the scratch path in timeout JSON; accept a
 non-CPU provider or non-null root; omit the offline cache/store invariant. Each
 focused test must fail under its matching mutation.
 
-- [ ] **Step 4: Run focused local verification and commit the CI seam**
+- [x] **Step 4: Run focused local verification and commit the CI seam**
 
 Run:
 
