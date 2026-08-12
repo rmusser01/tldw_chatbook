@@ -1506,6 +1506,15 @@ async def test_cache_reload_failure_adopts_persisted_root_with_warning(
         assert owner.current_binding() == new_binding
         assert "cache reload" in workspace._runtime_warning.lower()
 
+        monkeypatch.setattr(
+            workspace_module,
+            "apply_settings_mutation_to_cli_config",
+            lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
+            raising=False,
+        )
+        assert await workspace.set_root(old_root)
+        assert workspace._runtime_warning == ""
+
     await workspace.shutdown()
     owner.shutdown()
     replica.close()

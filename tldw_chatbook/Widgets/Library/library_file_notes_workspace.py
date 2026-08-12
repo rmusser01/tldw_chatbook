@@ -1423,9 +1423,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._service = service
                 self._clear_open_document()
                 self._initialized = True
-                if persistence_warning:
-                    self._runtime_warning = persistence_warning
-                self._apply_scan(result, deleted)
+                self._apply_scan(
+                    result,
+                    deleted,
+                    additional_warning=persistence_warning,
+                )
 
             # Atomic file replacement is the point of no return. There is
             # deliberately no await between observing it and synchronously
@@ -1463,20 +1465,32 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         result: ScanResult,
         deleted: tuple[str, ...],
+        *,
+        additional_warning: str = "",
     ) -> bool:
-        self._adopt_scan_state(result, deleted)
+        self._adopt_scan_state(
+            result,
+            deleted,
+            additional_warning=additional_warning,
+        )
         return self._render_scan_state()
 
     def _adopt_scan_state(
         self,
         result: ScanResult,
         deleted: tuple[str, ...],
+        *,
+        additional_warning: str = "",
     ) -> None:
         """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        self._runtime_warning = result.replica_warning or ""
+        self._runtime_warning = "; ".join(
+            warning
+            for warning in (result.replica_warning, additional_warning)
+            if warning
+        )
 
     def _render_projection(
         self,
