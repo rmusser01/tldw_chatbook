@@ -27,8 +27,9 @@ retirement. The premise is no longer true:
   Library tools are enabled and `LibraryRagToolProvider` otherwise, under
   ADR-030.
 - The old audit hook installation path disappeared with System A. TASK-743
-  already owns the decision to rehome that audit at `BuiltinToolProvider.invoke`
-  or delete it.
+  currently owns only the narrower decision to rehome file-write hooks at
+  `BuiltinToolProvider.invoke` or delete `file_operation_hooks.py`; it does not
+  yet account for the whole `CodeAuditTool` subsystem or local `fs_*` writes.
 
 The remaining legacy classes are compatibility surfaces, not runtime catalog
 owners. `Tools.__all__` and its PEP 562 `__getattr__` mapping intentionally keep
@@ -43,8 +44,11 @@ The legacy implementations are not reference semantics worth porting:
   `create_config_for_collection` recognizes `chat` and `character`. Those
   legacy values fall through to the default collection rather than selecting
   the named data source.
-- `SearchNotesTool` hardcodes `user_id="default_user"`, unlike the current
-  service-backed Library boundary.
+- `SearchNotesTool` hardcodes `user_id="default_user"`; the current Library
+  service uses its own explicit service identity (`"local_library"` by
+  default). The identifiers differ, so the legacy implementation is not a
+  contract oracle for the Library provider even though both are currently
+  fixed single-user identities.
 - `CodeAuditTool` and `FileOperationMonitor` are unreachable from the live
   runtime. They retain prompts and before/after file content in a process-global
   list, log prompt/error payloads, and hardcode an Anthropic model. Porting them
@@ -73,10 +77,24 @@ Do not add runtime deprecation warnings: import-time warnings would add noise
 without providing a migration mechanism, and this task does not remove the
 imports.
 
-TASK-743 retains sole ownership of the audit subsystem's implementation or
-deletion decision. TASK-694 may correct current documentation that falsely
-claims the audit is wired, but it will not change `code_audit_tool.py` or
-`file_operation_hooks.py`.
+Before TASK-694 closes, expand TASK-743 to own the entire audit subsystem's
+implementation-or-deletion decision. Its description and acceptance criteria
+must explicitly account for `CodeAuditTool`, `FileAuditSystem`,
+`file_operation_hooks.py`, the demo, tests, and current documentation.
+
+If TASK-743 keeps the feature, its acceptance criteria must cover every live
+Console file-mutation path: the built-in `write_file` path and local
+`fs_write`, `fs_edit`, and `fs_patch`. A built-in-only hook is insufficient.
+The retained design must define bounded state ownership, provider/model
+selection, payload-free diagnostics, prompt/content privacy, and tests proving
+that audit observation cannot bypass or alter the existing permission and
+workspace-confinement gates. If TASK-743 deletes the feature, its acceptance
+criteria must require removal of the implementation, hook module, demo, live
+documentation, and feature-specific tests, plus a stale-reference scan.
+
+TASK-694 may correct current documentation that falsely claims the audit is
+wired, but it will not change `code_audit_tool.py` or
+`file_operation_hooks.py`; implementation remains with the expanded TASK-743.
 
 ### 3. Record authoritative ownership
 
@@ -84,7 +102,7 @@ The current capability map is:
 
 | Legacy name | Current Console owner | Contract |
 | --- | --- | --- |
-| `web_search` | `LocalToolProvider` | `local:web_search`; ADR-032 permissions and public-only egress |
+| `web_search` | `LocalToolProvider` | `local:web_search`; ADR-032 permission gate and outbound access through the configured search backend |
 | `rag_search` | `LibraryRagToolProvider.search_library_rag` when direct Library tools are off | Bounded profile-driven Library retrieval over notes, media, and conversations |
 | `search_notes` | `LibraryToolProvider.library_search_notes` when direct Library tools are on | Bounded lexical search through the local Library notes service |
 | `code_audit` | None | Never became a live System B capability; TASK-743 owns rehome-or-delete |
@@ -106,13 +124,27 @@ Update TASK-694 before implementation:
 Update TASK-545's historical scope note to record the final ownership outcome
 instead of claiming all four tools remain unported.
 
-Correct TASK-3500 so its agent-side parity language targets the live
-`LibraryRagToolProvider`/Library retrieval path rather than assuming
-`RAGSearchTool` will be registered. Its separate MCP retrieval-parity work
-remains open.
+Correct ADR-032's TASK-1354 addendum heading and TASK-1354's closeout wording
+so “public-only” applies only to `web_fetch` target and redirect validation.
+Record `web_search` accurately: it remains permission-gated, but sends queries
+through the operator-configured backend, including a configured Searx endpoint.
+This is a truthfulness correction, not new egress hardening; TASK-694 does not
+change operator-configured search endpoints.
 
-Clarify TASK-743's audit ownership if necessary, without implementing its
-choice in TASK-694.
+Narrow TASK-3500 to its genuine MCP parity work. Remove its stale agent-side
+`RAGSearchTool` premise and agent ACs as already satisfied/superseded by the
+profile-driven Library service consumed by `LibraryRagToolProvider`; retitle
+and rewrite the description, links, and remaining criteria around MCP
+`perform_rag_search` only. Do not replace the stale class name with a duplicate
+agent task: the live agent provider already delegates to
+`run_library_rag_search`.
+
+Expand TASK-743's audit ownership exactly as described above, without
+implementing its choice in TASK-694. Correct the historical System-A design
+and plan statements that assign `code_audit` to TASK-694, and the RAG-P0
+design/plan statements that assume TASK-694 or `RAGSearchTool` will own the
+agent retrieval path. Preserve their historical observations while appending
+the current replacement/ownership outcome.
 
 Add a prominent current-state notice to
 `Docs/Development/Agent-Tools/Claude_Code_File_Audit_System.md`: the described
@@ -127,9 +159,11 @@ TASK-694 changes no runtime flow. The existing flow remains:
 1. Console composition registers `BuiltinToolProvider`.
 2. When local tools are enabled, it registers `LocalToolProvider`, including
    `web_search`.
-3. It registers exactly one Library provider per run:
+3. On successful provider composition it registers one Library provider per
+   run:
    `LibraryToolProvider` in direct mode or `LibraryRagToolProvider` in fallback
-   mode.
+   mode. A factory failure deliberately degrades to no Library provider for
+   that run.
 4. Provider names join the existing collision filters and are invoked through
    their current permission, validation, result-bounding, and privacy seams.
 5. Legacy wrapper imports remain outside every production catalog.
@@ -138,7 +172,10 @@ No storage, migration, network, or error-handling behavior changes.
 
 ## Testing
 
-Add one focused ownership regression that proves, without performing I/O:
+Add one focused ownership test module with two isolated concerns.
+
+The inventory test proves, without invoking tools or performing database or
+network I/O:
 
 - `gateable_builtin_tools()` contains none of `rag_search`, `web_search`,
   `search_notes`, or `code_audit`;
@@ -146,13 +183,21 @@ Add one focused ownership regression that proves, without performing I/O:
   `get_current_datetime`;
 - `LocalToolProvider` advertises `web_search`;
 - `LibraryToolProvider` advertises `library_search_notes`;
-- `LibraryRagToolProvider` advertises exactly `search_library_rag`;
-- the three explicitly supported compatibility imports still resolve.
+- `LibraryRagToolProvider` advertises exactly `search_library_rag`.
 
-Mutation checks must show the test fails when any replacement name is removed,
+The compatibility test starts a fresh Python process with a temporary config
+environment, resolves `WebSearchTool`, `RAGSearchTool`, and `SearchNotesTool`
+through `tldw_chatbook.Tools`, and asserts their defining modules and names.
+Fresh-process isolation is required because `Tools.__getattr__` caches resolved
+attributes in module globals; an in-process test can stay green after a lazy
+mapping is removed if an earlier test populated that cache. Import/config file
+reads are allowed; the test must not invoke a tool, open an application
+database, or perform network transport.
+
+Mutation checks must show the tests fail when any replacement name is removed,
 a legacy name is inserted into the gateable table, or a compatibility mapping
 is removed. Existing provider suites remain the behavioral authority; this
-test is an ownership/inventory ratchet, not a duplicate execution suite.
+module is an ownership/import ratchet, not a duplicate execution suite.
 
 Run the focused provider and compatibility suites plus documentation/backlog
 contract checks. Since production behavior does not change, no live network,
@@ -177,8 +222,9 @@ one.
 **ADR path:** N/A; reuse ADR-030 and ADR-032.  
 **Reason:** this task introduces no storage, provider, permission, runtime, or
 security boundary. It reconciles backlog and documentation with boundaries
-already accepted and preserves runtime behavior. TASK-743 remains the owner of
-any future audit-boundary decision.
+already accepted and preserves runtime behavior. The expanded TASK-743 remains
+the owner of any future audit-boundary decision and will need to perform its
+own ADR check if it keeps/redesigns the feature.
 
 ## Non-Goals
 
