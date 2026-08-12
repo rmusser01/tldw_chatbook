@@ -48,19 +48,16 @@ from tldw_chatbook.Video_Generation.exceptions import (
     VideoBackendUnavailableError,
     VideoGenerationError,
 )
+from tldw_chatbook.Video_Generation.video_formats import (
+    canonical_video_extension,
+    normalize_video_mime,
+    video_container_for_mime,
+)
 
 
 _PROMPT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SUPPORTED_REFERENCE_KINDS = frozenset({"first_frame", "reference_image"})
 _SUPPORTED_OUTPUT_CLASSES = frozenset({"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP"})
-_VIDEO_SUFFIX_TYPES = {
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".avi": "video/x-msvideo",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
 _TITLE_CONTROLS = {
     "prompt": frozenset({"prompt"}),
     "negativeprompt": frozenset({"negative_prompt"}),
@@ -100,7 +97,7 @@ class ComfyUIVideoAdapter:
     """
 
     name = "comfyui"
-    supported_formats = {"mp4"}
+    supported_formats = {"mp4", "webm"}
 
     def __init__(self) -> None:
         self._config = get_video_generation_config()
@@ -129,12 +126,16 @@ class ComfyUIVideoAdapter:
             VideoGenerationError: For malformed workflows, queue/poll/upload/
                 download failures, cancellation, timeout, or unsupported output.
         """
-        output_format = (request.format or "").lower()
-        if output_format not in self.supported_formats:
-            raise VideoGenerationError(f"unsupported output format: {output_format}")
+        output_format = request.format
+        try:
+            canonical_video_extension(output_format)
+        except ValueError as exc:
+            raise VideoGenerationError("unsupported output format") from exc
+        workflow = self._load_workflow(self._workflow_name())
+        if self._is_h3_workflow(workflow) and output_format != "mp4":
+            raise VideoGenerationError("ComfyUI H3 supports MP4 output only")
 
         base_url = self._base_url()
-        workflow = self._load_workflow(self._workflow_name())
         self._validate_reference_assets(request.reference_assets)
         if request.reference_assets and self._is_h3_workflow(workflow):
             raise VideoGenerationError("ComfyUI H3 does not support input image")
@@ -143,7 +144,9 @@ class ComfyUIVideoAdapter:
         image_name = self._resolve_uploaded_image(request.reference_assets)
         prepared = self._parameterize_workflow(workflow, request, image_name)
         prompt_id = self._queue_prompt(base_url, prepared.graph)
-        descriptor = self._poll_for_output(base_url, prompt_id, cancel_event, prepared.graph)
+        descriptor = self._poll_for_output(
+            base_url, prompt_id, cancel_event, prepared.graph, output_format
+        )
         return self._download_output(base_url, descriptor, prepared)
 
     # -- configuration / workflows --------------------------------------
@@ -769,6 +772,7 @@ class ComfyUIVideoAdapter:
         prompt_id: str,
         cancel_event: threading.Event | None,
         graph: dict[str, Any],
+        requested_container: str,
     ) -> dict[str, str]:
         """Poll ``/history/{prompt_id}`` until ComfyUI exposes media output."""
         history_url = f"{base_url}/history/{prompt_id}"
@@ -791,7 +795,9 @@ class ComfyUIVideoAdapter:
                 raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
             except Exception as exc:
                 raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
-            descriptor = self._find_output_descriptor(history, prompt_id, graph)
+            descriptor = self._find_output_descriptor(
+                history, prompt_id, graph, requested_container
+            )
             if descriptor is not None:
                 return descriptor
             remaining = deadline - time.monotonic()
@@ -932,6 +938,7 @@ class ComfyUIVideoAdapter:
         history: Any,
         prompt_id: str,
         graph: dict[str, Any],
+        requested_container: str,
     ) -> dict[str, str] | None:
         """Find supported media only under output nodes declared by the graph."""
         if not isinstance(history, dict):
@@ -964,8 +971,8 @@ class ComfyUIVideoAdapter:
                         if not isinstance(subfolder, str) or not isinstance(output_type, str):
                             continue
                         filename = filename.strip()
-                        suffix = Path(filename).suffix.lower()
-                        if suffix not in _VIDEO_SUFFIX_TYPES:
+                        suffix = Path(filename).suffix
+                        if suffix != f".{canonical_video_extension(requested_container)}":
                             continue
                         return {
                             "filename": filename,
@@ -973,7 +980,9 @@ class ComfyUIVideoAdapter:
                             "type": output_type or "output",
                         }
         if ComfyUIVideoAdapter._is_terminal_success(entry):
-            raise VideoGenerationError("ComfyUI history returned no supported video or animated-image output")
+            raise VideoGenerationError(
+                "ComfyUI history returned no matching canonical video output"
+            )
         return None
 
     def _download_output(
@@ -993,20 +1002,30 @@ class ComfyUIVideoAdapter:
             )
         except ImageGenerationError as exc:
             raise VideoGenerationError(f"ComfyUI output download failed: {exc}") from exc
-        normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
-        suffix = Path(descriptor["filename"]).suffix.lower()
-        if suffix != ".mp4" or (
-            self._is_h3_workflow(prepared.graph)
-            and normalized_type != "video/mp4"
-        ):
-            raise VideoGenerationError("ComfyUI workflow did not return an MP4 output")
-        if normalized_type not in _VIDEO_SUFFIX_TYPES.values():
-            normalized_type = _VIDEO_SUFFIX_TYPES[suffix]
-        if normalized_type != "video/mp4":
-            raise VideoGenerationError("ComfyUI workflow did not return an MP4 output")
+        suffix = Path(descriptor["filename"]).suffix
+        try:
+            container = suffix.removeprefix(".")
+            canonical_video_extension(container)
+            normalized_type = normalize_video_mime(content_type)
+            mime_container = video_container_for_mime(normalized_type)
+        except ValueError as exc:
+            message = (
+                "ComfyUI workflow did not return an MP4 output"
+                if self._is_h3_workflow(prepared.graph)
+                else "ComfyUI output container and MIME did not agree"
+            )
+            raise VideoGenerationError(message) from exc
+        if mime_container != container:
+            message = (
+                "ComfyUI workflow did not return an MP4 output"
+                if self._is_h3_workflow(prepared.graph)
+                else "ComfyUI output container and MIME did not agree"
+            )
+            raise VideoGenerationError(message)
         return VideoGenResult(
             content=content,
             content_type=normalized_type,
+            container=container,
             bytes_len=len(content),
             duration_seconds=prepared.duration_seconds,
             fps=prepared.fps,

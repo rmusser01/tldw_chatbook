@@ -97,7 +97,7 @@ def _register_fake(result_content: bytes = b"vid-bytes", **result_kwargs):
         def generate(self, request):
             return VideoGenResult(
                 content=result_content, content_type="video/mp4",
-                bytes_len=len(result_content), **result_kwargs,
+                container="mp4", bytes_len=len(result_content), **result_kwargs,
             )
 
     registry = get_registry()
@@ -124,6 +124,7 @@ def _register_capturing_comfyui(
             return VideoGenResult(
                 content=b"video",
                 content_type="video/mp4",
+                container="mp4",
                 bytes_len=5,
             )
 
@@ -223,7 +224,9 @@ def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
 
         def generate(self, request, *, cancel_event=None):
             received.append(cancel_event)
-            return VideoGenResult(content=b"v", content_type="video/mp4", bytes_len=1)
+            return VideoGenResult(
+                content=b"v", content_type="video/mp4", container="mp4", bytes_len=1
+            )
 
     registry = get_registry()
     registry._enabled_backends = ["fakevid"]
@@ -259,6 +262,70 @@ def test_run_video_generation_invalid_request_never_writes(tmp_path):
             video_store=store,
         )
     assert list(store.iter_stored()) == []
+
+
+@pytest.mark.parametrize(
+    ("container", "content_type"),
+    [
+        ("mov", "video/mp4"),
+        ("webm", "video/mp4"),
+    ],
+)
+def test_invalid_adapter_result_never_reaches_any_persistence_boundary(
+    tmp_path, monkeypatch, container, content_type
+):
+    from tldw_chatbook.Video_Generation.adapter_registry import get_registry
+    from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+
+    dispatches = []
+    save_calls = []
+    temp_calls = []
+
+    class ContradictoryAdapter:
+        name = "fakevid"
+        supported_formats = {"mp4", "webm"}
+
+        def generate(self, request):
+            dispatches.append(request)
+            return VideoGenResult(
+                content=b"PRIVATE-VIDEO-BYTES",
+                content_type=content_type,
+                container=container,
+                bytes_len=19,
+            )
+
+    class RecordingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            save_calls.append((args, kwargs))
+            return super().save(*args, **kwargs)
+
+    registry = get_registry()
+    registry._enabled_backends = ["fakevid"]
+    registry._default_backend = "fakevid"
+    registry.register_adapter("fakevid", ContradictoryAdapter)
+
+    managed_root = tmp_path / "absent-managed-root"
+    store = RecordingStore(root=managed_root)
+    monkeypatch.setattr(
+        console_generate_video_module.tempfile,
+        "TemporaryFile",
+        lambda **kwargs: temp_calls.append(kwargs) or pytest.fail("must not stage"),
+    )
+
+    with pytest.raises(VideoGenerationError, match="result format") as exc_info:
+        run_video_generation(
+            backend="fakevid",
+            prompt="reject before persistence",
+            message_id="invalid-result",
+            video_store=store,
+        )
+
+    assert len(dispatches) == 1
+    assert save_calls == []
+    assert temp_calls == []
+    assert not managed_root.exists()
+    assert "PRIVATE-VIDEO-BYTES" not in str(exc_info.value)
 
 
 def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_path):
@@ -653,6 +720,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
             return VideoGenResult(
                 content=b"video",
                 content_type="video/mp4",
+                container="mp4",
                 bytes_len=5,
             )
 

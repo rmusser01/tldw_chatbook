@@ -23,7 +23,9 @@ def test_request_defaults_and_frozen():
 def test_result_defaults_and_resolved_fields():
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
 
-    result = VideoGenResult(content=b"1234", content_type="video/mp4", bytes_len=4)
+    result = VideoGenResult(
+        content=b"1234", content_type="video/mp4", container="mp4", bytes_len=4
+    )
     assert result.duration_seconds is None
     assert result.fps is None
     assert result.width is None and result.height is None
@@ -31,6 +33,14 @@ def test_result_defaults_and_resolved_fields():
     # None unless they can state the value with certainty.
     assert result.resolved_seed is None
     assert result.resolved_model is None
+    assert result.container == "mp4"
+
+
+def test_result_requires_observed_container():
+    from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
+
+    with pytest.raises(TypeError, match="container"):
+        VideoGenResult(content=b"1234", content_type="video/mp4", bytes_len=4)
 
 
 def test_reference_asset_shape():
@@ -57,7 +67,9 @@ def test_adapter_protocol_conformance():
         supported_formats = {"mp4"}
 
         def generate(self, request: VideoGenRequest) -> VideoGenResult:
-            return VideoGenResult(content=b"vid", content_type="video/mp4", bytes_len=3)
+            return VideoGenResult(
+                content=b"vid", content_type="video/mp4", container="mp4", bytes_len=3
+            )
 
     adapter: VideoGenerationAdapter = FakeAdapter()
     req = VideoGenRequest(
