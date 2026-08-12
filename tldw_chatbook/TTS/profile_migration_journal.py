@@ -97,6 +97,9 @@ class _ArtifactAuthorityCapsule(_OpaqueAuthority):
     def schema_is(self, schema_version: int) -> bool:
         return self.__values[4] == schema_version
 
+    def fits(self, maximum_bytes: int) -> bool:
+        return self.__values[2] <= maximum_bytes
+
     def payload(self) -> dict[str, object]:
         dev, ino, byte_length, digest, schema_version = self.__values
         return {
@@ -162,6 +165,9 @@ class _ArtifactEvidence(_OpaqueAuthority):
 
     def _schema_is(self, schema_version: int) -> bool:
         return self.__authority.schema_is(schema_version)
+
+    def _fits(self, maximum_bytes: int) -> bool:
+        return self.__authority.fits(maximum_bytes)
 
     def _payload(self) -> dict[str, object]:
         return self.__authority.payload()
@@ -370,6 +376,18 @@ class ProfileMigrationJournalSlot(_OpaqueAuthority):
         if prior_matches:
             return "prior"
         return None
+
+    def evidence_fits(self, maximum_bytes: int) -> bool:
+        """Return whether every recorded artifact fits a recovery byte bound."""
+
+        if type(maximum_bytes) is not int or maximum_bytes < 0:
+            return False
+        candidate, prior = self.__authority
+        return (
+            candidate is not None
+            and candidate._fits(maximum_bytes)
+            and (prior is None or prior._fits(maximum_bytes))
+        )
 
 
 class _ParentAuthorityCapsule(_OpaqueAuthority):

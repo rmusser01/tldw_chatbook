@@ -153,6 +153,13 @@ from ordinary backup destinations. A private durable publication journal lets
 startup complete or roll back an interrupted multi-file publication before
 opening the store.
 
+Startup recovery accepts each journal-recorded profile-store artifact only up
+to 576 MiB: the 512 MiB aggregate canonical-reference quota plus 64 MiB of
+bounded SQLite page, schema, index, and free-list overhead. It rejects both
+recorded evidence and observed files above that limit before hashing, while
+hashing accepted artifacts incrementally rather than buffering a store in
+memory.
+
 Downgrade explicitly restores the pre-v4 backup while the repository is closed
 and accepts loss of all post-migration changes and recipe provenance.
 

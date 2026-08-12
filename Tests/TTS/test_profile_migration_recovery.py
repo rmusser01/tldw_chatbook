@@ -4,10 +4,12 @@ import asyncio
 import copy
 import importlib
 import io
+import json
 import os
 import pickle
 import sqlite3
 import stat
+from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
 from zlib import crc32
@@ -543,3 +545,316 @@ def test_fresh_backup_destination_recovers_without_inventing_prior(
     assert not backup_candidate.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
     assert not tuple(tmp_path.glob("*.rollback"))
+
+
+@pytest.mark.parametrize(
+    "fault_site",
+    [
+        "move_after_mutation",
+        "file_fsync",
+        "parent_fsync",
+        "validation",
+        "journal_unlink",
+    ],
+)
+def test_internal_control_flow_is_deferred_until_recovery_reconverges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_site: str,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, target, rollback = _paths(artifacts[0], destinations[0])
+    old = target.read_bytes()
+    _write_journal(publication, active, artifacts, destinations, phase="publishing")
+    _link_then_unlink(target, rollback, finish=True)
+    _link_then_unlink(candidate, target, finish=True)
+    cancellation = asyncio.CancelledError(f"PRIVATE {fault_site}")
+    raised = False
+    settlement_fsync_after_fault = False
+
+    if fault_site == "move_after_mutation":
+        real_link = recovery.os.link
+
+        def interrupt_link(*args: object, **kwargs: object) -> None:
+            nonlocal raised
+            real_link(*args, **kwargs)
+            if not raised:
+                raised = True
+                raise cancellation
+
+        monkeypatch.setattr(recovery.os, "link", interrupt_link)
+    elif fault_site in {"file_fsync", "parent_fsync"}:
+        real_fsync = recovery.os.fsync
+
+        def interrupt_fsync(file_fd: int) -> None:
+            nonlocal raised
+            real_fsync(file_fd)
+            is_directory = stat.S_ISDIR(os.fstat(file_fd).st_mode)
+            selected = (
+                is_directory if fault_site == "parent_fsync" else not is_directory
+            )
+            if selected and not raised:
+                raised = True
+                raise cancellation
+
+        monkeypatch.setattr(recovery.os, "fsync", interrupt_fsync)
+    elif fault_site == "validation":
+        real_validate = recovery._validate_authoritative_targets
+
+        def interrupt_validation(*args: object, **kwargs: object) -> None:
+            nonlocal raised
+            real_validate(*args, **kwargs)
+            if not raised:
+                raised = True
+                raise cancellation
+
+        monkeypatch.setattr(
+            recovery, "_validate_authoritative_targets", interrupt_validation
+        )
+    else:
+        real_unlink = recovery.os.unlink
+        real_fsync = recovery.os.fsync
+
+        def interrupt_journal_unlink(*args: object, **kwargs: object) -> None:
+            nonlocal raised
+            real_unlink(*args, **kwargs)
+            if args[0] == f".{active.name}.migration-publication.json" and not raised:
+                raised = True
+                raise cancellation
+
+        def observe_settlement_fsync(file_fd: int) -> None:
+            nonlocal settlement_fsync_after_fault
+            real_fsync(file_fd)
+            if raised and stat.S_ISDIR(os.fstat(file_fd).st_mode):
+                settlement_fsync_after_fault = True
+
+        monkeypatch.setattr(recovery.os, "unlink", interrupt_journal_unlink)
+        monkeypatch.setattr(recovery.os, "fsync", observe_settlement_fsync)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        recovery.recover_profile_migration_publication(active)
+
+    assert caught.value is cancellation
+    assert target.read_bytes() == old
+    assert not candidate.exists()
+    assert not rollback.exists()
+    assert not tuple(tmp_path.glob("*.migration-publication.json"))
+    if fault_site == "journal_unlink":
+        assert settlement_fsync_after_fault
+
+
+def test_irrecoverable_failure_dominates_deferred_control_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, target, rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="publishing"
+    )
+    _link_then_unlink(target, rollback, finish=True)
+    _link_then_unlink(candidate, target, finish=True)
+    cancellation = asyncio.CancelledError("PRIVATE deferred")
+    real_link = recovery.os.link
+    calls = 0
+
+    def interrupt_then_fail(*args: object, **kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            real_link(*args, **kwargs)
+            raise cancellation
+        raise OSError("PRIVATE storage failure")
+
+    monkeypatch.setattr(recovery.os, "link", interrupt_then_fail)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
+        recovery.recover_profile_migration_publication(active)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert journal.is_file()
+
+
+def test_parent_substitution_mid_move_preserves_displaced_recovery_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    owned = tmp_path / "owned"
+    publication, active, artifacts, destinations = _publication_fixture(
+        owned, slots=("active",)
+    )
+    candidate, target, rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="publishing"
+    )
+    _link_then_unlink(target, rollback, finish=True)
+    _link_then_unlink(candidate, target, finish=True)
+    displaced = tmp_path / "displaced"
+    real_link = recovery.os.link
+    substituted = False
+
+    def substitute_after_link(*args: object, **kwargs: object) -> None:
+        nonlocal substituted
+        real_link(*args, **kwargs)
+        if not substituted:
+            substituted = True
+            owned.rename(displaced)
+            owned.mkdir(mode=0o700)
+
+    monkeypatch.setattr(recovery.os, "link", substitute_after_link)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
+        recovery.recover_profile_migration_publication(active)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert (displaced / journal.name).is_file()
+    assert (displaced / target.name).is_file()
+    assert (displaced / rollback.name).is_file()
+    assert any(path.name == candidate.name for path in displaced.iterdir())
+
+
+@pytest.mark.parametrize("mutation", ["append", "same_size"])
+def test_same_inode_journal_mutation_after_admission_is_preserved(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+    original = journal.read_bytes()
+
+    def mutate(stage: str) -> None:
+        if stage != "validated":
+            return
+        if mutation == "append":
+            with journal.open("ab") as stream:
+                stream.write(b"PRIVATE append")
+        else:
+            changed = bytearray(original)
+            changed[0] ^= 1
+            journal.write_bytes(bytes(changed))
+            journal.chmod(0o600)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
+        recovery.recover_profile_migration_publication(active, _stage_hook=mutate)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert journal.is_file()
+    assert journal.read_bytes() != original
+
+
+def test_recovery_artifact_size_limit_has_exact_boundary() -> None:
+    _, recovery = _modules()
+    maximum = recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES
+
+    assert recovery._artifact_size_allowed(maximum)
+    assert not recovery._artifact_size_allowed(maximum + 1)
+
+
+def test_observed_artifact_over_limit_is_rejected_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, recovery = _modules()
+    artifact = tmp_path / "oversize.sqlite3"
+    with artifact.open("wb") as stream:
+        stream.truncate(recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES + 1)
+    descriptor = os.open(artifact, os.O_RDONLY)
+
+    def should_not_read(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("oversize artifact must fail before reading")
+
+    monkeypatch.setattr(recovery.os, "pread", should_not_read)
+    try:
+        with pytest.raises(ValueError):
+            recovery._hash_sqlite(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_oversize_journal_evidence_is_rejected_before_artifact_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    authority = publication._journal_authority(artifacts, destinations)
+    raw, _checksum = publication._encode_initial_journal(authority)
+    decoded = json.loads(raw)
+    evidence = decoded["recovery"]["authority"]["slots"][0]["candidate_evidence"]
+    evidence["byte_length"] = recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES + 1
+    recovery_payload = json.dumps(
+        decoded["recovery"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    decoded["checksum"] = sha256(recovery_payload).hexdigest()
+    journal = active.with_name(f".{active.name}.migration-publication.json")
+    journal.write_bytes(
+        json.dumps(
+            decoded,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        + b"\n"
+    )
+    journal.chmod(0o600)
+
+    def should_not_hash(_file_fd: int) -> object:
+        raise AssertionError("oversize authority must fail before hashing")
+
+    monkeypatch.setattr(recovery, "_hash_sqlite", should_not_hash)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert journal.is_file()
+
+
+@pytest.mark.parametrize("failure", ["short_read", "same_inode_change"])
+def test_artifact_hash_rejects_short_read_or_same_inode_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    _, recovery = _modules()
+    path = tmp_path / "profiles.sqlite3"
+    _store(path, version=4, marker="candidate")
+    descriptor = os.open(path, os.O_RDWR)
+    real_pread = recovery.os.pread
+    calls = 0
+
+    def unstable_pread(file_fd: int, count: int, offset: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            chunk = real_pread(file_fd, max(1, count // 2), offset)
+            if failure == "same_inode_change":
+                os.pwrite(file_fd, b"X", 100)
+            return chunk
+        return b"" if failure == "short_read" else real_pread(file_fd, count, offset)
+
+    monkeypatch.setattr(recovery.os, "pread", unstable_pread)
+    try:
+        with pytest.raises(ValueError):
+            recovery._hash_sqlite(descriptor)
+    finally:
+        os.close(descriptor)
