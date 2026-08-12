@@ -37,6 +37,11 @@ conversation fails closed if the required checkpoint write fails. Explicitly
 ephemeral conversations may continue in memory and are disclosed as
 non-resumable.
 
+Kimi K3 also requires preserved reasoning for ordinary historical assistant
+turns. Those reasoning-only complete checkpoints are committed with the normal
+final visible assistant row and never create a blank row or resumable tool
+state.
+
 Restoration never executes work automatically. A user must choose Resume (or
 an explicit cross-device takeover), current permissions are evaluated again,
 and the checkpoint's provider, model, API mode, and normalized base must still
@@ -47,24 +52,32 @@ pending calls require fresh approval.
 
 The continuation field follows its assistant branch/variant and participates
 in the same message version, hash, sync, deletion, and whole-record conflict
-contract as visible content. Conflict resolution never merges continuation
-subfields or tool-call arrays. Sync provides portable state, not a distributed
-execution lock; remote takeover is explicit and never claims exactly-once
-execution across concurrently active devices.
+contract as visible content. When sync is enabled, the local checkpoint and its
+durable outbox intent commit together before dispatch; remote acknowledgement
+is not required. Conflict resolution never merges continuation subfields or
+tool-call arrays. Sync provides portable state, not a distributed execution
+lock; remote takeover is explicit and never claims exactly-once execution
+across concurrently active devices.
 
 The field uses the same storage protection as message content. It is encrypted
 where Sync v2 encrypts message content and otherwise receives no additional
-application-level encryption. Lossless `.chatbook` and ordinary JSON exports
-include it under an explicit private namespace and warn that model reasoning,
-tool arguments, and provider-bound results are present. Rendering, FTS,
-text/Markdown export, summaries, logs, errors, and usage exclude it.
+application-level encryption. Versioned `.chatbook` preserves/remaps message
+graph and variant ownership before attaching it; ordinary active-path JSON uses
+an explicit private projection. Both warn that model reasoning, tool arguments,
+and provider-bound results are present. Rendering, FTS, text/Markdown export,
+summaries, logs, errors, and usage exclude it.
 
-Provider replay remains explicit policy. Kimi and GLM use preserved reasoning
-for an active/restored tool run only under their documented controls. DeepSeek
+Provider replay remains explicit policy. Kimi K3's always-on Preserved Thinking
+replays every retained reasoning owner on later K3 requests; other Kimi
+families and GLM use only their documented active/restored policy. DeepSeek
 replays reasoning and tool history from completed tool-bearing turns on later
 same-provider requests while the owning visible turn remains in context. The
 history budget counts private continuation and retains or evicts the owning
 visible turn plus its private rounds atomically.
+
+Discard never executes work. It atomically clears continuation on an assistant
+row with visible content, or clears and tombstones a checkpoint-created blank
+assistant generation, while bumping version/hash and recording sync intent.
 
 ## Context
 

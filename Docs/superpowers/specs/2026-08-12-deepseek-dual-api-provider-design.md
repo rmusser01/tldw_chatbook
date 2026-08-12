@@ -31,15 +31,17 @@ usage, cancellation, Settings, readiness, and model discovery.
 - Responses uses `POST /responses`. It is stateless: `previous_response_id` and
   `conversation` are unsupported, `store` is always false, and Chatbook must
   send explicit history.
-- Responses streaming is semantic SSE. Every JSON event contains `event` and a
-  monotonically increasing `sequence_number`; a terminal
+- Responses streaming is semantic SSE. Each record names the event with the
+  SSE `event:` field and JSON `type`, and its JSON contains an incrementing
+  `sequence_number`; a terminal
   `response.completed`, `response.incomplete`, or `response.failed` replaces
   `[DONE]`.
 - Both modes support function tools. Responses also supports server-side web
   search and the `apply_patch` custom tool, but those are outside this feature.
-- Thinking defaults enabled. The distinct documented effort values are `high`
-  and `max`; compatibility values map onto them. Chatbook exposes provider
-  default, `high`, and `max`, and rejects aliases that add no behavior.
+- Thinking defaults enabled. The distinct documented effort values are `low`,
+  `high`, and `max`; compatibility values map onto them. Chatbook exposes
+  provider default, `low`, `high`, and `max`, and rejects aliases that add no
+  behavior.
 - Thinking requests ignore or reject sampler controls. DeepSeek V4 thinking
   mode rejects `tool_choice`; tool-enabled thinking requests must omit it.
 - For any assistant turn that performed a tool call, complete
@@ -54,6 +56,7 @@ usage, cancellation, Settings, readiness, and model discovery.
 Primary references:
 
 - [Using the Responses API](https://api-docs.deepseek.com/guides/responses_api/)
+- [Create Response](https://api-docs.deepseek.com/api/create-response/)
 - [Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion)
 - [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)
 - [Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
@@ -254,16 +257,17 @@ DeepSeek ignores them.
 
 ## Thinking And Generation Policy
 
-Settings exposes three values:
+Settings exposes four values:
 
 - `provider_default`: omit `reasoning_effort`; thinking remains provider-
   default enabled;
+- `low`: send enabled thinking with effort `low`;
 - `high`: send enabled thinking with effort `high`;
 - `max`: send enabled thinking with effort `max`.
 
-Compatibility values `low`, `medium`, and `xhigh` are rejected locally because
-they map to an already exposed value. There is no separate thinking-disable
-setting in this feature.
+Compatibility values `minimal`, `medium`, and `xhigh` are rejected locally
+because they map to an already exposed value. There is no separate thinking-
+disable setting in this feature.
 
 Thinking-mode payloads omit `temperature`, `top_p`, `presence_penalty`, and
 `frequency_penalty`. Valid generic settings are not transmitted; invalid
@@ -307,7 +311,7 @@ The exact feature allowlist is `model`, `input`, `instructions`, `stream`,
 - Tools use flat Responses function shapes derived from the validated common
   schema.
 - `reasoning` is omitted for provider default or contains exact effort
-  `high`/`max`. `summary` is omitted.
+  `low`/`high`/`max`. `summary` is omitted.
 - `text` contains only the supported format projection. Verbosity is omitted.
 - `temperature`, `top_p`, `top_logprobs`, and `user` are intentionally omitted
   from this first thinking-enabled slice.
@@ -366,12 +370,12 @@ EOF without completion is an error.
 
 ### Responses stream
 
-Each event object has exact string `event` and strict nonnegative integer
-`sequence_number`. Sequence numbers increase monotonically. Exact duplicate
-event replay may be ignored only when the complete type-sensitive canonical
-event digest matches; conflicts, decreases/non-increases, or unseen post-
-terminal events fail. Strictly increasing values may skip numbers because the
-official contract promises monotonicity, not contiguity.
+Each SSE record has an exact nonblank `event:` label; the decoded JSON has an
+exact string `type` and strict nonnegative integer `sequence_number`. The label
+and JSON type must match. A JSON `event` key is not required or used as the
+discriminator. Sequence numbers strictly increase; duplicates, decreases, or
+unseen post-terminal events fail. Increasing values may skip numbers because
+the official examples are not contiguous.
 
 Accepted events are:
 
@@ -439,7 +443,8 @@ nonnegative integers and structurally valid detail mappings.
 - Cancellation/failure without terminal usage is unknown, not fabricated zero.
 
 Checkpoint privacy is governed by TASK-15675: it is synced and present only in
-lossless `.chatbook`/JSON private fields with warnings, while text/Markdown,
+versioned `.chatbook` or explicit active-path JSON private fields with warnings,
+while text/Markdown,
 rendering, FTS, clipboard-visible message copy, summaries, logs, errors, usage,
 and telemetry exclude it.
 
@@ -554,7 +559,7 @@ README, Settings guide, and Console guide document:
 - stable DeepSeek identity, credential, current models, and base;
 - exact mode values and Chat default;
 - mode-specific supported parameters and omissions;
-- thinking default/high/max and sampler/tool-choice behavior;
+- thinking default/low/high/max and sampler/tool-choice behavior;
 - stateless explicit Responses history and no provider continuation IDs;
 - existing function tools and provider built-in exclusions;
 - durable private later-turn reasoning, explicit resume/takeover, and ambiguous

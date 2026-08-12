@@ -43,8 +43,8 @@ design must represent that ambiguity instead of silently retrying it.
 
 ### Goals
 
-- Give each tool-bearing assistant generation/variant one durable private
-  continuation owner.
+- Give each assistant generation/variant that owns provider-required private
+  continuation one durable owner.
 - Commit the assistant call batch before tool dispatch and each provider-bound
   result before the next model request.
 - Resume pending work only after an explicit user action and fresh approvals.
@@ -81,7 +81,10 @@ not gain a durable blank placeholder. When, and only when, a complete valid
 assistant function-call batch arrives, the store force-creates that assistant
 row with its preallocated stable message ID, empty visible content, and the
 first continuation checkpoint in one transaction. Tool dispatch is blocked
-until that transaction succeeds.
+until that transaction succeeds. A Kimi K3 tool-free answer is different: its
+visible final content already requires the normal assistant-row write, so its
+provider-required preserved reasoning is committed on that same row in the
+same final-content transaction; it never creates a speculative blank row.
 
 This ownership gives the checkpoint existing semantics for:
 
@@ -134,24 +137,29 @@ approved replay policy. `protocol` is `chat_completions` or `responses` and
 must be allowed for that provider. Model and normalized base are nonblank,
 bounded strings. The URL has already passed the provider's structural
 normalizer and cannot contain userinfo, query, fragment, or credentials.
+`state` is exactly `active` or `complete`; discarded continuation is removed,
+not retained as a third state.
 
-Each round represents one assistant message containing complete function calls
-and their ordered results:
+Each round represents one provider request's assistant output:
 
 - `assistant_content` is the exact bounded assistant content paired with the
   call batch, including an empty string;
 - `reasoning_blocks` preserves provider order and exact string bytes after
   strict UTF-8/JSON decoding;
-- `calls` preserves assistant call order;
-- `call_id` and `name` are nonblank and unique within the checkpoint;
+- `calls` preserves assistant call order and may be empty only for a completed
+  Kimi K3 reasoning-only turn;
+- `call_id` is nonblank and unique across the checkpoint; `name` is nonblank,
+  valid, and may repeat because one function can be called more than once;
 - `arguments` is the exact validated JSON-object string returned by the
   provider, with finite JSON values only;
 - `state` is `pending`, `executing`, `completed`, or `failed`;
 - `result` is absent for pending/executing and is the exact capped string sent
   to the provider for completed/failed calls.
 
-No provider output item ID, response ID, conversation ID, timestamp, process
-ID, approval decision, or opaque vendor object is accepted. Protocol builders
+Provider builders additionally reject a call-ID collision anywhere in the
+expanded outbound history. No provider output item ID, response ID,
+conversation ID, timestamp, process ID, approval decision, or opaque vendor
+object is accepted. Protocol builders
 derive their external assistant/function-call/function-output shapes from this
 canonical record.
 
@@ -188,6 +196,11 @@ For a complete assistant call batch:
 8. Add later assistant call batches as additional rounds under the same row.
 9. When the provider returns a final tool-free answer, update visible content
    and mark the checkpoint `complete` in one transaction.
+
+For a Kimi K3 turn with no calls, commit final visible content plus the bounded
+reasoning-only complete checkpoint in one transaction. No call state or Resume
+action exists for that row; it is retained solely for K3's required historical
+Preserved Thinking replay.
 
 Review refusal is stored as a failed/result-bearing call because that exact
 string is sent back to the provider. Cancellation before dispatch leaves a
@@ -227,6 +240,15 @@ mismatch offers Restore pinned settings or Discard, not silent translation.
 Credentials are intentionally current rather than pinned so key rotation does
 not make otherwise valid history unresumable.
 
+Discard is a durable, optimistic whole-message transition and never executes a
+tool. If the checkpoint-created assistant row has no visible content, Discard
+atomically clears the continuation and tombstones that assistant generation
+under the existing branch operation. If visible content exists, Discard keeps
+that content but atomically clears the continuation, making the row
+non-resumable. Both forms bump message version/hash and record the durable sync
+intent in the same transaction; stale-version conflict leaves the row and
+checkpoint unchanged.
+
 Sync is portability, not execution coordination. A remote active checkpoint
 requires explicit Take over and the same validation as local Resume. The UI
 warns that another device must not still be running the turn. This design does
@@ -236,10 +258,11 @@ not claim a distributed lease or exactly-once cross-device tool execution.
 
 The store/runtime exposes validated rounds; provider builders own replay:
 
-- **Kimi:** replay exact reasoning/calls/results for the active or restored
-  tool run while its preserved-thinking request policy is enabled. A later
-  unrelated ordinary turn sends only visible history unless a future product
-  decision enables broader preserved thinking.
+- **Kimi K3:** Preserved Thinking is always enabled. Replay exact bounded
+  reasoning for every retained K3 assistant turn, plus calls/results for tool
+  rounds, on later K3 requests while each owning visible turn remains in
+  context. Other curated Kimi families use only their explicitly documented
+  active/restored tool-run policy.
 - **GLM:** replay exact reasoning/calls/results for the active or restored tool
   run with `clear_thinking=false`. Ordinary completed turns use
   `clear_thinking=true` and omit private reasoning.
@@ -257,16 +280,16 @@ Private history is counted before request construction. Counts include
 reasoning blocks, assistant content, function names/arguments/IDs, tool result
 content, and protocol framing.
 
-For DeepSeek, one visible user/assistant turn and all private tool rounds owned
-by that assistant are one eviction unit. If the unit cannot fit, history
+For DeepSeek and Kimi K3, one visible user/assistant turn and all private rounds
+owned by that assistant are one eviction unit. If the unit cannot fit, history
 budgeting evicts the entire unit according to the existing oldest-first branch
 policy; it never keeps the visible final answer while silently dropping only
 the provider-required private portion. Active/incomplete checkpoints are not
 automatically compacted and block send when they cannot fit safely.
 
-Kimi/GLM completed private rounds are not sent on ordinary later turns, but
-their persisted bytes remain subject to the storage cap and are counted when
-resuming that exact checkpoint.
+Non-K3 Kimi and GLM completed private rounds are not sent on ordinary later
+turns, but their persisted bytes remain subject to the storage cap and are
+counted when resuming that exact checkpoint.
 
 Summaries are derived only from visible conversation content. They never
 contain private continuation and cannot replace it for provider replay.
@@ -280,8 +303,11 @@ payload hash:
   and watch it in the update predicate;
 - Sync v2 includes it inside the encrypted message payload, never routing
   metadata;
-- a checkpoint update enqueues the same message identity/version contract as a
-  content update;
+- when sync is enabled, each checkpoint/content/call-state transaction also
+  writes its durable sync-outbox intent before commit; dispatch never depends
+  on remote acknowledgement, but it does not begin if that local intent fails;
+- a post-commit notifier/wakeup may fail or the process may crash, and startup/
+  ordinary reconciliation must still discover and send the durable intent;
 - restore applies visible content and continuation atomically;
 - field-level or round-level merge is forbidden.
 
@@ -298,7 +324,7 @@ checkpoints through existing branch operations.
 
 ## Export And Import
 
-Lossless `.chatbook` and ordinary conversation JSON include:
+Versioned `.chatbook` and ordinary conversation JSON include:
 
 ```json
 {
@@ -313,6 +339,23 @@ Lossless `.chatbook` and ordinary conversation JSON include:
 Export UI/copy warns that these formats can contain private model reasoning,
 tool arguments, and provider-bound tool results. The field receives the same
 file protection as visible content; no extra encryption is introduced.
+
+For `.chatbook` to call the result resumable/lossless, its next format version
+must export every included message with an export-local stable ID, parent ID,
+variant identity/order, selected/active-leaf ownership, role/content, deletion
+eligibility, and private continuation. Import first validates and remaps the
+complete graph, then attaches each checkpoint to the remapped assistant owner.
+If an older/linear package cannot reconstruct that ownership, it imports the
+visible messages but discards the private field with the safe warning below.
+
+Ordinary linear JSON covers the active exported path only. Each assistant item
+uses an explicit projection of role, visible content, safe public fields, and
+the `_private.provider_continuation` field; it never serializes a database row
+or arbitrary message dictionary wholesale. Import assigns a new local message
+identity and attaches the validated private field only to that same assistant
+item. TASK-15675 audits and updates the canonical `.chatbook` creator/importer
+and every conversation JSON exporter/importer, including the current
+`Chat_Functions.py` JSON path.
 
 Text, Markdown, rendered transcripts, clipboard-visible message copy, FTS,
 summaries, logs, errors, usage snapshots, and ordinary telemetry exclude the
@@ -344,6 +387,8 @@ permission validation succeeds.
 ### Schema and persistence
 
 - V1 valid/invalid matrices, exact key sets, finite JSON, depth/node/byte caps;
+- repeated function names with unique call IDs are valid; duplicate call IDs
+  within a checkpoint or expanded outbound history are rejected;
 - first tool batch creates stable empty assistant row + checkpoint atomically;
 - failed create/update prevents dispatch/provider continuation;
 - call-state crash points before/after dispatch and result commit;
@@ -368,12 +413,17 @@ permission validation succeeds.
 
 - legacy and Sync v2 round trips, encrypted-payload placement, hash/version
   change, base-version conflict, and no field merge;
-- `.chatbook` and JSON round trips with `_private` plus warning;
+- `.chatbook` graph/variant ID remap and active-path JSON round trips with
+  explicit `_private` projection plus warning;
 - text/Markdown/FTS/render/log/error/usage/summaries contain no canary;
 - malformed private import preserves visible message and emits redacted
   warning;
 - DeepSeek replay expands visible + private history and evicts it atomically;
-- Kimi/GLM ordinary later turns exclude completed private reasoning;
+- Kimi K3 later turns include every retained reasoning owner atomically;
+- non-K3 Kimi/GLM ordinary later turns exclude completed private reasoning;
+- Discard clears/tombstones with version/hash/outbox update and no execution;
+- crash after local commit but before notifier still leaves discoverable sync
+  intent;
 - mutation checks remove the pre-dispatch write, result barrier, conflict hash,
   or private-history token count and must fail.
 

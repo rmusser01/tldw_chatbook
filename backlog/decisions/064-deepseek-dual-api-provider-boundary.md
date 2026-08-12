@@ -27,8 +27,8 @@ search, custom `apply_patch`, and other provider-hosted tools remain excluded.
 Chatbook sends explicit stateless history and does not use provider
 conversation IDs or `previous_response_id`.
 
-Thinking uses provider defaults unless the user selects `high` or `max`.
-Compatibility aliases that add no distinct behavior are rejected locally.
+Thinking uses provider defaults unless the user selects `low`, `high`, or
+`max`. Compatibility aliases that add no distinct behavior are rejected locally.
 Thinking-mode requests omit unsupported sampling fields. Tool-bearing
 `reasoning_content` and paired tool history use ADR-063 checkpoints. DeepSeek's
 documented requirement is stricter than Kimi/GLM: completed tool-associated
@@ -65,7 +65,7 @@ introducing server-side response state.
 | Use DeepSeek `previous_response_id` or conversations | The documented endpoint does not support them and Chatbook owns explicit portable history. |
 | Enable DeepSeek built-in web/custom tools | Bypasses Chatbook's existing tool approval/execution boundary and needs a separate security decision. |
 | Keep reasoning only until the final tool answer | Contradicts DeepSeek's documented later-turn replay requirement. |
-| Accept `low`/`medium`/`xhigh` aliases | They map onto `high`/`max` and add settings values with no distinct behavior. |
+| Accept `minimal`/`medium`/`xhigh` aliases | They map onto the exposed `low`/`high` values and add settings values with no distinct behavior. |
 
 ## Consequences
 

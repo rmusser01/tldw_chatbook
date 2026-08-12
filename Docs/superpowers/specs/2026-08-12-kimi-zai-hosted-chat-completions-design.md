@@ -35,9 +35,10 @@ other provider behavior stays unchanged.
 - Function calls use standard assistant `tool_calls` and paired `role="tool"`
   results. Multiple calls are allowed and every call ID must have one matching
   result.
-- Kimi thinking models return `reasoning_content`. Official multi-step tool
-  guidance requires preserving the complete assistant message, including
-  reasoning, when preserved thinking applies.
+- Kimi thinking models return `reasoning_content`. Kimi K3 always enables
+  Preserved Thinking and requires every historical assistant reasoning value
+  to be kept as-is; other Kimi families follow their explicit `thinking.keep`
+  policy. Multi-step tools also require the complete assistant message.
 - Kimi accepts function tools plus provider-hosted/dynamic tools. Only existing
   Chatbook function tools are in scope here.
 - The China regional base remains configurable as
@@ -107,8 +108,8 @@ large independent functions in `LLM_API_Calls.py`, however:
 - Non-streaming and streaming responses are validated differently.
 - Z.ai is absent from `NATIVE_TOOLS_PROVIDERS`; Moonshot membership predates
   joined Console continuation/cancellation proof.
-- Kimi reasoning needed for an active tool loop is dropped by the current
-  assistant-message handoff.
+- Kimi reasoning needed for an active tool loop and K3 ordinary later turns is
+  dropped by the current assistant-message handoff.
 
 ## Goals
 
@@ -120,9 +121,9 @@ large independent functions in `LLM_API_Calls.py`, however:
   states, usage, retries, cancellation, and resource ownership.
 - Support existing Chatbook function tools through the ordinary Console agent
   runtime, including multiple calls and exact assistant/tool continuation.
-- Preserve Kimi and Z.ai `reasoning_content` as bounded, invisible durable
-  checkpoint data only while an active or explicitly restored tool run needs
-  it.
+- Preserve bounded invisible Kimi K3 reasoning for every retained assistant
+  owner, and preserve Kimi-family/Z.ai tool-run reasoning under each model's
+  exact durable checkpoint policy.
 - Use canonical provider configuration, credential precedence, and endpoint
   normalization consistently in readiness, Console, direct adapters, and
   discovery.
@@ -141,10 +142,10 @@ large independent functions in `LLM_API_Calls.py`, however:
   registry, or Settings destination. TASK-15675 owns the one conversation
   schema/checkpoint change used here.
 - No provider conversation ID or server-side session ownership.
-- No complete preserved-thinking parity for ordinary Kimi or Z.ai multi-turn
-  chat. Reasoning is replayed only inside an active or explicitly restored tool
-  run; tool-free turns and later unrelated chat turns omit it from provider
-  requests under the privacy boundary.
+- No speculative preserved-thinking behavior beyond the documented model
+  policy. Kimi K3 ordinary later turns replay retained reasoning because K3
+  requires it; other Kimi families and Z.ai omit private reasoning from
+  ordinary later requests unless their explicit policy says otherwise.
 - No automatic Z.ai `tool_stream` opt-in.
 - No complete implementation of Moonshot Flavored JSON Schema and no arbitrary
   vendor schema extensions. The strict common function schema and every
@@ -345,9 +346,10 @@ Builders deep-copy validated inputs and never repair/mutate caller history.
 - String content is preserved. Supported multimodal content is preserved only
   for documented model families; unknown/unsupported parts fail rather than
   being stringified or silently dropped.
-- Assistant tool turns retain `content`, complete `tool_calls`, and the one
-  allowlisted hidden `reasoning_content` field in TASK-15675's validated
-  continuation checkpoint when the active provider policy requires it.
+- Assistant turns retain `content` and the one allowlisted hidden
+  `reasoning_content` field in TASK-15675's validated continuation checkpoint
+  when provider policy requires it. Tool turns also retain complete
+  `tool_calls` and paired results.
 - Tool rows require a nonblank `tool_call_id` and string content.
 - Every completed assistant call ID must be unique and matched by exactly one
   following tool-result row before the next unrelated conversational turn.
@@ -406,6 +408,9 @@ Allowed request keys for this task are `model`, `messages`, `stream`,
 `reasoning_effort`, and adapter-owned `stream_options`.
 
 - `reasoning_effort` accepts only `low`, `high`, or `max`.
+- K3 always uses Preserved Thinking. Every retained historical K3 assistant
+  message includes exact bounded `reasoning_content`; callers cannot disable
+  that replay independently of the model contract.
 - Generic/config-backed temperature, top-p, penalties, seed, `n`, user ID,
   prediction, prompt-cache key, safety identifier, and unknown kwargs are not
   transmitted.
@@ -436,8 +441,9 @@ bounded and type-strict.
 
 Allowed request keys for the general Chat Completion slice are `model`,
 `messages`, `do_sample`, `stream`, `thinking`, `temperature`, `top_p`,
-`max_tokens`, `tools`, `tool_choice`, `stop`, `response_format`, `request_id`,
-and the existing generic user identifier mapped to `user_id` when valid.
+`reasoning_effort`, `max_tokens`, `tools`, `tool_choice`, `stop`,
+`response_format`, `request_id`, and the existing generic user identifier
+mapped to `user_id` when valid.
 
 - General/tool-free chat retains provider-default thinking and
   `clear_thinking=true`. An active or explicitly restored run that exposes
@@ -582,24 +588,26 @@ content.
 - Each call transitions `pending -> executing -> completed|failed` around the
   existing approval/execution seams. A restored `executing` call is ambiguous
   and is never automatically re-run.
-- The next request in the same active/restored provider run expands the exact
-  assistant reasoning/calls plus paired results from the checkpoint.
+- The next request expands exactly the reasoning/calls/results required by the
+  active model policy.
 - Restore is explicit, re-runs current approvals, uses the pinned
   provider/model/base, and resolves the credential at resume time.
 - Each assistant variant owns its checkpoint; overlapping runs cannot see or
   overwrite one another.
-- Tool-free reasoning is never checkpointed. Completed checkpoint data may
-  remain on the assistant row for private JSON export and audit but is omitted
-  from ordinary Kimi/GLM later-turn requests.
+- Tool-free reasoning is checkpointed only for Kimi K3, atomically with its
+  final visible assistant row. Completed data may remain for private JSON
+  export and provider replay; non-K3 Kimi/GLM ordinary later turns omit it.
 - It never reaches visible chunks, run-log content, usage snapshots, error
   copies, human-readable exports, or persistent logs.
 
-Moonshot/Kimi uses preserved thinking only for the active or restored tool run
-and sends the complete assistant message required by the documented preserved-
-thinking contract. Z.ai sends `clear_thinking=false` only for that active or
-restored run and replays exact ordered `reasoning_content`; ordinary/tool-free
-chat sends `clear_thinking=true`. QwenCloud remains governed by ADR-045 and does
-not gain preserved-thinking behavior through the shared wire parser.
+Kimi K3 replays every retained historical assistant reasoning value and counts
+the private bytes atomically with the owning visible turn. Other curated Kimi
+models send the complete assistant message only under their documented active/
+restored preserved-thinking policy. Z.ai sends `clear_thinking=false` only for
+that active or restored run and replays exact ordered `reasoning_content`;
+ordinary/tool-free chat sends `clear_thinking=true`. QwenCloud remains governed
+by ADR-045 and does not gain preserved-thinking behavior through the shared
+wire parser.
 
 ## Native Continuation And Cancellation
 
@@ -640,7 +648,8 @@ owner. No API-mode selector is added.
   Test/Save/send with provider-specific recovery.
 - Field search can focus the relevant provider model, credential, endpoint, and
   reasoning controls.
-- Moonshot help describes international/China/custom bases and K3 reasoning.
+- Moonshot help describes international/China/custom bases, K3 always-on
+  Preserved Thinking, its private storage/export warning, and context cost.
 - Z.ai help distinguishes the general API from the coding-only endpoint and
   explains durable but private reasoning preservation for active/restored
   function-tool runs.
@@ -687,6 +696,8 @@ the focused and surrounding regressions.
 - endpoint normalization parity across readiness/chat/discovery;
 - provider/model-family allowlists, scalar/range/schema validation, and input
   copying;
+- Kimi K3 tool-free reasoning persists with final content, replays on later K3
+  turns, and is evicted atomically with its visible owner;
 - function tools and exact tool-choice subsets;
 - common function-name boundaries, including rejected leading digits/hyphens
   and one-/two-character names;
@@ -734,10 +745,12 @@ They prove:
 - terminal usage reaches Console signals and agent budget accounting;
 - partial-call cancellation after downstream parser observation executes zero
   tools and closes the live response exactly once;
-- Kimi and Z.ai reasoning reaches active and restored continuation byte-for-
-  byte, the first complete call batch is persisted before execution, ambiguous
-  restored `executing` calls never auto-run, and the data stays absent from
-  visible/log/error/usage/human-export surfaces;
+- Kimi K3 later turns and Kimi/Z.ai active/restored tool continuations receive
+  exact policy-required reasoning, the first complete call batch is persisted
+  before execution, ambiguous restored `executing` calls never auto-run, and
+  the data stays absent from visible/log/error/usage/human-export surfaces;
+- repeated calls to the same function name remain valid while duplicate call
+  IDs across an outbound history fail before I/O;
 - Z.ai works before and after its final native-provider registry entry.
 
 Local loopback fixtures prove application integration, not vendor availability.
@@ -777,8 +790,8 @@ README, Settings guide, and Console guide document:
 - exact supported parameter/reasoning/tool-choice subsets;
 - streaming/non-streaming usage behavior;
 - existing Chatbook function tools and built-in-tool exclusion;
-- durable private active/restored Kimi/Z.ai reasoning and ordinary-chat
-  clearing behavior;
+- durable private Kimi K3 later-turn reasoning, active/restored Kimi/Z.ai tool
+  reasoning, and ordinary GLM clearing behavior;
 - model discovery/cache and unknown pricing behavior;
 - invalid config/endpoint recovery;
 - optional isolated live gates.

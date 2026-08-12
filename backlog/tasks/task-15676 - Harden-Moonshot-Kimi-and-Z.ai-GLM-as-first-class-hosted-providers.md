@@ -23,7 +23,7 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
 - [ ] #3 Explicit arguments, canonical configuration, environment credentials, defaults, and structural endpoint validation follow one documented fail-closed contract without mutating source configuration or disclosing secrets.
 - [ ] #4 Streaming and non-streaming calls strictly validate payloads, errors, finish states, usage, retries, cancellation, ownership, and size/depth bounds.
 - [ ] #5 Existing Chatbook function tools complete joined Console continuation for both providers; private reasoning uses TASK-15675 checkpoints and vendor built-in tools remain excluded.
-- [ ] #6 Kimi uses preserved reasoning only where its active tool continuation requires it, GLM uses `clear_thinking=false` only for preserved active tool runs, and ordinary completed turns do not replay private reasoning.
+- [ ] #6 Kimi K3 preserves and budgets every retained assistant reasoning turn required by its always-on Preserved Thinking contract; other curated Kimi/GLM models follow their exact policies, with GLM using `clear_thinking=false` only for active/restored tool runs.
 - [ ] #7 Moonshot and best-effort Z.ai model discovery use the same normalized endpoint and credential resolution as chat, preserve prior cache on failure, and never log sensitive payloads.
 - [ ] #8 Canonical Settings exposes actionable readiness, save, search/focus, endpoint, credential, model, and reasoning guidance without an API-mode selector.
 - [ ] #9 QwenCloud Chat behavior remains unchanged after any shared parser extraction, proven by its complete contract suite and mutation checks.
