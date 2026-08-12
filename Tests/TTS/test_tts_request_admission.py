@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import threading
+import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 from uuid import UUID
 from datetime import UTC, datetime
 
 import pytest
+from loguru import logger as loguru_logger
 
 from Tests.TTS.adapter_fakes import FakeAdapter
 from tldw_chatbook.TTS import TTS_Generation as generation_module
@@ -1288,6 +1290,11 @@ async def test_recipe_mismatch_blocks_before_provider_lease_or_adapter_work(
 @pytest.mark.asyncio
 async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
     canary = "CANARY-private-provider-origin-generated-config"
+    logs: list[str] = []
+
+    class PrivateProviderOriginError(RuntimeError):
+        pass
+
     adapter = _CloneCapturingAdapter()
     saved = StudioTTSPreferencesSnapshot(revision=2)
     service, registry = _native_service(
@@ -1313,7 +1320,8 @@ async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
         )
 
     def fail_dependency(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError(canary)
+        private_traceback_local = canary
+        raise PrivateProviderOriginError(private_traceback_local)
 
     adapter.preflight_clone_request_dependency = fail_dependency  # type: ignore[method-assign]
     service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
@@ -1332,6 +1340,7 @@ async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
         profile_id=UUID("55555555-5555-4555-8555-555555555555"),
         reference=_clone_reference(requirement),
     )
+    sink = loguru_logger.add(lambda message: logs.append(str(message)), level="DEBUG")
     try:
         with pytest.raises(TTSOperationError) as caught:
             await service.synthesize_effective(
@@ -1344,9 +1353,45 @@ async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
         assert caught.value.__context__ is None
         assert canary not in str(caught.value)
         assert canary not in repr(caught.value)
+        rendered_exception = "".join(traceback.format_exception(caught.value))
+        assert canary not in rendered_exception
+        assert PrivateProviderOriginError.__name__ not in rendered_exception
+
+        pending: list[BaseException] = [caught.value]
+        seen: set[int] = set()
+        product_traceback_locals: list[str] = []
+        while pending:
+            error = pending.pop()
+            if id(error) in seen:
+                continue
+            seen.add(id(error))
+            pending.extend(
+                linked
+                for linked in (error.__cause__, error.__context__)
+                if linked is not None
+            )
+            current = error.__traceback__
+            while current is not None:
+                if current.tb_frame.f_globals.get("__name__") == generation_module.__name__:
+                    product_traceback_locals.extend(
+                        repr(value) for value in current.tb_frame.f_locals.values()
+                    )
+                current = current.tb_next
+
+        rendered_surfaces = "\n".join(
+            (
+                *logs,
+                *product_traceback_locals,
+                repr(adapter.events),
+                repr(adapter.clone_requests),
+            )
+        )
+        assert canary not in rendered_surfaces
+        assert PrivateProviderOriginError.__name__ not in rendered_surfaces
         assert registry._total_leases() == 0
         assert adapter.clone_requests == []
     finally:
+        loguru_logger.remove(sink)
         await service.close()
         await service.wait_closed()
 
