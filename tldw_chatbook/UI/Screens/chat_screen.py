@@ -10004,6 +10004,35 @@ class ChatScreen(BaseAppScreen):
         rows: Iterable[ConsoleConversationBrowserInputRow],
         query: str,
     ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Return the rows matching ``query``; pure, no service or DB access.
+
+        Called from two places with different jobs. The debounced pass filters
+        freshly derived rows. The keystroke handler filters the rows already
+        on screen, which is the only work it does beyond bookkeeping
+        (TASK-15454) -- and that carries a documented tradeoff worth stating
+        where the filter lives:
+
+        **An empty query returns the rows unchanged**, so backspacing the
+        search box to empty leaves the PRIOR result set visible for up to the
+        0.2 s debounce, until ``_start_console_conversation_browser_search``
+        clears it. (Every non-empty query narrows instead, so the visible rows
+        never contradict the search box; only the emptied box does, and only
+        by showing more than it should.) Clicking a row in that window was
+        checked and is safe: ``on_button_pressed`` carries the row's own
+        ``conversation_id``/``row_key`` on the button, and when
+        ``_find_console_browser_row`` no longer finds the row in freshly built
+        state it falls back to that id and resumes the conversation anyway --
+        so a stale row still opens the conversation it names, it does not dead-
+        click. The "Clear" BUTTON does not go through this window at all; it
+        clears immediately.
+
+        Args:
+            rows: Rows to filter.
+            query: Raw search text; blank means "no filtering".
+
+        Returns:
+            The matching rows, in input order.
+        """
         normalized_query = str(query or "").strip().lower()
         row_tuple = tuple(rows)
         if not normalized_query:

@@ -44,6 +44,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceStatusPair,
 )
 
 APP_SIZE = (160, 48)
@@ -243,6 +244,203 @@ async def test_a_tray_whose_rows_went_missing_still_heals_and_stays_clickable():
             assert console.query_one(f"#{row.id}") is row
 
 
+# ---------------------------------------------------------------------------
+# The DOM evidence must not be vacuous for the row-less projections
+# ---------------------------------------------------------------------------
+
+
+def _fixed_projection_signature_is_complete(tray) -> None:
+    """Assert every control a fixed projection MOUNTED is in its signature.
+
+    Review round 1 caught that the row half of the DOM evidence is vacuous for
+    `#console-session-context` and `#console-workspaces-context`: neither
+    builds grouped-browser rows, so their row signature is `()` and matches
+    anything, degenerating the guard toward the reverted full-equality shape.
+    The fix records their fixed controls too — and this is the tripwire that
+    keeps it honest, so that a future dynamic control added to either
+    projection cannot silently sit outside the evidence.
+
+    `ConsoleWorkspaceStatusPair` composes its own label/value Statics; that
+    subtree belongs to the pair, not to this tray's signature, so it is
+    excluded — the ONE deliberate exemption. A new composed sub-component
+    would have to be added here consciously.
+    """
+    recorded = set(tray._composed_fixed_signature or ())
+    unrecorded: list[str] = []
+    for node in tray.query("*"):
+        node_id = str(getattr(node, "id", "") or "")
+        if not node_id or node_id in recorded:
+            continue
+        owner = node
+        owned_by_pair = False
+        while owner is not None and owner is not tray:
+            if isinstance(owner, ConsoleWorkspaceStatusPair):
+                owned_by_pair = True
+                break
+            owner = owner.parent
+        if not owned_by_pair:
+            unrecorded.append(node_id)
+    assert not unrecorded, (
+        f"{tray.id}: {unrecorded} are mounted in a row-less projection but "
+        "absent from `_composed_fixed_signature`, so `_can_skip_recompose` "
+        "has no DOM evidence about them -- route them through "
+        "`_record_composed_node`"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_fixed_projections_record_every_control_they_build():
+    """Both row-less projections carry real, non-empty DOM evidence."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, _tray = await _settled_tray(host, pilot)
+
+        for selector in ("#console-session-context", "#console-workspaces-context"):
+            projection = console.query_one(selector, ConsoleWorkspaceContextTray)
+            # Vacuous row half -- this is exactly the review finding.
+            assert projection._composed_row_signature == ()
+            # ... so the fixed half must be doing the work.
+            assert projection._composed_fixed_signature, (
+                f"{selector} records no fixed controls, so its DOM evidence "
+                "is empty and the guard degenerates to full equality"
+            )
+            _fixed_projection_signature_is_complete(projection)
+
+        # The Workspaces projection's click targets specifically.
+        workspaces = console.query_one(
+            "#console-workspaces-context", ConsoleWorkspaceContextTray
+        )
+        recorded = set(workspaces._composed_fixed_signature or ())
+        assert {
+            "console-change-workspace",
+            "console-new-workspace",
+            "console-workspace-rag-scope-open",
+        } <= recorded
+
+
+@pytest.mark.asyncio
+async def test_an_unrecorded_dynamic_control_reds_the_pin_while_the_guard_skips():
+    """Mutation control: the pin is what discriminates, and it does.
+
+    Give the Sessions projection a per-row button that does NOT go through
+    `_record_composed_node` -- exactly the future change the review was
+    worried about. Two things must then be true at once, and both are
+    asserted: the guard happily skips (the hole is real, because the row half
+    of the evidence is vacuous for this projection), and the pin above reds
+    (so the hole cannot be introduced unnoticed).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, _tray = await _settled_tray(host, pilot)
+        sessions = console.query_one(
+            "#console-session-context", ConsoleWorkspaceContextTray
+        )
+        _fixed_projection_signature_is_complete(sessions)  # clean before
+
+        original = ConsoleWorkspaceContextTray._compose_session_context
+
+        def mutated(self, *, show_selected_summary: bool):
+            yield from original(self, show_selected_summary=show_selected_summary)
+            if self.content != "session":
+                return
+            browser = self.state.conversation_browser
+            sections = browser.sections if browser is not None else ()
+            for index, section in enumerate(sections):
+                # A dynamic, data-derived click target, deliberately NOT
+                # routed through `_record_composed_node`.
+                yield Button(
+                    str(section.section_id),
+                    id=f"unrecorded-dynamic-control-{index}",
+                    classes="console-workspace-action",
+                    compact=True,
+                )
+
+        ConsoleWorkspaceContextTray._compose_session_context = mutated
+        try:
+            sessions.refresh(recompose=True)
+            for _ in range(4):
+                await pilot.pause()
+            injected = list(console.query("#console-session-context Button"))
+            assert injected, "the mutation must actually mount dynamic controls"
+
+            # (i) the hole is real -- the guard skips despite the new targets
+            assert sessions._can_skip_recompose(replace(sessions.state)) is True
+
+            # (ii) ... and the pin is what catches it
+            with pytest.raises(AssertionError) as caught:
+                _fixed_projection_signature_is_complete(sessions)
+            assert "unrecorded-dynamic-control-0" in str(caught.value)
+        finally:
+            ConsoleWorkspaceContextTray._compose_session_context = original
+            sessions.refresh(recompose=True)
+            for _ in range(3):
+                await pilot.pause()
+
+        _fixed_projection_signature_is_complete(sessions)  # clean after
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_projection_whose_control_went_missing_still_heals():
+    """The row-less projections now get the same self-heal the rows do.
+
+    Prune a recorded control out of the Workspaces projection behind its back
+    and push a value-equal state: before the fixed signature existed, the
+    guard skipped (its row signature was `()` on both sides) and the control
+    stayed gone.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, _tray = await _settled_tray(host, pilot)
+        workspaces = console.query_one(
+            "#console-workspaces-context", ConsoleWorkspaceContextTray
+        )
+        assert workspaces._can_skip_recompose(replace(workspaces.state)) is True
+
+        await console.query_one("#console-change-workspace", Button).remove()
+        await pilot.pause()
+        assert not list(console.query("#console-change-workspace"))
+
+        with _RecomposeCounter() as counter:
+            workspaces.sync_state(replace(workspaces.state))
+            assert counter.calls == 1, (
+                "a row-less projection that lost a recorded control must "
+                "rebuild it even though the incoming state is value-equal"
+            )
+        for _ in range(3):
+            await pilot.pause()
+
+        assert console.query_one("#console-change-workspace", Button) is not None
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_band_mount_does_not_defeat_the_guard():
+    """Extra nodes the screen mounts into a tray are not treated as drift.
+
+    The screen mounts the transitional `#console-new-workspace-conversation`
+    alias straight into the Conversations tray. Requiring exact DOM equality
+    would make that tray permanently unskippable, so the reader collects only
+    the ids compose recorded.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, tray = await _settled_tray(host, pilot)
+        assert tray._can_skip_recompose(replace(tray.state)) is True
+
+        await tray.mount(Button("Out of band", id="out-of-band-probe"))
+        await pilot.pause()
+        assert console.query_one("#out-of-band-probe", Button) is not None
+
+        assert tray._can_skip_recompose(replace(tray.state)) is True
+
+
 @pytest.mark.asyncio
 async def test_the_recorded_signature_matches_the_mounted_rows():
     """The guard's two sides must be derived from the same rows.
@@ -258,5 +456,9 @@ async def test_the_recorded_signature_matches_the_mounted_rows():
         console, tray = await _settled_tray(host, pilot)
         await _seed_rows(console, pilot)
 
-        assert tray._mounted_row_signature() == tray._composed_row_signature
+        mounted_rows, mounted_fixed = tray._mounted_signatures(
+            tray._composed_fixed_signature or ()
+        )
+        assert mounted_rows == tray._composed_row_signature
+        assert mounted_fixed == tray._composed_fixed_signature
         assert tray._can_skip_recompose(replace(tray.state)) is True

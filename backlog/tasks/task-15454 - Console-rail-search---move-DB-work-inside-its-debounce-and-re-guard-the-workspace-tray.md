@@ -138,6 +138,33 @@ marker on all three projections, as a real full-screen recompose does),
 (source inspection followed the `run_worker` into the debounced callback),
 `test_console_workspace_controller.py::..._empty_query_clears_state_*`.
 
+**Review round 1 — DOM evidence was vacuous for the row-less projections.**
+The DOM-evidence clause only compared grouped-browser rows, and
+`#console-session-context` / `#console-workspaces-context` build none — their
+row signature was `()` on both sides and matched anything, so for those two
+trays the guard degenerated toward the reverted full-equality shape. Closed
+both ways the review offered: `compose` now also records the ordered ids of
+the FIXED controls those projections build (`_record_composed_node`, a
+one-expression wrapper at each site) and the guard requires that half to match
+too; and a pin test asserts every id-carrying node mounted in either
+projection appears in that signature, with `ConsoleWorkspaceStatusPair`'s own
+subtree as the single deliberate exemption. The pin discriminates: a mutation
+that adds a dynamic per-row Button to the Sessions projection without
+recording it reds the pin **while `_can_skip_recompose` still returns True** —
+both facts asserted in the same test, so the pin is demonstrably what catches
+the hole. Two further tests cover the new half: a pruned Switch button now
+forces a heal (it did not before), and an out-of-band mount (the screen's
+`#console-new-workspace-conversation` alias, which lands directly in the
+Conversations tray) is deliberately NOT treated as drift — requiring exact DOM
+equality would make that tray permanently unskippable.
+
+**Why the User Guide "Verified against" stamp was not bumped.** The page's
+conversation-browser table row was updated to state the new debounce, but the
+stamp (`dev @ ff435772c — 2026-07-31`) was left alone on purpose: bumping it
+asserts the WHOLE page was re-verified against a running app, and only this one
+behaviour was. Claiming otherwise would make the stamp worthless for the next
+reader.
+
 **Modified/added:** `tldw_chatbook/UI/Screens/chat_screen.py`,
 `tldw_chatbook/Widgets/Console/console_workspace_context.py`,
 `Docs/User_Guide/console/sessions-tabs-workspaces.md`, the four test files
