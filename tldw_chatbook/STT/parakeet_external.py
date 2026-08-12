@@ -645,7 +645,10 @@ class ExternalParakeetVerifier:
             try:
                 descriptor_fd = os.open(path, flags)
                 with os.fdopen(descriptor_fd, "rb") as source:
-                    if _file_identity(os.fstat(source.fileno())) != before:
+                    opened = _file_identity(os.fstat(source.fileno()))
+                    # Windows path stat reports birth time as ctime while fstat
+                    # reports change time; the other fields still identify the file.
+                    if opened[:-1] != before[:-1]:
                         _fail_changed("open_file_identity")
                     while True:
                         if cancelled():

@@ -9,6 +9,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -209,6 +210,34 @@ def test_verifies_v3_f32_external_data_file(tmp_path: Path) -> None:
         "encoder-model.onnx.data",
         "decoder_joint-model.onnx",
     }
+
+
+def test_accepts_windows_path_and_handle_ctime_representation_difference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = {"model.onnx": b"expected"}
+    root = tmp_path / "external-windows-ctime"
+    descriptor = _descriptor(files)
+    _materialize(root, files)
+    real_fstat = os.fstat
+
+    def windows_fstat(descriptor_fd: int) -> SimpleNamespace:
+        metadata = real_fstat(descriptor_fd)
+        return SimpleNamespace(
+            st_dev=metadata.st_dev,
+            st_ino=metadata.st_ino,
+            st_mode=metadata.st_mode,
+            st_size=metadata.st_size,
+            st_mtime_ns=metadata.st_mtime_ns,
+            st_ctime_ns=metadata.st_ctime_ns + 1,
+        )
+
+    monkeypatch.setattr(parakeet_external.os, "fstat", windows_fstat)
+
+    verified = ExternalParakeetVerifier().verify(descriptor, root)
+
+    assert verified.reference == descriptor.reference
 
 
 @pytest.mark.parametrize(
