@@ -4953,9 +4953,28 @@ UPDATE db_schema_version
             / "chachanotes_v36_to_v37_provider_continuation.sql"
         )
         try:
-            existing_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(messages)")
+            columns = {
+                row["name"]: row for row in conn.execute("PRAGMA table_info(messages)")
             }
+            continuation_column = columns.get("provider_continuation_json")
+            if continuation_column is not None:
+                default = continuation_column["dflt_value"]
+                has_non_null_value = (
+                    conn.execute(
+                        "SELECT 1 FROM messages "
+                        "WHERE provider_continuation_json IS NOT NULL LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+                if (
+                    continuation_column["type"].strip().upper() != "TEXT"
+                    or continuation_column["notnull"] != 0
+                    or (default is not None and str(default).strip().upper() != "NULL")
+                    or has_non_null_value
+                ):
+                    raise SchemaError(
+                        "Provider continuation column is incompatible with schema V36"
+                    )
             with self.transaction() as cursor:
                 pending = ""
                 for line in migration_path.read_text(encoding="utf-8").splitlines(
@@ -4967,7 +4986,7 @@ UPDATE db_schema_version
                     statement = pending
                     pending = ""
                     if (
-                        "provider_continuation_json" in existing_columns
+                        continuation_column is not None
                         and statement.lstrip().startswith("-- Migration:")
                         and "ALTER TABLE messages ADD COLUMN" in statement
                     ):
@@ -10131,7 +10150,12 @@ UPDATE db_schema_version
         """
         safe_search_term = f'"{content_query}"'
         base_query = """
-                     SELECT m.*
+                     SELECT m.id, m.conversation_id, m.parent_message_id,
+                            m.sender, m.content, m.image_data, m.image_mime_type,
+                            m.timestamp, m.ranking, m.last_modified, m.deleted,
+                            m.client_id, m.version, m.feedback, m.role, m.variant_of,
+                            m.variant_number, m.is_selected_variant, m.total_variants,
+                            m.usage_json, m.metadata_json
                      FROM messages_fts fts
                               JOIN messages m ON fts.rowid = m.rowid
                      WHERE fts.messages_fts MATCH ? \

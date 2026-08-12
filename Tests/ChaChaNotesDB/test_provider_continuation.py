@@ -153,6 +153,29 @@ def test_add_message_rejects_invalid_or_wrong_owner_without_private_error_contex
         )
 
 
+def test_message_search_returns_public_fields_without_private_continuation(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    canary = "PRIVATE-SEARCH-CANARY"
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "public searchable answer",
+            "provider_continuation_json": _checkpoint_json(canary=canary),
+        }
+    )
+
+    hits = db.search_messages_by_content("searchable")
+
+    assert len(hits) == 1
+    assert hits[0]["id"] == message_id
+    assert hits[0]["content"] == "public searchable answer"
+    assert "provider_continuation_json" not in hits[0]
+    assert canary not in json.dumps(hits[0], default=str)
+
+
 def _message_sync_entries(
     db: CharactersRAGDB, message_id: str
 ) -> list[dict[str, object]]:

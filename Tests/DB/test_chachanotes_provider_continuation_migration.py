@@ -293,3 +293,42 @@ def test_v36_to_v37_requires_exact_precondition_and_handles_preadded_column(
     with pytest.raises(SchemaError, match="requires schema version 36"):
         db._migrate_from_v36_to_v37(db.get_connection())
     db.close_connection()
+
+
+def test_v35_to_v36_rejects_incompatible_preadded_column_without_partial_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v35_database(db_path, monkeypatch)
+
+    with monkeypatch.context() as v35_patch:
+        v35_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 35)
+        db = CharactersRAGDB(db_path, client_id="incompatible-pre-applied")
+        connection = db.get_connection()
+        connection.execute(
+            "ALTER TABLE messages ADD COLUMN provider_continuation_json "
+            "INTEGER NOT NULL DEFAULT 7"
+        )
+        connection.commit()
+        before_triggers = {
+            name: sql
+            for name, sql in _schema_objects(connection, "trigger").items()
+            if name in MESSAGE_SYNC_TRIGGERS
+        }
+        with pytest.raises(SchemaError, match="incompatible"):
+            db._migrate_from_v35_to_v36(connection)
+
+        assert _version(connection) == 35
+        assert {
+            name: sql
+            for name, sql in _schema_objects(connection, "trigger").items()
+            if name in MESSAGE_SYNC_TRIGGERS
+        } == before_triggers
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT provider_continuation_json FROM messages"
+            )
+        } == {7}
+        db.close_connection()
