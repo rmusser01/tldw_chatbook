@@ -972,8 +972,61 @@ def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
         "TldwCli",
         "_close_owned_tts_resources",
     )
+    portability_calls = _self_method_calls(
+        owner_close, "_close_tts_voice_bundle_service"
+    )
+    repository_calls = _self_method_calls(owner_close, "_close_tts_profile_repository")
+    assert len(portability_calls) == 1
+    assert len(repository_calls) == 1
+    assert portability_calls[0].lineno < repository_calls[0].lineno
     assert len(_self_method_calls(owner_close, "_close_tts_profile_repository")) == 1
     assert len(_self_method_calls(owner_close, "_close_tts_service")) == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[tuple[Path, object, object]] = []
+
+    class PortabilityOwner(FakeOwnedService):
+        pass
+
+    portability = PortabilityOwner()
+    repository = object()
+    profile_service = object()
+    tts_service = object()
+
+    def build(root: Path, repo: object, dependency: object) -> object:
+        constructed.append((root, repo, dependency))
+        return portability
+
+    monkeypatch.setattr(app_module, "TTSVoiceBundlePortabilityService", build)
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    owner = SimpleNamespace(
+        _tts_voice_bundle_service=None,
+        _tts_voice_bundle_service_close_task=None,
+        _tts_profile_repository=repository,
+        tts_service=tts_service,
+    )
+
+    async def ensure_profile_service() -> object:
+        return profile_service
+
+    owner._ensure_tts_profile_service = ensure_profile_service
+
+    first = await TldwCli._ensure_tts_voice_bundle_service(owner)
+    second = await TldwCli._ensure_tts_voice_bundle_service(owner)
+    assert first is portability
+    assert second is portability
+    assert constructed == [
+        (tmp_path / "tts_voice_bundle_portability", repository, tts_service)
+    ]
+
+    await TldwCli._close_tts_voice_bundle_service(owner)
+    assert portability.close_calls == 1
+    assert portability.wait_closed_calls == 1
 
 
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:

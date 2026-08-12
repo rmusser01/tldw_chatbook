@@ -94,6 +94,13 @@ from tldw_chatbook.TTS.voice_bundle_codec import (
     encode_clone_voice_bundle,
     inspect_clone_voice_bundle,
 )
+from tldw_chatbook.TTS.voice_bundle_service import (
+    TTSVoiceBundleHandle,
+    TTSVoiceBundleImportChoice,
+    TTSVoiceBundleImportResult,
+    TTSVoiceBundlePortabilityService,
+    TTSVoiceBundleReview,
+)
 
 __all__ = [
     "AssignedTTSProfileSnapshot",
@@ -166,6 +173,11 @@ __all__ = [
     "TTSVoiceDiscoveryResult",
     "TTSVoiceBundleError",
     "TTSVoiceBundleSinks",
+    "TTSVoiceBundleHandle",
+    "TTSVoiceBundleImportChoice",
+    "TTSVoiceBundleImportResult",
+    "TTSVoiceBundlePortabilityService",
+    "TTSVoiceBundleReview",
     "VoiceDiscoveryState",
     "bind_tts_service",
     "canonical_json_options",

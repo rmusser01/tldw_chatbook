@@ -51,13 +51,33 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _JSON_CHUNK_BYTES = 64 * 1024
 
 TTSVoiceBundleErrorCode = Literal[
-    "bundle_invalid", "bundle_limit_exceeded", "unsupported_bundle"
+    "acknowledgement_required",
+    "bundle_invalid",
+    "bundle_limit_exceeded",
+    "cleanup_failed",
+    "destination_changed",
+    "operation_failed",
+    "source_changed",
+    "stale_inspection",
+    "unsupported_bundle",
+    "unsupported_platform",
 ]
 _ControlFlowCode = Literal["cancelled", "keyboard_interrupt", "system_exit"]
 _FailureCode = TTSVoiceBundleErrorCode | _ControlFlowCode
 _CONTROL_FLOW_CODES = frozenset({"cancelled", "keyboard_interrupt", "system_exit"})
 _ERROR_CODES = frozenset(
-    {"bundle_invalid", "bundle_limit_exceeded", "unsupported_bundle"}
+    {
+        "acknowledgement_required",
+        "bundle_invalid",
+        "bundle_limit_exceeded",
+        "cleanup_failed",
+        "destination_changed",
+        "operation_failed",
+        "source_changed",
+        "stale_inspection",
+        "unsupported_bundle",
+        "unsupported_platform",
+    }
 )
 
 
