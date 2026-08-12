@@ -608,6 +608,7 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
     )
@@ -2880,6 +2881,19 @@ class LibraryIngestQueueMixin:
                 executor = self._create_local_stt_executor()
                 self._local_stt_executor = executor
             return executor
+
+    def _recycle_idle_local_stt_reference(self, reference: "ArtifactRef") -> bool:
+        """Recycle an existing idle STT resident that leases ``reference``."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                return False
+            executor = getattr(self, "_local_stt_executor", None)
+        if executor is None:
+            return False
+        return executor.recycle_idle_managed_reference(
+            (reference.artifact_id, reference.revision, reference.variant)
+        )
 
     def _create_parakeet_source_service(self) -> Any:
         """Construct the shared download-free Parakeet source service lazily."""

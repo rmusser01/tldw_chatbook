@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import App
@@ -22,6 +22,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
+from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
 import tldw_chatbook.app as app_module
@@ -87,6 +88,28 @@ def test_local_stt_accessors_share_one_executor_and_coordinator_without_deadlock
     assert len(executors) == 1
     assert len(coordinators) == 1
     assert resolved[0][1]._executor is resolved[0][0]
+
+
+def test_recycle_idle_local_stt_reference_uses_existing_executor_without_creating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    create_executor = MagicMock(side_effect=AssertionError("must stay lazy"))
+    monkeypatch.setattr(app, "_create_local_stt_executor", create_executor)
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+
+    assert app._recycle_idle_local_stt_reference(reference) is False
+    create_executor.assert_not_called()
+
+    executor = MagicMock()
+    executor.recycle_idle_managed_reference.return_value = True
+    app._local_stt_executor = executor
+
+    assert app._recycle_idle_local_stt_reference(reference) is True
+    executor.recycle_idle_managed_reference.assert_called_once_with(
+        ("parakeet-v2", "immutable-revision", "int8")
+    )
+    create_executor.assert_not_called()
 
 
 def test_console_dictation_factory_injects_app_owned_coordinator() -> None:

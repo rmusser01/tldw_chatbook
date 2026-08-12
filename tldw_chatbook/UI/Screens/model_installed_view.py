@@ -131,6 +131,7 @@ class InstalledView(Widget):
         legacy_dir: Path | None = None,
         on_root_activated: Callable[[ArtifactRef], None] | None = None,
         may_delete: Callable[[ArtifactRef], str | None] | None = None,
+        recycle_idle: Callable[[ArtifactRef], bool] | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle view; no filesystem work occurs here.
@@ -140,12 +141,14 @@ class InstalledView(Widget):
             legacy_dir: Legacy downloader directory to scan on activation.
             on_root_activated: Called after successful core activation.
             may_delete: Return a user-visible reason to block deletion.
+            recycle_idle: Retire an idle worker that leases the exact artifact.
             id: Optional Textual widget id.
         """
         self._service_factory = service_factory
         self._legacy_dir = legacy_dir or Path("~/Downloads/tldw_models").expanduser()
         self._on_root_activated = on_root_activated or (lambda _reference: None)
         self._may_delete = may_delete or (lambda _reference: None)
+        self._recycle_idle = recycle_idle or (lambda _reference: False)
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
         self._usage: ArtifactDiskUsage | None = None

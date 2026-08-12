@@ -52,6 +52,7 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
     vad = ArtifactRef("silero-vad", "immutable-revision", "f32")
     ui_thread = threading.get_ident()
     lifecycle_threads: list[tuple[str, int]] = []
+    recycled: list[tuple[str, str, str]] = []
 
     class _Source:
         def __init__(self) -> None:
@@ -93,6 +94,24 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
         lambda _window: False,
     )
     app = _build_test_app()
+
+    class _Executor:
+        def recycle_idle_managed_reference(
+            self,
+            reference: tuple[str, str, str],
+        ) -> bool:
+            recycled.append(reference)
+            return True
+
+        def close(self) -> None:
+            return None
+
+    app._local_stt_executor = _Executor()
+    monkeypatch.setattr(
+        app,
+        "_create_local_stt_executor",
+        MagicMock(side_effect=AssertionError("Models must not create an executor")),
+    )
 
     def create_source_service() -> _Source:
         lifecycle_threads.append(("construct", threading.get_ident()))
@@ -144,6 +163,8 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
 
         assert view._may_delete(vad) == "Managed dependency is in use."
         assert source.deletion_checks == [vad]
+        assert view._recycle_idle(vad) is True
+        assert recycled == [("silero-vad", "immutable-revision", "f32")]
         ensure_after_mount.assert_not_called()
 
 
