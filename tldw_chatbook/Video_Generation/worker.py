@@ -166,8 +166,8 @@ def run_generation(
         result_container = result.container
         canonical_video_extension(result_container)
         mime_container = video_container_for_mime(result.content_type)
-    except Exception as exc:
-        raise VideoGenerationError("Invalid video generation result format") from exc
+    except Exception:
+        raise VideoGenerationError("Invalid video generation result format") from None
     if request.format != result_container or result_container != mime_container:
         raise VideoGenerationError("Invalid video generation result format")
     return result

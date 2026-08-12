@@ -147,6 +147,31 @@ def test_run_generation_contains_malformed_or_hostile_result_containers(case):
     assert "PRIVATE-EQUALITY-ERROR" not in str(exc_info.value)
 
 
+def test_run_generation_suppresses_hostile_result_property_traceback_details():
+    import traceback
+
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+    from tldw_chatbook.Video_Generation.worker import run_generation
+
+    class HostileResult:
+        @property
+        def container(self):
+            raise RuntimeError("PRIVATE-RESULT-PROPERTY")
+
+    _register_fake(result=HostileResult())
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        run_generation(_request())
+
+    error = exc_info.value
+    formatted = "".join(traceback.format_exception(error))
+    assert str(error) == "Invalid video generation result format"
+    assert error.__cause__ is None
+    assert error.__context__ is not None
+    assert error.__suppress_context__ is True
+    assert "PRIVATE-RESULT-PROPERTY" not in formatted
+
+
 def test_build_request_defaults():
     req = _request()
     assert req.format == "mp4"
