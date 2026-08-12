@@ -92,9 +92,9 @@ Chatbook already registers `moonshot` and `zai`, exposes both in Settings and
 Console, and includes both in cloud model discovery. Their runtime handlers are
 large independent functions in `LLM_API_Calls.py`, however:
 
-- Moonshot reads a legacy `moonshot_api` projection while Z.ai reads canonical
-  `api_settings.zai`; direct calls, readiness, and Console can therefore resolve
-  different values.
+- Moonshot tries to read an orphaned top-level `moonshot_api` mapping while
+  Z.ai reads canonical `api_settings.zai`; direct calls, readiness, and Console
+  can therefore resolve different values.
 - The embedded defaults are stale (`kimi-latest` and `glm-4.5`).
 - Streaming relays raw lines, fabricates `[DONE]`, embeds exception text into
   successful-looking error events, and does not reliably expose terminal usage.
@@ -369,7 +369,7 @@ Only standard function tools are accepted:
 ```
 
 Validation requires exact top-level `type`/`function`, a unique function name
-matching `^[a-zA-Z0-9_-]{1,64}$`, a nonblank string description, and
+matching `^[A-Za-z_][A-Za-z0-9_-]{2,63}$`, a nonblank string description, and
 object-shaped parameters. This is the strict outbound intersection of the two
 providers' function contracts. Private top-level metadata and provider tool
 types are rejected. Inputs are copied before use.
@@ -675,6 +675,8 @@ the focused and surrounding regressions.
 - provider/model-family allowlists, scalar/range/schema validation, and input
   copying;
 - function tools and exact tool-choice subsets;
+- common function-name boundaries, including rejected leading digits/hyphens
+  and one-/two-character names;
 - no vendor built-in tool leakage;
 - safe finish/error/usage classification.
 

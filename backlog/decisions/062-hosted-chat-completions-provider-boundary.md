@@ -89,6 +89,7 @@ the narrow active-run reasoning handoff.
 - Provider builders use explicit allowlists; unknown kwargs are not forwarded.
 - Endpoint validation is structural and shared with discovery, not host-bound.
 - Streaming is not replayed after any response-body byte is consumed.
+- Non-streaming requests are not replayed after any 2xx response is received.
 - The provider stream owns and closes response/session resources exactly once.
 - Only complete normalized function calls reach the executor.
 - Vendor built-in tools require a separate security/product decision.
