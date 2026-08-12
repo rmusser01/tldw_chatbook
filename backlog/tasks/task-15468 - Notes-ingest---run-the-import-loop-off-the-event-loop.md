@@ -71,8 +71,10 @@ Fix direction: `thread=True` worker with `call_from_thread` for the UI updates (
 
 ## Implementation Notes
 
-**Approach.** Two-line functional change in
-`Event_Handlers/note_ingest_events.py`: `import_worker_notes` (the nested
+**Approach (initial implementation; see "Fix round 1" below for two
+review-driven additions to this same function).** Two-line functional
+change in `Event_Handlers/note_ingest_events.py`: `import_worker_notes`
+(the nested
 per-file/per-note loop inside
 `handle_ingest_notes_import_now_button_pressed`) lost its `async` keyword
 (it had no internal `await`s, so this changes nothing about its body), and
@@ -137,7 +139,7 @@ plain sync file I/O, also thread-safe.
    import regardless of duration, while the threaded shape gives it
    thousands, and wall time is not regressed (here, noise-level faster).
 
-**Test run:** `Tests/Event_Handlers/test_note_ingest_events.py` +
+**Test run (initial):** `Tests/Event_Handlers/test_note_ingest_events.py` +
 `test_note_ingest_import_offload.py` + `Tests/Notes/test_notes_library_unit.py`
 + `test_notes_adapter.py` + `test_notes_integration.py` +
 `test_notes_scope_service_library_canvas.py` + `test_sync_engine.py` +
@@ -146,6 +148,92 @@ plain sync file I/O, also thread-safe.
 tilde-path environment skip). `ruff check` on both changed/added files:
 clean.
 
+## Fix round 1 (review, 2026-08-11)
+
+Code review flagged two Important findings against the initial
+implementation above -- both are side effects of AC1 itself: moving the
+loop off the event loop means the UI (and app shutdown) can now genuinely
+run *concurrently* with an in-flight import, which is exactly what makes
+both of the below newly reachable in a way they structurally could not be
+while the whole app was frozen for the import's duration. Undisclosed in
+the original Implementation Notes above; recorded here as required.
+
+**1. SHARED-LIST RACE.** `import_worker_notes` iterated
+`app.selected_note_files_for_import` -- a plain, mutable list -- LIVE, on
+the worker thread, while the main thread keeps handling clicks (including
+"Clear Selection", `handle_ingest_notes_clear_files_button_pressed`, which
+calls `.clear()` on that exact list). A mid-import click would silently
+truncate the loop: an incomplete import with no error, no different from
+a successful complete one in the UI. Fix: `note_files_snapshot =
+list(app.selected_note_files_for_import)` is taken synchronously on the
+event loop, before the thread hop (the handler has no `await` between
+that point and `run_worker(...)`, so there is no race window on the
+snapshot itself). Both loops (templates and notes) now iterate
+`note_files_snapshot`, never the live list.
+
+**2. QUIT-DURING-IMPORT SEMANTICS.** An `asyncio.Future` in PENDING state
+(what `asyncio.to_thread` awaits) cancels *immediately* when the awaiting
+Task is cancelled -- but the underlying executor thread is NOT
+interruptible and keeps running `import_worker_notes` to completion
+regardless, since a running thread cannot be forced to stop. Left
+unaddressed, cancelling the import (app shutdown cancelling outstanding
+`file_operations`-group workers) would leave that thread running the rest
+of a potentially-hundreds-of-notes batch completely unattended, and
+`ThreadPoolExecutor.shutdown(wait=True)` (part of Python's own
+interpreter-exit sequence) would then block process shutdown on it, with
+no indication to the user, for as long as that remaining work takes. Fix:
+a `threading.Event` (`cancel_event`), created alongside the snapshot.
+`_run_note_import_worker_and_dispatch` now has an
+`except asyncio.CancelledError: cancel_event.set(); raise` clause around
+the `await asyncio.to_thread(...)` call. Both loops check
+`cancel_event.is_set()` at the top of each per-file AND per-note
+iteration, `break`-ing out at the next boundary rather than continuing.
+Honest residual, documented in a code comment at the `cancel_event`
+declaration: the note/template *currently* being committed when
+cancellation is requested still finishes -- there is no way to interrupt a
+single `add_note` call or a single file parse mid-flight, only between
+them. The (destination) `asyncio.to_thread` future's *result* is silently
+discarded once cancelled (asyncio drops it if the destination is already
+CANCELLED when the underlying `concurrent.futures.Future` completes), so
+a cancelled run never calls `on_import_success_notes` and therefore never
+reports a false "N imported" summary for a batch that didn't finish --
+that absence of a false-positive summary IS the "accounting reflects the
+partial import truthfully" requirement; the only durable record of a
+cancelled run is the `add_note` calls that actually committed before the
+stop, which the fix bounds to a small, deterministic window past the
+cancellation point rather than unboundedly close to a full complete run.
+
+**New evidence (same file), two more tests (5 total in the file now):**
+4. `test_import_worker_completes_over_snapshot_when_list_mutated_mid_import`
+   -- mutates (`.clear()`s) `app.selected_note_files_for_import` from
+   inside `add_note`'s side effect (i.e. from the loop side, mid-batch, to
+   simulate the timing of a concurrent main-thread click without needing a
+   real race) and asserts all 6 originally-selected notes still import
+   successfully.
+5. `test_import_cancellation_stops_at_a_note_boundary_with_honest_accounting`
+   -- schedules `import_task.cancel()` via `loop.call_soon_threadsafe`
+   (the thread-safe way app shutdown would reach across from a different
+   thread) from inside the 5th `add_note` call of a 40-note import (a
+   small per-note delay keeps the worker thread from racing through the
+   whole batch before the event loop gets a turn to actually deliver the
+   cancellation -- a test-determinism aid only; the mechanism under test,
+   `cancel_event`, is real production code), awaits the task expecting
+   `asyncio.CancelledError`, polls until the (still-running,
+   not-forcibly-killable) background thread's call count stabilizes, and
+   asserts it stopped within a small bounded window past the cancellation
+   point (not at the full 40) and that no "import finished" notification
+   ever fired.
+
+**Test run (after fix round 1):** same command set as above --
+`test_note_ingest_events.py` + `test_note_ingest_import_offload.py` (now 5
+tests) + the four Notes suites + `test_note_tool_user_id.py`: **116
+passed**. Full `Tests/Event_Handlers/`: **52 passed, 1 skipped**
+(pre-existing, unrelated). The two new timing-sensitive tests were run 5x
+back-to-back in isolation with no flakes. `ruff check` on both
+changed/added files: clean.
+
 **Files changed:** `tldw_chatbook/Event_Handlers/note_ingest_events.py`
-(2-line functional change + comments); added
-`Tests/Event_Handlers/test_note_ingest_import_offload.py`.
+(the original `asyncio.to_thread` dispatch change, plus the snapshot list
+and `cancel_event` mechanisms from this round -- no longer a 2-line diff,
+see the file for the full change); `Tests/Event_Handlers/
+test_note_ingest_import_offload.py` (5 tests total, 2 added this round).

@@ -11,7 +11,7 @@ the main event loop -- freezing all UI input for the duration of a large
 import (see Docs/Design/2026-08-11-input-latency-audit.md). The fix wraps
 the now-plain-sync `import_worker_notes` in `asyncio.to_thread(...)`.
 
-This file adds three tests on top of (not replacing) the pre-existing
+This file adds five tests on top of (not replacing) the pre-existing
 `test_note_ingest_events.py` suite, which is left green and unmodified:
 
 1. An "evidence-seam" test: the per-file parse and per-note `add_note`
@@ -28,6 +28,23 @@ This file adds three tests on top of (not replacing) the pre-existing
    `backlog/docs/lessons-live-verification.md`, "Importing the test
    harness outside pytest is NOT config-isolated", for why a standalone
    script poking real `tldw_chatbook` DB/config code is unsafe here.
+
+Fix-round-1 (review, 2026-08-11) -- two side effects of AC1 itself (moving
+the loop off the event loop makes the app responsive DURING an import,
+which makes both of the below newly reachable in a way they weren't when
+the whole app was frozen for the duration):
+
+4. SHARED-LIST RACE: `app.selected_note_files_for_import` is a plain list
+   the main thread can mutate mid-import (e.g. "Clear Selection"). The
+   loop now iterates a snapshot taken before dispatch; this test mutates
+   the live list from the loop side mid-import and asserts the import
+   still completes over the original selection.
+5. QUIT-DURING-IMPORT: cancelling the wrapping coroutine used to leave the
+   background thread running the whole batch unattended (a `threading`
+   worker cannot be forcibly interrupted). A cooperative `cancel_event`,
+   checked between notes/files, now stops it at the next boundary; this
+   test cancels mid-import and asserts the loop stops early with no false
+   "N imported" success accounting.
 """
 
 import asyncio
@@ -309,4 +326,147 @@ async def test_note_import_probe_hundreds_of_real_notes_before_after(
     assert after_elapsed < max(before_elapsed * 3, before_elapsed + 0.25), (
         f"import wall time regressed materially: before={before_elapsed:.3f}s, "
         f"after={after_elapsed:.3f}s"
+    )
+
+
+# --- 4. Fix-round-1: shared-list race (review finding, 2026-08-11) ---
+
+
+@pytest.mark.asyncio
+async def test_import_worker_completes_over_snapshot_when_list_mutated_mid_import(
+    tmp_path,
+):
+    """TASK-15468 fix-round-1: `app.selected_note_files_for_import` is a
+    plain list the main thread can mutate while the import runs on its
+    worker thread -- "Clear Selection" is a plausible mid-import click. If
+    the loop iterated the live list, a mid-import `.clear()` would silently
+    truncate it (incomplete import, no error). It must instead iterate a
+    snapshot taken before dispatch, so a later mutation of the live list
+    cannot affect an in-flight import.
+
+    Mutates the list from inside `add_note`'s side effect -- i.e. from the
+    loop side, on the worker thread, mid-batch -- to simulate the timing of
+    a concurrent main-thread click without needing a real race.
+    """
+    note_files = _write_note_files(tmp_path, note_count=6, files=3)
+    app = _make_mock_app(note_files)
+
+    call_count = {"n": 0}
+
+    def add_note_side_effect(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Simulate "Clear Selection" landing on the main thread while
+            # this (worker-thread) loop is mid-import.
+            app.selected_note_files_for_import.clear()
+        return f"note-id-{call_count['n']}"
+
+    app.notes_service.add_note = Mock(side_effect=add_note_side_effect)
+
+    worker_callable = await _dispatch_and_get_worker(app)
+    results = await worker_callable()
+
+    assert app.selected_note_files_for_import == [], (
+        "the mid-import mutation itself did not take effect -- test setup "
+        "is broken"
+    )
+    successes = [r for r in results if r.get("status") == "success"]
+    assert len(successes) == 6, (
+        f"expected all 6 originally-selected notes to import despite "
+        f"selected_note_files_for_import being cleared mid-import; got "
+        f"{len(successes)} successes -- the loop is reading the live list "
+        "instead of a snapshot (task-15468 shared-list-race regression)"
+    )
+
+
+# --- 5. Fix-round-1: quit-during-import cancellation (review finding, 2026-08-11) ---
+
+
+@pytest.mark.asyncio
+async def test_import_cancellation_stops_at_a_note_boundary_with_honest_accounting(
+    tmp_path,
+):
+    """TASK-15468 fix-round-1: cancelling the wrapping coroutine (e.g. app
+    shutdown cancelling outstanding workers) must not leave the background
+    thread running the rest of the batch unattended. The cooperative
+    `cancel_event` must make it stop at the next note boundary, with no
+    crash, and it must not report a false "N imported" success summary for
+    a batch that never finished.
+
+    A per-note delay is used so the (otherwise much faster) worker thread
+    doesn't race straight through the whole batch before the event loop
+    gets a chance to actually deliver the cancellation -- this is purely a
+    test-determinism aid; the mechanism under test (the cooperative
+    `cancel_event` check) is real production code.
+    """
+    note_count = 40
+    per_note_delay = 0.01  # seconds
+    cancel_at = 5  # request cancellation while committing the 5th note
+    note_files = _write_note_files(tmp_path, note_count=note_count, files=4)
+    app = _make_mock_app(note_files)
+
+    loop = asyncio.get_running_loop()
+    call_count = {"n": 0}
+    task_holder: dict = {}
+
+    def add_note_side_effect(**kwargs):
+        call_count["n"] += 1
+        n = call_count["n"]
+        if n == cancel_at:
+            # Request cancellation the way app shutdown would -- from
+            # outside the worker thread, thread-safely, on the loop that
+            # owns the Task.
+            loop.call_soon_threadsafe(task_holder["task"].cancel)
+        time.sleep(per_note_delay)
+        return f"note-id-{n}"
+
+    app.notes_service.add_note = Mock(side_effect=add_note_side_effect)
+
+    worker_callable = await _dispatch_and_get_worker(app)
+    import_task = asyncio.ensure_future(worker_callable())
+    task_holder["task"] = import_task
+
+    with pytest.raises(asyncio.CancelledError):
+        await import_task
+
+    # The background thread is not forcibly killable -- `import_task`
+    # being cancelled/done only means the *coroutine* gave up on it; the
+    # thread itself keeps running until `import_worker_notes` next checks
+    # `cancel_event` and returns. Poll a bounded window until the call
+    # count stops growing (the thread has actually stopped), rather than
+    # asserting immediately.
+    stable_count = None
+    for _ in range(50):  # up to ~1s
+        await asyncio.sleep(0.02)
+        if call_count["n"] == stable_count:
+            break
+        stable_count = call_count["n"]
+    else:
+        pytest.fail(
+            f"add_note call count never stabilized (still at "
+            f"{call_count['n']} after the polling window) -- the "
+            "background thread does not appear to have stopped"
+        )
+
+    final_count = call_count["n"]
+    assert cancel_at <= final_count <= cancel_at + 15, (
+        f"expected the import to stop within a small number of notes after "
+        f"cancellation was requested at note {cancel_at}; add_note was "
+        f"called {final_count} times total"
+    )
+    assert final_count < note_count, (
+        f"add_note was called {final_count}/{note_count} times -- the "
+        "cancelled import ran to completion instead of stopping at a "
+        "boundary (task-15468 quit-during-import regression)"
+    )
+
+    # Honest accounting: a cancelled import must never report the false
+    # "N imported" success summary `on_import_success_notes` produces --
+    # that summary is for a batch that actually finished.
+    notify_messages = [
+        str(c.args[0]) for c in app.notify.call_args_list if c.args
+    ]
+    assert not any("import finished" in msg.lower() for msg in notify_messages), (
+        f"a cancelled import fired the completed-import notification "
+        f"anyway: {notify_messages}"
     )

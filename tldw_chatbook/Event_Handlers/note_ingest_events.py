@@ -5,6 +5,7 @@
 # Imports
 import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, List, Any, Dict
 
@@ -342,6 +343,34 @@ async def handle_ingest_notes_import_now_button_pressed(
 
     user_id = app.notes_user_id
 
+    # TASK-15468 fix-round-1 (SHARED-LIST RACE): once the loop runs on a
+    # worker thread, the main thread keeps handling clicks concurrently --
+    # including "Clear Selection", which does
+    # `app.selected_note_files_for_import.clear()`. Iterating the live list
+    # from the thread would let a mid-import click silently truncate the
+    # loop (incomplete import, no error). Snapshot it once here, on the
+    # event loop, synchronously and before the thread hop (this whole
+    # handler runs without an intervening `await` up to `run_worker(...)`
+    # below, so there is no race window on the snapshot itself), and have
+    # the loop iterate ONLY the snapshot -- never the live, mutable list.
+    note_files_snapshot: List[Path] = list(app.selected_note_files_for_import)
+
+    # TASK-15468 fix-round-1 (QUIT-DURING-IMPORT): cooperative cancellation.
+    # `asyncio.to_thread`'s awaited future is cancelled promptly when this
+    # coroutine's Task is cancelled (e.g. app shutdown cancels outstanding
+    # workers), but the background thread itself is NOT interruptible -- it
+    # keeps running `import_worker_notes` to completion regardless of the
+    # coroutine giving up on it, which can block process shutdown on the
+    # executor for as long as the whole batch takes (up to ~300s on a
+    # large import), with no indication to the user. This Event lets the
+    # thread notice a cancellation request and stop at the next note/file
+    # boundary instead of finishing the rest of the batch unattended.
+    # Honest residual: the note/template *currently* being committed when
+    # cancellation is requested still finishes -- there is no way to
+    # interrupt a single `add_note` call or a single file parse mid-flight,
+    # only between them.
+    cancel_event = threading.Event()
+
     def import_worker_notes():
         """Per-file/per-note import loop.
 
@@ -356,6 +385,13 @@ async def handle_ingest_notes_import_now_button_pressed(
         UI input for the duration of a large import (see
         Docs/Design/2026-08-11-input-latency-audit.md). It is now dispatched
         via ``asyncio.to_thread`` instead, which needs a plain sync callable.
+
+        TASK-15468 fix-round-1: iterates `note_files_snapshot` (a copy taken
+        on the event loop before dispatch), never the live
+        `app.selected_note_files_for_import`, and checks `cancel_event`
+        between files and between notes so a cancelled import (app
+        shutdown) stops at the next boundary instead of running the whole
+        batch unattended.
         """
         results = []
 
@@ -380,12 +416,21 @@ async def handle_ingest_notes_import_now_button_pressed(
                 except Exception as e:
                     logger.error(f"Error loading existing templates: {e}")
 
-            # Process each file
-            for file_path in app.selected_note_files_for_import:
+            # Process each file (TASK-15468: snapshot, not the live list)
+            for file_path in note_files_snapshot:
+                if cancel_event.is_set():
+                    logger.info(
+                        "Template import cancelled; stopping at file boundary."
+                    )
+                    break
                 notes_in_file = _parse_single_note_file_for_preview(
                     file_path, app, import_as_template=True
                 )
+                file_cancelled = False
                 for note_data in notes_in_file:
+                    if cancel_event.is_set():
+                        file_cancelled = True
+                        break
                     if (
                         "error" in note_data
                         or not note_data.get("title")
@@ -452,8 +497,14 @@ async def handle_ingest_notes_import_now_button_pressed(
                                 "message": f"Error: {type(e).__name__}",
                             }
                         )
+                if file_cancelled:
+                    logger.info(
+                        "Template import cancelled; stopping at note boundary."
+                    )
+                    break
 
-            # Save all templates
+            # Save all templates parsed so far (honest partial progress if
+            # cancelled -- see cancel_event above).
             if any(r["status"] == "success" for r in results):
                 try:
                     output = {"templates": templates}
@@ -471,10 +522,21 @@ async def handle_ingest_notes_import_now_button_pressed(
                             r["message"] = f"Template imported but failed to save: {e}"
 
         else:
-            # Import as notes (existing logic)
-            for file_path in app.selected_note_files_for_import:
+            # Import as notes (existing logic). TASK-15468: snapshot, not
+            # the live list; checked for cancellation between files and
+            # between notes.
+            for file_path in note_files_snapshot:
+                if cancel_event.is_set():
+                    logger.info(
+                        "Note import cancelled; stopping at file boundary."
+                    )
+                    break
                 notes_in_file = _parse_single_note_file_for_preview(file_path, app)
+                file_cancelled = False
                 for note_data in notes_in_file:
+                    if cancel_event.is_set():
+                        file_cancelled = True
+                        break
                     if (
                         "error" in note_data
                         or not note_data.get("title")
@@ -530,6 +592,9 @@ async def handle_ingest_notes_import_now_button_pressed(
                                 "message": f"Unexpected error: {type(e).__name__}",
                             }
                         )
+                if file_cancelled:
+                    logger.info("Note import cancelled; stopping at note boundary.")
+                    break
         return results
 
     def on_import_success_notes(results: List[Dict[str, Any]]):
@@ -663,8 +728,24 @@ async def handle_ingest_notes_import_now_button_pressed(
         # that changed to fix the import-freezes-the-app symptom; everything
         # else in this function (ordering, exception handling, callback
         # dispatch) is unchanged from before.
+        #
+        # TASK-15468 fix-round-1 (QUIT-DURING-IMPORT): an `asyncio.Future`
+        # in PENDING state (which is what `asyncio.to_thread` awaits)
+        # cancels immediately when this coroutine's Task is cancelled --
+        # even though the underlying executor thread keeps running
+        # `import_worker_notes` regardless, since a running thread cannot
+        # be forcibly interrupted. Catching `CancelledError` here and
+        # setting `cancel_event` lets that still-running thread notice the
+        # cancellation and return early (see `import_worker_notes`'s
+        # per-file/per-note checks), bounding how long it keeps running
+        # unattended -- and therefore how long process shutdown can block
+        # waiting on the executor -- to "until the next note/file
+        # boundary" instead of "the rest of the batch".
         try:
             results = await asyncio.to_thread(import_worker_notes)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            raise
         except Exception as e:
             on_import_failure_notes(e)
             raise
