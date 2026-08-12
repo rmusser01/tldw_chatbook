@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+import json
+
+from tldw_chatbook.Sync_Interop.crypto import (
+    encrypt_sync_payload,
+    generate_dataset_key,
+)
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 
@@ -50,6 +55,34 @@ class RecordingLocalStore:
 
     def record_conflict(self, conflict: dict) -> None:
         self.conflicts.append(conflict)
+
+
+def _provider_continuation_json(*, canary: str = "private reasoning") -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k2",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [canary],
+                    "calls": [
+                        {
+                            "call_id": "call-1",
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
 
 
 def test_note_applier_records_conflict_instead_of_overwriting_divergent_content() -> (
@@ -178,6 +211,112 @@ def test_chat_applier_allows_versioned_message_update() -> None:
         "role": "assistant",
     }
     assert store.conflicts == []
+
+
+def test_chat_applier_attaches_valid_continuation_to_exact_stable_message() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    canary = "APPLIER-PRIVATE-CANARY"
+
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="variant-message-2",
+        role="assistant",
+        content="winning visible answer",
+        variant_turn_id="turn-1",
+        variant_index=2,
+        provider_continuation_json=_provider_continuation_json(canary=canary),
+    )
+
+    result = applier.apply(envelope)
+
+    assert result == {"status": "applied"}
+    payload = store.chat_messages["conversation-1:variant-message-2"]
+    assert payload["content"] == "winning visible answer"
+    assert json.loads(payload["provider_continuation_json"])["rounds"][0][
+        "reasoning_blocks"
+    ] == [canary]
+    assert "conversation-1:variant-message-1" not in store.chat_messages
+
+
+def test_chat_applier_drops_invalid_private_data_but_applies_visible_message() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    canary = "INVALID-REMOTE-PRIVATE-CANARY"
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="visible survives",
+    )
+    invalid_payload = {
+        "content": "visible survives",
+        "role": "assistant",
+        "provider_continuation_json": canary,
+    }
+    envelope = envelope.model_copy(
+        update={
+            "payload_ciphertext": encrypt_sync_payload(
+                invalid_payload, key=dataset_key
+            ).model_dump_json(),
+            "payload_hash": builder._payload_hash(invalid_payload),
+        }
+    )
+
+    result = applier.apply(envelope)
+
+    assert result["status"] == "applied"
+    assert result["warning"] == "Exact tool continuation was discarded."
+    assert store.chat_messages["conversation-1:message-1"] == {
+        "content": "visible survives",
+        "role": "assistant",
+    }
+    assert canary not in json.dumps(result)
+
+
+def test_chat_conflict_never_field_merges_content_and_continuation() -> None:
+    dataset_key = generate_dataset_key()
+    first_builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    second_builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-2", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    local = first_builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="local winner",
+        provider_continuation_json=_provider_continuation_json(canary="LOCAL-OWNER"),
+    )
+    remote = second_builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="remote loser",
+        provider_continuation_json=_provider_continuation_json(canary="REMOTE-OWNER"),
+        base_version="sha256:stale-base",
+    )
+
+    assert applier.apply(local)["status"] == "applied"
+    assert applier.apply(remote)["status"] == "conflict"
+
+    winner = store.chat_messages["conversation-1:message-1"]
+    assert winner["content"] == "local winner"
+    assert json.loads(winner["provider_continuation_json"])["rounds"][0][
+        "reasoning_blocks"
+    ] == ["LOCAL-OWNER"]
+    assert "REMOTE-OWNER" not in json.dumps(winner)
 
 
 def test_workspace_and_source_cache_appliers_route_to_local_store() -> None:

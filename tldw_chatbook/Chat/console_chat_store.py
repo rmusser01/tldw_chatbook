@@ -402,6 +402,17 @@ class ConsoleChatSyncProducer(Protocol):
     def enqueue_chat_message(self, **kwargs: Any) -> dict[str, Any]:
         """Enqueue a Chat message into the Sync v2 local outbox."""
 
+    def reconcile_chat_message_intent(self, **kwargs: Any) -> dict[str, Any]:
+        """Project an exact committed source intent into durable sync state."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationDurabilityResult:
+    """Bounded, private-data-free result for the execution durability barrier."""
+
+    ready: bool
+    reason: str
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -4722,6 +4733,111 @@ class ConsoleChatStore:
             return
         session_id = self._message_session_index[message.id]
         self._persist_new_message(session_id=session_id, message=message)
+
+    def ensure_provider_continuation_durable(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> ContinuationDurabilityResult:
+        """Require exact local intent durability and configured portable projection."""
+        source_db = self.persistence.db if self.persistence is not None else None
+        reader = getattr(source_db, "read_committed_chat_sync_intent", None)
+        if not callable(reader):
+            return ContinuationDurabilityResult(
+                False,
+                "Local continuation storage is unavailable; save the message and retry.",
+            )
+        source_record = reader(
+            message_id=message_id,
+            message_version=message_version,
+            payload_hash=payload_hash,
+        )
+        if source_record is None:
+            return ContinuationDurabilityResult(
+                False,
+                "Local continuation intent is stale or unavailable; save and retry.",
+            )
+        if self.sync_v2_server_profile_id is None:
+            return ContinuationDurabilityResult(True, "local_intent_durable")
+
+        producer = self.sync_v2_chat_producer
+        if producer is None:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection is unavailable; restore sync configuration.",
+            )
+        repository = getattr(producer, "state_repository", None)
+        if repository is None or getattr(repository, "is_durable", False) is not True:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync needs a file-backed state repository; configure one and retry.",
+            )
+        if getattr(producer, "source", None) is not source_db:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync source does not match local continuation storage.",
+            )
+        reconcile = getattr(producer, "reconcile_chat_message_intent", None)
+        if not callable(reconcile):
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection is unavailable; restore sync configuration.",
+            )
+        try:
+            projection = reconcile(
+                server_profile_id=self.sync_v2_server_profile_id,
+                authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                workspace_scope=self.sync_v2_workspace_scope,
+                message_id=message_id,
+                message_version=message_version,
+                payload_hash=payload_hash,
+            )
+            profile = repository.get_sync_v2_profile_state(
+                server_profile_id=self.sync_v2_server_profile_id,
+                authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                workspace_scope=self.sync_v2_workspace_scope,
+            )
+            dataset_id = profile.get("dataset_id") if profile else None
+            persisted_receipt = (
+                repository.get_sync_v2_source_projection_receipt(
+                    server_profile_id=self.sync_v2_server_profile_id,
+                    authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                    workspace_scope=self.sync_v2_workspace_scope,
+                    dataset_id=dataset_id,
+                    domain="chat",
+                    source_entity_id=message_id,
+                    source_version=message_version,
+                    source_payload_hash=payload_hash,
+                )
+                if dataset_id
+                else None
+            )
+        except Exception:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection failed; restore local sync state and retry.",
+            )
+        projected_receipt = (
+            projection.get("receipt") if isinstance(projection, Mapping) else None
+        )
+        if (
+            not isinstance(projection, Mapping)
+            or projection.get("status") != "enqueued"
+            or not isinstance(projected_receipt, Mapping)
+            or persisted_receipt is None
+            or projected_receipt.get("client_envelope_id")
+            != persisted_receipt.get("client_envelope_id")
+            or persisted_receipt.get("source_entity_id") != message_id
+            or persisted_receipt.get("source_version") != message_version
+            or persisted_receipt.get("source_payload_hash") != payload_hash
+        ):
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync receipt is missing or inconsistent; reconcile and retry.",
+            )
+        return ContinuationDurabilityResult(True, "portable_projection_durable")
 
     def _enqueue_sync_v2_message_if_ready(
         self,

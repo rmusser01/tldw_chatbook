@@ -46,7 +46,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence
+from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncIntentRecord
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -12574,6 +12577,120 @@ UPDATE db_schema_version
         return [dict(row) for row in cursor.fetchall()]
 
     # --- Sync Log Methods ---
+    def read_committed_chat_sync_intent(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> "ChatSyncIntentRecord | None":
+        """Return one exact committed message intent without exposing private data."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+            ChatSyncIntentRecord,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if (
+            type(message_id) is not str
+            or not message_id
+            or type(message_version) is not int
+            or message_version < 1
+            or type(payload_hash) is not str
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", payload_hash)
+        ):
+            return None
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return None
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                       m.role, m.content, m.image_mime_type,
+                       m.provider_continuation_json, m.timestamp, m.ranking,
+                       m.last_modified, m.deleted, m.client_id, m.version,
+                       intent.operation, intent.payload
+                  FROM messages AS m
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.id = ? AND m.version = ?
+                 ORDER BY intent.change_id
+                """,
+                (message_id, message_version),
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            row = rows[0]
+            if row["deleted"] or row["operation"] not in {"create", "update"}:
+                return None
+            intent_payload = json.loads(row["payload"])
+            if type(intent_payload) is not dict:
+                return None
+
+            def intent_value(value: Any) -> Any:
+                if isinstance(value, datetime):
+                    return (
+                        value.astimezone(timezone.utc)
+                        .isoformat(timespec="milliseconds")
+                        .replace("+00:00", "Z")
+                    )
+                return value
+
+            expected_intent = {
+                "id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "parent_message_id": row["parent_message_id"],
+                "sender": row["sender"],
+                "content": row["content"],
+                "image_mime_type": row["image_mime_type"],
+                "provider_continuation_json": row["provider_continuation_json"],
+                "timestamp": intent_value(row["timestamp"]),
+                "ranking": row["ranking"],
+                "last_modified": intent_value(row["last_modified"]),
+                "deleted": row["deleted"],
+                "client_id": row["client_id"],
+                "version": row["version"],
+            }
+            if intent_payload != expected_intent:
+                return None
+
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+            envelope_payload = {"content": content, "role": role}
+            if private_json is not None:
+                envelope_payload["provider_continuation_json"] = private_json
+            if canonical_payload_hash(envelope_payload) != payload_hash:
+                return None
+            return ChatSyncIntentRecord(
+                conversation_id=row["conversation_id"],
+                message_id=row["id"],
+                role=role,
+                content=content,
+                parent_message_id=row["parent_message_id"],
+                provider_continuation_json=private_json,
+                message_version=message_version,
+                payload_hash=payload_hash,
+            )
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return None
+
     def get_sync_log_entries(
         self,
         since_change_id: int = 0,
