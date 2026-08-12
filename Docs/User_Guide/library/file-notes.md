@@ -77,9 +77,10 @@ to go, then press the relevant button.
 | **Delete** | Two-press: first press shows "Click Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
-| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Conflict or Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
 | **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
-| **Save draft as copy** | Writes the complete editor draft to the typed path; only enabled while the save status is Dirty, Conflict, or Error |
+| **Resolve conflict** | Appears only for a Conflict and discloses the three bounded choices described below; none overwrites the changed disk file |
+| **Save draft as copy** | Writes the complete editor draft to the typed path; enabled while the save status is Dirty or Error. In Conflict, use **Resolve conflict** and **Save draft as new note** instead |
 | **Export exact copy** | Replaces **Save draft as copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
@@ -92,6 +93,21 @@ comparisons; oversized sides keep their exact sizes and SHA-256 identities and
 report that diff output was omitted or elided. A deleted or unreadable Disk side
 is named explicitly. Closing Compare returns to the conflict without resolving
 it or changing any side.
+
+**Resolve conflict** keeps **Compare** available and opens three explicit safe
+choices:
+
+- **Keep editing** closes the resolution choices and returns focus to
+  **Resolve conflict**. The Base, Draft, Disk, and Conflict state are unchanged.
+- **Save draft as new note** uses the path input, labeled "New note path" while
+  the choices are open. It writes the exact draft only when that destination
+  does not already exist, then opens the new note after the write succeeds.
+- **Discard draft and load disk** opens the same Cancel-first, freshness-checked
+  confirmation described below. It is the only resolution choice that can
+  replace the editor draft.
+
+There is no overwrite choice. If the proposed new-note destination already
+exists, File Notes leaves both that file and the conflict draft unchanged.
 
 **Discard draft and reload** first reads the current disk
 version and asks for confirmation. **Cancel** or **Escape** preserves the exact
@@ -232,7 +248,11 @@ not available.
    a **Search results** tree appears under the **Files** tree; pick a result
    to open that file. Activate **Load more** when a direct-path result set has
    another 100 rows. Clear the query and the tree disappears.
-4. **Stage and commit this session's edits, then push the exact commit.** Press
+4. **Resolve a disk conflict.** Use **Compare** to inspect Base, Draft, and
+   Disk. Press **Resolve conflict**, then either keep editing, save the exact
+   draft to an absent new-note path, or enter the Cancel-first discard
+   confirmation. No choice overwrites the changed disk file.
+5. **Stage and commit this session's edits, then push the exact commit.** Press
    **Session Git (N)**,
    trust the repository if asked, press **Stage all (N)**, then
    **Commit staged (N)**. Fill in **Subject**, press **Review commit**,
@@ -242,7 +262,7 @@ not available.
    **Authorize and check**, review the exact destination and parent lease, and
    finally choose **Push 1 commit**. If the result is **Uncertain**, use
    **Check remote again — no push** instead of pushing again.
-5. **Restore a deleted file.** After a delete the breadcrumb shows
+6. **Restore a deleted file.** After a delete the breadcrumb shows
    "Recently deleted: \<path\>" — press **Restore** and the file is back on
    disk and in the tree.
 
@@ -253,7 +273,7 @@ not available.
 | Up / Down (Session Git panel) | Select a row |
 | Tab (Session Git panel) | Move into the selected row's actions |
 | Enter (Session Git panel) | Run the highlighted action |
-| Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to **Discard draft and reload** |
+| Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to the action that opened the confirmation |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
 
