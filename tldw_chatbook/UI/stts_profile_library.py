@@ -280,7 +280,11 @@ class VoiceBundleActionProjection:
     """Immutable visible and executable truth for one portability action."""
 
     operation: Literal[
-        "sanitized_export", "bundle_export", "import_create", "import_reuse", "import_copy"
+        "sanitized_export",
+        "bundle_export",
+        "import_create",
+        "import_reuse",
+        "import_copy",
     ]
     label: str
     tooltip: str
@@ -310,10 +314,7 @@ def voice_bundle_export_actions(
     bundle = VoiceBundleActionProjection(
         operation="bundle_export",
         label="Export portable voice bundle",
-        tooltip=(
-            bundle_recovery
-            or "Export plaintext voice audio and transcript."
-        ),
+        tooltip=(bundle_recovery or "Export plaintext voice audio and transcript."),
         disabled=bundle_disabled,
         recovery=bundle_recovery,
     )
@@ -327,9 +328,7 @@ def voice_bundle_import_choice(
 ) -> TTSVoiceBundleImportChoice:
     """Translate only an enabled projected import operation for the service."""
 
-    choices: dict[
-        str, Literal["create", "reuse", "copy"]
-    ] = {
+    choices: dict[str, Literal["create", "reuse", "copy"]] = {
         "import_create": "create",
         "import_reuse": "reuse",
         "import_copy": "copy",
@@ -412,8 +411,7 @@ def _availability_cell_text(availability: TTSProfileAvailability | None) -> str:
         return availability.dependency.display
     if availability.dependency.advisory_display:
         return (
-            f"{availability.state.title()} · "
-            f"{availability.dependency.advisory_display}"
+            f"{availability.state.title()} · {availability.dependency.advisory_display}"
         )
     if availability.state == "unverified" and availability.recovery_action == "none":
         return _PROFILE_NO_CATALOG_CHECK_COPY
@@ -544,9 +542,7 @@ class TTSCloneProfileSaveReview:
             raise TypeError("choose_character must be a boolean")
 
 
-class TTSCloneProfileSaveReviewModal(
-    ModalScreen[TTSCloneProfileSaveReview | None]
-):
+class TTSCloneProfileSaveReviewModal(ModalScreen[TTSCloneProfileSaveReview | None]):
     """Review a clone result and choose whether to continue to Roleplay."""
 
     BINDINGS = (("escape", "dismiss", "Cancel"),)
@@ -1126,7 +1122,11 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
             )
         options = tuple(
             (
-                {"create": "Create profile", "reuse": "Reuse exact duplicate", "copy": "Create copy"}[choice],
+                {
+                    "create": "Create profile",
+                    "reuse": "Reuse exact duplicate",
+                    "copy": "Create copy",
+                }[choice],
                 choice,
             )
             for choice in review.allowed_choices
@@ -1152,9 +1152,15 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
                 "Create this profile inactive until a compatible model is available.",
                 id="stts-bundle-inactive-consent",
             )
-            yield Static("", id="stts-bundle-review-recovery", classes="stts-portability-recovery")
+            yield Static(
+                "",
+                id="stts-bundle-review-recovery",
+                classes="stts-portability-recovery",
+            )
             with Horizontal(classes="stts-portability-actions"):
-                yield Button("Confirm", id="stts-bundle-review-confirm", variant="primary")
+                yield Button(
+                    "Confirm", id="stts-bundle-review-confirm", variant="primary"
+                )
                 yield Button("Cancel", id="stts-bundle-review-cancel")
 
     def on_mount(self) -> None:
@@ -1163,7 +1169,10 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
 
     def _sync_action(self) -> VoiceBundleActionProjection:
         consent = self.query_one("#stts-bundle-inactive-consent", Checkbox)
-        needs_consent = self._choice in {"create", "copy"} and self.review.dependency_state != "exact"
+        needs_consent = (
+            self._choice in {"create", "copy"}
+            and self.review.dependency_state != "exact"
+        )
         consent.display = needs_consent
         action = voice_bundle_review_action(
             self.review,
@@ -1174,7 +1183,9 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
         confirm.label = action.label
         confirm.disabled = action.disabled
         confirm.tooltip = action.tooltip
-        self.query_one("#stts-bundle-review-recovery", Static).update(action.recovery or "")
+        self.query_one("#stts-bundle-review-recovery", Static).update(
+            action.recovery or ""
+        )
         return action
 
     @on(Select.Changed, "#stts-bundle-review-choice")
@@ -1935,10 +1946,11 @@ class STTSProfileLibrary(Widget):
         container = self.query_one("#stts-profile-dependency-actions", Horizontal)
         container.display = bool(actions)
         container.set_class(not actions, "hidden")
-        for role, selector in (
+        role_selectors: tuple[tuple[Literal["blocker", "advisory"], str], ...] = (
             ("blocker", "#stts-profile-dependency-primary-btn"),
             ("advisory", "#stts-profile-dependency-advisory-btn"),
-        ):
+        )
+        for role, selector in role_selectors:
             button = self.query_one(selector, Button)
             action = actions_by_role.get(role)
             button.display = action is not None
@@ -2463,9 +2475,7 @@ class STTSProfileLibrary(Widget):
         if loaded is None or not self._action_target_is_current(loaded):
             return False
         profile = loaded.profile
-        operation: Literal["sanitized_export", "bundle_export"] = (
-            "sanitized_export"
-        )
+        operation: Literal["sanitized_export", "bundle_export"] = "sanitized_export"
         reference = profile.reference
         if reference is not None:
             bundle_disabled = not self._bundle_platform_supported
@@ -2480,7 +2490,11 @@ class STTSProfileLibrary(Widget):
             choice = await self._push_owned_modal(
                 TTSProfileExportChoiceModal(sanitized_action, bundle_action)
             )
-            if type(choice) is not VoiceBundleActionProjection or choice.disabled:
+            if (
+                type(choice) is not VoiceBundleActionProjection
+                or choice.disabled
+                or choice.operation not in {"sanitized_export", "bundle_export"}
+            ):
                 return False
             operation = choice.operation
         if operation == "bundle_export":
@@ -2554,7 +2568,9 @@ class STTSProfileLibrary(Widget):
         acknowledged = await self._push_owned_modal(
             TTSVoiceBundleConsentModal(mode="import")
         )
-        if acknowledged is not True or not self._portability_request_is_current(request_id):
+        if acknowledged is not True or not self._portability_request_is_current(
+            request_id
+        ):
             return False
         source = await self._choose_voice_bundle_import_path()
         if source is None or not self._portability_request_is_current(request_id):

@@ -219,9 +219,7 @@ class PersonasTestApp(App):
     async def _ensure_tts_profile_service(self):
         """Delegate the real app's private lazy loader when a test provides it."""
 
-        loader = self.__dict__["_mock"].__dict__.get(
-            "_ensure_tts_profile_service"
-        )
+        loader = self.__dict__["_mock"].__dict__.get("_ensure_tts_profile_service")
         if not callable(loader):
             return None
         result = loader()
@@ -300,10 +298,7 @@ def _shared_pane_publication(screen) -> dict[str, object]:
     rendered_rows = tuple(
         (
             str(row.id),
-            tuple(
-                str(static.renderable)
-                for static in row.query(Static).results()
-            ),
+            tuple(str(static.renderable) for static in row.query(Static).results()),
         )
         for row in library.query(".personas-library-row").results()
     )
@@ -340,9 +335,7 @@ def _observe_shared_mode_render(
     """Mark a real mode renderer as started and stamp owner-distinct labels."""
     library = screen.query_one("#personas-library-pane")
     method_name = (
-        "_render_dictionary_rows"
-        if mode == "dictionaries"
-        else "_render_lore_rows"
+        "_render_dictionary_rows" if mode == "dictionaries" else "_render_lore_rows"
     )
     original_render = getattr(screen, method_name)
     owner_sort = f"Sort: {mode} owner"
@@ -734,7 +727,9 @@ class TestWorkbenchShell:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
             # F-038: chip tooltips carry their Ctrl+N jump key.
-            assert lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
+            assert (
+                lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
+            )
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
@@ -1242,9 +1237,7 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
 
             empty = screen.query_one("#personas-library-empty", Static)
-            assert (
-                str(empty.renderable) == "No personas yet - use New to add one."
-            )
+            assert str(empty.renderable) == "No personas yet - use New to add one."
             assert not list(screen.query("#personas-service-error"))
 
     async def test_profile_selection_shows_card(
@@ -1351,9 +1344,7 @@ class TestPersonasMode:
             screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
 
-            description = screen.query_one(
-                "#personas-editor-description", TextArea
-            )
+            description = screen.query_one("#personas-editor-description", TextArea)
             personality_traits = screen.query_one(
                 "#personas-editor-personality-traits", TextArea
             )
@@ -1451,12 +1442,14 @@ class TestPersonasMode:
 
             request = stub_scope_service.create_persona_profile.await_args.args[0]
             assert isinstance(request, PersonaProfileCreate)
-            assert request.model_dump().keys().isdisjoint(
-                {"description", "personality_traits"}
+            assert (
+                request.model_dump()
+                .keys()
+                .isdisjoint({"description", "personality_traits"})
             )
-            assert stub_scope_service.create_persona_profile.await_args.kwargs["mode"] == (
-                "server"
-            )
+            assert stub_scope_service.create_persona_profile.await_args.kwargs[
+                "mode"
+            ] == ("server")
 
     async def test_server_profile_edit_blocks_and_omits_local_only_fields(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1475,8 +1468,7 @@ class TestPersonasMode:
 
             assert screen.query_one("#personas-editor-description").disabled is True
             assert (
-                screen.query_one("#personas-editor-personality-traits").disabled
-                is True
+                screen.query_one("#personas-editor-personality-traits").disabled is True
             )
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1495,12 +1487,14 @@ class TestPersonasMode:
 
             request = stub_scope_service.update_persona_profile.await_args.args[1]
             assert isinstance(request, PersonaProfileUpdate)
-            assert request.model_dump().keys().isdisjoint(
-                {"description", "personality_traits"}
+            assert (
+                request.model_dump()
+                .keys()
+                .isdisjoint({"description", "personality_traits"})
             )
-            assert stub_scope_service.update_persona_profile.await_args.kwargs["mode"] == (
-                "server"
-            )
+            assert stub_scope_service.update_persona_profile.await_args.kwargs[
+                "mode"
+            ] == ("server")
 
     async def test_double_save_creates_once(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -2766,7 +2760,9 @@ class TestImportExport:
                     created=True,
                     availability="available",
                     loaded=LoadedTTSProfile(7, profile),
-                    assignment=CharacterTTSAssignment(character_ref, profile.profile_id),
+                    assignment=CharacterTTSAssignment(
+                        character_ref, profile.profile_id
+                    ),
                 )
 
         source = tmp_path / "portable-card.json"
@@ -2774,14 +2770,17 @@ class TestImportExport:
         monkeypatch.setattr(
             character_handler_module,
             "inspect_character_card_tts_attachment",
-            lambda source_bytes: events.append("inspect")
-            or CharacterCardTTSInspection(portable),
+            lambda source_bytes: (
+                events.append("inspect") or CharacterCardTTSInspection(portable)
+            ),
         )
         monkeypatch.setattr(
             character_handler_module,
             "import_character_card_with_outcome",
-            lambda source_bytes: events.append("character_write")
-            or CharacterCardImportOutcome(1, True, portable, None),
+            lambda source_bytes: (
+                events.append("character_write")
+                or CharacterCardImportOutcome(1, True, portable, None)
+            ),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -2904,8 +2903,7 @@ class TestImportExport:
                 screen,
                 "_resolve_import_collision_choice",
                 AsyncMock(
-                    side_effect=lambda _plan: events.append("collision_choice")
-                    or None
+                    side_effect=lambda _plan: events.append("collision_choice") or None
                 ),
             )
 
@@ -2934,7 +2932,9 @@ class TestImportExport:
                 options=profile.options,
             ),
         )
-        observation = PortableProfileAvailabilityObservation(7, 3, portable, "available")
+        observation = PortableProfileAvailabilityObservation(
+            7, 3, portable, "available"
+        )
 
         class _Service:
             async def observe_portable_profile(self, _profile):
@@ -4095,8 +4095,11 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled is True
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
-                screen.query_one("#personas-readiness-console", Static).renderable
+            assert (
+                "Chat now and Send to Console draft blocked: prompts are not attachable"
+                in str(
+                    screen.query_one("#personas-readiness-console", Static).renderable
+                )
             )
 
     async def test_readiness_surfaces_reflect_unready_character_provider(
@@ -4175,9 +4178,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled
                 is False
             )
-            assert (
-                screen.query_one("#personas-start-chat", Button).disabled is False
-            )
+            assert screen.query_one("#personas-start-chat", Button).disabled is False
 
     async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -4220,11 +4221,10 @@ class TestConsoleActions:
             )
             # Per-intent gating (task-523): Chat now disabled, Send to Console
             # draft enabled.
+            assert screen.query_one("#personas-start-chat", Button).disabled is True
             assert (
-                screen.query_one("#personas-start-chat", Button).disabled is True
-            )
-            assert (
-                screen.query_one("#personas-attach-to-console", Button).disabled is False
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
             )
 
     async def test_readiness_ready_when_handoff_provider_ready_despite_unready_character_provider(
@@ -4508,17 +4508,11 @@ class TestConsoleActions:
             ),
         )
 
-        row_dto = SimpleNamespace(
-            model_dump=Mock(return_value=dict(server_row))
-        )
-        detail_dto = SimpleNamespace(
-            model_dump=Mock(return_value=dict(server_card))
-        )
+        row_dto = SimpleNamespace(model_dump=Mock(return_value=dict(server_row)))
+        detail_dto = SimpleNamespace(model_dump=Mock(return_value=dict(server_card)))
         scope_service = SimpleNamespace(
             list_characters=AsyncMock(return_value=[row_dto]),
-            search_characters=AsyncMock(
-                return_value={"items": [row_dto], "total": 1}
-            ),
+            search_characters=AsyncMock(return_value={"items": [row_dto], "total": 1}),
             get_character=AsyncMock(return_value=detail_dto),
         )
         mock_app_instance.app_config = {
@@ -4567,9 +4561,7 @@ class TestConsoleActions:
             assert "Remote Elara: Remote hello from Remote Elara." in (
                 screen.query_one(PersonasPreviewPane).transcript_text()
             )
-            assert (
-                screen.query_one("#personas-character-attachments").display is False
-            )
+            assert screen.query_one("#personas-character-attachments").display is False
             assert (
                 screen.query_one("#personas-card-edit-character", Button).disabled
                 is True
@@ -4715,9 +4707,7 @@ class TestConsoleActions:
             }
             screen._sync_title_and_console_actions()
             await pilot.pause()
-            assert not screen.query_one("#personas-header").has_class(
-                "status-blocked"
-            )
+            assert not screen.query_one("#personas-header").has_class("status-blocked")
             ready_color = badge.styles.color
 
         assert blocked_color != ready_color
@@ -4966,9 +4956,9 @@ class TestServerCharacterSourceIsolation:
             ):
                 control = screen.query_one(control_id, Button)
                 assert control.disabled is True, control_id
-                assert control.tooltip == (
-                    "Server characters are read-only here."
-                ), control_id
+                assert control.tooltip == ("Server characters are read-only here."), (
+                    control_id
+                )
 
     async def test_server_footer_does_not_advertise_local_character_creation(
         self, mock_app_instance, stub_characters
@@ -5546,10 +5536,7 @@ class TestServerCharacterSourceIsolation:
                     return 1
                 if function is personas_screen_module.get_character_page_for_ui:
                     return [{"id": 7, "name": "Older Character Publication"}]
-                if (
-                    function
-                    is PersonasScreen._list_world_books_with_counts
-                ):
+                if function is PersonasScreen._list_world_books_with_counts:
                     return [
                         {
                             "id": 91,
@@ -5562,9 +5549,7 @@ class TestServerCharacterSourceIsolation:
 
             async def block_after_character_publication(rows, **kwargs):
                 await original_update_rows(rows, **kwargs)
-                if tuple(row.name for row in rows) == (
-                    "Older Character Publication",
-                ):
+                if tuple(row.name for row in rows) == ("Older Character Publication",):
                     stale_render_started.set()
                     await release_stale_render.wait()
 
@@ -5667,9 +5652,7 @@ class TestServerCharacterSourceIsolation:
                 raise AssertionError(f"Unexpected to_thread function: {function!r}")
 
             async def block_before_character_publication(rows, **kwargs):
-                if tuple(row.name for row in rows) == (
-                    "Older Character Publication",
-                ):
+                if tuple(row.name for row in rows) == ("Older Character Publication",):
                     character_writer_entered.set()
                     await release_character_writer.wait()
                 await original_update_rows(rows, **kwargs)
@@ -5687,9 +5670,7 @@ class TestServerCharacterSourceIsolation:
             screen._character_db = lambda: object()
             screen._count_cache_key = None
 
-            stale_character = asyncio.create_task(
-                screen._reload_character_page()
-            )
+            stale_character = asyncio.create_task(screen._reload_character_page())
             await wait_for_background_signal(
                 character_writer_entered,
                 stale_character,
@@ -5806,9 +5787,7 @@ class TestServerCharacterSourceIsolation:
             screen._count_cache_key = None
             screen.state.tag_filter = "older-tag"
 
-            stale_character = asyncio.create_task(
-                screen._reload_character_page()
-            )
+            stale_character = asyncio.create_task(screen._reload_character_page())
             await wait_for_background_signal(
                 initial_character_published,
                 stale_character,
@@ -6352,8 +6331,7 @@ class TestServerCharacterSourceIsolation:
                 )
                 expected_cache = prior_cache
                 expected_recovery = (
-                    "Dictionaries could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
                     if valid_mode == "dictionaries"
                     else "Lore books could not be loaded.\n"
                     "Switch modes and back to retry."
@@ -6473,9 +6451,7 @@ class TestServerCharacterSourceIsolation:
         elif changed_dimension == "tag":
             screen.state.tag_filter = "new-tag"
         else:
-            screen.state.page_offset = (
-                personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
-            )
+            screen.state.page_offset = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
         release.set()
         await load
 
@@ -7002,9 +6978,7 @@ class TestPreviewIntegration:
     async def _readout_text(self, screen):
         from textual.widgets import Static as _Static
 
-        return str(
-            screen.query_one("#personas-preview-provider", _Static).renderable
-        )
+        return str(screen.query_one("#personas-preview-provider", _Static).renderable)
 
     async def test_provider_readout_shows_character_and_fallback(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -7085,10 +7059,7 @@ class TestPreviewIntegration:
 
             assert fake.selections[0].provider == "anthropic"
             assert fake.selections[0].explicit_model is None
-            assert (
-                fake.selections[0].configured_model
-                == "claude-3-5-haiku-latest"
-            )
+            assert fake.selections[0].configured_model == "claude-3-5-haiku-latest"
 
     async def test_provider_readout_normalizes_whitespace_defaults(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -7557,9 +7528,7 @@ class TestPreviewIntegration:
                 "max_tokens": 321,
             },
             "api_settings": {
-                "llama_cpp": {
-                    "api_url": "http://127.0.0.1:8181/v1/chat/completions"
-                }
+                "llama_cpp": {"api_url": "http://127.0.0.1:8181/v1/chat/completions"}
             },
         }
         fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
@@ -8455,9 +8424,7 @@ class TestBulkLibraryActions:
         monkeypatch.setattr(
             character_handler_module,
             "fetch_all_characters",
-            lambda: [
-                dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)
-            ],
+            lambda: [dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)],
         )
 
         async def _confirm(name: str) -> bool:
@@ -8635,9 +8602,7 @@ class TestPersonaHumanIdentityRemoval:
             context_capture,
         ):
             assert context_capture is authority_capture
-            return await authority_resolver(
-                expected_server_id=expected_server_id
-            )
+            return await authority_resolver(expected_server_id=expected_server_id)
 
         class _CapturingStore(ConsoleChatStore):
             """Real in-memory Console store that records what was appended.
@@ -8683,9 +8648,7 @@ class TestPersonaHumanIdentityRemoval:
 
         runtime_app = SimpleNamespace(
             app_config=legacy_human_config.mapping,
-            active_server_id=(
-                server_target_id if runtime_source == "server" else None
-            ),
+            active_server_id=(server_target_id if runtime_source == "server" else None),
             chachanotes_db=db,
             character_persona_scope_service=server_profile_service,
             local_character_persona_service=local_profile_service,
@@ -8787,9 +8750,7 @@ class TestPersonaHumanIdentityRemoval:
             stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
-            await screen._after_profile_save(
-                {"id": "p-1", "name": "Chronicler"}
-            )
+            await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
             await pilot.pause()
             assert screen.state.selected_entity_name == "Chronicler"
 
@@ -8874,8 +8835,7 @@ class TestCharactersEmptyStateGuidance:
             assert screen.state.selected_entity_name == "Detective Sam"
             assert screen.query_one("#ccp-character-card-view").display is True
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             assert "Selected: Detective Sam" in str(
                 screen.query_one("#personas-selected-name", Static).renderable
@@ -8986,8 +8946,7 @@ class TestCharactersEmptyStateGuidance:
             # guidance is hidden from the start...
             assert screen.state.selected_entity_id == "1"
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             # ...and stays hidden when the selection moves to another row.
             await pilot.click("#personas-library-row-character-2")
@@ -8996,8 +8955,7 @@ class TestCharactersEmptyStateGuidance:
             await pilot.pause()
             assert screen.state.selected_entity_id == "2"
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             assert screen.query_one("#ccp-character-card-view").display is True
 
@@ -9010,14 +8968,12 @@ class TestCharactersEmptyStateGuidance:
             await screen._apply_mode("lore")
             await pilot.pause()
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             await screen._apply_mode("characters")
             await pilot.pause()
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is True
+                screen.query_one("#personas-characters-empty", Static).display is True
             )
 
     async def test_guidance_returns_after_delete(
@@ -9032,8 +8988,7 @@ class TestCharactersEmptyStateGuidance:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is False
+                screen.query_one("#personas-characters-empty", Static).display is False
             )
             self._bypass_confirm(screen, True)
             screen.query_one("#personas-delete", Button).press()
@@ -9042,8 +8997,7 @@ class TestCharactersEmptyStateGuidance:
             await pilot.pause()
             assert not screen.state.selected_entity_id
             assert (
-                screen.query_one("#personas-characters-empty", Static).display
-                is True
+                screen.query_one("#personas-characters-empty", Static).display is True
             )
 
 
@@ -9587,7 +9541,9 @@ class TestDirtyTracking:
             footer = screen.query_one(AppFooterStatus)
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
-            assert "ctrl+enter send to console draft" not in footer.shortcut_text.lower()
+            assert (
+                "ctrl+enter send to console draft" not in footer.shortcut_text.lower()
+            )
             await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -9774,8 +9730,7 @@ class TestImportExportFilters:
             assert "Markdown Files" in filter_by_name
             assert filter_by_name["Character Cards"](Path("character.md")) is False
             assert (
-                filter_by_name["Character Cards"](Path("character.markdown"))
-                is False
+                filter_by_name["Character Cards"](Path("character.markdown")) is False
             )
             assert filter_by_name["Markdown Files"](Path("character.md")) is True
             assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
@@ -9810,7 +9765,6 @@ class TestImportExportFilters:
             assert card_images(Path("x.png")) is True
             assert card_images(Path("x.webp")) is True
             assert card_images(Path("x.json")) is False
-
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -9931,7 +9885,9 @@ async def test_character_row_meta_prefers_a_description_snippet_over_the_date() 
     assert "archivist of a drowned library" in rows[0].meta
 
 
-async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> None:
+async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> (
+    None
+):
     """Characters with no description keep their previous date meta line."""
     rows = personas_screen_module.PersonasScreen._build_library_rows(
         [{"id": 3, "name": "Blank", "last_modified": "2026-07-26T10:00:00"}],
@@ -10263,12 +10219,13 @@ async def test_character_tts_widget_renders_disabled_global_and_broken_assignmen
         assert "Unavailable" in str(
             widget.query_one(".personas-character-tts-status", Static).renderable
         )
-        assert widget.query_one(
-            ".personas-character-tts-remove", Button
-        ).disabled is False
-        assert str(
-            widget.query_one(".personas-character-tts-edit", Button).label
-        ) == "Repair"
+        assert (
+            widget.query_one(".personas-character-tts-remove", Button).disabled is False
+        )
+        assert (
+            str(widget.query_one(".personas-character-tts-edit", Button).label)
+            == "Repair"
+        )
 
 
 async def test_character_tts_widget_emits_id_only_intents_for_available_profiles() -> (
@@ -10315,7 +10272,9 @@ async def test_character_tts_widget_emits_id_only_intents_for_available_profiles
         assert "authority" not in vars(app.actions[0])
 
 
-async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile() -> None:
+async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile() -> (
+    None
+):
     profile = _character_tts_profile(1)
     blocked = CharacterTTSProfileOption(
         profile.profile_id,
@@ -10353,7 +10312,9 @@ async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile(
         assert selector.value == "__global__"
 
 
-async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth() -> None:
+async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth() -> (
+    None
+):
     profile = _character_tts_profile(1)
     dependency = TTSProfileDependencyProjection(
         reason="recipe_mismatch",
@@ -10383,9 +10344,7 @@ async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth
         )
         await pilot.pause()
         actions = dependency_recovery_actions(dependency)
-        blocker = widget.query_one(
-            ".personas-character-tts-dependency-primary", Button
-        )
+        blocker = widget.query_one(".personas-character-tts-dependency-primary", Button)
         advisory = widget.query_one(
             ".personas-character-tts-dependency-advisory", Button
         )
@@ -10573,9 +10532,7 @@ def _configure_character_tts_app(
             "extensions": {},
         },
     )
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
 
 
 async def test_character_tts_population_requires_one_generation_and_observes_off_page_assignment(
@@ -10585,9 +10542,7 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
 ) -> None:
     # F-031: an empty library keeps first-paint auto-select from consuming
     # this state machine's exact-call seams before the explicit select below.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -10827,9 +10782,7 @@ async def test_character_tts_off_page_assignment_requires_matching_capability_re
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     first_page_profile = _character_tts_profile(1)
     assigned_profile = _character_tts_profile(51)
     character_ref = CharacterRef(
@@ -10934,9 +10887,7 @@ async def test_character_tts_server_principal_change_rejects_late_population(
     mock_app_instance.runtime_backend = "server"
     mock_app_instance.active_server_id = "server-a"
     mock_app_instance.server_context_provider = provider
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
 
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
@@ -10974,8 +10925,7 @@ async def test_character_tts_server_principal_change_rejects_late_population(
         assert screen._character_tts_snapshot is None
         assert screen._character_tts_presentation.controls_enabled is False
         assert (
-            screen._character_tts_presentation.status
-            == "Save/reopen before assigning."
+            screen._character_tts_presentation.status == "Save/reopen before assigning."
         )
 
 
@@ -10985,9 +10935,7 @@ async def test_character_tts_local_authority_change_rejects_late_population(
     monkeypatch,
 ) -> None:
     # F-031: empty library - see the population-generation test above.
-    monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: []
-    )
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
     profile = _character_tts_profile(1)
     original_ref = CharacterRef(
         source="local",
@@ -11025,9 +10973,7 @@ async def test_character_tts_local_authority_change_rejects_late_population(
             "extensions": {},
         },
     )
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
     app = PersonasTestApp(mock_app_instance)
 
     async with app.run_test() as pilot:
@@ -11069,9 +11015,7 @@ async def test_character_tts_missing_local_authority_disables_without_profile_re
     )
     mock_app_instance.runtime_backend = "local"
     mock_app_instance.chachanotes_db = object()
-    mock_app_instance._ensure_tts_profile_service = AsyncMock(
-        return_value=service
-    )
+    mock_app_instance._ensure_tts_profile_service = AsyncMock(return_value=service)
     app = PersonasTestApp(mock_app_instance)
 
     async with app.run_test() as pilot:
@@ -11127,9 +11071,7 @@ async def test_character_tts_assign_and_detach_use_exact_observed_tokens(
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == [
@@ -11200,9 +11142,7 @@ async def test_character_tts_assignment_worker_accepts_unverified_profile(
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == [
@@ -11332,9 +11272,7 @@ async def test_character_tts_assignment_worker_still_refuses_unavailable_profile
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.set_calls == []
@@ -11404,9 +11342,7 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
             assert button.region.width == action_area.region.width
             assert action_area.region.contains_region(button.region), str(button.label)
 
-        screen.post_message(
-            CharacterTTSActionRequested("preview", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("preview", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -11470,9 +11406,7 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
             options=profile.options,
         )
         pilot.app.push_screen_wait = AsyncMock(return_value=draft)
-        screen.post_message(
-            CharacterTTSActionRequested("edit", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("edit", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.update_calls == [
@@ -11526,9 +11460,7 @@ async def test_character_tts_preview_rechecks_local_authority(
         assert screen._character_tts_snapshot is not None
 
         authority_reader.return_value = "different-local-authority"
-        screen.post_message(
-            CharacterTTSActionRequested("preview", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("preview", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
 
@@ -11562,9 +11494,7 @@ async def test_character_tts_conflict_refreshes_and_stale_selection_cannot_publi
         await pilot.app.workers.wait_for_complete()
         reads_before = len(service.get_calls)
 
-        screen.post_message(
-            CharacterTTSActionRequested("assign", profile.profile_id)
-        )
+        screen.post_message(CharacterTTSActionRequested("assign", profile.profile_id))
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert len(service.get_calls) > reads_before

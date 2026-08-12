@@ -142,7 +142,8 @@ class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
         service_loader: Callable[[], Awaitable[TTSProfileService | None]],
         *,
         default_profile_id_reader: Callable[[], object | None] | None = None,
-        voice_bundle_service_loader: Callable[[], Awaitable[object | None]] | None = None,
+        voice_bundle_service_loader: Callable[[], Awaitable[object | None]]
+        | None = None,
     ) -> None:
         super().__init__()
         if not callable(service_loader):

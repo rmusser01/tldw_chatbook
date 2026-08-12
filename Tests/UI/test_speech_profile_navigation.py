@@ -127,7 +127,9 @@ async def test_profile_library_navigation_waits_for_deferred_speech_body() -> No
 
 
 @pytest.mark.asyncio
-async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged() -> None:
+async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged() -> (
+    None
+):
     app = _SpeechHost({"view": "profiles"})
     app._ensure_tts_voice_bundle_service = AsyncMock()  # type: ignore[attr-defined]
     screen = app.screen_under_test
@@ -244,7 +246,9 @@ async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() ->
         playground._clone_setup_canonical = retained_draft
 
         playground.post_message(OpenVoiceProfilesRequested())
-        await _wait_until(pilot, lambda: isinstance(app.screen, VoiceProfilePickerModal))
+        await _wait_until(
+            pilot, lambda: isinstance(app.screen, VoiceProfilePickerModal)
+        )
 
         assert screen.query_one(SpeechPlaygroundPane) is playground
         assert playground._clone_setup_canonical is retained_draft

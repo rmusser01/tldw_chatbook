@@ -252,7 +252,9 @@ class PersonasCharacterTTSWidget(Container):
                 with Horizontal(classes="personas-character-tts-ordinary-actions"):
                     yield Button(
                         "Preview",
-                        classes=("console-action-subdued personas-character-tts-preview"),
+                        classes=(
+                            "console-action-subdued personas-character-tts-preview"
+                        ),
                         disabled=True,
                     )
                     yield Button(
@@ -389,10 +391,11 @@ class PersonasCharacterTTSWidget(Container):
             () if selected is None else dependency_recovery_actions(selected.dependency)
         )
         actions_by_role = {action.role: action for action in recovery_actions}
-        for role, selector in (
+        role_selectors: tuple[tuple[Literal["blocker", "advisory"], str], ...] = (
             ("blocker", ".personas-character-tts-dependency-primary"),
             ("advisory", ".personas-character-tts-dependency-advisory"),
-        ):
+        )
+        for role, selector in role_selectors:
             button = self.query_one(selector, Button)
             action = actions_by_role.get(role)
             visible = action is not None and not has_suggestion
@@ -449,9 +452,7 @@ class PersonasCharacterTTSWidget(Container):
             self.post_message(CharacterTTSActionRequested("create", None))
             return
         if button.has_class("personas-character-tts-dismiss-suggestion"):
-            self.post_message(
-                CharacterTTSActionRequested("dismiss_suggestion", None)
-            )
+            self.post_message(CharacterTTSActionRequested("dismiss_suggestion", None))
             return
         profile_id = self._state.selected_profile_id
         if profile_id is None:

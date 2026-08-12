@@ -405,9 +405,7 @@ class _ActionHost(_STTSHost):
 
     def on_navigate_to_screen(self, message: object) -> None:
         self.nav_routes.append(str(getattr(message, "screen_name", "")))
-        self.nav_contexts.append(
-            dict(getattr(message, "screen_context", {}) or {})
-        )
+        self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
 def _page(
@@ -1955,7 +1953,9 @@ async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> Non
 
 
 @pytest.mark.asyncio
-async def test_clone_profile_review_requires_name_and_returns_explicit_post_save_choice() -> None:
+async def test_clone_profile_review_requires_name_and_returns_explicit_post_save_choice() -> (
+    None
+):
     """Clone review distinguishes an unassigned save from a Roleplay handoff."""
 
     modal = profile_library_module.TTSCloneProfileSaveReviewModal()
@@ -3151,7 +3151,9 @@ def test_bundle_review_never_reuses_a_nonexact_or_migrated_candidate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_export_choice_modal_renders_and_returns_only_supplied_projection() -> None:
+async def test_export_choice_modal_renders_and_returns_only_supplied_projection() -> (
+    None
+):
     sanitized = VoiceBundleActionProjection(
         operation="sanitized_export",
         label="Safe metadata copy",
@@ -3313,6 +3315,38 @@ def test_export_action_projection_supplies_both_visible_and_executable_truths() 
 
 
 @pytest.mark.asyncio
+async def test_profile_export_rejects_a_hostile_non_export_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _clone_profile()
+    app = _ActionHost(_ActionProfileService(profile))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        path_calls = 0
+        hostile = VoiceBundleActionProjection(
+            operation="import_create",
+            label="CANARY wrong operation",
+            tooltip="CANARY wrong operation",
+            disabled=False,
+        )
+
+        async def _hostile_choice(_modal: object) -> VoiceBundleActionProjection:
+            return hostile
+
+        async def _forbidden_path() -> None:
+            nonlocal path_calls
+            path_calls += 1
+            return None
+
+        monkeypatch.setattr(library, "_push_owned_modal", _hostile_choice)
+        monkeypatch.setattr(library, "_choose_profile_export_path", _forbidden_path)
+
+        assert await library.export_selected_profile() is False
+        assert path_calls == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((80, 24), (100, 30)))
 async def test_bundle_warning_acknowledgement_has_initial_focus_at_narrow_sizes(
     size: tuple[int, int],
@@ -3326,9 +3360,7 @@ async def test_bundle_warning_acknowledgement_has_initial_focus_at_narrow_sizes(
         await pilot.pause()
         assert app.focused is not None
         assert app.focused.id == "bundle-warning-ack"
-        assert app.screen.query_one(
-            "#bundle-warning-continue", Button
-        ).disabled
+        assert app.screen.query_one("#bundle-warning-continue", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -3370,7 +3402,9 @@ async def test_bundle_review_focus_order_is_facts_choice_consent_confirm_cancel(
 
 
 @pytest.mark.asyncio
-async def test_windows_disables_bundle_import_truthfully_but_keeps_json_export() -> None:
+async def test_windows_disables_bundle_import_truthfully_but_keeps_json_export() -> (
+    None
+):
     profile = _profile(0)
     service = _ActionProfileService(profile)
 
@@ -3431,7 +3465,9 @@ def _clone_profile(index: int = 0) -> TTSGenerationProfile:
 
 
 @pytest.mark.asyncio
-async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle() -> None:
+async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle() -> (
+    None
+):
     profile = _clone_profile()
     service = _ActionProfileService(profile)
 
@@ -3479,7 +3515,9 @@ class _BundleUIService:
         self.profile = profile
         self.exports: list[tuple[object, ...]] = []
         self.inspect_calls: list[Path] = []
-        self.commit_calls: list[tuple[TTSVoiceBundleHandle, TTSVoiceBundleImportChoice]] = []
+        self.commit_calls: list[
+            tuple[TTSVoiceBundleHandle, TTSVoiceBundleImportChoice]
+        ] = []
         self.invalidated: list[TTSVoiceBundleHandle] = []
         self.reviews = [self._review()]
         self.results: list[TTSVoiceBundleImportResult] = [
@@ -3761,7 +3799,9 @@ async def test_repeated_import_cancels_release_completed_invalidation_tasks(
 
 
 @pytest.mark.asyncio
-async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> None:
+async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> (
+    None
+):
     profile = _profile(0)
     bundle_service = _BundleUIService(profile)
     handle = bundle_service.reviews[0].handle
