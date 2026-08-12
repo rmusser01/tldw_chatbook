@@ -45,15 +45,13 @@ from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
-from tldw_chatbook.Chat.provider_readiness import (
-    get_provider_readiness,
-    provider_settings_for_key,
-)
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
 )
+from tldw_chatbook.config import provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,

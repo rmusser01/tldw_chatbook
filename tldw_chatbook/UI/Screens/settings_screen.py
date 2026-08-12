@@ -98,7 +98,6 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_LOCAL,
     PROVIDER_GROUP_ORDER,
 )
-from ...Chat.provider_readiness import provider_settings_for_key
 from ...config import (
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -114,6 +113,7 @@ from ...config import (
     get_cli_config_path,
     get_runtime_config_snapshot,
     load_settings,
+    provider_settings_for_key,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -17656,20 +17656,6 @@ class SettingsScreen(BaseAppScreen):
                     provider_settings_values,
                 )
                 saved = saved and provider_settings_saved
-            if qwencloud_mode_requires_canonical_save and saved:
-                delete_keys = {
-                    f"api_settings.{section_key}": ("api_mode",)
-                    for section_key in alias_mode_sections
-                }
-                canonical_mode_saved = save_settings_to_cli_config(
-                    {
-                        "api_settings.qwencloud": {
-                            "api_mode": normalized_api_mode,
-                        }
-                    },
-                    delete_keys=delete_keys or None,
-                )
-                saved = saved and canonical_mode_saved
             next_model_defaults = None
             if model_profile_dirty and provider_key and model:
                 provider_save_key = provider_section_key or provider_key
@@ -17721,6 +17707,20 @@ class SettingsScreen(BaseAppScreen):
                         {model: next_model_capabilities},
                     )
                 saved = saved and capability_saved
+            if qwencloud_mode_requires_canonical_save and saved:
+                delete_keys = {
+                    f"api_settings.{section_key}": ("api_mode",)
+                    for section_key in alias_mode_sections
+                }
+                canonical_mode_saved = save_settings_to_cli_config(
+                    {
+                        "api_settings.qwencloud": {
+                            "api_mode": normalized_api_mode,
+                        }
+                    },
+                    delete_keys=delete_keys or None,
+                )
+                saved = saved and canonical_mode_saved
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)

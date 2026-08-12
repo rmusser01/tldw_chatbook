@@ -24,8 +24,8 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
-    provider_settings_for_key,
 )
+from tldw_chatbook.config import provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 

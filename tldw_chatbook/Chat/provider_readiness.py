@@ -26,6 +26,8 @@ from typing import Mapping, Optional
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
 from ..config import (
     is_valid_provider_api_key,
+    normalize_provider_config_key,
+    provider_settings_for_key,
     resolve_provider_api_key as _valid_api_key,
 )
 
@@ -126,7 +128,7 @@ class ProviderReadiness:
 
 def provider_config_key(provider: Optional[str]) -> str:
     """Return the normalized key used under ``api_settings``."""
-    return (provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_config_key(provider)
 
 
 def _requires_api_key(provider_key: str) -> bool:
@@ -157,52 +159,6 @@ def default_api_key_env_var(provider_key: str) -> Optional[str]:
     return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
         provider_key, f"{provider_key.upper()}_API_KEY"
     )
-
-
-def provider_settings_for_key(
-    api_settings: object,
-    provider_key: str,
-) -> Mapping[str, object]:
-    """Return provider settings without mutating the loaded configuration.
-
-    QwenCloud historically accepted normalized alias table names.  When an
-    exact canonical table is also present, alias fields remain fallbacks while
-    exact ``api_settings.qwencloud`` fields win regardless of insertion order.
-    Other providers retain the existing first-normalized-match behavior.
-    """
-    if not isinstance(api_settings, Mapping):
-        return {}
-
-    if provider_key == "qwencloud":
-        alias_settings: Mapping[str, object] = {}
-        alias_found = False
-        canonical_settings: Mapping[str, object] = {}
-        for configured_provider, configured_value in api_settings.items():
-            configured_key = str(configured_provider)
-            if provider_config_key(configured_key) != provider_key:
-                continue
-            if configured_key == provider_key:
-                if isinstance(configured_value, Mapping):
-                    canonical_settings = configured_value
-                continue
-            if not alias_found:
-                alias_found = True
-                if isinstance(configured_value, Mapping):
-                    alias_settings = configured_value
-        if canonical_settings:
-            merged = dict(alias_settings)
-            merged.update(canonical_settings)
-            return merged
-        return alias_settings
-
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(str(configured_provider)) != provider_key:
-            continue
-        if isinstance(configured_value, Mapping):
-            return configured_value
-        return {}
-
-    return {}
 
 
 def get_provider_readiness(

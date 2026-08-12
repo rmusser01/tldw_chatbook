@@ -592,6 +592,107 @@ async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
 
 
 @pytest.mark.asyncio
+async def test_qwencloud_alias_mode_migration_waits_for_profile_write(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"] = {
+        "QwenCloud": {
+            "api_mode": "responses",
+            "api_key_env_var": "DASHSCOPE_API_KEY",
+            "model": "qwen3.8-max",
+        }
+    }
+    atomic_mutations: list[dict] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: (
+            atomic_mutations.append(dict(section_values)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda _section, key, _value: key != "model_defaults",
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        profile = screen.query_one("#settings-model-profile-temperature", Input)
+        profile.value = "0.25"
+        await pilot.pause()
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+
+        await pilot.click("#settings-save-category")
+
+        assert atomic_mutations == []
+        assert "qwencloud" not in app.app_config["api_settings"]
+        assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
+        assert mode.value == "chat_completions"
+        assert profile.value == "0.25"
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_alias_mode_migration_waits_for_context_write(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"] = {
+        "QwenCloud": {
+            "api_mode": "responses",
+            "api_key_env_var": "DASHSCOPE_API_KEY",
+            "model": "qwen3.8-max",
+        }
+    }
+    app.app_config["model_capabilities"] = {}
+    atomic_mutations: list[dict] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: (
+            atomic_mutations.append(dict(section_values)) or True
+        ),
+    )
+
+    def save_setting(section, _key, _value):
+        return section != "model_capabilities.models"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        save_setting,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        context = screen.query_one("#settings-model-context-window", Input)
+        context.value = "32768"
+        await pilot.pause()
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+
+        await pilot.click("#settings-save-category")
+
+        assert atomic_mutations == []
+        assert "qwencloud" not in app.app_config["api_settings"]
+        assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
+        assert mode.value == "chat_completions"
+        assert context.value == "32768"
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
+
+
+@pytest.mark.asyncio
 async def test_qwencloud_canonical_mode_wins_over_alias_for_settings_and_readiness():
     app = _qwencloud_app(api_mode="responses")
     app.app_config["api_settings"] = {

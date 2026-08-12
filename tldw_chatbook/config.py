@@ -864,6 +864,57 @@ def is_valid_provider_api_key(value: object) -> bool:
     return resolve_provider_api_key(value) is not None
 
 
+def normalize_provider_config_key(provider: object) -> str:
+    """Return the canonical lookup form used for provider config tables."""
+    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def provider_settings_for_key(
+    api_settings: object,
+    provider_key: str,
+) -> Mapping[str, object]:
+    """Return provider settings without mutating the loaded configuration.
+
+    QwenCloud historically accepted normalized alias table names. When an
+    exact canonical table is also present, alias fields remain fallbacks while
+    exact ``api_settings.qwencloud`` fields win regardless of insertion order.
+    Other providers retain the existing first-normalized-match behavior.
+    """
+    if not isinstance(api_settings, Mapping):
+        return {}
+
+    if provider_key == "qwencloud":
+        alias_settings: Mapping[str, object] = {}
+        alias_found = False
+        canonical_settings: Mapping[str, object] = {}
+        for configured_provider, configured_value in api_settings.items():
+            configured_key = str(configured_provider)
+            if normalize_provider_config_key(configured_key) != provider_key:
+                continue
+            if configured_key == provider_key:
+                if isinstance(configured_value, Mapping):
+                    canonical_settings = configured_value
+                continue
+            if not alias_found:
+                alias_found = True
+                if isinstance(configured_value, Mapping):
+                    alias_settings = configured_value
+        if canonical_settings:
+            merged = dict(alias_settings)
+            merged.update(canonical_settings)
+            return merged
+        return alias_settings
+
+    for configured_provider, configured_value in api_settings.items():
+        if normalize_provider_config_key(configured_provider) != provider_key:
+            continue
+        if isinstance(configured_value, Mapping):
+            return configured_value
+        return {}
+
+    return {}
+
+
 #: Providers whose legacy `[API] <provider>_api_key` TOML key and
 #: `<PROVIDER>_API_KEY` environment variable both follow the plain
 #: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
@@ -5599,7 +5650,7 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
 
 def _normalize_provider_lookup_key(provider: Any) -> str:
     """Return the canonical lookup form used for provider key comparisons."""
-    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_config_key(provider)
 
 
 def resolve_provider_name(

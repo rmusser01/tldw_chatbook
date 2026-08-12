@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.config import (
     get_runtime_config_snapshot,
+    provider_settings_for_key,
     resolve_provider_api_key,
 )
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
@@ -1156,10 +1157,13 @@ def chat_with_qwencloud(
     api_settings = config_values.get("api_settings", {})
     if not isinstance(api_settings, Mapping):
         raise _configuration_error("QwenCloud API settings must be an object.")
-    configured_qwencloud = api_settings.get("qwencloud", {})
-    if not isinstance(configured_qwencloud, Mapping):
+    if "qwencloud" in api_settings and not isinstance(
+        api_settings.get("qwencloud"), Mapping
+    ):
         raise _configuration_error("QwenCloud provider settings must be an object.")
-    provider_settings: Mapping[str, Any] = configured_qwencloud
+    provider_settings = cast(
+        Mapping[str, Any], provider_settings_for_key(api_settings, "qwencloud")
+    )
 
     final_mode = normalize_qwencloud_api_mode(
         api_mode, provider_settings=provider_settings

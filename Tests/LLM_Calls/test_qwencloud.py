@@ -2103,6 +2103,164 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
         assert canary not in serialized
 
 
+def test_direct_adapter_loads_alias_only_qwencloud_config_without_mutation_or_leakage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _TransportResponse(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
+    source = {
+        "api_settings": {
+            "QwenCloud": {
+                "api_mode": "chat_completions",
+                "api_base_url": "https://alias.example/compatible-mode/v1",
+                "api_key_env_var": "QWEN_ALIAS_KEY",
+                "model": "alias-model",
+                "timeout": 19,
+                "retries": 0,
+                "retry_delay": 0.25,
+            }
+        }
+    }
+    original = deepcopy(source)
+    retry_configuration: list[tuple[int, float]] = []
+    real_build_retry_policy = qwencloud._build_retry_policy
+
+    def record_retry_policy(*, retries: int, retry_delay: float):
+        retry_configuration.append((retries, retry_delay))
+        return real_build_retry_policy(retries=retries, retry_delay=retry_delay)
+
+    monkeypatch.setattr(qwencloud, "_build_retry_policy", record_retry_policy)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values=source),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model=None,
+            api_key=None,
+            streaming=False,
+            api_base_url=None,
+            api_mode=None,
+        )
+
+    assert source == original
+    assert retry_configuration == [(0, 0.25)]
+    assert len(session.posts) == 1
+    request = session.posts[0]
+    assert request["url"] == (
+        "https://alias.example/compatible-mode/v1/chat/completions"
+    )
+    assert request["headers"]["Authorization"] == "Bearer alias-key-canary"
+    assert request["json"]["model"] == "alias-model"
+    assert request["timeout"] == 19.0
+    assert "alias-key-canary" not in "".join(logs)
+
+
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_direct_adapter_canonical_qwencloud_config_overrides_alias_in_any_order(
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_first: bool,
+) -> None:
+    response = _TransportResponse(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
+    monkeypatch.setenv("QWEN_CANONICAL_KEY", "canonical-key-canary")
+    alias = {
+        "api_mode": "chat_completions",
+        "api_base_url": "https://alias.example/compatible-mode/v1",
+        "api_key_env_var": "QWEN_ALIAS_KEY",
+        "model": "alias-model",
+        "timeout": 17,
+        "retries": 4,
+        "retry_delay": 0.75,
+    }
+    canonical = {
+        "api_mode": "responses",
+        "api_base_url": "https://canonical.example/compatible-mode/v1",
+        "api_key_env_var": "QWEN_CANONICAL_KEY",
+        "model": "canonical-model",
+        "timeout": 23,
+        "retries": 0,
+        "retry_delay": 0.5,
+    }
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", canonical)]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+    retry_configuration: list[tuple[int, float]] = []
+    real_build_retry_policy = qwencloud._build_retry_policy
+
+    def record_retry_policy(*, retries: int, retry_delay: float):
+        retry_configuration.append((retries, retry_delay))
+        return real_build_retry_policy(retries=retries, retry_delay=retry_delay)
+
+    monkeypatch.setattr(qwencloud, "_build_retry_policy", record_retry_policy)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values=source),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model=None,
+            api_key=None,
+            streaming=False,
+            api_base_url=None,
+            api_mode=None,
+        )
+
+    assert source == original
+    assert retry_configuration == [(0, 0.5)]
+    assert len(session.posts) == 1
+    request = session.posts[0]
+    assert request["url"] == ("https://canonical.example/compatible-mode/v1/responses")
+    assert request["headers"]["Authorization"] == "Bearer canonical-key-canary"
+    assert request["json"]["model"] == "canonical-model"
+    assert request["timeout"] == 23.0
+    disclosure = repr(request) + "".join(logs)
+    assert "alias-key-canary" not in disclosure
+    assert "canonical-key-canary" not in "".join(logs)
+
+
 @pytest.mark.parametrize(
     "api_settings",
     (
