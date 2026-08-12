@@ -55,9 +55,10 @@ in the same message version, hash, sync, deletion, and whole-record conflict
 contract as visible content. The ChaChaNotes message transaction and its
 trigger-written `sync_log` row are the atomic durable local intent. An
 idempotent reconciler projects that row into the separate Sync-v2 outbox; the
-two databases are not described as one transaction. Tool execution fails
-closed when configured Sync v2 has only an in-memory repository, but remote
-acknowledgement is not required. Conflict resolution never merges continuation
+two databases are not described as one transaction. When Sync v2 is configured,
+tool execution waits for that durable idempotent outbox projection and fails
+closed if only an in-memory repository is available, but remote acknowledgement
+is not required. Conflict resolution never merges continuation
 subfields or tool-call arrays. Sync provides portable state, not a distributed
 execution lock; remote takeover is explicit and never claims exactly-once
 execution across concurrently active devices.

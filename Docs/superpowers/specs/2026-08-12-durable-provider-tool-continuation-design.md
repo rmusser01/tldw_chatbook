@@ -146,8 +146,8 @@ Each round represents one provider request's assistant output:
   call batch, including an empty string;
 - `reasoning_blocks` preserves provider order and exact string bytes after
   strict UTF-8/JSON decoding;
-- `calls` preserves assistant call order and may be empty only for a completed
-  Kimi K3 reasoning-only turn;
+- `calls` preserves assistant call order and may be empty only for a Kimi K3
+  final reasoning-only round in a complete checkpoint;
 - `call_id` is nonblank and unique across the checkpoint; `name` is nonblank,
   valid, and may repeat because one function can be called more than once;
 - `arguments` is the exact validated JSON-object string returned by the
@@ -321,8 +321,9 @@ database, not the separate Sync-v2 state database:
   outbox write is durable;
 - dispatch never waits for remote acknowledgement, but before a provider tool
   side effect it verifies the same-transaction `sync_log` intent exists and,
-  when Sync v2 is enabled, that a durable Sync-v2 repository is available; an
-  in-memory-only Sync-v2 fallback blocks start/resume with safe recovery copy;
+  when Sync v2 is enabled, that its idempotent projection has succeeded into a
+  durable Sync-v2 outbox; an unavailable or in-memory-only Sync-v2 repository
+  blocks start/resume with safe recovery copy;
 - a post-commit notifier/wakeup may fail or the process may crash, and startup/
   ordinary reconciliation still discovers the ChaChaNotes intent and enqueues
   it exactly once by the idempotency key;
@@ -445,6 +446,9 @@ permission validation succeeds.
 - Sync-v2 in-memory-only fallback blocks pre-execution start/resume, while
   durable reconciliation is idempotent across crashes before/after outbox
   insertion and bridge-cursor update;
+- configured Sync-v2 projection failure after the ChaChaNotes commit blocks
+  tool dispatch; retry/restart reconciles the same intent without duplicating
+  the outbox envelope;
 - mutation checks remove the pre-dispatch write, result barrier, conflict hash,
   or private-history token count and must fail.
 
