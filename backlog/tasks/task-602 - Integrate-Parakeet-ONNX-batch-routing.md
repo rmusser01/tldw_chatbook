@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-08 15:59'
+updated_date: '2026-08-12 15:26'
 labels:
   - stt
   - onnx
@@ -43,11 +43,12 @@ Make managed Parakeet v2 and v3 ONNX the gated batch STT paths while retaining f
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Complete the remaining parent gaps in seven focused slices: (1) pin CPU-only Parakeet package profiles; (2) add exact v2/v3 INT8/F32 root descriptors with a managed Silero VAD dependency; (3) carry explicit precision through batch routing; (4) implement one executor-native offline Parakeet runtime with batch-size-one VAD cancellation; (5) wire managed closure paths and normalized provenance through LocalSTTExecutor and the existing parent writer/retry flow; (6) make the first-run speech step install and configure the exact selected model/precision; and (7) run only focused tests plus native macOS smoke, preserving unavailable Windows/Linux gates. ADR required: no. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md. Reason: ADR-025 already governs the affected artifact, runtime, routing, provenance, package, and retry boundaries. Detailed plan: Docs/superpowers/plans/2026-08-08-task-602-parakeet-onnx-batch-routing.md
+Complete the implemented provider in seven focused slices documented at Docs/superpowers/plans/2026-08-08-task-602-parakeet-onnx-batch-routing.md, then close AC7 with the approved five-platform native evidence plan at Docs/superpowers/plans/2026-08-12-task-602-platform-evidence.md. The evidence addendum runs exact managed v2/v3 INT8 plus VAD on Linux x86_64/aarch64, Windows x86_64, and macOS arm64/x86_64, aggregates only same-commit green results, and keeps semantic-default promotion reserved for TASK-605. ADR required: no. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md. Reason: ADR-025 already governs the affected runtime, artifact, platform, cancellation, reuse, and recovery boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 - Added CPU-only `onnx-asr[cpu]==0.12.0` package profiles and exact managed
   Parakeet v2/v3 INT8/F32 roots sharing a pinned Silero VAD dependency.
 - Carried explicit precision through routing and batch options, implemented
@@ -65,3 +66,4 @@ Complete the remaining parent gaps in seven focused slices: (1) pin CPU-only Par
   runtime, routing, provenance, package, and retry boundaries.
 - Windows and Linux native gates remain unavailable and open, so AC #7 is
   unchecked and TASK-602 intentionally remains `In Progress`.
+<!-- SECTION:NOTES:END -->
