@@ -647,7 +647,6 @@ def _bounded_runtime_observations(
             forced_termination = True
     if forced_termination:
         raise SmokeFailure("cleanup", "cleanup")
-        raise SmokeFailure("cleanup", "cleanup")
     if outcome == "cleanup":
         raise SmokeFailure("cleanup", "cleanup")
     if outcome != "passed" or type(result) is not dict:
@@ -665,7 +664,19 @@ def _enable_runtime_offline() -> dict[str, str | None]:
 
 
 def run_smoke(evidence_name: str, workspace: Path) -> dict[str, object]:
-    """Run the production-path smoke and return only allowlisted observations."""
+    """Run the production-path smoke and return allowlisted observations.
+
+    Args:
+        evidence_name: Expected native platform evidence identity.
+        workspace: Lane-owned temporary workspace for acquisition and runtime.
+
+    Returns:
+        The bounded observations accepted by the evidence normalizer.
+
+    Raises:
+        SmokeFailure: If acquisition, execution, or cleanup cannot be proven.
+        ValueError: If the evidence identity is unknown.
+    """
 
     if evidence_name not in EVIDENCE_NAMES:
         raise ValueError("unknown evidence name")
