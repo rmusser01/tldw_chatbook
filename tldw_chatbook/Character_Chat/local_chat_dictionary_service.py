@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -121,6 +122,40 @@ def _parse_markdown_entries(content: str) -> list[cdl.ChatDictionary]:
     return entries
 
 
+def statistics_from_record(
+    record: Mapping[str, Any], *, dictionary_id: int | None = None
+) -> dict[str, Any]:
+    """Derive the ``get_statistics`` payload from an already-loaded record.
+
+    Byte-for-byte the payload
+    :meth:`LocalChatDictionaryService.get_statistics` returns, computed
+    without a second full load of the same row. Accepts either a raw
+    ``load_chat_dictionary`` record (entries are ``ChatDictionary`` objects)
+    or a normalized service record (entries are dicts) -- only the entry
+    COUNT and the enabled flag are read, and both shapes agree on those.
+    An explicit ``entry_count`` wins over ``len(entries)`` for the same reason
+    it does in ``_normalize_dictionary``: a list ROW carries the cheap SQL
+    count without materializing entries.
+
+    Args:
+        record: The loaded dictionary record.
+        dictionary_id: The id to report. Defaults to the record's own ``id``.
+
+    Returns:
+        ``{"dictionary_id", "entry_count", "enabled", "source": "local"}``.
+    """
+    resolved_id = int(record["id"] if dictionary_id is None else dictionary_id)
+    entry_count = record.get("entry_count")
+    return {
+        "dictionary_id": resolved_id,
+        "entry_count": int(entry_count)
+        if entry_count is not None
+        else len(record.get("entries") or []),
+        "enabled": bool(record.get("enabled")),
+        "source": "local",
+    }
+
+
 def _entries_payload(entries: list[Any]) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for entry in entries:
@@ -141,6 +176,21 @@ class LocalChatDictionaryService:
             if history_store_path is not None
             else None
         )
+        # The in-memory history and its JSON sidecar are shared mutable state,
+        # and since task-15469 the scope service runs these methods on
+        # `asyncio.to_thread` workers -- they are no longer serialized by the
+        # event loop. Two threads recording history would interleave appends to
+        # the same bucket list AND race on the single `<sidecar>.tmp` write +
+        # replace, which can publish a half-written file. Every mutate+persist
+        # and every read snapshot is taken under this lock.
+        #
+        # RLock, not Lock: `_ensure_history_baseline` holds it across
+        # `_record_history`. Held across `get_dictionary()`'s DB read in that
+        # one path, which cannot deadlock -- no caller holds an open DB
+        # transaction while acquiring this lock (every `_record_history` call
+        # site runs after its DB write has committed), so there is no lock
+        # ordering cycle to close.
+        self._history_lock = threading.RLock()
         self._history: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self._load_history()
 
@@ -159,30 +209,42 @@ class LocalChatDictionaryService:
         try:
             payload = json.loads(self.history_store_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            self._history = {}
+            with self._history_lock:
+                self._history = {}
             return
         dictionaries = (
             payload.get("dictionaries", payload) if isinstance(payload, dict) else {}
         )
-        if not isinstance(dictionaries, dict):
+        with self._history_lock:
+            if not isinstance(dictionaries, dict):
+                self._history = {}
+                return
             self._history = {}
-            return
-        self._history = {}
-        for dictionary_id, bucket in dictionaries.items():
-            if not isinstance(bucket, dict):
-                continue
-            activity = bucket.get("activity", [])
-            versions = bucket.get("versions", [])
-            self._history[str(dictionary_id)] = {
-                "activity": [dict(item) for item in activity if isinstance(item, dict)]
-                if isinstance(activity, list)
-                else [],
-                "versions": [dict(item) for item in versions if isinstance(item, dict)]
-                if isinstance(versions, list)
-                else [],
-            }
+            for dictionary_id, bucket in dictionaries.items():
+                if not isinstance(bucket, dict):
+                    continue
+                activity = bucket.get("activity", [])
+                versions = bucket.get("versions", [])
+                self._history[str(dictionary_id)] = {
+                    "activity": [
+                        dict(item) for item in activity if isinstance(item, dict)
+                    ]
+                    if isinstance(activity, list)
+                    else [],
+                    "versions": [
+                        dict(item) for item in versions if isinstance(item, dict)
+                    ]
+                    if isinstance(versions, list)
+                    else [],
+                }
 
     def _persist_history(self) -> None:
+        """Rewrite the history sidecar. Callers must hold ``_history_lock``.
+
+        The temp path is a single fixed name, so two unserialized writers would
+        interleave their `write_text` + `replace` and could publish a
+        half-written file.
+        """
         if self.history_store_path is None:
             return
         self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,6 +260,11 @@ class LocalChatDictionaryService:
         temp_path.replace(self.history_store_path)
 
     def _history_bucket(self, dictionary_id: int) -> dict[str, list[dict[str, Any]]]:
+        """Return (creating if needed) one dictionary's history bucket.
+
+        Callers must hold ``_history_lock`` -- both the create-if-missing and
+        every use of the returned lists are shared mutable state.
+        """
         key = str(int(dictionary_id))
         if key not in self._history:
             self._history[key] = {"activity": [], "versions": []}
@@ -225,49 +292,63 @@ class LocalChatDictionaryService:
         self, dictionary_id: int, action: str, record: Mapping[str, Any]
     ) -> None:
         snapshot = self._dictionary_snapshot(record)
-        bucket = self._history_bucket(dictionary_id)
-        now = self._now()
-        revision = int(snapshot.get("version", 1) or 1)
-        bucket["activity"].append(
-            {
-                "id": f"local:chat_dictionary_activity:{int(dictionary_id)}:{len(bucket['activity']) + 1}",
+        with self._history_lock:
+            bucket = self._history_bucket(dictionary_id)
+            now = self._now()
+            revision = int(snapshot.get("version", 1) or 1)
+            bucket["activity"].append(
+                {
+                    "id": f"local:chat_dictionary_activity:{int(dictionary_id)}:{len(bucket['activity']) + 1}",
+                    "dictionary_id": int(dictionary_id),
+                    "action": action,
+                    "revision": revision,
+                    "created_at": now,
+                    "source": "local",
+                }
+            )
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(bucket["versions"])
+                    if int(item.get("revision", -1)) == revision
+                ),
+                None,
+            )
+            version_record = {
                 "dictionary_id": int(dictionary_id),
-                "action": action,
                 "revision": revision,
+                "action": action,
+                "name": snapshot.get("name"),
                 "created_at": now,
+                "snapshot": snapshot,
                 "source": "local",
             }
-        )
-        existing_index = next(
-            (
-                index
-                for index, item in enumerate(bucket["versions"])
-                if int(item.get("revision", -1)) == revision
-            ),
-            None,
-        )
-        version_record = {
-            "dictionary_id": int(dictionary_id),
-            "revision": revision,
-            "action": action,
-            "name": snapshot.get("name"),
-            "created_at": now,
-            "snapshot": snapshot,
-            "source": "local",
-        }
-        if existing_index is None:
-            bucket["versions"].append(version_record)
-        else:
-            bucket["versions"][existing_index] = version_record
-        self._persist_history()
+            if existing_index is None:
+                bucket["versions"].append(version_record)
+            else:
+                bucket["versions"][existing_index] = version_record
+            self._persist_history()
 
-    def _ensure_history_baseline(self, dictionary_id: int) -> None:
-        bucket = self._history_bucket(dictionary_id)
-        if bucket["versions"]:
-            return
-        record = self.get_dictionary(int(dictionary_id))
-        if record is not None:
-            self._record_history(int(dictionary_id), "baseline", record)
+    def _ensure_history_baseline(
+        self, dictionary_id: int, record: Mapping[str, Any] | None = None
+    ) -> None:
+        """Seed the version history with a baseline snapshot if it has none.
+
+        Args:
+            dictionary_id: The dictionary to seed.
+            record: An already-loaded record for it, when the caller has one.
+                Passing it avoids a redundant full load of the same row
+                (task-15469); it is used only when a baseline is actually
+                missing.
+        """
+        with self._history_lock:
+            bucket = self._history_bucket(dictionary_id)
+            if bucket["versions"]:
+                return
+            if record is None:
+                record = self.get_dictionary(int(dictionary_id))
+            if record is not None:
+                self._record_history(int(dictionary_id), "baseline", record)
 
     def _normalize_dictionary(
         self, record: dict[str, Any] | None
@@ -680,8 +761,12 @@ class LocalChatDictionaryService:
         self, dictionary_id: int, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
         self._ensure_history_baseline(int(dictionary_id))
-        bucket = self._history_bucket(int(dictionary_id))
-        activity = list(reversed(bucket["activity"]))
+        with self._history_lock:
+            # Snapshot under the lock: a concurrent `_record_history` appends
+            # to this very list.
+            activity = list(
+                reversed(self._history_bucket(int(dictionary_id))["activity"])
+            )
         page = activity[offset : offset + limit]
         return {
             "dictionary_id": int(dictionary_id),
@@ -693,15 +778,32 @@ class LocalChatDictionaryService:
         }
 
     def list_versions(
-        self, dictionary_id: int, *, limit: int = 20, offset: int = 0
+        self,
+        dictionary_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        record: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self._ensure_history_baseline(int(dictionary_id))
-        bucket = self._history_bucket(int(dictionary_id))
-        versions = sorted(
-            bucket["versions"],
-            key=lambda item: int(item.get("revision", 0)),
-            reverse=True,
-        )
+        """List version summaries, newest first.
+
+        Args:
+            dictionary_id: The dictionary whose history to page.
+            limit: Page size.
+            offset: Page offset.
+            record: An already-loaded record for this dictionary, when the
+                caller has one. Used only to seed a missing history baseline
+                without a second full load (task-15469).
+        """
+        self._ensure_history_baseline(int(dictionary_id), record)
+        with self._history_lock:
+            # Snapshot under the lock: a concurrent `_record_history` appends
+            # to (or replaces an item in) this very list.
+            versions = sorted(
+                list(self._history_bucket(int(dictionary_id))["versions"]),
+                key=lambda item: int(item.get("revision", 0)),
+                reverse=True,
+            )
         summaries = [
             {key: value for key, value in version.items() if key != "snapshot"}
             for version in versions
@@ -718,10 +820,10 @@ class LocalChatDictionaryService:
 
     def get_version(self, dictionary_id: int, revision: int) -> dict[str, Any]:
         self._ensure_history_baseline(int(dictionary_id))
-        bucket = self._history_bucket(int(dictionary_id))
-        for version in bucket["versions"]:
-            if int(version.get("revision", -1)) == int(revision):
-                return dict(version)
+        with self._history_lock:
+            for version in list(self._history_bucket(int(dictionary_id))["versions"]):
+                if int(version.get("revision", -1)) == int(revision):
+                    return dict(version)
         raise ValueError(
             f"local_chat_dictionary_version_not_found:{dictionary_id}:{revision}"
         )
@@ -758,13 +860,15 @@ class LocalChatDictionaryService:
         return record
 
     def get_statistics(self, dictionary_id: int) -> dict[str, Any]:
+        """Load the dictionary and summarize it.
+
+        Callers that already hold the record (the Personas selection path, and
+        every save/revert refresh) should use :func:`statistics_from_record`
+        instead -- it returns this exact payload without a second full load of
+        the same row (task-15469).
+        """
         record = self._load_required_dictionary(int(dictionary_id))
-        return {
-            "dictionary_id": int(dictionary_id),
-            "entry_count": len(record.get("entries") or []),
-            "enabled": bool(record.get("enabled")),
-            "source": "local",
-        }
+        return statistics_from_record(record, dictionary_id=int(dictionary_id))
 
     def _load_conversation_or_raise(self, conversation_id: str) -> dict[str, Any]:
         record = self._require_db().get_conversation_by_id(str(conversation_id))
@@ -865,8 +969,58 @@ class LocalChatDictionaryService:
             "source": "local",
         }
 
+    #: One indexed lookup for "which conversations use this dictionary?".
+    #: Replaces a leading-wildcard ``metadata LIKE '%active_dictionaries%'``
+    #: full scan of ``conversations`` (task-15469). Two branches, one
+    #: statement: rows the trigger-maintained index resolved for this
+    #: dictionary, and rows whose metadata shape the index could not resolve
+    #: (see the V34->V35 migration header) -- the latter carry ``metadata`` so
+    #: the byte-for-byte Python predicate can decide them. ``rowid`` is
+    #: selected so the result keeps the old scan's ordering (``conversations``
+    #: table order); ``metadata`` is NULL on the resolved branch so a big JSON
+    #: blob is never pulled for a row that does not need parsing.
+    #:
+    #: Both joins are CROSS JOINs, which is what makes this an indexed lookup
+    #: rather than a scan wearing a join's clothes: SQLite's planner otherwise
+    #: picks `conversations` as the outer loop of the second branch (measured:
+    #: `SCAN conversation` + a covering-index probe per row -- a full scan of
+    #: the very table this index exists to avoid reading). CROSS JOIN pins the
+    #: derived table as the outer loop; the index tables drive, `conversations`
+    #: is only probed by primary key.
+    _USED_BY_SQL = """
+        SELECT conversation.rowid AS conversation_rowid,
+               conversation.id    AS conversation_id,
+               conversation.title AS title,
+               NULL               AS metadata,
+               0                  AS needs_python_check
+          FROM conversation_dictionary_attachments AS attachment
+          CROSS JOIN conversations AS conversation
+            ON conversation.id = attachment.conversation_id
+         WHERE attachment.dictionary_id = ?
+           AND conversation.deleted = 0
+        UNION ALL
+        SELECT conversation.rowid,
+               conversation.id,
+               conversation.title,
+               conversation.metadata,
+               1
+          FROM conversation_dictionary_unresolved AS unresolved
+          CROSS JOIN conversations AS conversation
+            ON conversation.id = unresolved.conversation_id
+         WHERE conversation.deleted = 0
+         ORDER BY conversation_rowid
+    """
+
     def list_dictionary_conversations(self, dictionary_id: int) -> dict[str, Any]:
         """Reverse used-by: conversations whose active_dictionaries include this id.
+
+        Answered from the trigger-maintained attachment index rather than a
+        full scan of ``conversations``. Rows the index could not resolve
+        (exotic metadata shapes; see the V34->V35 migration) are decided here
+        by the unchanged :meth:`_active_dictionaries` predicate, and that
+        verdict overrides the index for those conversations -- the two can
+        legitimately disagree (a duplicated JSON key resolves last-wins in
+        Python, first-wins in SQLite), and Python is the definition.
 
         Args:
             dictionary_id: The dictionary to find attachments for.
@@ -876,25 +1030,36 @@ class LocalChatDictionaryService:
         """
         did = int(dictionary_id)
         conn = self._require_db().get_connection()
-        # LIKE prefilter shrinks the scan; exact int membership below avoids the
-        # id-1-matches-11 substring trap. metadata is a column on conversations.
-        rows = conn.execute(
-            "SELECT id, title, metadata FROM conversations "
-            "WHERE deleted = 0 AND metadata LIKE '%active_dictionaries%'"
-        ).fetchall()
+        rows = conn.execute(self._USED_BY_SQL, (did,)).fetchall()
+        unresolved_ids = {
+            str(row["conversation_id"]) for row in rows if row["needs_python_check"]
+        }
         conversations: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for row in rows:
-            try:
-                is_member = did in self._active_dictionaries(
-                    {"metadata": row["metadata"]}
-                )
-            except Exception:
-                # One pathological row's metadata must never break the whole scan.
+            conversation_id = str(row["conversation_id"])
+            if conversation_id in seen:
                 continue
+            if row["needs_python_check"]:
+                try:
+                    is_member = did in self._active_dictionaries(
+                        {"metadata": row["metadata"]}
+                    )
+                except Exception:
+                    # One pathological row's metadata must never break used-by
+                    # for every other conversation.
+                    continue
+            elif conversation_id in unresolved_ids:
+                # The unresolved branch owns this conversation's verdict; its
+                # row decides it (and is reached by this same loop).
+                continue
+            else:
+                is_member = True
             if is_member:
+                seen.add(conversation_id)
                 conversations.append(
                     {
-                        "conversation_id": str(row["id"]),
+                        "conversation_id": conversation_id,
                         "title": str(row["title"] or ""),
                     }
                 )
@@ -1050,4 +1215,4 @@ class LocalChatDictionaryService:
         return cdl.summarize_active_dictionaries(self._require_db(), conv_id, char_data)
 
 
-__all__ = ["LocalChatDictionaryService"]
+__all__ = ["LocalChatDictionaryService", "statistics_from_record"]

@@ -163,7 +163,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 34  # Deterministic visual-compaction representation policy (TASK-14914).
+    _CURRENT_SCHEMA_VERSION = 35  # Conversation<->dictionary attachment index (TASK-15469).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4832,6 +4832,54 @@ UPDATE db_schema_version
                 f"Migration from V33 to V34 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v34_to_v35(self, conn: sqlite3.Connection) -> None:
+        """Add the derived conversation<->dictionary attachment index.
+
+        Replaces the ``metadata LIKE '%active_dictionaries%'`` full scan behind
+        "which conversations use this dictionary?" with two trigger-maintained
+        tables plus a backfill (TASK-15469). Local-only derived state: no sync
+        columns and no sync_log triggers -- see the migration file's header for
+        the full rationale, including why the index resolves only unambiguous
+        JSON integers and defers every other shape to the Python predicate.
+        """
+        if self._get_db_version(conn) != 34:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V34→V35] Migration requires schema version 34"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v34_to_v35_conversation_dictionary_attachments.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        cursor.execute(pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Conversation dictionary attachment migration contains "
+                        "incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 35:
+                    raise SchemaError(
+                        "Conversation dictionary attachment schema version "
+                        "verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V34 to V35 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4996,6 +5044,7 @@ UPDATE db_schema_version
                     31: self._migrate_from_v31_to_v32,
                     32: self._migrate_from_v32_to_v33,
                     33: self._migrate_from_v33_to_v34,
+                    34: self._migrate_from_v34_to_v35,
                 }
 
                 if current_db_version == 0:
