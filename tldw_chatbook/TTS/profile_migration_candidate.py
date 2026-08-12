@@ -65,7 +65,13 @@ _CAPABILITY_FACTORY_TOKEN = object()
 class ProfileMigrationBoundarySnapshot:
     """Revocable single-use authority to copy one exact validated boundary."""
 
-    __slots__ = ("__evidence", "__snapshot", "__thread_id", "__used")
+    __slots__ = (
+        "__attempted",
+        "__completed",
+        "__evidence",
+        "__snapshot",
+        "__thread_id",
+    )
 
     def __init__(
         self,
@@ -77,10 +83,11 @@ class ProfileMigrationBoundarySnapshot:
             raise ProfileRepositoryError("migration_failed")
         from threading import get_ident
 
+        self.__attempted = False
+        self.__completed = False
         self.__evidence: _BoundaryEvidence | None = evidence
         self.__snapshot: sqlite3.Connection | None = snapshot
         self.__thread_id = get_ident()
-        self.__used = False
 
     def __repr__(self) -> str:
         return "ProfileMigrationBoundarySnapshot()"
@@ -106,11 +113,11 @@ class ProfileMigrationBoundarySnapshot:
             if (
                 snapshot is None
                 or evidence is None
-                or self.__used
+                or self.__attempted
                 or self.__thread_id != get_ident()
             ):
                 raise ValueError
-            self.__used = True
+            self.__attempted = True
             if type(destination) is not ProfileMigrationBoundaryDestination:
                 raise ValueError
             _require_boundary_evidence(snapshot, evidence)
@@ -123,6 +130,7 @@ class ProfileMigrationBoundarySnapshot:
                     evidence,
                 ),
             )
+            self.__completed = True
         except ProfileRepositoryError:
             raise ProfileRepositoryError("migration_failed") from None
         except BaseException as error:
@@ -389,7 +397,7 @@ def _emit_boundary(
         sink(capability, request)
         if not object.__getattribute__(
             capability,
-            "_ProfileMigrationBoundarySnapshot__used",
+            "_ProfileMigrationBoundarySnapshot__completed",
         ):
             raise ValueError
     except BaseException as error:

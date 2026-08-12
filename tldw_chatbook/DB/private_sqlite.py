@@ -80,6 +80,13 @@ _READ_ONLY_URI = frozenset({SQLiteTargetKind.READ_ONLY_URI})
 _PRIVATE_AND_READ_ONLY = frozenset(
     {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
 )
+_PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
+    {
+        SQLiteTargetKind.PRIVATE_FILE,
+        SQLiteTargetKind.MEMORY,
+        SQLiteTargetKind.READ_ONLY_URI,
+    }
+)
 
 _SQLITE_OWNER_POLICIES = {
     "app.prompts_parent": SQLiteOwnerPolicy(
@@ -344,10 +351,11 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "tts.profile_migration_boundary": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_migration_candidate",
-        _PRIVATE_OR_MEMORY,
+        _PRIVATE_MEMORY_AND_READ_ONLY,
         "TTS migration boundaries use an isolated in-memory source and one "
         "exclusive owner-private future-artifact destination.",
         centralized_backup_allowed=True,
+        preserve_read_only_source_mode=True,
     ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
@@ -1523,6 +1531,40 @@ def _profile_destination_sidecars_absent(parent_fd: int, leaf: str) -> bool:
     return True
 
 
+def _profile_destination_namespace_holds(
+    destination: ProfileMigrationBoundaryDestination,
+    parent_fd: int,
+    file_fd: int,
+    leaf: str,
+) -> bool:
+    return (
+        private_paths._same_identity(
+            os.fstat(parent_fd),
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_identity",
+            ),
+        )
+        and _artifact_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_identity",
+            ),
+            selected=cast(
+                Path,
+                object.__getattribute__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__path",
+                ),
+            ),
+        )
+        and _profile_destination_sidecars_absent(parent_fd, leaf)
+    )
+
+
 def _verify_profile_migration_destination(
     destination: ProfileMigrationBoundaryDestination,
     *,
@@ -1593,6 +1635,17 @@ def _verify_profile_migration_destination(
     verify_trusted_directory(opened_path.parent, allow_shared_sticky=False)
     if not private_paths._same_identity(opened_path.lstat(), file_stat):
         raise SQLitePrivateDestinationError()
+    parent_fd, leaf = private_paths._open_verified_parent(
+        selected,
+        missing_leaf_allowed=False,
+    )
+    try:
+        if not private_paths._same_identity(
+            parent_stat, os.fstat(parent_fd)
+        ) or not _profile_destination_sidecars_absent(parent_fd, leaf):
+            raise SQLitePrivateDestinationError()
+    finally:
+        os.close(parent_fd)
     if require_empty:
         version_row = connection.execute("PRAGMA user_version").fetchone()
         objects_row = connection.execute(
@@ -1669,6 +1722,18 @@ def open_profile_migration_boundary_destination(
         if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             raise ValueError
         parent_identity = selected.parent.lstat()
+        parent_fd, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=True,
+        )
+        try:
+            if not private_paths._same_identity(
+                os.fstat(parent_fd),
+                parent_identity,
+            ) or not _profile_destination_sidecars_absent(parent_fd, leaf):
+                raise ValueError
+        finally:
+            os.close(parent_fd)
         connection = _connect_registered_sqlite(
             _PROFILE_MIGRATION_BOUNDARY_OWNER,
             selected,
@@ -1721,9 +1786,59 @@ def _snapshot_connection_to_memory(
         snapshot.execute("PRAGMA foreign_keys = ON")
         _backup_pages(source, snapshot, restore=False)
         return snapshot
-    except BaseException:
-        snapshot.close()
-        raise
+    except BaseException as primary_error:
+        close_error: BaseException | None = None
+        try:
+            snapshot.close()
+        except BaseException as error:
+            close_error = error
+        for pending_error in (primary_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        raise primary_error
+
+
+def _validate_closed_profile_migration_destination(
+    destination: ProfileMigrationBoundaryDestination,
+    validate: Callable[[sqlite3.Connection], None],
+) -> None:
+    selected = cast(
+        Path,
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__path",
+        ),
+    )
+    connection: sqlite3.Connection | None = None
+    body_error: BaseException | None = None
+    close_error: BaseException | None = None
+    try:
+        connection = _connect_registered_sqlite(
+            _PROFILE_MIGRATION_BOUNDARY_OWNER,
+            selected,
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA query_only = ON")
+        validate(connection)
+    except BaseException as error:
+        body_error = error
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as error:
+            close_error = error
+    for pending_error in (body_error, close_error):
+        if pending_error is not None and not isinstance(pending_error, Exception):
+            raise pending_error
+    if body_error is not None:
+        raise body_error
+    if close_error is not None:
+        raise close_error
 
 
 def backup_profile_migration_boundary(
@@ -1797,40 +1912,28 @@ def backup_profile_migration_boundary(
                     writable=False,
                     create=False,
                 )
-                file_identity = object.__getattribute__(
+                if not _profile_destination_namespace_holds(
                     destination,
-                    "_ProfileMigrationBoundaryDestination__file_identity",
-                )
-                parent_identity = object.__getattribute__(
-                    destination,
-                    "_ProfileMigrationBoundaryDestination__parent_identity",
-                )
-                if not private_paths._same_identity(
-                    os.fstat(parent_fd),
-                    parent_identity,
-                ) or not _artifact_postcondition_holds(
-                    file_fd,
                     parent_fd,
+                    file_fd,
                     leaf,
-                    expected_identity=file_identity,
-                    selected=selected,
                 ):
                     raise SQLitePrivateDestinationError()
                 os.fsync(file_fd)
                 os.fsync(parent_fd)
-                if (
-                    not private_paths._same_identity(
-                        os.fstat(parent_fd),
-                        parent_identity,
-                    )
-                    or not _artifact_postcondition_holds(
-                        file_fd,
-                        parent_fd,
-                        leaf,
-                        expected_identity=file_identity,
-                        selected=selected,
-                    )
-                    or not _profile_destination_sidecars_absent(parent_fd, leaf)
+                if not _profile_destination_namespace_holds(
+                    destination,
+                    parent_fd,
+                    file_fd,
+                    leaf,
+                ):
+                    raise SQLitePrivateDestinationError()
+                _validate_closed_profile_migration_destination(destination, validate)
+                if not _profile_destination_namespace_holds(
+                    destination,
+                    parent_fd,
+                    file_fd,
+                    leaf,
                 ):
                     raise SQLitePrivateDestinationError()
                 object.__setattr__(

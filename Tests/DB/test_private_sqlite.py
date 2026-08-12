@@ -206,6 +206,27 @@ def test_profile_migration_boundary_destination_refuses_existing_artifact(
     assert outside.read_bytes() == b"outside-private-value"
 
 
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_profile_migration_boundary_refuses_preexisting_sidecar_namespace(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    sidecar = Path(f"{target}{suffix}")
+    foreign = b"foreign-sidecar-entry"
+    sidecar.write_bytes(foreign)
+    sidecar.chmod(0o600)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_profile_migration_boundary_destination(
+            target,
+            schema_version=2,
+        )
+
+    assert not target.exists()
+    assert sidecar.read_bytes() == foreign
+
+
 def test_profile_migration_boundary_destination_rejects_substitution_before_copy(
     tmp_path: Path,
 ) -> None:
@@ -339,6 +360,55 @@ def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
         )
     finally:
         reopened.close()
+
+
+def test_profile_migration_boundary_revalidates_content_after_final_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+    expected_identity = target.stat()
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT)")
+    source.execute("INSERT INTO private_data VALUES ('exact-copy')")
+    source.execute("PRAGMA user_version = 2")
+    source.commit()
+    real_fsync = private_sqlite.os.fsync
+    fsync_calls = 0
+
+    def corrupt_on_first_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            with target.open("r+b") as stream:
+                stream.write(b"corrupt!")
+        real_fsync(fd)
+
+    monkeypatch.setattr(private_sqlite.os, "fsync", corrupt_on_first_fsync)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.backup_profile_migration_boundary(
+            source,
+            destination,
+            schema_version=2,
+            validate=lambda connection: (
+                connection.execute("SELECT value FROM private_data").fetchone()[0]
+                == "exact-copy"
+                or pytest.fail("final validator did not observe exact content")
+            ),
+        )
+
+    source.close()
+    assert fsync_calls >= 2
+    assert (target.stat().st_dev, target.stat().st_ino) == (
+        expected_identity.st_dev,
+        expected_identity.st_ino,
+    )
+    assert target.read_bytes().startswith(b"corrupt!")
 
 
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])

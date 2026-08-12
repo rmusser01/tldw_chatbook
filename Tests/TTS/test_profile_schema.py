@@ -490,6 +490,47 @@ def test_candidate_boundary_requires_exact_destination_type(tmp_path: Path) -> N
         reopened.close()
 
 
+def test_candidate_boundary_requires_success_after_caught_invalid_attempt(
+    tmp_path: Path,
+) -> None:
+    connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 3)
+    raw = sqlite3.connect(":memory:")
+    destination_path = tmp_path / "second-attempt.sqlite3"
+    errors: list[str] = []
+
+    def catch_invalid_attempt(
+        snapshot: ProfileMigrationBoundarySnapshot,
+        request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        try:
+            snapshot.backup_to(raw)  # type: ignore[arg-type]
+        except ProfileRepositoryError as error:
+            errors.append(error.code)
+        destination = private_sqlite.open_profile_migration_boundary_destination(
+            destination_path,
+            schema_version=request.schema_version,
+        )
+        with destination:
+            try:
+                snapshot.backup_to(destination)
+            except ProfileRepositoryError as error:
+                errors.append(error.code)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=catch_invalid_attempt,
+        )
+
+    raw.close()
+    assert errors == ["migration_failed", "migration_failed"]
+    reopened = sqlite3.connect(destination_path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone() == (0,)
+    finally:
+        reopened.close()
+
+
 def test_candidate_boundary_cannot_disable_guard_and_commit_domain_mutation(
     tmp_path: Path,
 ) -> None:
@@ -695,6 +736,60 @@ def test_candidate_boundary_control_flow_wins_after_isolated_snapshot_cleanup(
         assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("primary_kind", ["control_flow", "ordinary"])
+def test_candidate_snapshot_backup_cleanup_preserves_error_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary_kind: str,
+) -> None:
+    class StopSnapshot(BaseException):
+        pass
+
+    class FailingCloseConnection(sqlite3.Connection):
+        def close(self) -> None:
+            super().close()
+            raise RuntimeError("PRIVATE snapshot close failure")
+
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+    signal: BaseException = (
+        StopSnapshot()
+        if primary_kind == "control_flow"
+        else RuntimeError("PRIVATE snapshot backup failure")
+    )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        lambda *_args, **_kwargs: sqlite3.connect(
+            ":memory:",
+            isolation_level=None,
+            factory=FailingCloseConnection,
+        ),
+    )
+
+    def fail_backup(*_args: object, **_kwargs: object) -> None:
+        raise signal
+
+    monkeypatch.setattr(private_sqlite, "_backup_pages", fail_backup)
+
+    if primary_kind == "control_flow":
+        with pytest.raises(StopSnapshot) as caught:
+            step_profile_migration_candidate(
+                connection,
+                boundary_sink=lambda *_args: pytest.fail("sink must not run"),
+            )
+        assert caught.value is signal
+    else:
+        with _safe_error("migration_failed") as caught:
+            step_profile_migration_candidate(
+                connection,
+                boundary_sink=lambda *_args: pytest.fail("sink must not run"),
+            )
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -966,6 +1061,8 @@ def test_candidate_validates_source_boundaries_and_each_post_step_version(
         2,
         2,
         2,
+        2,
+        3,
         3,
         3,
         3,
