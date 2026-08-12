@@ -543,10 +543,16 @@ class LLMManagementWindow(Container):
             # Autofill the Ollama executable when it's discoverable (UX-078).
             self._autofill_ollama_path,
             # Keep the Ollama API controls gated on a live service (UX-091).
+            # task-15473: this step is now a coroutine function (it awaits
+            # the non-blocking Ollama probe) -- the others are still plain
+            # sync methods, so each result is awaited only if awaitable,
+            # preserving the per-step try/except isolation and ordering.
             self._update_ollama_api_state,
         ):
             try:
-                step()
+                result = step()
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 logger.exception(f"Post-mount step failed: {step.__name__}")
         self.post_message(self.DeferredViewsMounted())
@@ -610,16 +616,16 @@ class LLMManagementWindow(Container):
             )
         )
 
-    def _ollama_api_available(self) -> bool:
+    async def _ollama_api_available(self) -> bool:
         """True when an Ollama service answers (app-launched or external)."""
         proc = getattr(self.app_instance, "ollama_server_process", None)
         if proc is not None and proc.poll() is None:
             return True
         from .Screens.llm_screen import _probe_local_server
 
-        return _probe_local_server()
+        return await _probe_local_server()
 
-    def _update_ollama_api_state(self) -> None:
+    async def _update_ollama_api_state(self) -> None:
         """Disable API controls when no Ollama service is running.
 
         The banner already says "requires running service"; without gating,
@@ -638,7 +644,7 @@ class LLMManagementWindow(Container):
             view = self.query_one("#llm-view-ollama")
         except Exception:  # noqa: BLE001 - view not mounted
             return
-        available = self._ollama_api_available()
+        available = await self._ollama_api_available()
         for button in view.query(Button):
             if not button.id or button.id in excluded:
                 continue
