@@ -1,7 +1,7 @@
 # Durable Provider Tool-Continuation Checkpoints Design
 
 Date: 2026-08-12
-Status: Approved in conversation; pending written-spec review
+Status: Approved; written-spec review complete
 Backlog task: [TASK-15675](../../../backlog/tasks/task-15675%20-%20Add-durable-provider-tool-continuation-checkpoints.md)
 Architecture decision: [ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)
 

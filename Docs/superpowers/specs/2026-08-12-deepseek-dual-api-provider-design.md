@@ -1,7 +1,7 @@
 # DeepSeek Dual-API Provider Design
 
 Date: 2026-08-12
-Status: Approved in conversation; pending written-spec review
+Status: Approved; written-spec review complete
 Backlog task: [TASK-15677](../../../backlog/tasks/task-15677%20-%20Add-DeepSeek-dual-API-provider-support.md)
 Foundation task: [TASK-15675](../../../backlog/tasks/task-15675%20-%20Add-durable-provider-tool-continuation-checkpoints.md)
 Hosted Chat dependency: [TASK-15676](../../../backlog/tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)

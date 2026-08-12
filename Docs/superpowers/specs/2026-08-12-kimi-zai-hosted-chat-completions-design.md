@@ -1,7 +1,7 @@
 # Moonshot/Kimi and Z.ai/GLM Hosted Chat-Completions Design
 
 Date: 2026-08-12
-Status: Approved in conversation; pending written-spec review
+Status: Approved; written-spec review complete
 Backlog task: [TASK-15676](../../../backlog/tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)
 Foundation task: [TASK-15675](../../../backlog/tasks/task-15675%20-%20Add-durable-provider-tool-continuation-checkpoints.md)
 Architecture decision: [ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)

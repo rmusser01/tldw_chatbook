@@ -6,6 +6,11 @@ assignee: []
 created_date: '2026-08-12 18:06'
 labels: []
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-12-durable-provider-tool-continuation-implementation.md
+  - backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md
 priority: high
 ---
 
@@ -28,3 +33,27 @@ Persist the private provider context required to resume interrupted native funct
 - [ ] #9 The shared runtime supports provider-specific replay policy without an open metadata bag: Kimi K3 replays retained reasoning on later K3 turns, other Kimi/GLM policies preserve only documented active/restored tool runs, and DeepSeek replays completed tool-associated reasoning on later same-provider turns.
 - [ ] #10 Crash-boundary, sync/conflict, import/export, privacy, cancellation, branch/variant, and mutation tests prove the contract without paid requests.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+The executable TDD plan is
+`Docs/superpowers/plans/2026-08-12-durable-provider-tool-continuation-implementation.md`.
+It is ordered as follows:
+
+1. Define the bounded canonical checkpoint and owner-group contract without vendor wire translation.
+2. Add schema-v36 message ownership and atomic persistence.
+3. Extend Sync v1 and reconcile durable Sync-v2 outbox intent.
+4. Add one typed runtime lifecycle callback before side effects.
+5. Bind checkpoints to Console messages and explicit Resume/Discard UX.
+6. Expand and budget provider-private history atomically with its visible owner.
+7. Preserve/remap ownership in `.chatbook` and use explicit JSON projections.
+8. Prove crash boundaries, privacy, conflicts, and closeout evidence.
+
+ADR required: yes
+
+ADR path: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+
+Reason: This task changes durable message storage, sync/export behavior, and the
+provider/runtime side-effect boundary. ADR-058 records the approved contract.
+<!-- SECTION:PLAN:END -->

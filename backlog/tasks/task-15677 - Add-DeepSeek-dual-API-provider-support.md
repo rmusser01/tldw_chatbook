@@ -8,6 +8,12 @@ labels: []
 dependencies:
   - TASK-15675
   - TASK-15676
+references:
+  - Docs/superpowers/specs/2026-08-12-deepseek-dual-api-provider-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-12-deepseek-dual-api-provider-implementation.md
+  - backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md
+  - backlog/decisions/059-deepseek-dual-api-provider-boundary.md
 priority: high
 ---
 
