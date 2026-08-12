@@ -61,7 +61,8 @@ CREATE TABLE {REFERENCE_TABLE} (
         (recipe_id IS NULL AND recipe_revision IS NULL)
         OR (
             typeof(recipe_id) = 'text'
-            AND length(recipe_id) BETWEEN 1 AND 128
+            AND length(CAST(recipe_id AS BLOB)) BETWEEN 1 AND 128
+            AND instr(CAST(recipe_id AS BLOB), x'00') = 0
             AND recipe_id GLOB '[a-z0-9]*'
             AND recipe_id NOT GLOB '*[^a-z0-9._-]*'
             AND typeof(recipe_revision) = 'integer'

@@ -262,6 +262,29 @@ def test_v4_reference_columns_are_nullable_and_pair_constrained(tmp_path: Path) 
         connection.close()
 
 
+@pytest.mark.parametrize(
+    "recipe_id",
+    ["a\x00UPPER", "a\x00", "a\x00._-", f"{'a' * 128}\x00hidden"],
+)
+def test_v4_sql_recipe_grammar_rejects_embedded_nul(
+    tmp_path: Path,
+    recipe_id: str,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    before = _create_populated_v3_reference(path)
+    connection = open_profile_store(path)
+    try:
+        connection.execute(f"DELETE FROM {REFERENCE_TABLE}")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO {REFERENCE_TABLE} VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (*before, recipe_id, 1),
+            )
+    finally:
+        connection.close()
+
+
 def test_v3_to_v4_preserves_reference_and_leaves_recipe_unknown(
     tmp_path: Path,
 ) -> None:
