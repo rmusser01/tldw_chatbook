@@ -10,14 +10,17 @@ immutable read-only handle used for the rest of validation.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import stat
+import struct
+from dataclasses import dataclass
 import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 from uuid import UUID
 
 from tldw_chatbook.DB.private_sqlite import (
@@ -137,6 +140,19 @@ LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 """
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
+
+_MAX_EXACT_METADATA_ROWS = 1_000_000
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PostInitProfileStoreAuthority:
+    """Exact closed-store identity retained across exclusive/shared handoff."""
+
+    parent_identity: os.stat_result
+    file_identity: os.stat_result
+
+    def __repr__(self) -> str:
+        return "PostInitProfileStoreAuthority(<private>)"
 
 
 def _repository_error(code: str) -> ProfileRepositoryError:
@@ -439,10 +455,114 @@ def _same_parent_authority(
     )
 
 
-def _exact_store_metadata_snapshot(
+def _matches_post_init_authority(
+    parent: os.stat_result,
+    file: os.stat_result,
+    expected: PostInitProfileStoreAuthority,
+) -> bool:
+    return (
+        _same_parent_authority(parent, expected.parent_identity)
+        and private_paths._same_identity(file, expected.file_identity)
+        and file.st_size == expected.file_identity.st_size
+        and file.st_nlink == 1
+        and private_paths._classify_private_file_stat(
+            file,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and stat.S_IMODE(file.st_mode) == 0o600
+    )
+
+
+def capture_post_init_profile_store_authority(
+    path: Path,
+) -> PostInitProfileStoreAuthority:
+    """Pin one closed, sidecar-free store before releasing exclusive ownership."""
+
+    parent_fd = -1
+    file_fd = -1
+    try:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        parent = os.fstat(parent_fd)
+        if not _exact_store_namespace_safe(parent_fd, leaf):
+            raise _repository_error("operation_failed")
+        file_fd = os.open(
+            leaf,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(file_fd)
+        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        provisional = PostInitProfileStoreAuthority(parent, opened)
+        if (
+            opened.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+            or not _matches_post_init_authority(parent, opened, provisional)
+            or not _matches_post_init_authority(parent, named, provisional)
+        ):
+            raise _repository_error("operation_failed")
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+        settled_parent = os.fstat(parent_fd)
+        settled_file = os.fstat(file_fd)
+        settled_named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not _matches_post_init_authority(
+                settled_parent,
+                settled_file,
+                provisional,
+            )
+            or not _matches_post_init_authority(
+                settled_parent,
+                settled_named,
+                provisional,
+            )
+            or not _exact_store_namespace_safe(parent_fd, leaf)
+        ):
+            raise _repository_error("operation_failed")
+        return provisional
+    except ProfileRepositoryError:
+        raise
+    except Exception:
+        raise _repository_error("operation_failed") from None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _update_metadata_digest(digest: Any, value: object) -> None:
+    """Length-frame one SQLite scalar into an incremental digest."""
+
+    if value is None:
+        payload = b""
+        tag = b"n"
+    elif type(value) is int:
+        payload = str(value).encode("ascii")
+        tag = b"i"
+    elif type(value) is float:
+        payload = struct.pack(">d", value)
+        tag = b"f"
+    elif type(value) is str:
+        payload = value.encode("utf-8")
+        tag = b"s"
+    else:
+        raise _repository_error("corrupt_data")
+    digest.update(tag)
+    digest.update(len(payload).to_bytes(8, "big"))
+    digest.update(payload)
+
+
+def _stream_exact_store_metadata_evidence(
     connection: sqlite3.Connection,
-) -> tuple[tuple[tuple[object, ...], ...], ...]:
-    """Capture exact ordered persisted metadata without loading private blobs."""
+) -> tuple[bytes, tuple[int, int, int]]:
+    """Stream bounded exact metadata evidence without retaining rows or blobs."""
 
     statements = (
         """
@@ -467,10 +587,22 @@ def _exact_store_metadata_snapshot(
         ORDER BY profile_id
         """,
     )
-    return tuple(
-        tuple(tuple(row) for row in connection.execute(statement))
-        for statement in statements
-    )
+    digest = hashlib.sha256()
+    counts: list[int] = []
+    total = 0
+    for table_index, statement in enumerate(statements):
+        count = 0
+        digest.update(b"t" + table_index.to_bytes(1, "big"))
+        for row in connection.execute(statement):
+            count += 1
+            total += 1
+            if total > _MAX_EXACT_METADATA_ROWS:
+                raise _repository_error("corrupt_data")
+            digest.update(b"r")
+            for value in row:
+                _update_metadata_digest(digest, value)
+        counts.append(count)
+    return digest.digest(), (counts[0], counts[1], counts[2])
 
 
 def encode_uuid(value: UUID) -> str:
@@ -1394,7 +1526,11 @@ def peek_profile_store_schema_version(path: Path) -> int | None:
                 pass
 
 
-def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
+def open_exact_current_profile_store(
+    path: Path,
+    *,
+    expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
+) -> sqlite3.Connection:
     """Open exact current v4 without migration while retaining its proof pin."""
 
     if not isinstance(path, Path) or not path.is_absolute():
@@ -1413,6 +1549,11 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
             missing_leaf_allowed=False,
         )
         parent_identity = os.fstat(parent_fd)
+        if expected_post_init_authority is not None and not _same_parent_authority(
+            parent_identity,
+            expected_post_init_authority.parent_identity,
+        ):
+            raise _repository_error("operation_failed")
         if not _exact_store_namespace_safe(parent_fd, leaf):
             raise ExactProfileStoreNotCurrentError()
         file_fd = os.open(
@@ -1435,7 +1576,21 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
         ):
             raise ExactProfileStoreNotCurrentError()
         named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        if not private_paths._same_identity(named, file_identity):
+        if not private_paths._same_identity(named, file_identity) or (
+            expected_post_init_authority is not None
+            and (
+                not _matches_post_init_authority(
+                    parent_identity,
+                    file_identity,
+                    expected_post_init_authority,
+                )
+                or not _matches_post_init_authority(
+                    parent_identity,
+                    named,
+                    expected_post_init_authority,
+                )
+            )
+        ):
             raise _repository_error("operation_failed")
         pinned_sidecars = _open_exact_store_sidecars(parent_fd, leaf)
         if pinned_sidecars is not None:
@@ -1452,7 +1607,7 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
             raise ExactProfileStoreNotCurrentError()
         _validate_schema(descriptor)
         validate_profile_store_rows(descriptor)
-        _exact_store_metadata_snapshot(descriptor)
+        _stream_exact_store_metadata_evidence(descriptor)
 
         live = connect_private_sqlite(
             "tts.profile_store",
@@ -1498,22 +1653,17 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
         _validate_schema(cast(sqlite3.Connection, owned))
         validate_profile_store_rows(cast(sqlite3.Connection, owned))
         owned.execute("BEGIN")
-        live_data_version = owned.execute("PRAGMA data_version").fetchone()[0]
-        live_snapshot = _exact_store_metadata_snapshot(cast(sqlite3.Connection, owned))
-        # A coexisting current-v4 writer may have committed into the WAL after
-        # the immutable main-file image was pinned. Accept only a stable,
-        # metadata-only SQLite snapshot of the exact pinned canonical cohort.
+        _stream_exact_store_metadata_evidence(cast(sqlite3.Connection, owned))
         revalidate_exact_current_profile_store(
             cast(sqlite3.Connection, owned),
             path,
         )
-        repeated_snapshot = _exact_store_metadata_snapshot(
-            cast(sqlite3.Connection, owned)
-        )
-        repeated_data_version = owned.execute("PRAGMA data_version").fetchone()[0]
-        if (
-            repeated_snapshot != live_snapshot
-            or repeated_data_version != live_data_version
+        if expected_post_init_authority is not None and (
+            not _matches_post_init_authority(
+                os.fstat(owned.parent_fd),
+                os.fstat(owned.file_fd),
+                expected_post_init_authority,
+            )
         ):
             raise _repository_error("operation_failed")
         owned.rollback()

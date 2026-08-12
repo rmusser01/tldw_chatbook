@@ -47,7 +47,10 @@ from tldw_chatbook.TTS.profile_migration_journal import (
 from tldw_chatbook.TTS.profile_migration_namespace import (
     MigrationTombstoneKey,
     ParentAuthority,
+    prepare_reusable_tombstone,
     remove_exact,
+    remove_zero_reusable_tombstone,
+    require_reusable_tombstone,
 )
 from tldw_chatbook.TTS.profile_migration_publication import (
     prepare_profile_migration_artifact,
@@ -80,6 +83,8 @@ from tldw_chatbook.TTS.profile_schema import (
     ExactProfileStoreCleanupError,
     ExactProfileStoreAuthorityError,
     ExactProfileStoreNotCurrentError,
+    PostInitProfileStoreAuthority,
+    capture_post_init_profile_store_authority,
     decode_assigned_snapshot,
     decode_assignment,
     decode_profile,
@@ -1044,6 +1049,7 @@ class TTSProfileRepository:
         self._exact_authority_quarantined = False
         self._restore_sidecar_identities: dict[str, os.stat_result] = {}
         self._restore_parent_authority: ParentAuthority | None = None
+        self._reusable_tombstones: dict[MigrationTombstoneKey, os.stat_result] = {}
         self._active_database_path: Path | None = None
         self._residual_cleanup_paths: tuple[Path, ...] = ()
         self._damaged_reference_profile_ids: set[UUID] = set()
@@ -1278,13 +1284,17 @@ class TTSProfileRepository:
                 self._database_path,
                 "operation_failed",
             )
+            expected_post_init_authority: PostInitProfileStoreAuthority | None = None
             shared = self._worker_open_if_proven_current(active_path)
             if shared is None:
-                self._worker_initialize_store(
+                expected_post_init_authority = self._worker_initialize_store(
                     active_path,
                     allow_create=not self._store_established,
                 )
-                shared = self._worker_open_if_proven_current(active_path)
+                shared = self._worker_open_if_proven_current(
+                    active_path,
+                    expected_post_init_authority=expected_post_init_authority,
+                )
                 if shared is None:
                     raise _repository_error("operation_failed")
                 lease, connection = shared
@@ -1339,6 +1349,8 @@ class TTSProfileRepository:
     def _worker_open_if_proven_current(
         self,
         active_path: Path,
+        *,
+        expected_post_init_authority: PostInitProfileStoreAuthority | None = None,
     ) -> tuple[ProfileStoreLease, sqlite3.Connection] | None:
         """Open exact v4 while continuously holding one shared gate."""
 
@@ -1368,7 +1380,10 @@ class TTSProfileRepository:
             finally:
                 os.close(parent_fd)
             try:
-                connection = open_exact_current_profile_store(active_path)
+                connection = open_exact_current_profile_store(
+                    active_path,
+                    expected_post_init_authority=expected_post_init_authority,
+                )
             except ExactProfileStoreNotCurrentError:
                 self._worker_release_unproven_shared(lease, active_path)
                 return None
@@ -1429,7 +1444,7 @@ class TTSProfileRepository:
         active_path: Path,
         *,
         allow_create: bool = True,
-    ) -> None:
+    ) -> PostInitProfileStoreAuthority:
         """Create or migrate one store only while holding exclusive ownership."""
 
         lease = ProfileStoreLease(
@@ -1441,6 +1456,7 @@ class TTSProfileRepository:
         body_error: BaseException | None = None
         connection_error: BaseException | None = None
         lease_error: BaseException | None = None
+        authority: PostInitProfileStoreAuthority | None = None
         try:
             lease.acquire()
             recover_profile_migration_publication(active_path)
@@ -1472,6 +1488,11 @@ class TTSProfileRepository:
                 self._connection = connection
                 self._lease = lease
                 self._active_database_path = active_path
+        if body_error is None and connection_error is None:
+            try:
+                authority = capture_post_init_profile_store_authority(active_path)
+            except BaseException as error:
+                body_error = error
         if self._connection is not None:
             self._lease = lease
             self._active_database_path = active_path
@@ -1487,6 +1508,8 @@ class TTSProfileRepository:
             connection_error,
             lease_error,
         )
+        assert authority is not None
+        return authority
 
     def _worker_publish_migrated_store(
         self,
@@ -1526,6 +1549,7 @@ class TTSProfileRepository:
         source: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         try:
+            self._worker_prepare_reusable_tombstones(active_path)
             if source_path is None:
                 source = connect_private_sqlite(
                     "tts.profile_migration_backup",
@@ -1652,6 +1676,7 @@ class TTSProfileRepository:
                 backup_destinations=backup_destinations,
                 stage_hook=stage_hook,
             )
+            self._worker_refresh_reusable_tombstones(active_path)
         except BaseException as error:
             body_error = error
 
@@ -1670,6 +1695,10 @@ class TTSProfileRepository:
                         owner,
                         tombstone_key=tombstone_key,
                     )
+                    holding = active_path.with_name(
+                        f".profile-migration-{tombstone_key.value}.tombstone"
+                    )
+                    self._reusable_tombstones[tombstone_key] = holding.stat()
                 except BaseException as error:
                     cleanup_errors.append(error)
         for owner, _tombstone_key in reversed(owners):
@@ -1684,6 +1713,87 @@ class TTSProfileRepository:
             if isinstance(body_error, ProfileRepositoryError):
                 raise _repository_error(body_error.code)
             raise _repository_error("migration_failed")
+
+    def _worker_prepare_reusable_tombstones(self, active_path: Path) -> None:
+        """Turn retained exact cleanup evidence into zero reusable leaves."""
+
+        parent = ParentAuthority(active_path.parent.stat())
+        known = self._reusable_tombstones
+        for key in MigrationTombstoneKey:
+            holding = active_path.with_name(f".profile-migration-{key.value}.tombstone")
+            try:
+                observed = holding.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            expected = known.get(key)
+            if expected is None or not private_paths._same_identity(observed, expected):
+                raise _repository_error("migration_failed")
+        moves = (
+            (
+                MigrationTombstoneKey.ACTIVE_ROLLBACK,
+                MigrationTombstoneKey.ACTIVE_CANDIDATE,
+            ),
+            (
+                MigrationTombstoneKey.PRE_V3_ROLLBACK,
+                MigrationTombstoneKey.PRE_V3_CANDIDATE,
+            ),
+            (
+                MigrationTombstoneKey.PRE_V4_ROLLBACK,
+                MigrationTombstoneKey.PRE_V4_CANDIDATE,
+            ),
+            (MigrationTombstoneKey.JOURNAL, MigrationTombstoneKey.JOURNAL),
+            (MigrationTombstoneKey.LIVE_WAL, MigrationTombstoneKey.LIVE_WAL),
+            (MigrationTombstoneKey.LIVE_SHM, MigrationTombstoneKey.LIVE_SHM),
+        )
+        for source_key, destination_key in moves:
+            expected = known.pop(source_key, None)
+            if expected is None:
+                continue
+            try:
+                prepared = prepare_reusable_tombstone(
+                    active_path,
+                    parent_authority=parent,
+                    file_identity=expected,
+                    source_key=source_key,
+                    destination_key=destination_key,
+                )
+                if destination_key in {
+                    MigrationTombstoneKey.LIVE_WAL,
+                    MigrationTombstoneKey.LIVE_SHM,
+                }:
+                    remove_zero_reusable_tombstone(
+                        active_path,
+                        parent_authority=parent,
+                        file_identity=prepared,
+                        tombstone_key=destination_key,
+                    )
+                else:
+                    known[destination_key] = prepared
+            except Exception:
+                raise _repository_error("migration_failed") from None
+
+    def _worker_refresh_reusable_tombstones(self, active_path: Path) -> None:
+        """Retain exact identities produced by a completed publication."""
+
+        refreshed: dict[MigrationTombstoneKey, os.stat_result] = {}
+        for key in MigrationTombstoneKey:
+            holding = active_path.with_name(f".profile-migration-{key.value}.tombstone")
+            try:
+                observed = holding.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if (
+                private_paths._classify_private_file_stat(
+                    observed,
+                    expected_uid=os.geteuid(),
+                )
+                is not None
+                or stat.S_IMODE(observed.st_mode) != 0o600
+                or observed.st_nlink != 1
+            ):
+                raise _repository_error("migration_failed")
+            refreshed[key] = observed
+        self._reusable_tombstones = refreshed
 
     def _worker_exact_schema_version(self, active_path: Path) -> int | None:
         """Read the exact version without authorizing migration or creation."""
@@ -2567,6 +2677,13 @@ class TTSProfileRepository:
             exclusive_lease.acquire()
             _require_restore_time(deadline)
             recover_profile_migration_publication(active_path)
+            parent_authority = ParentAuthority(active_path.parent.stat())
+            for key in MigrationTombstoneKey:
+                require_reusable_tombstone(
+                    active_path,
+                    parent_authority=parent_authority,
+                    tombstone_key=key,
+                )
             self._worker_remove_live_sidecars(deadline=deadline)
             if not _candidate_is_unchanged(candidate):
                 raise _repository_error("restore_failed")
@@ -2956,6 +3073,10 @@ class TTSProfileRepository:
                     file_identity=expected,
                     tombstone_key=tombstones[suffix],
                 )
+                holding = database_path.with_name(
+                    f".profile-migration-{tombstones[suffix].value}.tombstone"
+                )
+                self._reusable_tombstones[tombstones[suffix]] = holding.stat()
             except BaseException as error:
                 if not isinstance(error, Exception):
                     raise
@@ -3034,8 +3155,11 @@ class TTSProfileRepository:
 
         shared = self._worker_open_if_proven_current(active_path)
         if shared is None:
-            self._worker_initialize_store(active_path, allow_create=False)
-            shared = self._worker_open_if_proven_current(active_path)
+            expected = self._worker_initialize_store(active_path, allow_create=False)
+            shared = self._worker_open_if_proven_current(
+                active_path,
+                expected_post_init_authority=expected,
+            )
         if shared is None:
             raise _repository_error("restore_failed")
         lease, connection = shared

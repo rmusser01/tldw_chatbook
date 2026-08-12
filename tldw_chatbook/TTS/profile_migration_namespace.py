@@ -139,6 +139,142 @@ def _holding_path(path: Path, key: MigrationTombstoneKey) -> Path:
     return path.with_name(f".profile-migration-{key.value}.tombstone")
 
 
+def require_reusable_tombstone(
+    path: Path,
+    *,
+    parent_authority: ParentAuthority,
+    tombstone_key: MigrationTombstoneKey,
+) -> None:
+    """Require an existing bounded tombstone to remain exact and unaliased."""
+
+    holding = _holding_path(path, tombstone_key)
+    parent_fd = _open_parent(path, parent_authority)
+    descriptor = -1
+    try:
+        try:
+            descriptor = os.open(
+                holding.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            return
+        opened = os.fstat(descriptor)
+        named = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not private_paths._same_identity(opened, named)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(named, links=frozenset({1}))
+            or not _sidecars_absent(parent_fd, holding.name)
+        ):
+            raise ValueError
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
+def prepare_reusable_tombstone(
+    path: Path,
+    *,
+    parent_authority: ParentAuthority,
+    file_identity: os.stat_result,
+    source_key: MigrationTombstoneKey,
+    destination_key: MigrationTombstoneKey,
+) -> os.stat_result:
+    """Move exact retained cleanup evidence into one zero reusable leaf."""
+
+    source = _holding_path(path, source_key)
+    destination = _holding_path(path, destination_key)
+    parent_fd = _open_parent(path, parent_authority)
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            source.name,
+            os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(descriptor)
+        named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not private_paths._same_identity(opened, file_identity)
+            or not private_paths._same_identity(named, file_identity)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(named, links=frozenset({1}))
+            or not _sidecars_absent(parent_fd, source.name)
+        ):
+            raise ValueError
+        if source != destination:
+            _rename_noreplace(parent_fd, source.name, destination.name)
+            os.fsync(parent_fd)
+        current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(descriptor)
+        if (
+            not private_paths._same_identity(opened, file_identity)
+            or not private_paths._same_identity(current, file_identity)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(current, links=frozenset({1}))
+            or not _sidecars_absent(parent_fd, destination.name)
+        ):
+            raise ValueError
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+        settled = os.fstat(descriptor)
+        current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            settled.st_size != 0
+            or current.st_size != 0
+            or not private_paths._same_identity(settled, file_identity)
+            or not private_paths._same_identity(current, file_identity)
+            or not _valid_file(settled, links=frozenset({1}))
+            or not _valid_file(current, links=frozenset({1}))
+        ):
+            raise ValueError
+        os.fsync(parent_fd)
+        return settled
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
+def remove_zero_reusable_tombstone(
+    path: Path,
+    *,
+    parent_authority: ParentAuthority,
+    file_identity: os.stat_result,
+    tombstone_key: MigrationTombstoneKey,
+) -> None:
+    """Remove exact zero cleanup evidence so its fixed slot can be refilled."""
+
+    holding = _holding_path(path, tombstone_key)
+    parent_fd = _open_parent(path, parent_authority)
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            holding.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(descriptor)
+        named = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            opened.st_size != 0
+            or named.st_size != 0
+            or not private_paths._same_identity(opened, file_identity)
+            or not private_paths._same_identity(named, file_identity)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(named, links=frozenset({1}))
+        ):
+            raise ValueError
+        os.unlink(holding.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
 def move_exact_noreplace(
     source: Path,
     destination: Path,
@@ -452,5 +588,8 @@ __all__ = [
     "ParentAuthority",
     "move_exact_noreplace",
     "open_new_or_reused_private_file",
+    "prepare_reusable_tombstone",
+    "remove_zero_reusable_tombstone",
+    "require_reusable_tombstone",
     "remove_exact",
 ]

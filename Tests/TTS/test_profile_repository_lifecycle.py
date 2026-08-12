@@ -483,7 +483,72 @@ async def test_restore_v2_uses_transactional_publication_with_exact_boundaries(
 
 
 @pytest.mark.asyncio
-async def test_prepublication_migration_failure_retains_bounded_candidates(
+async def test_three_sequential_older_restores_reuse_fixed_nonzero_tombstones(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    candidates = tuple(tmp_path / f"incoming-{index}.sqlite3" for index in range(3))
+    for index, candidate in enumerate(candidates):
+        _build_populated_v2_store_at(candidate, display_name=f"Restored {index}")
+    repository = _repository(database_path)
+    await repository.open()
+    retained_inode_set: set[int] | None = None
+    try:
+        for index, candidate in enumerate(candidates):
+            await repository.restore_from(candidate)
+            assert _stored_profile_name(database_path) == f"Restored {index}"
+            private_namespace = tuple(
+                path
+                for path in tmp_path.iterdir()
+                if path == database_path
+                or path.name.startswith(".profile-migration-")
+                or ".pre-v" in path.name
+            )
+            assert private_namespace
+            if index == 1:
+                retained_inode_set = {path.stat().st_ino for path in private_namespace}
+            elif index == 2:
+                assert {
+                    path.stat().st_ino for path in private_namespace
+                } == retained_inode_set
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_nonzero_tombstone_hardlink_blocks_reuse_without_touching_alias(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    first = tmp_path / "incoming-first.sqlite3"
+    second = tmp_path / "incoming-second.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(first, display_name="First")
+    _build_populated_v2_store_at(second, display_name="Second")
+    repository = _repository(database_path)
+    await repository.open()
+    try:
+        await repository.restore_from(first)
+        tombstone = tmp_path / ".profile-migration-active-rollback.tombstone"
+        alias = tmp_path / "foreign-alias.sqlite3"
+        os.link(tombstone, alias)
+        retained = alias.read_bytes()
+
+        with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+            await repository.restore_from(second)
+
+        assert alias.read_bytes() == retained
+        assert tombstone.read_bytes() == retained
+        assert _stored_profile_name(database_path) == "First"
+    finally:
+        alias = tmp_path / "foreign-alias.sqlite3"
+        alias.unlink(missing_ok=True)
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_prepublication_migration_failure_retains_bounded_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -507,7 +572,6 @@ async def test_prepublication_migration_failure_retains_bounded_candidates(
     assert all(path.read_bytes() for path in tombstones)
     active_tombstone = tmp_path / ".profile-migration-active-candidate.tombstone"
     retained_inode = active_tombstone.stat().st_ino
-    retained_bytes = active_tombstone.read_bytes()
 
     monkeypatch.setattr(module, "step_profile_migration_candidate", real_step)
     with pytest.raises(ProfileRepositoryError, match="migration_failed"):
@@ -515,7 +579,6 @@ async def test_prepublication_migration_failure_retains_bounded_candidates(
     await repository.close()
 
     assert active_tombstone.stat().st_ino == retained_inode
-    assert active_tombstone.read_bytes() == retained_bytes
 
 
 @pytest.mark.asyncio
@@ -1082,6 +1145,54 @@ async def test_initialized_store_reopens_with_exact_live_authority(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_version", (None, 3))
+async def test_post_initialization_handoff_rejects_distinct_valid_v4_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initial_version: int | None,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    foreign_path = tmp_path / "foreign.sqlite3"
+    detached_path = tmp_path / "detached.sqlite3"
+    await _create_profile_store(foreign_path, "Foreign")
+    foreign_bytes = foreign_path.read_bytes()
+    if initial_version == 3:
+        _build_populated_v3_store_at(database_path, display_name="Original")
+    real_initialize = module.TTSProfileRepository._worker_initialize_store
+
+    def initialize_then_swap(
+        self: Any,
+        active_path: Path,
+        *,
+        allow_create: bool = True,
+    ) -> object:
+        authority = real_initialize(
+            self,
+            active_path,
+            allow_create=allow_create,
+        )
+        os.replace(active_path, detached_path)
+        os.replace(foreign_path, active_path)
+        return authority
+
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_initialize_store",
+        initialize_then_swap,
+    )
+    repository = module.TTSProfileRepository(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.open()
+
+    assert database_path.read_bytes() == foreign_bytes
+    assert _stored_profile_name(database_path) == "Foreign"
+    assert detached_path.exists()
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_normal_exact_open_never_serializes_or_selects_reference_blob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1160,6 +1271,75 @@ async def test_normal_exact_open_never_serializes_or_selects_reference_blob(
     repository = module.TTSProfileRepository(database_path)
     await repository.open()
     await repository.close()
+
+
+def test_exact_open_metadata_evidence_is_incremental_and_bounded(
+    tmp_path: Path,
+) -> None:
+    module = _repository_module()._profile_schema
+    database_path = tmp_path / "profiles.sqlite3"
+    connection = module.open_profile_store(database_path)
+    try:
+        created = "2026-01-01T00:00:00.000000Z"
+        connection.executemany(
+            """
+            INSERT INTO tts_generation_profiles (
+                profile_id, display_name, normalized_name, provider_id,
+                model_id, voice_id, response_format, speed, options_json,
+                revision, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    f"00000000-0000-4000-8000-{index:012d}",
+                    f"Profile {index}",
+                    f"profile {index}",
+                    "audiocpp",
+                    "model",
+                    "voice",
+                    "wav",
+                    1.0,
+                    "{}",
+                    1,
+                    created,
+                    created,
+                )
+                for index in range(2_000)
+            ),
+        )
+        connection.commit()
+
+        class BoundedCursor:
+            def __init__(self, cursor: sqlite3.Cursor) -> None:
+                self.cursor = cursor
+
+            def __iter__(self) -> object:
+                return iter(self.cursor)
+
+            def fetchone(self) -> object:
+                return self.cursor.fetchone()
+
+            def fetchall(self) -> object:
+                raise AssertionError("metadata proof must not fetchall")
+
+        class BoundedConnection:
+            def execute(self, sql: str, *args: object) -> BoundedCursor:
+                normalized = " ".join(sql.lower().split())
+                if "select" in normalized and "wav_bytes" in normalized:
+                    assert "length(wav_bytes)" in normalized
+                return BoundedCursor(connection.execute(sql, *args))
+
+            def serialize(self) -> bytes:
+                raise AssertionError("metadata proof must not serialize")
+
+        digest, counts = module._stream_exact_store_metadata_evidence(
+            cast(sqlite3.Connection, BoundedConnection())
+        )
+    finally:
+        connection.close()
+
+    assert type(digest) is bytes and len(digest) == 32
+    assert counts == (2_000, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -5189,8 +5369,8 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
             raise RuntimeError(secret)
         return real_counts(connection, deadline=deadline)
 
-    def injected_exact_open(path: Path) -> sqlite3.Connection:
-        connection = real_exact_open(path)
+    def injected_exact_open(path: Path, **kwargs: object) -> sqlite3.Connection:
+        connection = real_exact_open(path, **kwargs)
         if boundary == "post_rebind" and publication_complete:
             proxy = _CloseFailingSQLiteProxy(connection, secret)
             proxies.append(proxy)
