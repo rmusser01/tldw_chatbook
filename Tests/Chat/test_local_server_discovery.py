@@ -15,7 +15,6 @@ from tldw_chatbook.Chat.local_server_discovery import (
     probe_models_endpoint,
 )
 
-
 # These ARE the tests of the probe implementation, so they opt out of the
 # autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
 # They never touch the network: every client below is an injected
@@ -107,6 +106,19 @@ def test_normalize_and_localhost_helpers() -> None:
     assert is_localhost_url("http://127.0.0.1:1234") is True
     assert is_localhost_url("http://127.0.0.2:1234") is False
     assert is_localhost_url("http://example.com") is False
+
+
+def test_normalize_probe_base_url_uses_contract_persistence_shape() -> None:
+    assert (
+        normalize_probe_base_url(
+            "http://127.0.0.1:8080/proxy/v1/chat/completions"
+        )
+        == "http://127.0.0.1:8080/proxy"
+    )
+    assert (
+        normalize_probe_base_url("http://127.0.0.1:8080/models")
+        == "http://127.0.0.1:8080"
+    )
 
 
 # --- discover_local_servers -------------------------------------------------
@@ -222,6 +234,42 @@ async def test_probe_success_returns_model_ids() -> None:
         base_url="http://127.0.0.1:9099",
         model_ids=("m-a", "m-b"),
     )
+
+
+@pytest.mark.asyncio
+async def test_probe_full_chat_url_uses_contract_derived_models_sibling() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099/proxy/v1/chat/completions",
+        provider_key="llama_cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert seen == ["http://127.0.0.1:9099/proxy/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_probe_models_url_never_doubles_models_suffix() -> None:
+    seen: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_openai_models_payload("m-a"))
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099/proxy/v1/models",
+        provider_key="llama_cpp",
+        http_client=_client(handler),
+    )
+
+    assert result.ok is True
+    assert seen == ["http://127.0.0.1:9099/proxy/v1/models"]
 
 
 @pytest.mark.asyncio

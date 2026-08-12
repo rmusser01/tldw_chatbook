@@ -17,14 +17,14 @@ single-URL probe used by the settings modal and carries no host filter.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import httpx
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
-
+from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 DEFAULT_LLAMACPP_DISCOVERY_URL = "http://127.0.0.1:8080"
@@ -52,11 +52,6 @@ _ENDPOINT_CONFIG_KEYS = (
     "api_endpoint",
     "endpoint",
 )
-#: Path suffixes stripped from configured endpoints so ``/v1/models`` appends
-#: cleanly (mirrors ``normalize_llamacpp_base_url``'s endpoint-path handling).
-_STRIPPED_PATH_SUFFIXES = ("/v1/models", "/v1", "/models")
-
-
 @dataclass(frozen=True)
 class LocalServerCandidate:
     """One localhost endpoint eligible for a discovery probe."""
@@ -96,10 +91,10 @@ def endpoint_display(base_url: str) -> str:
         base_url: Raw endpoint value from config or user input.
 
     Returns:
-        A display label suitable for status copy; falls back to the raw
-        stripped value only when the safe formatter yields nothing.
+        A display label suitable for status copy. Malformed values return a
+        bounded sentinel and are never echoed verbatim.
     """
-    return safe_endpoint_display(base_url) or str(base_url or "").strip()
+    return safe_endpoint_display(base_url)
 
 
 def normalize_probe_base_url(base_url: object) -> str | None:
@@ -113,23 +108,17 @@ def normalize_probe_base_url(base_url: object) -> str | None:
         The normalized URL string, or ``None`` when the value is not a usable
         http(s) endpoint.
     """
-    raw_url = str(base_url or "").strip()
-    if not raw_url:
+    resolution = resolve_provider_endpoint("llama_cpp", base_url)
+    persisted = resolution.persisted_endpoint
+    if persisted is None:
         return None
-    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
-    try:
-        parsed = urlparse(candidate)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return None
-    path = parsed.path.rstrip("/")
-    lowered = path.lower()
-    for suffix in _STRIPPED_PATH_SUFFIXES:
-        if lowered.endswith(suffix):
-            path = path[: len(path) - len(suffix)]
-            break
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    if resolution.form == "origin" and persisted.endswith("/models"):
+        legacy_resolution = resolve_provider_endpoint(
+            "llama_cpp",
+            persisted.removesuffix("/models"),
+        )
+        return legacy_resolution.persisted_endpoint
+    return persisted
 
 
 def is_localhost_url(base_url: str) -> bool:
@@ -336,6 +325,11 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
     return tuple(model_ids)
 
 
+def model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
+    """Return bounded chat-capable model IDs from a recognized listing."""
+    return _model_ids_from_payload(payload)
+
+
 async def _get_models_payload(
     http_client: httpx.AsyncClient,
     url: str,
@@ -358,18 +352,22 @@ async def _get_models_payload(
         must not register as a detected LLM server (PR #608 review).
     """
     try:
-        response = await http_client.get(url, timeout=timeout)
+        response = await http_client.get(
+            url,
+            timeout=timeout,
+            follow_redirects=False,
+        )
     except httpx.TimeoutException:
         return None, f"Timed out contacting {display}."
     except httpx.HTTPError:
         return None, f"No models endpoint at {display}."
-    except Exception:
+    except Exception:  # noqa: BLE001 - discovery must degrade for injected clients.
         return None, f"No models endpoint at {display}."
     if response.status_code < 200 or response.status_code >= 300:
         return None, f"No models endpoint at {display} (HTTP {response.status_code})."
     try:
         payload = response.json()
-    except Exception:
+    except ValueError:
         return None, f"No models endpoint at {display} (not a JSON API)."
     model_ids = _model_ids_from_payload(payload)
     if model_ids is None:
@@ -408,6 +406,7 @@ async def probe_models_endpoint(
         failure copy in ``detail``.
     """
     normalized = normalize_probe_base_url(base_url)
+    contract_provider = provider_key or "llama_cpp"
     if normalized is None:
         display = endpoint_display(base_url)
         return LocalModelProbeResult(
@@ -417,20 +416,29 @@ async def probe_models_endpoint(
             if display
             else "Enter a base URL first.",
         )
+    resolution = resolve_provider_endpoint(contract_provider, normalized)
+    if resolution.models_url is None:
+        return LocalModelProbeResult(
+            ok=False,
+            base_url=normalized,
+            detail=f"No models endpoint at {endpoint_display(normalized)}.",
+        )
     display = endpoint_display(normalized)
     owns_client = http_client is None
     client = http_client or httpx.AsyncClient(timeout=timeout)
     try:
         model_ids, detail = await _get_models_payload(
             client,
-            f"{normalized}/v1/models",
+            resolution.models_url,
             timeout,
             display,
         )
         if model_ids is None and provider_key in _OLLAMA_PROVIDER_KEYS:
+            models_suffix = "/v1/models"
+            root = resolution.models_url.removesuffix(models_suffix)
             fallback_ids, _fallback_detail = await _get_models_payload(
                 client,
-                f"{normalized}/api/tags",
+                f"{root}/api/tags",
                 timeout,
                 display,
             )

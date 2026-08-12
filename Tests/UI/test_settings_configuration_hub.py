@@ -2677,7 +2677,7 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
     probe_calls = []
 
     async def fake_probe(base_url, **kwargs):
-        probe_calls.append(base_url)
+        probe_calls.append((base_url, kwargs))
         return SettingsEndpointProbeOutcome(
             reachable=True,
             summary="reachable (3 models)",
@@ -2699,7 +2699,9 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         while time.monotonic() < deadline and not toasts:
             await pilot.pause(0.01)
 
-        assert probe_calls == ["http://127.0.0.1:11434"]
+        assert probe_calls == [
+            ("http://127.0.0.1:11434", {"provider": "ollama"})
+        ]
         message, kwargs = toasts[-1]
         assert message == (
             "Provider test passed: Ollama is ready; model llama3; "
@@ -2880,7 +2882,9 @@ async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
         await client.aclose()
 
     assert outcome.reachable is False
-    assert outcome.summary == "unreachable: HTTP 404"
+    assert outcome.state == "model_listing_unavailable"
+    assert outcome.category == "http_status"
+    assert outcome.summary == "Model listing unavailable; chat endpoint not tested"
 
     invalid = await probe_settings_endpoint("")
     assert invalid.reachable is False

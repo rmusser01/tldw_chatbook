@@ -1,9 +1,11 @@
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
+from tldw_chatbook.Chat.local_server_discovery import endpoint_display
 
 
 def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens() -> (
@@ -92,3 +94,20 @@ def test_generic_endpoint_differs_accepts_api_base_url_alias() -> None:
     )
 
     assert differs is False
+
+
+def test_effective_custom_endpoint_is_the_chat_url_actually_used() -> None:
+    endpoint = effective_provider_endpoint(
+        "custom",
+        "https://api.example.test/proxy/v1",
+        {},
+    )
+
+    assert endpoint == "https://api.example.test/proxy/v1/chat/completions"
+
+
+def test_local_discovery_endpoint_display_never_echoes_malformed_input() -> None:
+    entered = "http://[::1?api_key=unit-test-token"
+
+    assert endpoint_display(entered) == "invalid endpoint"
+    assert "unit-test-token" not in endpoint_display(entered)

@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+    resolve_provider_endpoint,
+)
 
 UNSAVED_ENDPOINT_COPY = (
     "Provider blocked: save the endpoint in Settings before using it from Console."
@@ -91,9 +95,9 @@ def effective_provider_endpoint(
 ) -> str | None:
     """Resolve the exact endpoint a provider call would use at this moment.
 
-    Explicit Console selection wins without normalization, followed by the
-    provider's configured endpoint aliases and finally the adapter's built-in
-    cloud default.
+    Explicit Console selection wins, followed by the provider's configured
+    endpoint aliases and finally the adapter's built-in cloud default. Custom
+    OpenAI-compatible endpoint forms resolve to the chat URL actually used.
 
     Args:
         provider_key: Normalized provider readiness key.
@@ -105,7 +109,7 @@ def effective_provider_endpoint(
         when the provider has neither a configured nor built-in endpoint.
     """
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
-        return selected_endpoint
+        return _effective_contract_endpoint(provider_key, selected_endpoint)
     if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
         for key in ("router_base_url", "huggingface_router_base_url"):
             router_endpoint = provider_settings.get(key)
@@ -114,7 +118,7 @@ def effective_provider_endpoint(
         return builtin_provider_endpoint(provider_key, provider_settings)
     configured_endpoint = first_configured_endpoint(provider_settings)
     if configured_endpoint:
-        return configured_endpoint
+        return _effective_contract_endpoint(provider_key, configured_endpoint)
     return builtin_provider_endpoint(provider_key, provider_settings)
 
 
@@ -221,6 +225,9 @@ def safe_endpoint_display(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    resolution = resolve_provider_endpoint("custom", url)
+    if resolution.persisted_endpoint is not None:
+        return resolution.normalized_input
     return _format_endpoint(parsed_endpoint, drop_default_port=False)
 
 
@@ -237,7 +244,18 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
     parsed_endpoint = _parse_http_endpoint(url)
     if parsed_endpoint is None:
         return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    identity = canonical_connection_identity("custom", url)
+    if identity is not None:
+        return identity[1]
     return _format_endpoint(parsed_endpoint, drop_default_port=True)
+
+
+def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
+    """Resolve endpoint forms only for adapters governed by the new contract."""
+    if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
+        return endpoint
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    return resolution.persisted_endpoint or endpoint
 
 
 def _parse_http_endpoint(

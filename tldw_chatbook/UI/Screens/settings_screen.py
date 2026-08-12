@@ -10039,10 +10039,11 @@ class SettingsScreen(BaseAppScreen):
     async def _provider_endpoint_probe_worker(
         self,
         base_url: str,
+        provider: str,
         detail: str,
         summary: str,
     ) -> None:
-        outcome = await probe_settings_endpoint(base_url)
+        outcome = await probe_settings_endpoint(base_url, provider=provider)
         self._apply_provider_endpoint_probe_outcome(detail, summary, outcome)
 
     def _apply_provider_endpoint_probe_outcome(
@@ -19037,7 +19038,12 @@ class SettingsScreen(BaseAppScreen):
                 # short live probe in a worker and fold it into the toast.
                 self._provider_test_result = f"{detail} | endpoint probe: checking"
                 self._update_provider_test_result()
-                self._provider_endpoint_probe_worker(probe_base_url, detail, summary)
+                self._provider_endpoint_probe_worker(
+                    probe_base_url,
+                    provider_config_key(self._provider_widget_value()),
+                    detail,
+                    summary,
+                )
                 return
             self._provider_test_result = detail
             self._update_provider_test_result()
