@@ -102,3 +102,13 @@ legitimately changed and nobody updated:
 - [x] It is established whether the three save-related failures are stale contracts or a genuine break in the Settings save path, with evidence either way
 - [x] Any genuine product break found is fixed rather than absorbed into the tests' expectations (the log-call crash is fixed; the save refusal is filed as task-15610 rather than absorbed)
 - [ ] All six pass on dev
+
+## Loose end handed off
+
+A sixth-adjacent failure appeared during verification and is NOT one of this
+task's six: `test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`
+fails only in a multi-module run (`ConflictError`, note version mismatch). It
+passes alone, passes with its own module alone on base dev, and passes behind a
+settings-module prefix. The decisive comparison — the same 5-module set on base
+dev — was killed by the environment three times. Filed as **task-15611** with
+everything ruled out so far, rather than left as an unexplained red.
