@@ -559,7 +559,12 @@ def skill_supporting_files_text(
     return "\n".join(lines)
 
 
-class LibrarySkillsListCanvas(VerticalScroll):
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+
+
+class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

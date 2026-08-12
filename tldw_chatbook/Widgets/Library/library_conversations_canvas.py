@@ -19,10 +19,13 @@ from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
+class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the saved-conversation list with a preview + Console handoff.
 
     Attributes:

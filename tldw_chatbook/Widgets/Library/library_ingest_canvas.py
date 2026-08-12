@@ -988,7 +988,12 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
 INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
 
 
-class LibraryIngestCanvas(VerticalScroll):
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+
+
+class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

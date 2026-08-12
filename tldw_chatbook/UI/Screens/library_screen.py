@@ -1313,7 +1313,12 @@ def _apply_library_row_toggle(
         screen.refresh(recompose=True)
 
 
-def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
+def _sync_library_canvas(
+    screen: "LibraryScreen",
+    kind: str,
+    *,
+    then: Callable[[], None] | None = None,
+) -> None:
     """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
 
     Rebuilds the given canvas's fresh display state and hands it to the
@@ -1340,6 +1345,18 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
     Args:
         screen: The Library screen instance driving the update.
         kind: Supported Library canvas kind.
+        then: Optional zero-argument follow-up (in practice: "focus the
+            control the user should now be on"), run once the canvas's new
+            children are mounted. It exists because
+            ``screen.call_after_refresh`` -- correct for a WHOLE-SCREEN
+            recompose, where ``Screen._on_timer_update`` runs the recompose
+            before the callbacks -- has no ordering against a recompose
+            driven by the CANVAS's own message pump. Reproduced while
+            converting the notes strips: the follow-ups ran against removed
+            children and stranded DOM focus outside the canvas. Supported
+            only for canvases carrying ``PostRecomposeCallback``; passing it
+            for another kind raises into the whole-screen fallback rather
+            than silently dropping the follow-up.
 
     Returns:
         None.
@@ -1401,6 +1418,8 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
                     "Mouse-capture release before Library canvas sync skipped.",
                     exc_info=True,
                 )
+        if then is not None:
+            canvas.queue_after_recompose(then)
         canvas.sync_state(*sync_args, **sync_kwargs)
         # task-15457: the one thing a canvas sync cannot skip.
         # ``LibraryScreen.refresh`` (the override) re-derives the footer on
@@ -4972,22 +4991,27 @@ class LibraryScreen(BaseAppScreen):
             self._supersede_library_notes_navigation()
             self._library_notes_view = "list"
             self._reset_library_notes_sync_transient_state()
-            _sync_library_canvas(self, "notes")
-            self.call_after_refresh(self._focus_library_notes_filter_input)
+            _sync_library_canvas(
+                self, "notes", then=self._focus_library_notes_filter_input
+            )
             return
         if self._library_notes_select_mode:
             self._library_notes_select_mode = False
             self._library_notes_row_selection.clear()
-            _sync_library_canvas(self, "notes")
-            self.call_after_refresh(
-                self._focus_library_note_control, "#library-notes-select-toggle"
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-select-toggle"
+                ),
             )
             return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
-            _sync_library_canvas(self, "notes")
-            self.call_after_refresh(
-                self._focus_library_note_control, "#library-notes-sort"
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control("#library-notes-sort"),
             )
             return
         self._library_notes_stage = "rail"
@@ -12796,17 +12820,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
-        _sync_library_canvas(self, "media")
         if self._library_media_type_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
+            then: Callable[[], None] = lambda: self._focus_library_choice_strip_active(
                 ".library-media-type-choice",
                 self._library_media_type_filter,
             )
         else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-type-filter"
-            )
+            then = lambda: self._focus_library_control("#library-media-type-filter")
+        _sync_library_canvas(self, "media", then=then)
 
     @on(Button.Pressed, ".library-media-type-choice")
     def handle_library_media_type_choice(self, event: Button.Pressed) -> None:
@@ -12826,9 +12847,10 @@ class LibraryScreen(BaseAppScreen):
             # bulk-delete confirmation either, and states the discard like
             # every other exit.
             self._exit_library_media_select_mode(announce_discard=True)
-        _sync_library_canvas(self, "media")
-        self.call_after_refresh(
-            self._focus_library_control, "#library-media-type-filter"
+        _sync_library_canvas(
+            self,
+            "media",
+            then=lambda: self._focus_library_control("#library-media-type-filter"),
         )
 
     @on(Button.Pressed, ".library-media-row")
@@ -13443,8 +13465,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_total = total
         self._library_media_trash_error = error
         if self.is_mounted and self._library_media_view == "trash":
-            _sync_library_canvas(self, "media-trash")
-            self.call_after_refresh(self._focus_library_media_trash_entry)
+            _sync_library_canvas(
+                self, "media-trash", then=self._focus_library_media_trash_entry
+            )
 
     @on(Button.Pressed, ".library-media-trash-row")
     def handle_library_media_trash_row(self, event: Button.Pressed) -> None:
@@ -13736,8 +13759,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
-        _sync_library_canvas(self, "notes")
-        self.call_after_refresh(self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     @on(Input.Submitted, "#library-notes-filter")
     def handle_library_notes_filter(self, event: Input.Submitted) -> None:
@@ -13798,8 +13820,7 @@ class LibraryScreen(BaseAppScreen):
         if query != self._library_notes_filter:
             return
         self._library_notes_filter_records = list(records or [])
-        _sync_library_canvas(self, "notes")
-        self.call_after_refresh(self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
 
     def _focus_library_notes_filter_input(self) -> None:
         """Restore focus to the notes filter box after a filter recompose."""
@@ -13853,9 +13874,10 @@ class LibraryScreen(BaseAppScreen):
         scope = self._library_prompt_browse_controller.scope
         current = "name" if scope.sort_by == "name" else "newest"
         if requested not in {"newest", "name"} or requested == current:
-            _sync_library_canvas(self, "prompts")
-            self.call_after_refresh(
-                self._focus_library_control, "#library-prompts-sort"
+            _sync_library_canvas(
+                self,
+                "prompts",
+                then=lambda: self._focus_library_control("#library-prompts-sort"),
             )
             return
         if requested == "name":
@@ -13964,17 +13986,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = (
             not self._library_skills_sort_choices_visible
         )
-        _sync_library_canvas(self, "skills")
         if self._library_skills_sort_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-skills-sort-choice",
-                self._library_skills_sort,
+            skills_then: Callable[[], None] = (
+                lambda: self._focus_library_choice_strip_active(
+                    ".library-skills-sort-choice",
+                    self._library_skills_sort,
+                )
             )
         else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-skills-sort"
-            )
+            skills_then = lambda: self._focus_library_control("#library-skills-sort")
+        _sync_library_canvas(self, "skills", then=skills_then)
 
     @on(Button.Pressed, ".library-skills-sort-choice")
     def handle_library_skills_sort_choice(self, event: Button.Pressed) -> None:
@@ -13992,9 +14013,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = False
         if requested in _LIBRARY_SKILLS_SORT_MODES:
             self._library_skills_sort = requested
-        _sync_library_canvas(self, "skills")
-        self.call_after_refresh(
-            self._focus_library_control, "#library-skills-sort"
+        _sync_library_canvas(
+            self,
+            "skills",
+            then=lambda: self._focus_library_control("#library-skills-sort"),
         )
 
     @on(Input.Submitted, "#library-skills-filter")
@@ -18730,8 +18752,11 @@ class LibraryScreen(BaseAppScreen):
             "_library_skills_sort_choices_visible": "skills",
             "_library_export_quality_choices_visible": "export",
         }[visibility_attr]
-        _sync_library_canvas(self, canvas_kind)
-        self.call_after_refresh(self._focus_library_control, opener_selector)
+        _sync_library_canvas(
+            self,
+            canvas_kind,
+            then=lambda: self._focus_library_control(opener_selector),
+        )
         return True
 
     def action_library_list_focus_rail(self) -> None:

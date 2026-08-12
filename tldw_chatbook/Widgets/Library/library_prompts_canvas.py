@@ -63,7 +63,12 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
-class LibraryPromptsListCanvas(Vertical):
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+
+
+class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     """Render the Library prompts canvas: the list view, or the prompt editor.
 
     Attributes:

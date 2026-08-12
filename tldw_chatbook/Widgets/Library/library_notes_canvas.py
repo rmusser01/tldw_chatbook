@@ -32,6 +32,8 @@ from tldw_chatbook.Library.library_notes_sync_state import (
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 _COMPACT_SYNC_DIRECTION_LABELS = {
@@ -71,7 +73,7 @@ class LibraryNotePresentationState:
     transfer_running: bool = False
 
 
-class LibraryNotesCanvas(Vertical):
+class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library notes canvas: the list view, or the note editor.
 
     Attributes:

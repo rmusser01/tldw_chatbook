@@ -1,0 +1,77 @@
+"""Post-recompose callback plumbing for canvas-scoped Library updates.
+
+task-15457. A Library screen handler that recomposed the WHOLE screen could
+schedule its follow-up work -- almost always "focus the control the user
+should now be on" -- with ``screen.call_after_refresh(...)``: both the
+recompose and the callback are driven by the screen's own message pump, and
+``Screen._on_timer_update`` runs the recompose via ``call_next`` BEFORE it
+runs ``_invoke_and_clear_callbacks``, so the ordering is guaranteed.
+
+A canvas-scoped update breaks that guarantee. ``canvas.refresh(recompose=
+True)`` is serviced by the CANVAS's pump (its ``_on_idle`` ->
+``_check_recompose``), while ``screen.call_after_refresh`` still queues onto
+the screen's callback list -- two independent pumps with no ordering between
+them. Reproduced while converting the notes sort/filter strips: every
+converted site's focus follow-up ran against the OLD children (or after they
+were removed), leaving DOM focus stranded on an unrelated widget outside the
+canvas instead of the strip's opener.
+
+This mixin restores the ordering by hanging the follow-up on the widget that
+actually does the work: the callback is stored on the canvas instance and
+fired from its own ``recompose()``, immediately after the new children are
+mounted. Storing it on the INSTANCE (not a screen-side dict keyed by widget
+id) is deliberate -- the recompose-lifecycle rule from the July programme:
+fresh widgets must carry current state, and per-widget bookkeeping that lives
+anywhere else goes stale the moment a widget is replaced.
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+from loguru import logger
+
+
+class PostRecomposeCallback:
+    """Mixin: run one queued callback right after this widget recomposes.
+
+    Cooperative with ``RecomposeCaptureGuard`` -- both override
+    ``recompose()`` and chain through ``super()``, so a canvas can use both
+    (list them in whatever order; each does its own work around the shared
+    ``super().recompose()``).
+    """
+
+    #: Class-level default so the attribute is readable before any queue call
+    #: and on any subclass that never queues one.
+    _post_recompose_callback: Optional[Callable[[], None]] = None
+
+    def queue_after_recompose(self, callback: Optional[Callable[[], None]]) -> None:
+        """Queue ``callback`` to run once, after the next recompose.
+
+        A second call before that recompose replaces the first: the pending
+        callback is always the most recent caller's intent, matching how a
+        second ``refresh(recompose=True)`` supersedes the first.
+
+        Args:
+            callback: Zero-argument callable, or ``None`` to clear.
+
+        Returns:
+            None.
+        """
+        self._post_recompose_callback = callback
+
+    async def recompose(self) -> None:
+        """Recompose, then fire the queued callback against fresh children."""
+        await super().recompose()  # type: ignore[misc]
+        callback = self._post_recompose_callback
+        if callback is None:
+            return
+        # Cleared BEFORE invoking: a callback that itself queues another one
+        # (or raises) must not be re-run by the next recompose.
+        self._post_recompose_callback = None
+        try:
+            callback()
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"{type(self).__name__}: post-recompose callback failed."
+            )
