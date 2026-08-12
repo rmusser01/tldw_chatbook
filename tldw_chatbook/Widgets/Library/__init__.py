@@ -13,7 +13,12 @@ from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_notes_canvas import LibraryNotesCanvas
 from .library_prompts_canvas import LibraryPromptsListCanvas
-from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
+from .library_rail import (
+    LIBRARY_RAIL_ROW_PREFIX,
+    LibraryNavigationRailHandle,
+    LibraryRail,
+    library_dim_label_text,
+)
 from .library_search_rag_panel import (
     LibrarySearchRagPanel,
     library_rag_answer_children,
@@ -67,6 +72,7 @@ __all__ = [
     "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
     "LibraryNotesCanvas",
+    "LibraryNavigationRailHandle",
     "LibraryPromptsListCanvas",
     "LibraryRail",
     "LibrarySearchRagPanel",

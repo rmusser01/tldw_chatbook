@@ -42,6 +42,10 @@ pages:
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom:
+  - a **Navigation** heading with **Collapse** at the opposite edge. Collapse
+    hides the rail without changing the selected destination, search query,
+    section disclosures, or canvas. The slim **Nav** handle expands it again;
+    it is keyboard-focusable and remains part of the **F6** pane cycle;
   - the **Import…** button ("Add files, links, and transcripts to
     your Library.");
   - the **Search Library…** box — submitting it lands on the
@@ -105,6 +109,8 @@ on-screen. Escape (or the **Database** link) returns to the notes list — see
 
 | Control | What it does |
 |---|---|
+| **Collapse** | Hides the wide navigation rail in place and gives the canvas the reclaimed width. The choice lasts for the current Library screen session. |
+| **Nav** | Expands a manually collapsed rail and returns focus to **Search Library…**. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. |
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). |
 | **▾** / **▸** (section headers) | Open or collapse that rail section. |

@@ -8,7 +8,7 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.events import Focus, Key, MouseDown, Resize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
@@ -19,7 +19,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryRailSectionState,
     LibraryShellState,
 )
-from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
+from tldw_chatbook.Widgets.destination_rail import (
+    DestinationRailHandle,
+    DestinationRailSectionHeader,
+)
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
@@ -247,6 +250,41 @@ class LibraryRailRowButton(Button):
         )
 
 
+class LibraryNavigationRailHandle(DestinationRailHandle):
+    """Compact, focusable handle for reopening Library navigation."""
+
+    WIDTH = 3
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(
+            label="Nav",
+            button_id="library-rail-open",
+            badge_id="library-rail-handle-badge",
+            side="left",
+            open_tooltip="Expand Library navigation",
+            **kwargs,
+        )
+        self.add_class("console-rail-handle-vertical")
+        self.styles.width = self.WIDTH
+        self.styles.min_width = self.WIDTH
+        self.styles.max_width = self.WIDTH
+
+    def compose(self) -> ComposeResult:
+        for child in super().compose():
+            if isinstance(child, Button):
+                child.add_class("console-rail-handle-button-vertical")
+                child.styles.width = 1
+                child.styles.max_width = 1
+                child.styles.height = "1fr"
+                child.styles.clear_rule("min_height")
+                child.styles.clear_rule("max_height")
+                child.styles.line_pad = 0
+            yield child
+
+    def _display_label(self) -> str:
+        return "N\na\nv"
+
+
 class LibraryRail(RecomposeCaptureGuard, Vertical):
     """Render the Library shell rail: search, source sections, and Details.
 
@@ -459,6 +497,26 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             ComposeResult with the search box, one header + body per section,
             and the Details header + body.
         """
+        heading_row = Horizontal(id="library-rail-heading")
+        heading_row.styles.height = 1
+        heading_row.styles.min_height = 1
+        with heading_row:
+            heading = Static("Navigation", id="library-rail-heading-label")
+            heading.styles.height = 1
+            heading.styles.width = "1fr"
+            yield heading
+            collapse = Button(
+                "Collapse",
+                id="library-rail-collapse",
+                compact=True,
+            )
+            collapse.tooltip = "Collapse Library navigation"
+            collapse.styles.width = "auto"
+            collapse.styles.height = 1
+            collapse.styles.min_height = 1
+            collapse.styles.padding = (0, 1)
+            collapse.styles.border = ("none", "transparent")
+            yield collapse
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
         yield LibraryRailSearchInput(
