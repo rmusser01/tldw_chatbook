@@ -495,17 +495,45 @@ def _load_result(path: Path) -> dict[str, object]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--initialize", action="store_true")
-    parser.add_argument("--record-failure")
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--initialize", action="store_true")
+    operation.add_argument("--record-failure")
+    operation.add_argument("--from-junit", type=Path)
+    operation.add_argument("--validate", type=Path)
+    operation.add_argument("--aggregate", nargs=3, type=Path)
+    operation.add_argument("--validate-aggregate", type=Path)
     parser.add_argument("--failure-stage")
     parser.add_argument("--evidence-name")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--from-junit", type=Path)
     parser.add_argument("--pytest-outcome")
-    parser.add_argument("--validate", type=Path)
-    parser.add_argument("--aggregate", nargs=3, type=Path)
-    parser.add_argument("--validate-aggregate", type=Path)
     return parser
+
+
+def _validate_cli_args(args: argparse.Namespace) -> None:
+    if args.initialize:
+        required = (args.evidence_name, args.output)
+        forbidden = (args.failure_stage, args.pytest_outcome)
+    elif args.record_failure is not None:
+        required = (args.failure_stage, args.evidence_name, args.output)
+        forbidden = (args.pytest_outcome,)
+    elif args.from_junit is not None:
+        required = (args.pytest_outcome, args.evidence_name, args.output)
+        forbidden = (args.failure_stage,)
+    elif args.aggregate is not None:
+        required = (args.output,)
+        forbidden = (args.failure_stage, args.evidence_name, args.pytest_outcome)
+    else:
+        required = ()
+        forbidden = (
+            args.failure_stage,
+            args.evidence_name,
+            args.output,
+            args.pytest_outcome,
+        )
+    if any(value is None for value in required) or any(
+        value is not None for value in forbidden
+    ):
+        raise ValueError("arguments do not match the selected evidence operation")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -513,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _parser().parse_args(argv)
     try:
+        _validate_cli_args(args)
         if args.validate is not None:
             validate_result(_load_result(args.validate))
             return 0
@@ -520,15 +549,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_aggregate(_load_result(args.validate_aggregate))
             return 0
         if args.aggregate is not None:
-            if args.output is None:
-                raise ValueError("--output is required")
             aggregate = aggregate_results(
                 [_load_result(path) for path in args.aggregate]
             )
             _write_result(args.output, aggregate)
             return 0
-        if args.output is None or args.evidence_name is None:
-            raise ValueError("--evidence-name and --output are required")
         if args.initialize:
             result = failure_result(
                 current_run_identity(),
@@ -537,8 +562,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failure_stage="initialize",
             )
         elif args.record_failure is not None:
-            if args.failure_stage is None:
-                raise ValueError("--failure-stage is required")
             result = failure_result(
                 current_run_identity(),
                 evidence_name=args.evidence_name,
@@ -546,8 +569,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 failure_stage=args.failure_stage,
             )
         elif args.from_junit is not None:
-            if args.pytest_outcome is None:
-                raise ValueError("--pytest-outcome is required")
             result = result_from_junit(
                 args.from_junit,
                 pytest_outcome=args.pytest_outcome,

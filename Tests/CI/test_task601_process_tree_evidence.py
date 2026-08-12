@@ -5,6 +5,7 @@ import importlib.util
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -112,6 +113,13 @@ def _stub_linux_evidence(evidence: ModuleType, monkeypatch: pytest.MonkeyPatch) 
             "python": "3.12.9",
         },
     )
+
+
+def _main_code(evidence: ModuleType, args: list[str]) -> int:
+    try:
+        return evidence.main(args)
+    except SystemExit as error:
+        return int(error.code or 0)
 
 
 def test_evidence_script_exists_and_loads() -> None:
@@ -694,6 +702,165 @@ def test_aggregate_cli_writes_sorted_atomic_json(tmp_path: Path) -> None:
     assert json.loads(output.read_text(encoding="utf-8"))["status"] == "passed"
     assert not output.with_name(f".{output.name}.tmp").exists()
     assert output.read_text(encoding="utf-8").startswith('{\n  "evidence_label"')
+
+
+def test_cli_process_rejects_multiple_operation_modes(tmp_path: Path) -> None:
+    input_path = tmp_path / "result.json"
+    input_path.write_text(json.dumps(_valid_result("linux-x86_64")), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(EVIDENCE_PATH),
+            "--validate",
+            str(input_path),
+            "--validate-aggregate",
+            str(input_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+
+
+@pytest.mark.parametrize("destination_exists", (True, False))
+def test_cli_rejects_multiple_modes_without_writing_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_exists: bool,
+) -> None:
+    evidence = _load_evidence()
+    _stub_linux_evidence(evidence, monkeypatch)
+    destination = tmp_path / "result.json"
+    if destination_exists:
+        destination.write_text("sentinel", encoding="utf-8")
+    junit = _passing_junit(tmp_path)
+    extra_mode = (
+        ["--from-junit", str(junit), "--pytest-outcome", "success"]
+        if destination_exists
+        else ["--record-failure", "dependency_install"]
+    )
+
+    code = _main_code(
+        evidence,
+        [
+            "--initialize",
+            "--evidence-name",
+            "linux-x86_64",
+            "--output",
+            str(destination),
+            *extra_mode,
+        ],
+    )
+
+    assert code != 0
+    if destination_exists:
+        assert destination.read_text(encoding="utf-8") == "sentinel"
+    else:
+        assert not destination.exists()
+
+
+@pytest.mark.parametrize("mode", ("initialize", "validate"))
+def test_cli_rejects_irrelevant_mode_arguments_without_writing_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    evidence = _load_evidence()
+    _stub_linux_evidence(evidence, monkeypatch)
+    destination = tmp_path / "destination.json"
+    if mode == "initialize":
+        destination.write_text("sentinel", encoding="utf-8")
+        args = [
+            "--initialize",
+            "--pytest-outcome",
+            "success",
+            "--evidence-name",
+            "linux-x86_64",
+            "--output",
+            str(destination),
+        ]
+    else:
+        input_path = tmp_path / "result.json"
+        input_path.write_text(
+            json.dumps(_valid_result("linux-x86_64")), encoding="utf-8"
+        )
+        args = ["--validate", str(input_path), "--output", str(destination)]
+
+    code = _main_code(evidence, args)
+
+    assert code != 0
+    if mode == "initialize":
+        assert destination.read_text(encoding="utf-8") == "sentinel"
+    else:
+        assert not destination.exists()
+
+
+def test_cli_accepts_each_exact_documented_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = _load_evidence()
+    _stub_linux_evidence(evidence, monkeypatch)
+    platform_output = tmp_path / "platform.json"
+    junit = _passing_junit(tmp_path)
+
+    assert (
+        evidence.main(
+            [
+                "--initialize",
+                "--evidence-name",
+                "linux-x86_64",
+                "--output",
+                str(platform_output),
+            ]
+        )
+        == 0
+    )
+    assert (
+        evidence.main(
+            [
+                "--record-failure",
+                "dependency_install",
+                "--failure-stage",
+                "dependency_install",
+                "--evidence-name",
+                "linux-x86_64",
+                "--output",
+                str(platform_output),
+            ]
+        )
+        == 0
+    )
+    assert (
+        evidence.main(
+            [
+                "--from-junit",
+                str(junit),
+                "--pytest-outcome",
+                "success",
+                "--evidence-name",
+                "linux-x86_64",
+                "--output",
+                str(platform_output),
+            ]
+        )
+        == 0
+    )
+    assert evidence.main(["--validate", str(platform_output)]) == 0
+
+    inputs: list[str] = []
+    for name in EXPECTED_PLATFORMS:
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(_valid_result(name)), encoding="utf-8")
+        inputs.append(str(path))
+    aggregate_output = tmp_path / "aggregate.json"
+    assert (
+        evidence.main(["--aggregate", *inputs, "--output", str(aggregate_output)]) == 0
+    )
+    assert evidence.main(["--validate-aggregate", str(aggregate_output)]) == 0
 
 
 @pytest.mark.parametrize(
