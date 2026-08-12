@@ -208,7 +208,7 @@ class _WorkerOutcome:
 @dataclass(frozen=True, slots=True, repr=False)
 class _PublicOutcome:
     code: str | None = None
-    control: Literal["cancelled"] | None = None
+    control: Literal["cancelled", "keyboard_interrupt", "system_exit"] | None = None
     result: object | None = None
 
 
@@ -341,6 +341,38 @@ def _source_path(value: Path | str | os.PathLike[str]) -> Path:
     return Path(os.path.abspath(os.path.normpath(os.path.expanduser(raw))))
 
 
+def _classify_and_sever_public_failure(error: BaseException) -> _PublicOutcome:
+    """Reduce one private failure graph to a bounded, type-only outcome."""
+
+    if type(error) is asyncio.CancelledError:
+        outcome = _PublicOutcome(control="cancelled")
+    elif type(error) is KeyboardInterrupt:
+        outcome = _PublicOutcome(control="keyboard_interrupt")
+    elif type(error) is SystemExit:
+        outcome = _PublicOutcome(control="system_exit")
+    elif type(error) is TTSVoiceBundleError:
+        outcome = _PublicOutcome(code=cast(TTSVoiceBundleError, error).code)
+    else:
+        outcome = _PublicOutcome(code="operation_failed")
+    BaseException.__setattr__(error, "__traceback__", None)
+    BaseException.__setattr__(error, "__cause__", None)
+    BaseException.__setattr__(error, "__context__", None)
+    BaseException.__setattr__(error, "args", ())
+    return outcome
+
+
+def _reconstruct_public_failure(outcome: _PublicOutcome) -> BaseException | None:
+    if outcome.control == "cancelled":
+        return asyncio.CancelledError()
+    if outcome.control == "keyboard_interrupt":
+        return KeyboardInterrupt()
+    if outcome.control == "system_exit":
+        return SystemExit()
+    if outcome.code is not None:
+        return TTSVoiceBundleError(cast(Any, outcome.code))
+    return None
+
+
 def _prepare_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
     if not _posix_supported():
         raise TTSVoiceBundleError("unsupported_platform")
@@ -356,7 +388,7 @@ def _prepare_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
         assert fcntl is not None
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.listdir(descriptor):
-            raise OSError
+            raise TTSVoiceBundleError("cleanup_failed")
         return selected, _identity(opened)
     finally:
         os.close(descriptor)
@@ -1205,14 +1237,8 @@ class TTSVoiceBundlePortabilityService:
         try:
             result = await self._inspect_impl(cast(Any, source))
             return _PublicOutcome(result=result)
-        except asyncio.CancelledError:
-            return _PublicOutcome(control="cancelled")
-        except TTSVoiceBundleError as error:
-            return _PublicOutcome(code=error.code)
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            return _PublicOutcome(code="operation_failed")
+            return _classify_and_sever_public_failure(error)
 
     async def inspect(
         self, source: Path | str | os.PathLike[str]
@@ -1221,13 +1247,13 @@ class TTSVoiceBundlePortabilityService:
 
         outcome = await self._inspect_outcome(source)
         del source
-        if outcome.control is not None:
+        failure = _reconstruct_public_failure(outcome)
+        if failure is not None:
             del outcome
-            raise asyncio.CancelledError from None
-        if outcome.code is not None or type(outcome.result) is not TTSVoiceBundleReview:
-            code = outcome.code or "operation_failed"
+            raise failure from None
+        if type(outcome.result) is not TTSVoiceBundleReview:
             del outcome
-            raise TTSVoiceBundleError(cast(Any, code)) from None
+            raise TTSVoiceBundleError("operation_failed") from None
         return cast(TTSVoiceBundleReview, outcome.result)
 
     def _expire_sessions(self) -> None:
@@ -1356,19 +1382,19 @@ class TTSVoiceBundlePortabilityService:
             or candidate.reference.recipe_requirement != bundle.recipe_requirement
         ):
             return False
-        try:
-            result = await self._repository.get_reference(
-                candidate.profile_id,
-                expected_revision=candidate.revision,
-                expected_generation=generation,
-            )
-        except Exception:
-            return False
+        result = await self._repository.get_reference(
+            candidate.profile_id,
+            expected_revision=candidate.revision,
+            expected_generation=generation,
+        )
+        if (
+            type(result) is not ProfileStoreResult
+            or result.generation != generation
+            or type(result.value) is not TTSCloneReference
+        ):
+            raise TTSVoiceBundleError("operation_failed")
         return (
-            type(result) is ProfileStoreResult
-            and result.generation == generation
-            and type(result.value) is TTSCloneReference
-            and result.value.recipe_requirement == bundle.recipe_requirement
+            result.value.recipe_requirement == bundle.recipe_requirement
             and _canonical_reference(result.value) == bundle.reference
         )
 
@@ -1517,14 +1543,8 @@ class TTSVoiceBundlePortabilityService:
         try:
             result = await self._commit_impl(cast(Any, handle), cast(Any, choice))
             return _PublicOutcome(result=result)
-        except asyncio.CancelledError:
-            return _PublicOutcome(control="cancelled")
-        except TTSVoiceBundleError as error:
-            return _PublicOutcome(code=error.code)
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            return _PublicOutcome(code="operation_failed")
+            return _classify_and_sever_public_failure(error)
 
     async def commit(
         self,
@@ -1535,16 +1555,13 @@ class TTSVoiceBundlePortabilityService:
 
         outcome = await self._commit_outcome(handle, choice)
         del handle, choice
-        if outcome.control is not None:
+        failure = _reconstruct_public_failure(outcome)
+        if failure is not None:
             del outcome
-            raise asyncio.CancelledError from None
-        if (
-            outcome.code is not None
-            or type(outcome.result) is not TTSVoiceBundleImportResult
-        ):
-            code = outcome.code or "operation_failed"
+            raise failure from None
+        if type(outcome.result) is not TTSVoiceBundleImportResult:
             del outcome
-            raise TTSVoiceBundleError(cast(Any, code)) from None
+            raise TTSVoiceBundleError("operation_failed") from None
         return cast(TTSVoiceBundleImportResult, outcome.result)
 
     async def _export_impl(
@@ -1634,14 +1651,8 @@ class TTSVoiceBundlePortabilityService:
                 acknowledged=cast(Any, acknowledged),
             )
             return _PublicOutcome(result=True)
-        except asyncio.CancelledError:
-            return _PublicOutcome(control="cancelled")
-        except TTSVoiceBundleError as error:
-            return _PublicOutcome(code=error.code)
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            return _PublicOutcome(code="operation_failed")
+            return _classify_and_sever_public_failure(error)
 
     async def export(
         self,
@@ -1668,13 +1679,13 @@ class TTSVoiceBundlePortabilityService:
             expected_revision,
             acknowledged,
         )
-        if outcome.control is not None:
+        failure = _reconstruct_public_failure(outcome)
+        if failure is not None:
             del outcome
-            raise asyncio.CancelledError from None
-        if outcome.code is not None or outcome.result is not True:
-            code = outcome.code or "operation_failed"
+            raise failure from None
+        if outcome.result is not True:
             del outcome
-            raise TTSVoiceBundleError(cast(Any, code)) from None
+            raise TTSVoiceBundleError("operation_failed") from None
 
     def seal(self) -> None:
         self._closed = True
@@ -1695,31 +1706,20 @@ class TTSVoiceBundlePortabilityService:
         try:
             await self._invalidate_impl(handle)
             return _PublicOutcome(result=True)
-        except asyncio.CancelledError:
-            return _PublicOutcome(control="cancelled")
-        except TTSVoiceBundleError as error:
-            return _PublicOutcome(code=error.code)
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            return _PublicOutcome(code="operation_failed")
+            return _classify_and_sever_public_failure(error)
 
     async def invalidate(self, handle: TTSVoiceBundleHandle) -> None:
         """Idempotently discard one retained review authority."""
 
         outcome = await self._invalidate_outcome(handle)
         del handle
-        if outcome.control is not None:
+        failure = _reconstruct_public_failure(outcome)
+        if failure is not None:
             del outcome
-            raise asyncio.CancelledError from None
-        if outcome.code is not None:
-            code = outcome.code
-            del outcome
-            raise TTSVoiceBundleError(cast(Any, code)) from None
+            raise failure from None
 
-    async def close(self) -> None:
-        """Seal admission and retain settlement of every service-owned call."""
-
+    async def _close_impl(self) -> None:
         async with self._session_lock:
             if self._close_task is None:
                 self._closed = True
@@ -1729,6 +1729,25 @@ class TTSVoiceBundlePortabilityService:
         cancellation, _ = await _await_retained(close_task)
         if cancellation is not None:
             raise cancellation
+
+    async def _close_outcome(self) -> _PublicOutcome:
+        try:
+            await self._close_impl()
+            return _PublicOutcome(result=True)
+        except BaseException as error:
+            return _classify_and_sever_public_failure(error)
+
+    async def close(self) -> None:
+        """Seal admission and retain settlement of every service-owned call."""
+
+        outcome = await self._close_outcome()
+        failure = _reconstruct_public_failure(outcome)
+        if failure is not None:
+            del outcome
+            raise failure from None
+        if outcome.result is not True:
+            del outcome
+            raise TTSVoiceBundleError("operation_failed") from None
 
     async def wait_closed(self) -> None:
         """Join definitive close; ``close`` remains idempotent."""

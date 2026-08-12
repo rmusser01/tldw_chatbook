@@ -514,6 +514,41 @@ async def test_operation_root_refuses_non_directory_or_symlink(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("residue", ("recognized", "unrecognized", "symlink", "mode"))
+async def test_restart_preserves_operation_root_residue_and_reports_cleanup_failed(
+    tmp_path: Path,
+    residue: str,
+) -> None:
+    root = tmp_path / "owned-portability"
+    root.mkdir(mode=0o700)
+    if residue == "recognized":
+        occupant = root / "operation-crash-residue"
+        occupant.mkdir(mode=0o700)
+    elif residue == "unrecognized":
+        occupant = root / "foreign-residue"
+        occupant.write_bytes(b"private residue")
+        occupant.chmod(0o600)
+    elif residue == "symlink":
+        target = tmp_path / "foreign-target"
+        target.write_bytes(b"foreign")
+        occupant = root / "operation-symlink"
+        occupant.symlink_to(target)
+    else:
+        occupant = root / "operation-wrong-mode"
+        occupant.mkdir(mode=0o755)
+
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    for _ in range(2):
+        service, _repository, _dependency_service = _service(tmp_path)
+        with pytest.raises(TTSVoiceBundleError, match="cleanup_failed") as caught:
+            await service.inspect(source)
+        assert str(caught.value) == "cleanup_failed"
+        assert occupant.exists() or occupant.is_symlink()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_operation_file_substitution_is_preserved_and_fails_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -638,9 +673,10 @@ async def test_stale_repository_result_returns_brand_new_review(tmp_path: Path) 
 
     async def stale(command):
         repository.commits.append(command)
+        current = command_to_profile(command)
         repository.collisions = TTSProfileCollisionSnapshot(
-            command_to_profile(command),
-            command_to_profile(command),
+            current,
+            None,
         )
         dependency.snapshot = _dependency(state="missing", revision=5)
         return ProfileStoreResult(
@@ -673,6 +709,46 @@ async def test_stale_repository_result_returns_brand_new_review(tmp_path: Path) 
             review.handle,
             TTSVoiceBundleImportChoice("create", False),
         )
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ("read", "validation"))
+async def test_exact_public_collision_private_reference_failure_blocks_review(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle = _bundle()
+    exact = command_to_profile(
+        SimpleNamespace(
+            choice="create",
+            source_profile_id=PROFILE_ID,
+            copy_profile_id=None,
+            copy_display_name=None,
+            source_draft=bundle.profile.draft,
+            canonical_reference=bundle.reference,
+            recipe_requirement=bundle.recipe_requirement,
+        )
+    )
+    repository.collisions = TTSProfileCollisionSnapshot(exact, exact)
+
+    if failure == "read":
+
+        async def fail_reference(*_args, **_kwargs):
+            raise RuntimeError("CANARY-private-reference-read")
+
+    else:
+
+        async def fail_reference(*_args, **_kwargs):
+            return ProfileStoreResult(repository.generation, object())
+
+    repository.get_reference = fail_reference
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+        await service.inspect(source)
+    assert service._sessions == {}
     await service.close()
 
 
@@ -993,6 +1069,27 @@ def _exception_graph_values(error: BaseException) -> list[object]:
         elif not isinstance(value, type) and is_dataclass(value):
             pending.extend(getattr(value, field.name) for field in fields(value))
     return values
+
+
+class _PrivateBaseException(BaseException):
+    pass
+
+
+def _assert_bounded_public_error(error: BaseException, canary: str) -> None:
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    service_frames: list[str] = []
+    traceback = error.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_globals.get("__name__") == bundle_service.__name__:
+            service_frames.append(traceback.tb_frame.f_code.co_name)
+            assert all(
+                canary not in repr(value)
+                for value in traceback.tb_frame.f_locals.values()
+            )
+        traceback = traceback.tb_next
+    assert len(service_frames) == 1
+    assert all(canary not in repr(value) for value in _exception_graph_values(error))
 
 
 @pytest.mark.asyncio
@@ -1731,6 +1828,114 @@ async def test_public_operations_sever_all_collaborator_exception_graphs(
     assert error.__context__ is None
     assert all(canary not in repr(value) for value in _exception_graph_values(error))
     await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation_name", "signal_type"),
+    (
+        ("inspect_dependency", asyncio.CancelledError),
+        ("inspect_dependency", _PrivateBaseException),
+        ("inspect_dependency", KeyboardInterrupt),
+        ("inspect_dependency", SystemExit),
+        ("commit_repository", _PrivateBaseException),
+        ("export_repository", _PrivateBaseException),
+        ("export_codec", _PrivateBaseException),
+        ("export_hook", _PrivateBaseException),
+        ("invalidate", _PrivateBaseException),
+        ("close", _PrivateBaseException),
+    ),
+)
+async def test_public_operations_classify_sever_and_reconstruct_baseexceptions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation_name: str,
+    signal_type: type[BaseException],
+) -> None:
+    service, repository, dependency = _service(tmp_path)
+    source = tmp_path / "CANARY-selected.tldw-voice.zip"
+    _write_source(source)
+    canary = f"CANARY-{operation_name}-private"
+
+    def signal() -> BaseException:
+        return signal_type(canary)
+
+    if operation_name == "inspect_dependency":
+
+        async def fail_dependency(_requirement):
+            raise signal()
+
+        dependency.audio_cpp_guided_dependency_snapshot = fail_dependency
+        operation = service.inspect(source)
+    elif operation_name in {"commit_repository", "invalidate"}:
+        review = await service.inspect(source)
+        if operation_name == "commit_repository":
+
+            async def fail_commit(_command):
+                raise signal()
+
+            repository.commit_bundle_import = fail_commit
+            operation = service.commit(
+                review.handle, TTSVoiceBundleImportChoice("create", False)
+            )
+        else:
+
+            async def fail_invalidate(_handle):
+                raise signal()
+
+            monkeypatch.setattr(service, "_invalidate_impl", fail_invalidate)
+            operation = service.invalidate(review.handle)
+    elif operation_name == "close":
+
+        async def fail_close():
+            raise signal()
+
+        monkeypatch.setattr(service, "_complete_close", fail_close)
+        operation = service.close()
+    else:
+        _bundle_value, profile = _install_export_record(repository)
+        if operation_name == "export_repository":
+
+            async def fail_profile(_profile_id):
+                raise signal()
+
+            repository.get_profile = fail_profile
+        elif operation_name == "export_codec":
+
+            def fail_codec(_bundle_value):
+                raise signal()
+
+            monkeypatch.setattr(bundle_service, "encode_clone_voice_bundle", fail_codec)
+        else:
+
+            def fail_hook(boundary: str) -> None:
+                if boundary == "destination_pre_publish":
+                    raise signal()
+
+            monkeypatch.setattr(bundle_service, "_test_boundary", fail_hook)
+        operation = service.export(
+            PROFILE_ID,
+            tmp_path / "CANARY-destination.tldw-voice.zip",
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+
+    expected = (
+        signal_type
+        if signal_type in {asyncio.CancelledError, KeyboardInterrupt, SystemExit}
+        else TTSVoiceBundleError
+    )
+    with pytest.raises(expected) as caught:
+        await operation
+    error = caught.value
+    if type(error) is TTSVoiceBundleError:
+        assert str(error) == "operation_failed"
+    else:
+        assert error.args == ()
+    _assert_bounded_public_error(error, canary)
+    if not service._closed:
+        await service.close()
 
 
 @pytest.mark.asyncio

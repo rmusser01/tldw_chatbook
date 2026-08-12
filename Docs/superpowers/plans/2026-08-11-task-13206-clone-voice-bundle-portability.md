@@ -319,6 +319,12 @@ requires queued configuration plus the exact saved requirement. Keep the
 pending flag coherent with saved/applied generations without treating it as a
 state alias, and prove inspection/commit perform zero provider work.
 
+Treat any nonempty verified owner-private operation root on first use or
+restart as `cleanup_failed`, preserve every occupant, and do not infer cleanup
+authority from a recognized filename. Recovery requires Chatbook to be exited
+before the user manually inspects the app-owned portability root and removes
+only confirmed residue; no runtime path crosses the public error boundary.
+
 The successful atomic no-replace publication is export's non-cancellable point
 of no return. Pre-publication cancellation retains the randomized `0600`
 temporary sibling and propagates with no final; pathname cleanup in a

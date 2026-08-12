@@ -553,6 +553,12 @@ the handle contains no public path/reference fields and cannot be copied.
 Cancel, modal replacement/unmount, commit, expiry, and service close invalidate
 the handle and join owned cleanup. Replay and foreign-service handles fail
 boundedly. The service closes and joins before the profile repository closes.
+On construction or first use, a nonempty owner-private operation root reports
+`cleanup_failed` and remains untouched, even when an entry resembles a prior
+operation. Restart does not create deletion authority. Recovery requires
+exiting Chatbook, manually inspecting the app-owned portability root, removing
+only confirmed residue, and retrying; the bounded error does not reveal its
+runtime path.
 
 Exact duplicate reuse requires equality of:
 
@@ -665,7 +671,7 @@ Bounded public categories and recoveries are:
 | `stale_inspection` | Inspect again |
 | `destination_changed` | Choose a new absent destination |
 | `migration_failed` | Keep/restore the prior store and retry after resolving storage health |
-| `cleanup_failed` | Wait for retained cleanup or restart Chatbook before retrying |
+| `cleanup_failed` | Wait for retained cleanup; if it persists after restart, exit Chatbook, inspect the app-owned portability root manually, remove only confirmed residue, and retry |
 | `operation_failed` | Retry without exposing collaborator detail |
 
 UI copy supplies one truthful next action. Logs, notifications, metrics,

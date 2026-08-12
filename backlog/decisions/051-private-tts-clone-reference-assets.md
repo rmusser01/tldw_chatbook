@@ -267,6 +267,13 @@ remain and directs manual removal only after the user verifies that exact
 random filename; the service never guesses that a pathname still names its
 former inode.
 
+The application-owned operation root is fail-closed across restart. Any
+nonempty root, including a recognized prior operation name, reports bounded
+`cleanup_failed`; a new service instance does not reclaim or pathname-delete
+crash residue without retained exact authority. Recovery directs the user to
+exit Chatbook, manually inspect the app-owned portability root, remove only
+confirmed residue, and retry. The public error never includes the runtime path.
+
 ## Context
 
 Several audio.cpp families in the approved `release-0.5.1` compatibility scope
