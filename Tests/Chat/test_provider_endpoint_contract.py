@@ -12,17 +12,24 @@ from tldw_chatbook.Chat import provider_endpoint_contract as contract
         ("Custom", "custom"),
         ("Custom OpenAI", "custom"),
         ("Custom OpenAI API", "custom"),
+        ("custom-openai", "custom"),
+        ("custom_openai", "custom"),
         ("custom-openai-api", "custom"),
         ("custom_openai_api", "custom"),
         ("Custom-2", "custom_2"),
         ("Custom 2", "custom_2"),
+        ("custom-2", "custom_2"),
         ("Custom OpenAI 2", "custom_2"),
+        ("custom_openai_2", "custom_2"),
         ("Custom OpenAI API-2", "custom_2"),
         ("custom-openai-api-2", "custom_2"),
         ("custom_openai_api_2", "custom_2"),
+        ("llama.cpp", "llama_cpp"),
+        ("local llama.cpp", "local_llamacpp"),
         ("vllm", "vllm"),
-        ("OpenRouter", "openrouter"),
-        ("local-llamacpp", "local_llamacpp"),
+        ("openrouter", "openrouter"),
+        ("local_llamacpp", "local_llamacpp"),
+        ("custom__openai__api", "custom__openai__api"),
     ],
 )
 def test_provider_aliases_resolve_to_canonical_config_keys(
@@ -35,6 +42,24 @@ def test_provider_aliases_resolve_to_canonical_config_keys(
         provider_key,
         result.persisted_endpoint,
     )
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "custom---openai",
+        "open router",
+        "local--vllm",
+        "OpenRouter",
+        "local-llamacpp",
+    ],
+)
+def test_unknown_provider_keys_must_already_be_canonical(provider: str) -> None:
+    result = contract.resolve_provider_endpoint(provider, "http://localhost:9000")
+
+    assert result.provider_key == ""
+    assert result.persisted_endpoint is None
+    assert result.errors
 
 
 @pytest.mark.parametrize(
@@ -241,6 +266,29 @@ def test_valid_explicit_ipv6_endpoints_are_bracket_safe(
     assert result.errors == ()
 
 
+@pytest.mark.parametrize(
+    "unsafe_character",
+    [
+        "\u0085",
+        "\u202e",
+        "\u2066",
+        "\u200d",
+        "\ud800",
+    ],
+)
+def test_unsafe_unicode_categories_are_rejected_before_parsing(
+    unsafe_character: str,
+) -> None:
+    result = contract.resolve_provider_endpoint(
+        "custom", f"https://example.test/proxy{unsafe_character}/v1"
+    )
+
+    assert result.persisted_endpoint is None
+    assert result.normalized_input == ""
+    assert result.errors
+    assert all(len(message) <= 100 for message in result.errors)
+
+
 @pytest.mark.parametrize("control", [chr(code) for code in range(32)] + ["\x7f"])
 def test_c0_controls_and_del_are_rejected_before_normalization(
     control: str,
@@ -253,6 +301,72 @@ def test_c0_controls_and_del_are_rejected_before_normalization(
     assert result.chat_url is None
     assert result.models_url is None
     assert result.errors
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test/proxy/%ZZ",
+        "https://example.test/proxy/%",
+        "https://example.test/proxy/%0",
+        "https://example.test/proxy%2Fv1",
+        "https://example.test/proxy%5cv1",
+        "https://example.test/proxy/%00/v1",
+        "https://example.test/proxy/%1f/v1",
+        "https://example.test/proxy/%7F/v1",
+        "https://example.test/proxy/%85/v1",
+        "https://example.test/proxy/%C2%85/v1",
+        "https://example.test/proxy/%E2%80%AE/v1",
+        "https://example.test/proxy/%ED%A0%80/v1",
+        "https://example.test/proxy/%2e%2e/v1",
+        "https://example.test/proxy/.%2E/v1",
+        "https://example.test/proxy/%2E/v1",
+    ],
+)
+def test_malformed_or_unsafe_percent_encoded_paths_are_rejected(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.chat_url is None
+    assert result.models_url is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    ("value", "normalized_input"),
+    [
+        (
+            "https://example.test/%70roxy/v1",
+            "https://example.test/proxy/v1",
+        ),
+        (
+            "https://example.test/proxy/%7emodel/v1",
+            "https://example.test/proxy/~model/v1",
+        ),
+        (
+            "https://example.test/proxy/%3a/v1",
+            "https://example.test/proxy/%3A/v1",
+        ),
+    ],
+)
+def test_valid_percent_escapes_are_canonicalized(
+    value: str, normalized_input: str
+) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.normalized_input == normalized_input
+    assert result.errors == ()
+
+
+def test_percent_encoded_unreserved_path_has_same_canonical_identity() -> None:
+    encoded = contract.canonical_connection_identity(
+        "custom", "https://example.test/%70roxy/v1"
+    )
+    plain = contract.canonical_connection_identity(
+        "custom", "https://example.test/proxy/v1"
+    )
+
+    assert encoded == plain
 
 
 @pytest.mark.parametrize(
@@ -328,6 +442,91 @@ def test_schemeless_remote_ip_and_dns_endpoints_are_rejected(value: str) -> None
     assert result.persisted_endpoint is None
     assert result.chat_url is None
     assert result.models_url is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "LOCALHOST:9000/v1",
+        "localhost.:9000/v1",
+        "127.000.000.001:9000/v1",
+    ],
+)
+def test_schemeless_local_policy_requires_exact_raw_host(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    ("value", "normalized_input"),
+    [
+        (
+            "https://EXAMPLE.TEST./v1",
+            "https://example.test/v1",
+        ),
+        (
+            "http://LOCALHOST.:8080/v1",
+            "http://localhost:8080/v1",
+        ),
+    ],
+)
+def test_explicit_dns_hosts_are_canonicalized(
+    value: str, normalized_input: str
+) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.normalized_input == normalized_input
+    assert result.errors == ()
+    if normalized_input.startswith("http://localhost"):
+        assert result.warnings == ()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test../v1",
+        "http://localhost..:8080/v1",
+    ],
+)
+def test_dns_hosts_with_multiple_trailing_dots_are_rejected(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.errors
+
+
+def test_equivalent_ipv6_spellings_share_serialization_and_identity() -> None:
+    expanded = "https://[2001:0DB8:0:0:0:0:0:1]/v1"
+    compressed = "https://[2001:db8::1]/v1"
+
+    expanded_result = contract.resolve_provider_endpoint("custom", expanded)
+    compressed_result = contract.resolve_provider_endpoint("custom", compressed)
+
+    assert expanded_result.normalized_input == "https://[2001:db8::1]/v1"
+    assert expanded_result == compressed_result
+    assert contract.canonical_connection_identity(
+        "custom", expanded
+    ) == contract.canonical_connection_identity("custom", compressed)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test/proxy//",
+        "https://example.test///",
+        "https://example.test/proxy///",
+        "https://example.test//v1",
+    ],
+)
+def test_original_path_rejects_doubled_separators_before_trimming(
+    value: str,
+) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
     assert result.errors
 
 
@@ -435,6 +634,33 @@ def test_invalid_endpoint_has_no_canonical_identity() -> None:
         )
         is None
     )
+
+
+def test_provider_and_endpoint_length_bounds_are_checked_before_parsing() -> None:
+    valid_provider = "a" * 128
+    oversized_provider = "a" * 129
+    endpoint_prefix = "https://example.test/"
+    endpoint_at_limit = endpoint_prefix + "a" * (4096 - len(endpoint_prefix))
+    oversized_endpoint = endpoint_at_limit + "a"
+
+    assert contract.resolve_provider_endpoint(
+        valid_provider, "http://localhost:9000"
+    ).provider_key == valid_provider
+
+    provider_result = contract.resolve_provider_endpoint(
+        oversized_provider, "http://localhost:9000"
+    )
+    endpoint_result = contract.resolve_provider_endpoint(
+        "custom", oversized_endpoint
+    )
+
+    assert provider_result.persisted_endpoint is None
+    assert endpoint_result.persisted_endpoint is None
+    assert all(len(message) <= 100 for message in provider_result.errors)
+    assert all(len(message) <= 100 for message in endpoint_result.errors)
+    assert contract.resolve_provider_endpoint(
+        "custom", endpoint_at_limit
+    ).persisted_endpoint is not None
 
 
 def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() -> (

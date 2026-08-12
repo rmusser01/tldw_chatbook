@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from ipaddress import ip_address
 from typing import Literal
+from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 EndpointForm = Literal[
@@ -17,15 +18,36 @@ EndpointForm = Literal[
 ]
 
 _LLAMA_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
-_CUSTOM_PROVIDER_ALIASES = frozenset(
-    {"custom", "custom_openai", "custom_openai_api"}
-)
-_CUSTOM_2_PROVIDER_ALIASES = frozenset(
-    {"custom_2", "custom_openai_2", "custom_openai_api_2"}
-)
+_PROVIDER_ALIASES = {
+    "Custom": "custom",
+    "Custom OpenAI": "custom",
+    "Custom OpenAI API": "custom",
+    "custom-openai": "custom",
+    "custom_openai": "custom",
+    "custom-openai-api": "custom",
+    "custom_openai_api": "custom",
+    "Custom-2": "custom_2",
+    "Custom 2": "custom_2",
+    "custom-2": "custom_2",
+    "Custom OpenAI 2": "custom_2",
+    "custom-openai-2": "custom_2",
+    "custom_openai_2": "custom_2",
+    "Custom OpenAI API-2": "custom_2",
+    "Custom OpenAI API 2": "custom_2",
+    "custom-openai-api-2": "custom_2",
+    "custom_openai_api_2": "custom_2",
+    "llama.cpp": "llama_cpp",
+    "local llama.cpp": "local_llamacpp",
+}
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
-_ENCODED_DELIMITER = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
+_UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_UNRESERVED_ASCII = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+_MAX_PROVIDER_LENGTH = 128
+_MAX_ENDPOINT_LENGTH = 4096
 _SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
     (("v1", "chat", "completions"), "chat_url"),
     (("v1", "models"), "models_url"),
@@ -56,12 +78,16 @@ def resolve_provider_endpoint(
 ) -> ProviderEndpointResolution:
     """Interpret one endpoint value without reading config or performing I/O."""
 
+    if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
+        return _invalid_resolution("", "Provider name is invalid or too long.")
     provider_key = _normalize_provider_key(provider)
     if not provider_key:
         return _invalid_resolution("", "Select a valid provider.")
     if not isinstance(value, str):
         return _invalid_resolution(provider_key, "Enter an endpoint URL.")
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+    if len(value) > _MAX_ENDPOINT_LENGTH:
+        return _invalid_resolution(provider_key, "Endpoint URL is too long.")
+    if _contains_unsafe_unicode(value):
         return _invalid_resolution(
             provider_key, "Endpoint URL contains invalid characters."
         )
@@ -114,30 +140,29 @@ def resolve_provider_endpoint(
         return _invalid_resolution(
             provider_key, "Endpoint URL must not include a fragment."
         )
-    if not hostname or port == 0 or not _valid_host(hostname):
+    canonical_host = _canonical_host(hostname) if hostname else None
+    if not canonical_host or port == 0:
         return _invalid_resolution(
             provider_key, "Endpoint URL must include a valid host and port."
         )
-    if not has_explicit_scheme and hostname.lower() not in {
-        "localhost",
-        "127.0.0.1",
-    }:
+    if not has_explicit_scheme and not _is_exact_schemeless_host(parsed.netloc):
         return _invalid_resolution(
             provider_key,
             "Remote endpoint URLs must include an HTTP or HTTPS scheme.",
         )
-    if _ENCODED_DELIMITER.search(parsed.path):
+
+    original_path = parsed.path
+    if "//" in original_path or "\\" in original_path:
+        return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    canonical_path = _canonicalize_path(original_path)
+    if canonical_path is None:
         return _invalid_resolution(
-            provider_key, "Endpoint path contains an encoded delimiter."
+            provider_key, "Endpoint path contains invalid percent encoding."
         )
 
-    path = parsed.path.rstrip("/")
+    path = canonical_path.removesuffix("/")
     segments = tuple(segment for segment in path.split("/") if segment)
-    if (
-        "//" in path
-        or "\\" in path
-        or any(segment in {".", ".."} for segment in segments)
-    ):
+    if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
     suffix = _terminal_suffix(
@@ -149,7 +174,7 @@ def resolve_provider_endpoint(
         )
     prefix_segments, form = suffix
 
-    netloc = _normalized_netloc(hostname, port)
+    netloc = _normalized_netloc(canonical_host, port)
     prefix_path = f"/{'/'.join(prefix_segments)}" if prefix_segments else ""
     root = urlunsplit((scheme, netloc, prefix_path, "", ""))
     normalized_path = f"/{'/'.join(segments)}" if segments else ""
@@ -159,7 +184,7 @@ def resolve_provider_endpoint(
     persisted_endpoint = root if provider_key in _LLAMA_PROVIDER_KEYS else chat_url
     warnings = (
         (_REMOTE_HTTP_WARNING,)
-        if scheme == "http" and not _is_loopback_host(hostname)
+        if scheme == "http" and not _is_loopback_host(canonical_host)
         else ()
     )
 
@@ -194,13 +219,12 @@ def canonical_connection_identity(
 def _normalize_provider_key(provider: object) -> str:
     if not isinstance(provider, str):
         return ""
-    provider_key = re.sub(r"[\s-]+", "_", provider.strip().lower())
+    provider_key = provider.strip()
+    alias = _PROVIDER_ALIASES.get(provider_key)
+    if alias is not None:
+        return alias
     if not _PROVIDER_KEY.fullmatch(provider_key):
         return ""
-    if provider_key in _CUSTOM_PROVIDER_ALIASES:
-        return "custom"
-    if provider_key in _CUSTOM_2_PROVIDER_ALIASES:
-        return "custom_2"
     return provider_key
 
 
@@ -246,19 +270,71 @@ def _terminal_suffix(
     return (segments[:index], form)
 
 
-def _valid_host(hostname: str) -> bool:
-    if not hostname.isascii():
-        return False
+def _contains_unsafe_unicode(value: str) -> bool:
+    return any(
+        category(character) in _UNSAFE_UNICODE_CATEGORIES for character in value
+    )
+
+
+def _canonicalize_path(path: str) -> str | None:
+    canonical: list[str] = []
+    index = 0
+    while index < len(path):
+        character = path[index]
+        if character != "%":
+            canonical.append(character)
+            index += 1
+            continue
+
+        octets = bytearray()
+        while index < len(path) and path[index] == "%":
+            if (
+                index + 2 >= len(path)
+                or path[index + 1] not in _HEX_DIGITS
+                or path[index + 2] not in _HEX_DIGITS
+            ):
+                return None
+            octets.append(int(path[index + 1 : index + 3], 16))
+            index += 3
+
+        if _percent_octets_contain_unsafe_unicode(octets):
+            return None
+        for octet in octets:
+            if octet in {0x2F, 0x5C} or octet < 0x20 or octet == 0x7F:
+                return None
+            decoded = chr(octet)
+            canonical.append(
+                decoded if decoded in _UNRESERVED_ASCII else f"%{octet:02X}"
+            )
+    return "".join(canonical)
+
+
+def _percent_octets_contain_unsafe_unicode(octets: bytearray) -> bool:
     try:
-        ip_address(hostname)
-        return True
+        decoded = bytes(octets).decode("utf-8")
+    except UnicodeDecodeError:
+        return any(0x80 <= octet <= 0x9F for octet in octets)
+    return _contains_unsafe_unicode(decoded)
+
+
+def _canonical_host(hostname: str) -> str | None:
+    if not hostname.isascii() or "%" in hostname:
+        return None
+    try:
+        return ip_address(hostname).compressed.lower()
     except ValueError:
         pass
 
-    host = hostname.rstrip(".")
+    if hostname.endswith(".."):
+        return None
+    host = hostname.removesuffix(".")
     if not host or len(host) > 253:
-        return False
-    return all(_valid_dns_label(label) for label in host.split("."))
+        return None
+    if all(character.isdigit() or character == "." for character in host):
+        return None
+    if not all(_valid_dns_label(label) for label in host.split(".")):
+        return None
+    return host.lower()
 
 
 def _valid_dns_label(label: str) -> bool:
@@ -271,10 +347,17 @@ def _valid_dns_label(label: str) -> bool:
 
 
 def _normalized_netloc(hostname: str, port: int | None) -> str:
-    host = hostname.lower().rstrip(".")
+    host = hostname
     if ":" in host:
         host = f"[{host}]"
     return f"{host}:{port}" if port is not None else host
+
+
+def _is_exact_schemeless_host(netloc: str) -> bool:
+    return any(
+        netloc == host or netloc.startswith(f"{host}:")
+        for host in ("localhost", "127.0.0.1")
+    )
 
 
 def _drop_default_port(endpoint: str) -> str:
@@ -284,7 +367,10 @@ def _drop_default_port(endpoint: str) -> str:
     )
     if not default_port or parsed.hostname is None:
         return endpoint
-    netloc = _normalized_netloc(parsed.hostname, None)
+    canonical_host = _canonical_host(parsed.hostname)
+    if canonical_host is None:
+        return endpoint
+    netloc = _normalized_netloc(canonical_host, None)
     return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
