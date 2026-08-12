@@ -290,6 +290,90 @@ def test_profile_migration_boundary_destination_revalidates_connection_state(
         reopened.close()
 
 
+def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    retained = tmp_path / "retained-boundary.sqlite3"
+    replacement = b"foreign-private-replacement"
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT)")
+    source.execute("INSERT INTO private_data VALUES ('retained-copy')")
+    source.execute("PRAGMA user_version = 2")
+    source.commit()
+    real_fsync = private_sqlite.os.fsync
+    fsync_calls = 0
+
+    def substitute_on_first_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            target.rename(retained)
+            target.write_bytes(replacement)
+            target.chmod(0o600)
+        real_fsync(fd)
+
+    monkeypatch.setattr(private_sqlite.os, "fsync", substitute_on_first_fsync)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.backup_profile_migration_boundary(
+            source,
+            destination,
+            schema_version=2,
+            validate=lambda _connection: None,
+        )
+
+    source.close()
+    assert fsync_calls >= 2
+    assert target.read_bytes() == replacement
+    reopened = sqlite3.connect(retained)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone() == (2,)
+        assert reopened.execute("SELECT value FROM private_data").fetchone() == (
+            "retained-copy",
+        )
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    sidecar = Path(f"{target}{suffix}")
+    missing = tmp_path / "missing-sidecar-target"
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT)")
+    source.execute("PRAGMA user_version = 2")
+    source.commit()
+
+    def install_dangling_sidecar(_connection: sqlite3.Connection) -> None:
+        sidecar.symlink_to(missing)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.backup_profile_migration_boundary(
+            source,
+            destination,
+            schema_version=2,
+            validate=install_dangling_sidecar,
+        )
+
+    source.close()
+    assert sidecar.is_symlink()
+    assert sidecar.readlink() == missing
+
+
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
 def test_connection_backup_owners_execute_real_transactional_backup(
     owner_id,

@@ -1509,6 +1509,20 @@ def _unattached_database_rows(
     return tuple(main_rows[0])
 
 
+def _profile_destination_sidecars_absent(parent_fd: int, leaf: str) -> bool:
+    for suffix in _SIDECAR_SUFFIXES:
+        try:
+            os.stat(
+                f"{leaf}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        return False
+    return True
+
+
 def _verify_profile_migration_destination(
     destination: ProfileMigrationBoundaryDestination,
     *,
@@ -1771,26 +1785,6 @@ def backup_profile_migration_boundary(
                     "_ProfileMigrationBoundaryDestination__path",
                 ),
             )
-            file_stat = selected.lstat()
-            if (
-                not private_paths._same_identity(
-                    file_stat,
-                    object.__getattribute__(
-                        destination,
-                        "_ProfileMigrationBoundaryDestination__file_identity",
-                    ),
-                )
-                or private_paths._classify_private_file_stat(
-                    file_stat,
-                    expected_uid=os.geteuid(),
-                )
-                is not None
-                or stat.S_IMODE(file_stat.st_mode) != _PRIVATE_FILE_MODE
-                or any(
-                    Path(f"{selected}{suffix}").exists() for suffix in _SIDECAR_SUFFIXES
-                )
-            ):
-                raise SQLitePrivateDestinationError()
             parent_fd, leaf = private_paths._open_verified_parent(
                 selected,
                 missing_leaf_allowed=False,
@@ -1803,21 +1797,52 @@ def backup_profile_migration_boundary(
                     writable=False,
                     create=False,
                 )
-                opened = os.fstat(file_fd)
-                if not private_paths._same_identity(opened, file_stat):
+                file_identity = object.__getattribute__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__file_identity",
+                )
+                parent_identity = object.__getattribute__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__parent_identity",
+                )
+                if not private_paths._same_identity(
+                    os.fstat(parent_fd),
+                    parent_identity,
+                ) or not _artifact_postcondition_holds(
+                    file_fd,
+                    parent_fd,
+                    leaf,
+                    expected_identity=file_identity,
+                    selected=selected,
+                ):
                     raise SQLitePrivateDestinationError()
                 os.fsync(file_fd)
                 os.fsync(parent_fd)
+                if (
+                    not private_paths._same_identity(
+                        os.fstat(parent_fd),
+                        parent_identity,
+                    )
+                    or not _artifact_postcondition_holds(
+                        file_fd,
+                        parent_fd,
+                        leaf,
+                        expected_identity=file_identity,
+                        selected=selected,
+                    )
+                    or not _profile_destination_sidecars_absent(parent_fd, leaf)
+                ):
+                    raise SQLitePrivateDestinationError()
+                object.__setattr__(
+                    destination,
+                    "_ProfileMigrationBoundaryDestination__state",
+                    "ready",
+                )
+                return
             finally:
                 if file_fd >= 0:
                     os.close(file_fd)
                 os.close(parent_fd)
-            object.__setattr__(
-                destination,
-                "_ProfileMigrationBoundaryDestination__state",
-                "ready",
-            )
-            return
         except BaseException as caught:
             body_error = caught
     object.__setattr__(
