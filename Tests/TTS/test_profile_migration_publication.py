@@ -1653,17 +1653,11 @@ def test_atomic_publication_race_never_clobbers_foreign_leaf(
     destination = _retained(module, active_path, slot.ACTIVE, "old")
     foreign = b"foreign-race-entry"
     selected = rollback_path if race_leaf == "rollback" else active_path
-    real_link = module.os.link
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
     injected = False
 
-    def race_link(
-        source: str,
-        target: str,
-        *,
-        src_dir_fd: int,
-        dst_dir_fd: int,
-        follow_symlinks: bool,
-    ) -> None:
+    def race_rename(parent_fd: int, source: str, target: str) -> None:
         nonlocal injected
         if not injected and target == selected.name:
             injected = True
@@ -1671,21 +1665,15 @@ def test_atomic_publication_race_never_clobbers_foreign_leaf(
                 target,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
-                dir_fd=dst_dir_fd,
+                dir_fd=parent_fd,
             )
             try:
                 os.write(descriptor, foreign)
             finally:
                 os.close(descriptor)
-        real_link(
-            source,
-            target,
-            src_dir_fd=src_dir_fd,
-            dst_dir_fd=dst_dir_fd,
-            follow_symlinks=follow_symlinks,
-        )
+        real_rename(parent_fd, source, target)
 
-    monkeypatch.setattr(module.os, "link", race_link)
+    monkeypatch.setattr(namespace, "_rename_noreplace", race_rename)
 
     with pytest.raises(ProfileRepositoryError) as caught:
         module.publish_profile_migration(
@@ -1704,6 +1692,97 @@ def test_atomic_publication_race_never_clobbers_foreign_leaf(
         assert active_path.read_bytes() == active_before
     else:
         assert rollback_path.read_bytes() == active_before
+
+
+def test_publisher_atomic_move_gap_preserves_foreign_source_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / ".candidate.sqlite3"
+    active_before = _store(active, version=3, marker="old")
+    _store(candidate, version=4, marker="new")
+    artifact = _prepared(module, candidate, slot.ACTIVE, "new")
+    destination = _retained(module, active, slot.ACTIVE, "old")
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
+    foreign = b"foreign-source-substitution"
+    swapped = False
+
+    def swap_source(parent_fd: int, source: str, target: str) -> None:
+        nonlocal swapped
+        if source == candidate.name and not swapped:
+            swapped = True
+            held = ".held-candidate.sqlite3"
+            os.rename(source, held, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(descriptor, foreign)
+            finally:
+                os.close(descriptor)
+        real_rename(parent_fd, source, target)
+
+    monkeypatch.setattr(namespace, "_rename_noreplace", swap_source)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+        )
+
+    assert swapped
+    assert candidate.read_bytes() == foreign
+    assert active.read_bytes() == active_before
+
+
+def test_publisher_sqlite_validation_is_bound_to_pinned_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / ".candidate.sqlite3"
+    foreign = tmp_path / "foreign.sqlite3"
+    active_before = _store(active, version=3, marker="old")
+    _store(candidate, version=4, marker="new")
+    _store(foreign, version=4, marker="foreign")
+    artifact = _prepared(module, candidate, slot.ACTIVE, "new")
+    destination = _retained(module, active, slot.ACTIVE, "old")
+    real_connect = module.connect_private_sqlite_descriptor
+    swapped = False
+
+    def swap_during_open(*args: object, **kwargs: object) -> sqlite3.Connection:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            candidate.rename(tmp_path / ".held-candidate.sqlite3")
+            foreign.rename(candidate)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(module, "connect_private_sqlite_descriptor", swap_during_open)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+        )
+
+    assert swapped
+    assert active.read_bytes() == active_before
+    assert candidate.is_file()
+    assert not tuple(tmp_path.glob("*.migration-publication.json"))
 
 
 @pytest.mark.parametrize("mutated_owner", ["candidate", "retained"])

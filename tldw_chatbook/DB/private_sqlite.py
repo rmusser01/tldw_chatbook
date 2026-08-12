@@ -28,6 +28,9 @@ from tldw_chatbook.Utils.private_paths import (
 )
 
 
+_SQLITE_CONNECT = sqlite3.connect
+
+
 class SQLiteTargetKind(StrEnum):
     """Supported SQLite storage target classifications."""
 
@@ -369,6 +372,20 @@ _SQLITE_OWNER_POLICIES = {
         _READ_ONLY_URI,
         "TTS startup recovery immutably validates journal-classified exact "
         "active and retained backup authority before profile-store open.",
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_publication_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_publication",
+        _READ_ONLY_URI,
+        "TTS migration publication validates an immutable "
+        "read-only view bound to an already verified descriptor.",
+        preserve_read_only_source_mode=True,
+    ),
+    "tts.profile_migration_recovery_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_recovery",
+        _READ_ONLY_URI,
+        "TTS startup recovery validates an immutable read-only view bound to "
+        "an already verified descriptor.",
         preserve_read_only_source_mode=True,
     ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
@@ -1034,6 +1051,7 @@ def _connect_registered_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
+    _verified_descriptor_fd: int | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     if "uri" in kwargs:
@@ -1041,6 +1059,24 @@ def _connect_registered_sqlite(
     if immutable and not read_only:
         raise ValueError("Immutable SQLite connections must be read-only")
     policy = _validated_owner_policy(owner_id)
+    if _verified_descriptor_fd is not None:
+        if not read_only or not immutable or not must_exist:
+            raise ValueError("Descriptor SQLite views are immutable read-only")
+        if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
+            raise ValueError("SQLite owner does not allow descriptor reads")
+        opened = os.fstat(_verified_descriptor_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+        ):
+            raise ValueError("SQLite descriptor must be a regular file")
+        return _SQLITE_CONNECT(
+            f"file:/dev/fd/{_verified_descriptor_fd}?mode=ro&immutable=1",
+            uri=True,
+            **kwargs,
+        )
     raw, target_kind = _classify_target(database, read_only=read_only)
     if target_kind is SQLiteTargetKind.MEMORY and must_exist:
         raise ValueError("must_exist is only valid for file-backed SQLite")
@@ -1116,6 +1152,39 @@ def connect_private_sqlite(
         immutable=immutable,
         **kwargs,
     )
+
+
+def connect_private_sqlite_descriptor(
+    owner_id: str,
+    file_fd: int,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    """Open an immutable SQLite view bound to an already verified descriptor."""
+
+    policy = _validated_owner_policy(owner_id)
+    if SQLiteTargetKind.READ_ONLY_URI not in policy.allowed_target_kinds:
+        raise ValueError("SQLite owner does not allow descriptor reads")
+    opened = os.fstat(file_fd)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or stat.S_IMODE(opened.st_mode) != 0o600
+        or opened.st_nlink != 1
+    ):
+        raise ValueError("SQLite descriptor must be a regular file")
+    duplicate = os.dup(file_fd)
+    try:
+        return _connect_registered_sqlite(
+            owner_id,
+            ":memory:",
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            _verified_descriptor_fd=duplicate,
+            **kwargs,
+        )
+    finally:
+        os.close(duplicate)
 
 
 @dataclass(slots=True)
@@ -2290,6 +2359,7 @@ __all__ = [
     "backup_open_connections_to_private",
     "backup_profile_migration_boundary",
     "connect_private_sqlite",
+    "connect_private_sqlite_descriptor",
     "copy_private_sqlite",
     "open_profile_migration_boundary_destination",
     "restore_private_sqlite",

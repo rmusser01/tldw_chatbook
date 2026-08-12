@@ -13,7 +13,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Final
 
-from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
@@ -23,6 +23,10 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     ProfileMigrationJournalSlot,
     ProfileMigrationPublicationSlot,
     parse_profile_migration_journal,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
+    move_exact_noreplace,
+    remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.private_paths import (
@@ -105,21 +109,25 @@ def _same_parent_authority(
         and stat.S_IFMT(current.st_mode) == stat.S_IFMT(expected.st_mode)
         and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
         and current.st_uid == expected.st_uid
-        and current.st_nlink == expected.st_nlink
         and _valid_parent_stat(current)
     )
 
 
 def _require_configured_parent(
     selected: Path,
-    expected_fd: int,
+    expected: os.stat_result,
+    *,
+    exact_links: bool = False,
 ) -> None:
     reopened_fd, _leaf = private_paths._open_verified_parent(
         selected,
         missing_leaf_allowed=True,
     )
     try:
-        if not _same_parent_authority(os.fstat(reopened_fd), os.fstat(expected_fd)):
+        current = os.fstat(reopened_fd)
+        if not _same_parent_authority(current, expected) or (
+            exact_links and current.st_nlink != expected.st_nlink
+        ):
             raise ValueError
     finally:
         os.close(reopened_fd)
@@ -349,11 +357,13 @@ def _remove_exact(
     selected: Path,
     expected: _ObservedArtifact,
 ) -> None:
-    _require_configured_parent(selected, parent_fd)
-    _reobserve_exact(parent_fd, expected)
-    _require_configured_parent(selected, parent_fd)
-    os.unlink(expected.leaf, dir_fd=parent_fd)
-    _fsync_parent(parent_fd, parent_identity)
+    _require_configured_parent(selected, parent_identity)
+    remove_exact_namespace(
+        selected.parent / expected.leaf,
+        parent_identity=parent_identity,
+        file_identity=expected.identity,
+        allowed_links=frozenset({1, 2}),
+    )
 
 
 def _move_exact(
@@ -363,34 +373,20 @@ def _move_exact(
     source: _ObservedArtifact,
     destination_leaf: str,
 ) -> None:
-    _require_configured_parent(selected, parent_fd)
+    _require_configured_parent(selected, parent_identity)
     identity = _reobserve_exact(parent_fd, source)
-    try:
-        os.stat(destination_leaf, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        if not _sidecars_absent(parent_fd, destination_leaf):
-            raise ValueError
-    else:
-        raise ValueError
-    _require_configured_parent(selected, parent_fd)
-    os.link(
-        source.leaf,
-        destination_leaf,
-        src_dir_fd=parent_fd,
-        dst_dir_fd=parent_fd,
-        follow_symlinks=False,
+    moved = move_exact_noreplace(
+        selected.parent / source.leaf,
+        selected.parent / destination_leaf,
+        parent_identity=parent_identity,
+        file_identity=identity,
+        allowed_links=frozenset({1, 2}),
     )
-    linked = os.stat(destination_leaf, dir_fd=parent_fd, follow_symlinks=False)
-    if not private_paths._same_identity(linked, identity) or linked.st_nlink != 2:
-        raise ValueError
-    _fsync_parent(parent_fd, parent_identity)
-    _require_configured_parent(selected, parent_fd)
-    os.unlink(source.leaf, dir_fd=parent_fd)
     file_fd = _open_leaf(parent_fd, destination_leaf)
     try:
-        moved = os.fstat(file_fd)
-        if not private_paths._same_identity(moved, identity) or not _valid_stat(
-            moved, links=frozenset({1})
+        opened = os.fstat(file_fd)
+        if not private_paths._same_identity(opened, moved) or not _valid_stat(
+            opened, links=frozenset({1, 2})
         ):
             raise ValueError
         os.fsync(file_fd)
@@ -406,7 +402,7 @@ def _remove_journal(
     journal_leaf: str,
     snapshot: _JournalSnapshot,
 ) -> None:
-    _require_configured_parent(selected, parent_fd)
+    _require_configured_parent(selected, parent_identity)
     current = _read_journal(parent_fd, journal_leaf)
     if (
         current is None
@@ -419,9 +415,12 @@ def _remove_journal(
     ):
         raise ValueError
     parse_profile_migration_journal(current.raw)
-    _require_configured_parent(selected, parent_fd)
-    os.unlink(journal_leaf, dir_fd=parent_fd)
-    _fsync_parent(parent_fd, parent_identity)
+    _require_configured_parent(selected, parent_identity)
+    remove_exact_namespace(
+        selected.parent / journal_leaf,
+        parent_identity=parent_identity,
+        file_identity=current.identity,
+    )
 
 
 def _rollback_possible(rows: Sequence[_ObservedRow]) -> bool:
@@ -555,13 +554,14 @@ def _complete(
 
 def _validate_authoritative_targets(
     parent_fd: int,
+    parent_identity: os.stat_result,
     selected: Path,
     parsed: ParsedProfileMigrationJournal,
     *,
     kind: str,
 ) -> None:
     for row in parsed.recovery_rows:
-        _require_configured_parent(selected, parent_fd)
+        _require_configured_parent(selected, parent_identity)
         if kind == "prior" and not row.had_prior:
             try:
                 os.stat(row.target, dir_fd=parent_fd, follow_symlinks=False)
@@ -570,29 +570,38 @@ def _validate_authoritative_targets(
                     raise ValueError
                 continue
             raise ValueError
-        path = selected.parent / row.target
         before = _observe_artifact(parent_fd, row.target, row)
         if before is None or before.kind != kind or before.identity.st_nlink != 1:
             raise ValueError
-        connection = connect_private_sqlite(
-            "tts.profile_migration_recovery",
-            path,
-            read_only=True,
-            must_exist=True,
-            immutable=True,
-            isolation_level=None,
-        )
+        file_fd = _open_leaf(parent_fd, row.target)
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA query_only = ON")
-            version_row = connection.execute("PRAGMA user_version").fetchone()
-            if version_row is None or type(version_row[0]) is not int:
+            opened_before = os.fstat(file_fd)
+            if not private_paths._same_identity(opened_before, before.identity):
                 raise ValueError
-            profile_schema.validate_profile_store_version(connection, version_row[0])
+            connection = connect_private_sqlite_descriptor(
+                "tts.profile_migration_recovery_descriptor",
+                file_fd,
+                isolation_level=None,
+            )
+            try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA query_only = ON")
+                version_row = connection.execute("PRAGMA user_version").fetchone()
+                if version_row is None or type(version_row[0]) is not int:
+                    raise ValueError
+                profile_schema.validate_profile_store_version(
+                    connection, version_row[0]
+                )
+            finally:
+                connection.close()
+            _hash_sqlite(file_fd)
+            opened_after = os.fstat(file_fd)
+            if not private_paths._same_identity(opened_before, opened_after):
+                raise ValueError
         finally:
-            connection.close()
-        _require_configured_parent(selected, parent_fd)
+            os.close(file_fd)
+        _require_configured_parent(selected, parent_identity)
         after = _observe_artifact(parent_fd, row.target, row)
         if (
             after is None
@@ -601,7 +610,7 @@ def _validate_authoritative_targets(
             or not private_paths._same_identity(before.identity, after.identity)
         ):
             raise ValueError
-    _require_configured_parent(selected, parent_fd)
+    _require_configured_parent(selected, parent_identity)
 
 
 def _choose_action(
@@ -689,20 +698,22 @@ def recover_profile_migration_publication(
         # Admission pins the only authority this invocation may consume. From
         # here through settlement, control-flow signals are deferred and the
         # exact action is replayed from fresh observations until it converges.
+        first_attempt = True
         while True:
             attempt_error: BaseException | None = None
             settled = False
             try:
-                _require_configured_parent(selected, parent_fd)
+                _require_configured_parent(selected, parent_identity)
                 current_snapshot = _read_journal(parent_fd, journal_leaf)
                 if current_snapshot is None:
                     # A deferred signal may have arrived after journal unlink
                     # but before its namespace fsync. Re-durably settle that
                     # exact absence before treating recovery as complete.
                     _fsync_parent(parent_fd, parent_identity)
-                    _require_configured_parent(selected, parent_fd)
+                    _require_configured_parent(selected, parent_identity)
                     _validate_authoritative_targets(
                         parent_fd,
+                        parent_identity,
                         selected,
                         parsed,
                         kind="prior" if action == "rollback" else "candidate",
@@ -733,6 +744,12 @@ def recover_profile_migration_publication(
                     current_rows = _observe_rows(parent_fd, current_parsed)
                     if _stage_hook is not None:
                         _stage_hook("admitted")
+                    _require_configured_parent(
+                        selected,
+                        parent_identity,
+                        exact_links=first_attempt,
+                    )
+                    first_attempt = False
                     if action == "rollback":
                         _rollback(
                             parent_fd,
@@ -751,6 +768,7 @@ def recover_profile_migration_publication(
                         _stage_hook("repaired")
                     _validate_authoritative_targets(
                         parent_fd,
+                        parent_identity,
                         selected,
                         current_parsed,
                         kind="prior" if action == "rollback" else "candidate",
@@ -766,7 +784,7 @@ def recover_profile_migration_publication(
                     )
                     if _stage_hook is not None:
                         _stage_hook("settled")
-                    _require_configured_parent(selected, parent_fd)
+                    _require_configured_parent(selected, parent_identity)
                     settled = True
             except BaseException as error:
                 attempt_error = error

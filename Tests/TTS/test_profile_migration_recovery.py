@@ -574,18 +574,19 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     cancellation = asyncio.CancelledError(f"PRIVATE {fault_site}")
     raised = False
     settlement_fsync_after_fault = False
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
 
     if fault_site == "move_after_mutation":
-        real_link = recovery.os.link
+        real_rename = namespace._rename_noreplace
 
-        def interrupt_link(*args: object, **kwargs: object) -> None:
+        def interrupt_rename(*args: object, **kwargs: object) -> None:
             nonlocal raised
-            real_link(*args, **kwargs)
+            real_rename(*args, **kwargs)
             if not raised:
                 raised = True
                 raise cancellation
 
-        monkeypatch.setattr(recovery.os, "link", interrupt_link)
+        monkeypatch.setattr(namespace, "_rename_noreplace", interrupt_rename)
     elif fault_site in {"file_fsync", "parent_fsync"}:
         real_fsync = recovery.os.fsync
 
@@ -615,13 +616,13 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
             recovery, "_validate_authoritative_targets", interrupt_validation
         )
     else:
-        real_unlink = recovery.os.unlink
+        real_unlink = namespace.os.unlink
         real_fsync = recovery.os.fsync
 
         def interrupt_journal_unlink(*args: object, **kwargs: object) -> None:
             nonlocal raised
             real_unlink(*args, **kwargs)
-            if args[0] == f".{active.name}.migration-publication.json" and not raised:
+            if str(args[0]).endswith(".migration-hold") and not raised:
                 raised = True
                 raise cancellation
 
@@ -631,7 +632,7 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
             if raised and stat.S_ISDIR(os.fstat(file_fd).st_mode):
                 settlement_fsync_after_fault = True
 
-        monkeypatch.setattr(recovery.os, "unlink", interrupt_journal_unlink)
+        monkeypatch.setattr(namespace.os, "unlink", interrupt_journal_unlink)
         monkeypatch.setattr(recovery.os, "fsync", observe_settlement_fsync)
 
     with pytest.raises(asyncio.CancelledError) as caught:
@@ -661,18 +662,19 @@ def test_irrecoverable_failure_dominates_deferred_control_flow(
     _link_then_unlink(target, rollback, finish=True)
     _link_then_unlink(candidate, target, finish=True)
     cancellation = asyncio.CancelledError("PRIVATE deferred")
-    real_link = recovery.os.link
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
     calls = 0
 
     def interrupt_then_fail(*args: object, **kwargs: object) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
-            real_link(*args, **kwargs)
+            real_rename(*args, **kwargs)
             raise cancellation
         raise OSError("PRIVATE storage failure")
 
-    monkeypatch.setattr(recovery.os, "link", interrupt_then_fail)
+    monkeypatch.setattr(namespace, "_rename_noreplace", interrupt_then_fail)
 
     with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
         recovery.recover_profile_migration_publication(active)
@@ -698,18 +700,19 @@ def test_parent_substitution_mid_move_preserves_displaced_recovery_set(
     _link_then_unlink(target, rollback, finish=True)
     _link_then_unlink(candidate, target, finish=True)
     displaced = tmp_path / "displaced"
-    real_link = recovery.os.link
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
     substituted = False
 
-    def substitute_after_link(*args: object, **kwargs: object) -> None:
+    def substitute_after_move(*args: object, **kwargs: object) -> None:
         nonlocal substituted
-        real_link(*args, **kwargs)
+        real_rename(*args, **kwargs)
         if not substituted:
             substituted = True
             owned.rename(displaced)
             owned.mkdir(mode=0o700)
 
-    monkeypatch.setattr(recovery.os, "link", substitute_after_link)
+    monkeypatch.setattr(namespace, "_rename_noreplace", substitute_after_move)
 
     with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
         recovery.recover_profile_migration_publication(active)
@@ -717,9 +720,137 @@ def test_parent_substitution_mid_move_preserves_displaced_recovery_set(
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert (displaced / journal.name).is_file()
-    assert (displaced / target.name).is_file()
     assert (displaced / rollback.name).is_file()
-    assert any(path.name == candidate.name for path in displaced.iterdir())
+    assert any(
+        path.name in {candidate.name, target.name}
+        or path.name.endswith(".migration-hold")
+        for path in displaced.iterdir()
+    )
+
+
+def test_parent_link_authority_change_after_admission_fails_closed(
+    tmp_path: Path,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+
+    def add_foreign_child(stage: str) -> None:
+        if stage == "admitted":
+            (tmp_path / "foreign-child").mkdir(mode=0o700, exist_ok=True)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(
+            active,
+            _stage_hook=add_foreign_child,
+        )
+
+    assert journal.is_file()
+
+
+def test_sqlite_validation_is_bound_to_pinned_descriptor_during_leaf_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, target, rollback = _paths(artifacts[0], destinations[0])
+    old = target.read_bytes()
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="publishing"
+    )
+    _link_then_unlink(target, rollback, finish=True)
+    _link_then_unlink(candidate, target, finish=True)
+    real_connect = recovery.connect_private_sqlite_descriptor
+    foreign = tmp_path / "foreign.sqlite3"
+    _store(foreign, version=4, marker="foreign")
+    swapped = False
+
+    def swap_during_open(*args: object, **kwargs: object) -> sqlite3.Connection:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            held = tmp_path / ".swapped-owned.sqlite3"
+            target.rename(held)
+            foreign.rename(target)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(recovery, "connect_private_sqlite_descriptor", swap_during_open)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert journal.is_file()
+    assert target.read_bytes() != old
+
+
+@pytest.mark.parametrize("operation", ["remove", "move", "journal_remove"])
+def test_foreign_leaf_swapped_in_atomic_transition_gap_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, target, rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication,
+        active,
+        artifacts,
+        destinations,
+        phase="prepared" if operation == "remove" else "publishing",
+    )
+    if operation != "remove":
+        _link_then_unlink(target, rollback, finish=True)
+        _link_then_unlink(candidate, target, finish=True)
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
+    foreign = b"foreign-substitution"
+    swapped_leaf: str | None = None
+
+    def swap_before_atomic_rename(
+        parent_fd: int, source: str, destination: str
+    ) -> None:
+        nonlocal swapped_leaf
+        relevant = (
+            operation == "remove"
+            and source == candidate.name
+            or operation == "move"
+            and source == rollback.name
+            or operation == "journal_remove"
+            and source == journal.name
+        )
+        if relevant and swapped_leaf is None:
+            held = f".foreign-swap-held-{operation}"
+            os.rename(source, held, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            descriptor = os.open(
+                source,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(descriptor, foreign)
+            finally:
+                os.close(descriptor)
+            swapped_leaf = source
+        real_rename(parent_fd, source, destination)
+
+    monkeypatch.setattr(namespace, "_rename_noreplace", swap_before_atomic_rename)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert swapped_leaf is not None
+    assert (tmp_path / swapped_leaf).read_bytes() == foreign
 
 
 @pytest.mark.parametrize("mutation", ["append", "same_size"])

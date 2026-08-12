@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import Lock, get_ident
 from typing import Final
 
-from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
@@ -28,6 +28,10 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     _JournalAuthority,
     _new_profile_migration_journal_authority,
     parse_profile_migration_journal,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
+    move_exact_noreplace,
+    remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.private_paths import (
@@ -221,12 +225,9 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
     try:
         os.fsync(file_fd)
         os.fsync(parent_fd)
-        connection = connect_private_sqlite(
-            "tts.profile_migration_publication",
-            identity._path,
-            read_only=True,
-            must_exist=True,
-            immutable=True,
+        connection = connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            file_fd,
             isolation_level=None,
         )
         try:
@@ -248,6 +249,10 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
             profile_schema.validate_profile_store_version(connection, schema_version)
         finally:
             connection.close()
+        if identity._content_evidence is not None:
+            _pin = _content_evidence(file_fd)
+            if _pin != identity._content_evidence:
+                raise ValueError
         _parent_fd, reopened_fd, _reopened_leaf = _open_exact(identity)
         os.close(reopened_fd)
         os.close(_parent_fd)
@@ -467,38 +472,14 @@ def _rename_exact(
     destination_path: Path,
 ) -> _OpaqueIdentity:
     source_parent_fd, source_fd, source_leaf = _open_exact(source)
-    destination_parent_fd = -1
     try:
-        destination_parent_fd, destination_leaf = private_paths._open_verified_parent(
-            destination_path,
-            missing_leaf_allowed=True,
-        )
-        if not private_paths._same_identity(
-            os.fstat(source_parent_fd), source._parent_identity
-        ) or not private_paths._same_identity(
-            os.fstat(destination_parent_fd), source._parent_identity
-        ):
-            raise ValueError
-        _require_absent(destination_path, source._parent_identity)
-        os.link(
-            source_leaf,
-            destination_leaf,
-            src_dir_fd=source_parent_fd,
-            dst_dir_fd=destination_parent_fd,
-            follow_symlinks=False,
-        )
         assert source._file_identity is not None
-        linked = os.stat(
-            destination_leaf,
-            dir_fd=destination_parent_fd,
-            follow_symlinks=False,
+        move_exact_noreplace(
+            source._path,
+            destination_path,
+            parent_identity=source._parent_identity,
+            file_identity=source._file_identity,
         )
-        if (
-            not private_paths._same_identity(linked, source._file_identity)
-            or linked.st_nlink != 2
-        ):
-            raise ValueError
-        os.unlink(source_leaf, dir_fd=source_parent_fd)
         moved = _identity_at(
             source,
             destination_path,
@@ -515,8 +496,6 @@ def _rename_exact(
             raise ValueError
         return moved
     finally:
-        if destination_parent_fd >= 0:
-            os.close(destination_parent_fd)
         os.close(source_fd)
         os.close(source_parent_fd)
 
@@ -824,28 +803,15 @@ def _unlink_exact(
 ) -> bool:
     if identity is None:
         return False
-    parent_fd, leaf = private_paths._open_verified_parent(
-        path,
-        missing_leaf_allowed=True,
-    )
     try:
-        if not private_paths._same_identity(os.fstat(parent_fd), parent_identity):
-            return False
-        try:
-            current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            return False
-        if not private_paths._same_identity(
-            current, identity
-        ) or not _valid_private_stat(current):
-            return False
-        os.unlink(leaf, dir_fd=parent_fd)
-        os.fsync(parent_fd)
-        if not private_paths._same_identity(os.fstat(parent_fd), parent_identity):
-            raise ValueError
+        remove_exact_namespace(
+            path,
+            parent_identity=parent_identity,
+            file_identity=identity,
+        )
         return True
-    finally:
-        os.close(parent_fd)
+    except (FileNotFoundError, ValueError):
+        return False
 
 
 def _finish_claim(

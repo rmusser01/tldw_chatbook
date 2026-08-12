@@ -559,8 +559,10 @@ def _assert_raw_connection_census(
         assert current == documented_legacy
         return
 
-    assert current[seam_site] == 1
-    assert current == Counter({seam_site: 1})
+    # The seam owns one ordinary path connection and one descriptor-bound
+    # immutable connection; no raw SQLite open exists outside this function.
+    assert current[seam_site] == 2
+    assert current == Counter({seam_site: 2})
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -585,9 +587,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C44 is immutable validation of exact migration-publication
         # candidates, rollback identities, active state, and backups. C45
         # is immutable validation of journal-classified startup recovery
-        # authority before any profile-store open.
+        # authority before any profile-store open. C46/C47 are descriptor-bound
+        # publisher/recovery validation through the centralized SQLite seam.
         f"C{number:02d}"
-        for number in range(1, 46)
+        for number in range(1, 48)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 19)
@@ -635,19 +638,19 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 1}),
+        Counter({seam_site: 2}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 1}),
+            Counter({legacy_site: 7, seam_site: 2}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 2}),
+            Counter({legacy_site: 7, seam_site: 3}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -931,7 +934,11 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
             else (
                 "open_profile_migration_boundary_destination"
                 if row["id"] == "C43"
-                else "connect_private_sqlite"
+                else (
+                    "connect_private_sqlite_descriptor"
+                    if row["id"] in {"C46", "C47"}
+                    else "connect_private_sqlite"
+                )
             )
         )
         assert row["disposition"].startswith(f"Migrated via `{helper}`.")
