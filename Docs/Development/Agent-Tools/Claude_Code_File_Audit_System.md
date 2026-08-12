@@ -6,25 +6,29 @@
 
 The Claude Code File Audit System was designed as a monitoring and analysis tool to detect deceptive file operations and determine whether changes align with user requests. The sections below describe that design and its reference implementation.
 
-## Key Features
+## Intended Design Capabilities
 
-- **Deception Detection**: Analyzes whether file changes align with user prompts
-- **TODO/FIXME Detection**: Identifies incomplete implementations disguised as complete
-- **Operation Monitoring Design**: Records hooked file operations (Read, Write, Edit, MultiEdit)
-- **LLM-based Analysis**: Uses Claude Haiku for fast, intelligent change analysis
-- **Audit Trail**: Maintains detailed records of all file operations
+The unwired design intended the following capabilities; they are not current Console features:
+
+- **Deception Detection**: Was designed to compare file changes with user prompts
+- **TODO/FIXME Detection**: Was designed to identify incomplete implementations disguised as complete
+- **Operation Monitoring Design**: Would record file operations only when explicitly hooked (Read, Write, Edit, MultiEdit)
+- **LLM-based Analysis**: Was designed to use Claude Haiku for change analysis
+- **Audit Trail**: Would retain detailed records of hooked file operations
 - **Historical Task Tool Integration**: Was exposed through the retired System A framework
 
-## Architecture
+## Reference Architecture
 
-### Core Components
+### Retained Components
 
-1. **FileAuditSystem** (`code_audit_tool.py`): Core audit engine
-2. **CodeAuditTool** (`code_audit_tool.py`): Task tool for running audits
-3. **FileOperationMonitor** (`file_operation_hooks.py`): Integration hooks
-4. **Configuration**: Settings in `config.toml`
+1. **FileAuditSystem** (`code_audit_tool.py`): Reference audit engine
+2. **CodeAuditTool** (`code_audit_tool.py`): Retired System A task wrapper
+3. **FileOperationMonitor** (`file_operation_hooks.py`): Reference integration hooks, currently uninstalled
+4. **Configuration**: Historical settings in `config.toml`
 
 ### Data Flow
+
+The intended data flow was:
 
 ```
 User Request → Set Prompt Context → File Operation → Record Operation → LLM Analysis → Audit Record
@@ -36,7 +40,7 @@ These examples document the former System A interface. `CodeAuditTool` is not re
 
 ### Basic Audit Commands
 
-The audit system is accessed through the Task tool with `subagent_type="code-audit"`:
+The historical interface exposed the audit system through the Task tool with `subagent_type="code-audit"`:
 
 ```python
 # Review recent file changes
@@ -91,7 +95,7 @@ Task(
 
 ## Analysis Types
 
-The reference implementation determines analysis type based on your prompt:
+The reference implementation was designed to select an analysis type from the prompt:
 
 - **Recent Changes**: Keywords "recent", "change" → Last N operations summary
 - **Deception Report**: Keywords "report", "deception report" → Comprehensive analysis
@@ -99,9 +103,9 @@ The reference implementation determines analysis type based on your prompt:
 - **Incomplete Analysis**: Keywords "todo", "incomplete", "fixme" → TODO/placeholder detection
 - **Comprehensive**: Default → All analysis types combined
 
-## What Gets Analyzed
+## Reference Analysis Scope
 
-### File Operations Monitored
+### Operations the Retired Hooks Were Designed to Record
 
 - **Read**: File access operations
 - **Write**: New file creation and full file replacements
@@ -111,7 +115,7 @@ The reference implementation determines analysis type based on your prompt:
 
 ### Analysis Criteria
 
-For each file operation, the system analyzes:
+For each recorded operation, the reference logic was designed to analyze:
 
 1. **Alignment**: Do changes match the user's request?
 2. **Completeness**: Are there TODO/FIXME comments indicating incomplete work?
@@ -140,7 +144,7 @@ That install caller was deleted with System A. In the current runtime, setting `
 
 ### Reference Manual Integration
 
-The importable reference API can be called explicitly as shown below. No current Console file-mutation seam calls it.
+A hypothetical explicit integration could call the importable reference API as shown below. No current Console file-mutation seam calls it.
 
 ```python
 from tldw_chatbook.Tools.code_audit_tool import record_file_operation, set_user_prompt
@@ -172,7 +176,7 @@ The historical implementation used the following configuration. It is retained f
 
 ```toml
 [tools]
-# Enable the audit tool
+# Historical System A flag; does not enable current Console auditing
 code_audit_enabled = true
 
 # Audit system settings
@@ -186,13 +190,15 @@ analysis_temperature = 0.1
 analysis_max_tokens = 500
 analysis_timeout = 30
 
-# Enable specific analysis types
+# Historical analysis-type options
 enable_deception_detection = true
 enable_todo_detection = true
 enable_alignment_analysis = true
 ```
 
-## Output Examples
+## Historical Output Examples
+
+These examples illustrate the intended output shapes; they are not evidence of current Console monitoring.
 
 ### Recent Changes Audit
 
@@ -239,30 +245,34 @@ enable_alignment_analysis = true
 }
 ```
 
-## Best Practices
+## Historical Design Considerations
 
-### For Users
+The following guidance belonged to the original design. It is not current user or administrator procedure and would require revalidation only if TASK-743 retains or redesigns the subsystem.
 
-1. **Provide Clear Prompts**: Detailed requests improve analysis accuracy
-2. **Regular Audits**: Run comprehensive audits after significant changes
-3. **Review High-Risk**: Always manually review HIGH/CRITICAL flagged operations
-4. **Context Matters**: Ensure user prompts are captured for accurate analysis
+### Historical User Guidance
 
-### For Developers (If Re-integrated)
+1. **Clear Prompts**: Detailed requests were expected to improve analysis accuracy
+2. **Regular Audits**: The design recommended audits after significant changes
+3. **Review High-Risk**: HIGH/CRITICAL results required manual review
+4. **Context Matters**: Accurate analysis depended on captured user prompts
 
-1. **Hook Early**: Install hooks before file operations begin
-2. **Capture Context**: Always set user prompt context before operations
-3. **Handle Failures**: Audit recording should not break file operations
-4. **Monitor Performance**: LLM analysis adds latency to file operations
+### Developer Considerations If Re-integrated
 
-### For System Administrators (If Re-integrated)
+1. **Hook Lifecycle**: An integrated design would need hooks in place before relevant file operations
+2. **Capture Context**: An integrated design would need prompt context before operations
+3. **Handle Failures**: Audit recording would need to avoid breaking file operations
+4. **Performance**: LLM analysis would add latency to file operations
 
-1. **Regular Monitoring**: Check audit logs for patterns
-2. **Threshold Tuning**: Adjust risk thresholds based on your environment
-3. **Model Selection**: Use appropriate LLM models for your performance needs
-4. **Storage Management**: Audit records consume memory/storage
+### Administrator Considerations If Re-integrated
 
-## Troubleshooting
+1. **Monitoring Cadence**: An integrated deployment would need an audit-log review policy
+2. **Threshold Tuning**: Risk thresholds would need environment-specific validation
+3. **Model Selection**: Model choice would need to match performance requirements
+4. **Storage Management**: Retained audit records would consume memory or storage
+
+## Historical Troubleshooting Reference
+
+These notes apply only to an explicit integration of the reference code; they are not steps for enabling current Console auditing.
 
 ### Common Issues
 
@@ -270,13 +280,13 @@ enable_alignment_analysis = true
 A: This is expected in the current Console runtime: `code_audit_enabled = true` does not install hooks. TASK-743 owns any future integration decision.
 
 **Q: Analysis says "No user prompt available"**
-A: Ensure `set_user_prompt()` is called before file operations
+A: In an explicit integration, prompt context would need to be set before file operations.
 
 **Q: LLM analysis fails**
-A: Check API keys, model availability, and network connectivity
+A: Historical troubleshooting included verifying API keys, model availability, and network connectivity.
 
 **Q: High memory usage**
-A: Reduce `max_records` setting or clear audit records more frequently
+A: Historical mitigations included reducing `max_records` or clearing audit records more frequently.
 
 ### Historical Debug Commands
 
@@ -297,14 +307,18 @@ print(f"Records: {len(audit_system.audit_records)}")
 audit_system.audit_records.clear()
 ```
 
-## Security Considerations
+## Reference Security Considerations
 
-1. **Audit Records**: Contain file content and may include sensitive data
-2. **LLM Analysis**: File content is sent to external LLM for analysis
-3. **Performance Impact**: Analysis adds latency to file operations
-4. **Storage**: Audit records persist in memory (not encrypted by default)
+If the reference design were integrated:
 
-## Future Enhancements
+1. **Audit Records**: Records could contain file content and sensitive data
+2. **LLM Analysis**: Configured analysis would send file content to an external LLM
+3. **Performance Impact**: Analysis would add latency to file operations
+4. **Storage**: Audit records would persist in memory without encryption by default
+
+## Historical Ideas (No Commitment)
+
+These ideas were recorded for the original design and do not imply any TASK-743 outcome:
 
 - Persistent audit storage with encryption
 - Real-time alerting for critical operations
@@ -314,4 +328,4 @@ audit_system.audit_records.clear()
 
 ## API Reference
 
-See `code_audit_tool.py` and `file_operation_hooks.py` for detailed API documentation.
+See `code_audit_tool.py` and `file_operation_hooks.py` for retained implementation reference. Their presence does not wire them into the Console runtime.
