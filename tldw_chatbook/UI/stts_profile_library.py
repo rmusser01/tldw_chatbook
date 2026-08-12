@@ -2382,6 +2382,12 @@ class STTSProfileLibrary(Widget):
                 name="invalidate_tts_voice_bundle_review",
             )
             self._bundle_invalidation_tasks[handle] = task
+
+            def _release_completed(candidate: asyncio.Task[None]) -> None:
+                if self._bundle_invalidation_tasks.get(handle) is candidate:
+                    self._bundle_invalidation_tasks.pop(handle, None)
+
+            task.add_done_callback(_release_completed)
         cancellation: asyncio.CancelledError | None = None
         try:
             await asyncio.shield(task)

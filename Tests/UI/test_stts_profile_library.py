@@ -3716,6 +3716,121 @@ async def test_import_review_cancel_invalidates_handle_without_committing(
 
 
 @pytest.mark.asyncio
+async def test_repeated_import_cancels_release_completed_invalidation_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    bundle_service.reviews = [bundle_service._review() for _ in range(20)]
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        for expected in range(1, 21):
+            app.query_one("#stts-profile-import-btn", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+            )
+            app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+            await pilot.pause()
+            app.screen.query_one("#bundle-warning-continue", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
+            )
+            app.screen.query_one("#stts-bundle-review-cancel", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(bundle_service.invalidated) == expected,
+            )
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(bundle_service.invalidated) == 20
+        assert len(set(bundle_service.invalidated)) == 20
+        assert library._bundle_invalidation_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> None:
+    profile = _profile(0)
+    bundle_service = _BundleUIService(profile)
+    handle = bundle_service.reviews[0].handle
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _delayed_invalidate(candidate: TTSVoiceBundleHandle) -> None:
+        started.set()
+        await release.wait()
+        bundle_service.invalidated.append(candidate)
+
+    bundle_service.invalidate = _delayed_invalidate  # type: ignore[method-assign]
+    app = _BundleActionHost(_ActionProfileService(profile), bundle_service)
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        library._voice_bundle_service = bundle_service
+        library._active_bundle_handle = handle
+        cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
+        await started.wait()
+
+        async def _remove_library() -> None:
+            await library.remove()
+
+        removal = asyncio.create_task(_remove_library())
+        await pilot.pause()
+        release.set()
+        await asyncio.gather(cleanup, removal)
+
+        assert bundle_service.invalidated == [handle]
+        assert library._bundle_invalidation_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
+    profile = _profile(0)
+    bundle_service = _BundleUIService(profile)
+    handle = bundle_service.reviews[0].handle
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _delayed_invalidate(candidate: TTSVoiceBundleHandle) -> None:
+        started.set()
+        await release.wait()
+        bundle_service.invalidated.append(candidate)
+
+    bundle_service.invalidate = _delayed_invalidate  # type: ignore[method-assign]
+    app = _BundleActionHost(_ActionProfileService(profile), bundle_service)
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+        library._voice_bundle_service = bundle_service
+        cleanup = asyncio.create_task(library._invalidate_bundle_handle(handle))
+        await started.wait()
+        original = library._bundle_invalidation_tasks[handle]
+        replacement = asyncio.create_task(asyncio.sleep(60))
+        library._bundle_invalidation_tasks[handle] = replacement
+
+        release.set()
+        await cleanup
+        await pilot.pause()
+
+        assert library._bundle_invalidation_tasks.get(handle) is replacement
+        assert original.done()
+        replacement.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await replacement
+        library._bundle_invalidation_tasks.pop(handle)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure_type", (RuntimeError, _ReviewPushAbort))
 async def test_import_review_push_failure_invalidates_handle_exactly_once(
     monkeypatch: pytest.MonkeyPatch,

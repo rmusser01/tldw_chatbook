@@ -186,6 +186,11 @@ class PersonasCharacterTTSWidget(Container):
 
     PersonasCharacterTTSWidget .personas-character-tts-actions {
         width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-ordinary-actions {
+        width: 100%;
         height: 1;
     }
 
@@ -197,6 +202,16 @@ class PersonasCharacterTTSWidget(Container):
         border: none;
         padding: 0 1;
         margin-right: 1;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions Button {
+        width: 100%;
+        margin-right: 0;
     }
     """
 
@@ -233,52 +248,54 @@ class PersonasCharacterTTSWidget(Container):
                 classes="personas-character-tts-status",
                 markup=False,
             )
-            with Horizontal(classes="personas-character-tts-actions"):
-                yield Button(
-                    "Preview",
-                    classes=("console-action-subdued personas-character-tts-preview"),
-                    disabled=True,
-                )
-                yield Button(
-                    "Create",
-                    classes="console-action-subdued personas-character-tts-create",
-                    disabled=True,
-                )
-                yield Button(
-                    "Edit",
-                    classes="console-action-subdued personas-character-tts-edit",
-                    disabled=True,
-                )
-                yield Button(
-                    "Remove",
-                    classes="console-action-subdued personas-character-tts-remove",
-                    disabled=True,
-                )
-                yield Button(
-                    "Dismiss",
-                    classes=(
-                        "console-action-subdued "
-                        "personas-character-tts-dismiss-suggestion hidden"
-                    ),
-                    disabled=True,
-                    tooltip="Dismiss the saved Voice Profile suggestion.",
-                )
-                yield Button(
-                    "Recovery",
-                    classes=(
-                        "console-action-subdued "
-                        "personas-character-tts-dependency-primary hidden"
-                    ),
-                    disabled=True,
-                )
-                yield Button(
-                    "Recovery",
-                    classes=(
-                        "console-action-subdued "
-                        "personas-character-tts-dependency-advisory hidden"
-                    ),
-                    disabled=True,
-                )
+            with Vertical(classes="personas-character-tts-actions"):
+                with Horizontal(classes="personas-character-tts-ordinary-actions"):
+                    yield Button(
+                        "Preview",
+                        classes=("console-action-subdued personas-character-tts-preview"),
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Create",
+                        classes="console-action-subdued personas-character-tts-create",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Edit",
+                        classes="console-action-subdued personas-character-tts-edit",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Remove",
+                        classes="console-action-subdued personas-character-tts-remove",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Dismiss",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dismiss-suggestion hidden"
+                        ),
+                        disabled=True,
+                        tooltip="Dismiss the saved Voice Profile suggestion.",
+                    )
+                with Vertical(classes="personas-character-tts-recovery-actions"):
+                    yield Button(
+                        "Recovery",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dependency-primary hidden"
+                        ),
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Recovery",
+                        classes=(
+                            "console-action-subdued "
+                            "personas-character-tts-dependency-advisory hidden"
+                        ),
+                        disabled=True,
+                    )
 
     def apply_state(self, state: CharacterTTSPresentationState) -> None:
         """Render one immutable screen-owned presentation snapshot."""

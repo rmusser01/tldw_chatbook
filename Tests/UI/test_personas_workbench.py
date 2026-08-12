@@ -10371,7 +10371,7 @@ async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth
     )
     app = _CharacterTTSWidgetHost()
 
-    async with app.run_test(size=(100, 30)) as pilot:
+    async with app.run_test(size=(40, 24)) as pilot:
         widget = app.query_one(PersonasCharacterTTSWidget)
         widget.apply_state(
             CharacterTTSPresentationState(
@@ -10397,11 +10397,26 @@ async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth
             actions[1].label,
             actions[1].tooltip,
         )
+        action_area = widget.query_one(".personas-character-tts-actions")
+        assert widget.region.width == 40
+        for button in (blocker, advisory):
+            assert button.region.width == action_area.region.width
+            assert action_area.region.contains_region(button.region), str(button.label)
 
-        blocker.press()
-        advisory.press()
+        selector = widget.query_one(Select)
+        selector.focus()
+        focused_recovery: list[str] = []
+        for _ in range(5):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused in (blocker, advisory):
+                assert isinstance(focused, Button)
+                focused_recovery.append(str(focused.label))
+                await pilot.press("enter")
+
         await pilot.pause()
 
+        assert focused_recovery == [actions[0].label, actions[1].label]
         assert [(message.action, message.profile_id) for message in app.actions] == [
             ("open_audio_cpp_settings", profile.profile_id),
             ("generate_new_profile", profile.profile_id),
@@ -11363,11 +11378,31 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
     _configure_character_tts_app(mock_app_instance, service)
     app = _NavCaptureApp(mock_app_instance)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         screen = await _mounted(pilot)
         await pilot.app.workers.wait_for_complete()
         await screen._select_character("1", "Detective Sam")
         await pilot.app.workers.wait_for_complete()
+
+        character_tts = screen.query_one(
+            "#personas-character-card-tts", PersonasCharacterTTSWidget
+        )
+        action_area = character_tts.query_one(".personas-character-tts-actions")
+        blocker = character_tts.query_one(
+            ".personas-character-tts-dependency-primary", Button
+        )
+        advisory = character_tts.query_one(
+            ".personas-character-tts-dependency-advisory", Button
+        )
+        character_tts.query_one(
+            ".personas-character-tts-recovery-actions"
+        ).scroll_visible()
+        await pilot.pause()
+        assert character_tts.region.width <= 40
+        for button in (blocker, advisory):
+            assert button.display is True
+            assert button.region.width == action_area.region.width
+            assert action_area.region.contains_region(button.region), str(button.label)
 
         screen.post_message(
             CharacterTTSActionRequested("preview", profile.profile_id)
@@ -11381,16 +11416,12 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
         assert preset.model_id == profile.model_id
         assert preset.voice_id == profile.voice_id
 
-        screen.post_message(
-            CharacterTTSActionRequested("open_audio_cpp_settings", profile.profile_id)
-        )
+        blocker.press()
         await pilot.pause()
         assert app.nav_routes[-1] == "settings"
         assert app.nav_contexts[-1]["category"] == "speech-tts"
 
-        screen.post_message(
-            CharacterTTSActionRequested("generate_new_profile", profile.profile_id)
-        )
+        advisory.press()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert app.nav_routes[-1] == "stts"
