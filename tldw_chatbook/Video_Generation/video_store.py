@@ -41,6 +41,7 @@ from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
     get_video_generation_config,
 )
+from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
 
 VIDEO_MARKER_PREFIX = "[video] "
 """Prefix identifying a video card's content marker in a message row."""
@@ -246,7 +247,7 @@ class VideoStore:
             raise ValueError(f"unsafe slug component: {slug!r}")
         if slug.startswith(_STAGE_PREFIX):
             raise ValueError("slug uses reserved internal stage namespace")
-        safe_ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "mp4"
+        safe_ext = canonical_video_extension(extension)
         candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
         try:
             resolved_root = self._root.resolve()

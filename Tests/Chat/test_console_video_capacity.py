@@ -282,16 +282,18 @@ def _artifact(
     *,
     reason: str = "over_capacity",
     message_id: str = "pending-message",
+    extension: str = "mp4",
 ) -> PendingVideoArtifact:
     return PendingVideoArtifact(
         metadata=VideoGenerationMetadata(
             name="generated-clip",
             prompt="private generation prompt",
             backend="comfyui",
+            **({"container": extension} if extension != "mp4" else {}),
         ),
         message_id=message_id,
         slug="generated-clip",
-        extension="mp4",
+        extension=extension,
         size_bytes=len(payload),
         max_bytes=1024 * 1024,
         reason=cast(CapacityReason, reason),
@@ -537,7 +539,7 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     before_specs = ChatScreen._build_video_card_specs(spec_owner, old_messages)
     assert {spec.status for spec in before_specs.values()} == {"ready"}
     payload = b"n" * (1024 * 1024 + 17)
-    artifact = _artifact(payload)
+    artifact = _artifact(payload, extension="webm")
     harness = _OutcomeHarness(actions=["keep"], video_store=store)
 
     await harness._resolve_generated_video_outcome(
@@ -548,6 +550,7 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     assert [(item.message_id, item.slug, item.size_bytes) for item in stored] == [
         (artifact.message_id, artifact.slug, len(payload))
     ]
+    assert stored[0].path.suffix == ".webm"
     assert not old.exists()
     assert not second_old.exists()
     after_specs = ChatScreen._build_video_card_specs(spec_owner, old_messages)
@@ -647,7 +650,7 @@ async def test_unmount_during_managed_resolve_persists_without_sync(
 
 @pytest.mark.asyncio
 async def test_store_failure_retry_uses_ordinary_save_not_adoption(tmp_path: Path) -> None:
-    artifact = _artifact(reason="store_failure")
+    artifact = _artifact(reason="store_failure", extension="webm")
 
     class RetryStore:
         capacity_bytes = 1024 * 1024
@@ -669,12 +672,12 @@ async def test_store_failure_retry_uses_ordinary_save_not_adoption(tmp_path: Pat
             self.saved.append((message_id, slug, content, extension))
             with publication_gate.claim_publication() as active:
                 assert active
-                path = tmp_path / "retried.mp4"
+                path = tmp_path / "retried.webm"
                 path.write_bytes(content)
             return path
 
         def resolve(self, *_args, **_kwargs):
-            return tmp_path / "retried.mp4"
+            return tmp_path / "retried.webm"
 
         def adopt_oversized(self, *_args, **_kwargs):
             self.adopted = True
@@ -688,7 +691,7 @@ async def test_store_failure_retry_uses_ordinary_save_not_adoption(tmp_path: Pat
     )
 
     assert store.saved == [
-        (artifact.message_id, artifact.slug, b"generated-video", "mp4")
+        (artifact.message_id, artifact.slug, b"generated-video", "webm")
     ]
     assert not store.adopted
     assert len(harness.appended) == 1
@@ -1201,7 +1204,7 @@ async def test_unmount_immediately_before_external_commit_creates_no_path_or_car
 
 @pytest.mark.asyncio
 async def test_external_picker_cancel_discards_without_card(tmp_path: Path) -> None:
-    artifact = _artifact()
+    artifact = _artifact(extension="webm")
     harness = _OutcomeHarness(actions=["save_external", None], video_store=object())
 
     await harness._resolve_generated_video_outcome(
@@ -1209,10 +1212,104 @@ async def test_external_picker_cancel_discards_without_card(tmp_path: Path) -> N
     )
 
     picker = harness.waited_screens[1]
-    assert picker.default_filename == "generated-clip.mp4"
+    assert picker.default_filename == "generated-clip.webm"
     assert harness.appended == []
     assert harness.opened == []
     assert artifact.stream.closed
+
+
+@pytest.mark.parametrize(
+    ("selected_name", "expected_name"),
+    [("chosen", "chosen.webm"), ("chosen.webm", "chosen.webm")],
+)
+@pytest.mark.asyncio
+async def test_external_picker_normalizes_only_missing_or_exact_webm_suffix(
+    tmp_path: Path, selected_name: str, expected_name: str
+) -> None:
+    artifact = _artifact(b"webm bytes", extension="webm")
+    selected = tmp_path / selected_name
+    expected = tmp_path / expected_name
+    harness = _OutcomeHarness(
+        actions=["save_external", selected], video_store=object()
+    )
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert expected.read_bytes() == b"webm bytes"
+    assert harness.opened == [expected]
+    assert artifact.stream.closed
+
+
+@pytest.mark.parametrize("bad_suffix", ["mp4", "mov", "WEBM", "txt"])
+@pytest.mark.asyncio
+async def test_external_picker_reprompts_for_any_nonmatching_suffix(
+    tmp_path: Path, bad_suffix: str
+) -> None:
+    artifact = _artifact(b"webm bytes", extension="webm")
+    bad_target = tmp_path / f"chosen.{bad_suffix}"
+    good_target = tmp_path / "accepted.webm"
+    harness = _OutcomeHarness(
+        actions=["save_external", bad_target, good_target], video_store=object()
+    )
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    pickers = [
+        screen
+        for screen in harness.waited_screens
+        if screen.__class__.__name__ == "EnhancedFileSave"
+    ]
+    assert len(pickers) == 2
+    assert not bad_target.exists()
+    assert good_target.read_bytes() == b"webm bytes"
+    assert any("generated video format" in message for message, _ in harness.notifications)
+
+
+def test_external_copy_rejects_mismatched_suffix_before_any_filesystem_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"webm bytes", extension="webm")
+    parent = tmp_path / "absent-parent"
+    target = parent / "chosen.mp4"
+    actions: list[str] = []
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_require_external_video_pinned_capabilities",
+        staticmethod(lambda: actions.append("capability")),
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_external_video_parent_identity",
+        staticmethod(lambda _parent: actions.append("target-inspection")),
+    )
+    real_mkdir = Path.mkdir
+
+    def tracking_mkdir(self, *args, **kwargs):
+        actions.append("mkdir")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
+    real_open = os.open
+
+    def tracking_open(*args, **kwargs):
+        actions.append("stage")
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    try:
+        with pytest.raises(ValueError, match="extension"):
+            ChatScreen._copy_pending_video_external(artifact, target, None)
+    finally:
+        artifact.close()
+
+    assert actions == []
+    assert not parent.exists()
+    assert not target.exists()
 
 
 @pytest.mark.asyncio
@@ -2544,7 +2641,7 @@ async def test_regenerate_normal_result_persists_then_syncs_through_shared_opera
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     original_meta = VideoGenerationMetadata(
-        name="old", prompt="regenerate me", backend="comfyui"
+        name="old", prompt="regenerate me", backend="comfyui", container="webm"
     )
     generated_meta = VideoGenerationMetadata(
         name="new", prompt="regenerate me", backend="comfyui"
@@ -2555,8 +2652,11 @@ async def test_regenerate_normal_result_persists_then_syncs_through_shared_opera
     )
     harness.chat_store.session_id_for_message = lambda _message_id: "session"
 
-    async def fake_to_thread(_function, **_kwargs):
-        return generated_meta, tmp_path / "new.mp4"
+    dispatched_kwargs = {}
+
+    async def fake_to_thread(_function, **kwargs):
+        dispatched_kwargs.update(kwargs)
+        return generated_meta, tmp_path / "new.webm"
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
     inflight: set[str] = set()
@@ -2575,6 +2675,7 @@ async def test_regenerate_normal_result_persists_then_syncs_through_shared_opera
     assert harness.appended[0][1]["persist"] is True
     assert harness.appended[0][1]["message_id"]
     assert harness.sync_count == 1
+    assert dispatched_kwargs["video_format"] == "webm"
     assert inflight == set()
     assert cancels == {}
 

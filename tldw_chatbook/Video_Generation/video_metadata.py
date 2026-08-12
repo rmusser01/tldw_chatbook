@@ -29,6 +29,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
+
 #: Top-level key namespacing this payload inside ``metadata_json``.
 VIDEO_METADATA_TOP_KEY = "video_generation"
 
@@ -43,6 +45,7 @@ class VideoGenerationMetadata:
         prompt: Generation prompt text.
         negative_prompt: Negative prompt (``""`` when none).
         backend: Backend id that produced the video (e.g. ``"minimax"``).
+        container: Canonical generated-video container (``"mp4"`` or ``"webm"``).
         model: Model identifier, or ``None`` when not known/recorded.
         seed: Seed used, or ``None`` when random/unknown.
         duration_seconds: Clip length, or ``None`` when unknown.
@@ -72,12 +75,14 @@ class VideoGenerationMetadata:
     height: int | None = None
     ratio: str | None = None
     source_image_message_id: str | None = None
+    container: str = "mp4"
 
     def __post_init__(self) -> None:
         if not str(self.name).strip():
             raise ValueError("name must be non-empty (it is the only durable reference)")
         if not str(self.backend).strip():
             raise ValueError("backend must be non-empty")
+        canonical_video_extension(self.container)
 
     def to_json(self) -> str:
         """Serialize for the ``messages.metadata_json`` column.
@@ -91,6 +96,7 @@ class VideoGenerationMetadata:
             "prompt": self.prompt,
             "negative_prompt": self.negative_prompt,
             "backend": self.backend,
+            "container": self.container,
             "model": self.model,
             "seed": self.seed,
             "duration_seconds": self.duration_seconds,
@@ -131,12 +137,14 @@ class VideoGenerationMetadata:
         payload = data.get(VIDEO_METADATA_TOP_KEY)
         if not isinstance(payload, dict):
             return None
+        container = "mp4" if "container" not in payload else payload["container"]
         try:
             return cls(
                 name=_as_text(payload.get("name")),
                 prompt=_as_text(payload.get("prompt")),
                 negative_prompt=_as_text(payload.get("negative_prompt")),
                 backend=_as_text(payload.get("backend")),
+                container=container,
                 model=_as_optional_text(payload.get("model")),
                 seed=_as_optional_int(payload.get("seed")),
                 duration_seconds=_as_optional_float(payload.get("duration_seconds")),

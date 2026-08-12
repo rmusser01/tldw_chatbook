@@ -86,18 +86,28 @@ def _reset_registry():
     c.reset_video_generation_config_cache()
 
 
-def _register_fake(result_content: bytes = b"vid-bytes", **result_kwargs):
+def _register_fake(
+    result_content: bytes = b"vid-bytes",
+    *,
+    captured_requests: list | None = None,
+    **result_kwargs,
+):
     from tldw_chatbook.Video_Generation.adapter_registry import get_registry
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
 
     class FakeAdapter:
         name = "fakevid"
-        supported_formats = {"mp4"}
+        supported_formats = {"mp4", "webm"}
 
         def generate(self, request):
+            if captured_requests is not None:
+                captured_requests.append(request)
             return VideoGenResult(
-                content=result_content, content_type="video/mp4",
-                container="mp4", bytes_len=len(result_content), **result_kwargs,
+                content=result_content,
+                content_type=f"video/{request.format}",
+                container=request.format,
+                bytes_len=len(result_content),
+                **result_kwargs,
             )
 
     registry = get_registry()
@@ -185,7 +195,29 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert meta.model == "FakeH3"  # resolved model wins
     assert meta.duration_seconds == 6.0
     assert meta.width == 1920 and meta.height == 1080
+    assert meta.container == "mp4"
+    assert path.suffix == ".mp4"
     assert store.resolve("msg-42", "a-red-dragon") == path
+
+
+def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_path):
+    captured_requests = []
+    _register_fake(captured_requests=captured_requests)
+    store = VideoStore(root=tmp_path / "gv")
+
+    meta, path = run_video_generation(
+        backend="fakevid",
+        prompt="A WebM Dragon",
+        message_id="msg-webm",
+        video_format="webm",
+        video_store=store,
+    )
+
+    assert [request.format for request in captured_requests] == ["webm"]
+    assert path.suffix == ".webm"
+    assert path.read_bytes() == b"vid-bytes"
+    assert meta.container == "webm"
+    assert store.resolve("msg-webm", "a-webm-dragon", extension="webm") == path
 
 
 def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
@@ -350,6 +382,7 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
         prompt="A Red Dragon",
         message_id="msg-over-cap",
         ratio="16:9",
+        video_format="webm",
         video_store=store,
     )
 
@@ -357,7 +390,7 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
     assert result.reason == "over_capacity"
     assert result.message_id == "msg-over-cap"
     assert result.slug == "a-red-dragon"
-    assert result.extension == "mp4"
+    assert result.extension == "webm"
     assert result.size_bytes == len(payload)
     assert result.max_bytes == 1024 * 1024
     assert result.error_type is None
@@ -372,10 +405,24 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
     assert result.metadata.width == 1920
     assert result.metadata.height == 1080
     assert result.metadata.ratio == "16:9"
+    assert result.metadata.container == "webm"
     assert result.stream.tell() == 0
     assert result.stream.read() == payload
     assert list(store.iter_stored()) == []
     result.close()
+
+
+@pytest.mark.parametrize("extension", ["", "mov", "MP4", ".webm"])
+def test_video_store_explicit_bad_extension_fails_without_creating_root(
+    tmp_path, extension
+):
+    root = tmp_path / "absent-root"
+    store = VideoStore(root=root)
+
+    with pytest.raises(ValueError, match="container"):
+        store.save("message", "clip", b"video", extension=extension)
+
+    assert not root.exists()
 
 
 def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
@@ -892,4 +939,5 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
     )
     assert captured_dispatch["kwargs"]["negative_prompt"] == "style-derived negative"
     assert captured_dispatch["kwargs"]["style_negative_prompt"] is True
+    assert captured_dispatch["kwargs"]["video_format"] == "mp4"
     assert appended_messages
