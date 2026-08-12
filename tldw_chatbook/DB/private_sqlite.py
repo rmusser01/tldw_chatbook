@@ -191,11 +191,6 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "RAG indexing supports private files and exact in-memory targets.",
     ),
-    "db.search_history": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/search_history_db",
-        _PRIVATE_OR_MEMORY,
-        "Search history supports private files and exact in-memory targets.",
-    ),
     "db.sync_client_example": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Sync_Client",
         _PRIVATE_FILE,

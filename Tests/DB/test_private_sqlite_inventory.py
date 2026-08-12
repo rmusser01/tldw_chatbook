@@ -95,11 +95,6 @@ EXPECTED_PARENT_CREATORS = {
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/DB/search_history_db",
-        "SearchHistoryDB.__init__",
-        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/Kanban_Interop/local_kanban_db",
         "open_connection",
         "Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)",
@@ -582,28 +577,30 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     assert [row["id"] for row in connection_rows] == [
         # Extending this range is the deliberate step the inventory exists to
         # force -- a new connection site must be documented and
-        # owner-registered, not merely written. C37 is the File Notes recovery
-        # replica, which stores exact private note bytes. C38 is candidate
+        # owner-registered, not merely written. C36 is the File Notes recovery
+        # replica, which stores exact private note bytes. C37 is candidate
         # validation's brief read-write reopen of its own disposable snapshot
         # to run the in-place schema upgrade before immutable revalidation.
-        # C39 is the lease orchestration's read-only schema-version peek used
-        # to route a needed upgrade to the exclusive-lease path first. C40 is
+        # C38 is the lease orchestration's read-only schema-version peek used
+        # to route a needed upgrade to the exclusive-lease path first. C39 is
         # the RAG hybrid keyword leg's read-only read of the live ChaChaNotes
-        # database for its notes/conversation sub-legs (TASK-3996). C41 is
-        # the retained exact-v2 TTS migration source/backup boundary. C42 is
+        # database for its notes/conversation sub-legs (TASK-3996). C40 is
+        # the retained exact-v2 TTS migration source/backup boundary. C41 is
         # the keyword leg's read-only read of the live Prompts database for
-        # its prompts sub-leg (TASK-15020/B2). C43 is the isolated TTS
+        # its prompts sub-leg (TASK-15020/B2). C42 is the isolated TTS
         # migration-boundary memory snapshot and opaque private destination.
-        # C44 is immutable validation of exact migration-publication
-        # candidates, rollback identities, active state, and backups. C45
+        # C43 is immutable validation of exact migration-publication
+        # candidates, rollback identities, active state, and backups. C44
         # is immutable validation of journal-classified startup recovery
-        # authority before any profile-store open. C46/C47 are descriptor-bound
+        # authority before any profile-store open. C45/C46 are descriptor-bound
         # publisher/recovery validation through the centralized SQLite seam;
-        # C48 is the exact admitted restore source retained during canonical
-        # candidate preparation. C49 is the descriptor-bound exact-current
-        # proof retained through shared live-store use.
+        # C47 is the exact admitted restore source retained during canonical
+        # candidate preparation. C48 is the descriptor-bound exact-current
+        # proof retained through shared live-store use. (task-15481 retired
+        # the dead db.search_history owner, formerly C16; every id from C16
+        # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 50)
+        for number in range(1, 49)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18)
@@ -943,13 +940,13 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
     for row in connection_rows:
         helper = (
             "backup_connection_to_private"
-            if row["id"] in {"C13", "C18", "C21"}
+            if row["id"] in {"C13", "C17", "C20"}
             else (
                 "open_profile_migration_boundary_destination"
-                if row["id"] == "C43"
+                if row["id"] == "C42"
                 else (
                     "connect_private_sqlite_descriptor"
-                    if row["id"] in {"C46", "C47", "C49"}
+                    if row["id"] in {"C45", "C46", "C48"}
                     else "connect_private_sqlite"
                 )
             )
@@ -1194,7 +1191,6 @@ def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
             "P12",
             "P13",
             "P14",
-            "P15",
         )
     } == {
         "P06": "migrated",
@@ -1206,7 +1202,6 @@ def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
         "P12": "migrated",
         "P13": "migrated",
         "P14": "migrated",
-        "P15": "migrated",
     }
 
 
@@ -1242,7 +1237,7 @@ def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:
     connection_rows = {row["id"]: row for row in _inventory_rows("C")}
     parent_rows = {row["id"]: row for row in _inventory_rows("P")}
 
-    for connection_id in ("C01", "C02", "C24", "C25", "C26", "C27", "C28", "C29"):
+    for connection_id in ("C01", "C02", "C23", "C24", "C25", "C26", "C27", "C28"):
         assert "memory" in _classifications(connection_rows[connection_id])
         owner_id = connection_rows[connection_id]["owner_id"]
         assert SQLiteTargetKind.MEMORY in (
