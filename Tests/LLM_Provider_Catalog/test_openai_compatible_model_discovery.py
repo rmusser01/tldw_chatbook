@@ -105,6 +105,55 @@ def test_qwencloud_discovery_rejects_structurally_unsafe_endpoints(endpoint):
     assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://workspace.example/api%2fv2",
+        "https://workspace.example/api%252Fv2",
+        "https://workspace.example/api%5Cv2",
+        "https://workspace.example/api/v2/%2e/responses",
+        "https://workspace.example/api/v2/%2E%2e/responses",
+        "https://workspace.example/api/v2/%252e%252e/responses",
+        "https://workspace.example/api/v2/res%70onses",
+        "https://workspace.example/api/v2/RES%70ONSES",
+        "https://workspace.example/api/v2/chat/%63ompletions",
+        "https://workspace.example/api/v2/mod%65ls",
+        "https://workspace.example/api/v2/res%2570onses",
+        "https://workspace.example/api/v2/chat/%2563ompletions",
+        "https://workspace.example/api/v2/mod%2565ls",
+        "https://workspace.example/api/v2/res%252570onses",
+    ],
+)
+def test_qwencloud_discovery_rejects_encoded_endpoint_structure(endpoint):
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        (
+            "https://workspace.example/tenant%20alpha/api/v2",
+            "https://workspace.example/tenant%20alpha/api/v2/models",
+        ),
+        (
+            "https://workspace.example/caf%C3%A9/api/v2/responses",
+            "https://workspace.example/caf%C3%A9/api/v2/models",
+        ),
+        (
+            "https://workspace.example/tenant%2520alpha/api/v2/chat/completions",
+            "https://workspace.example/tenant%2520alpha/api/v2/models",
+        ),
+        (
+            "https://workspace.example/mod%65ls/api/v2/chat/completions",
+            "https://workspace.example/mod%65ls/api/v2/models",
+        ),
+    ],
+)
+def test_qwencloud_discovery_preserves_safe_encoded_prefix_data(endpoint, expected):
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert build_models_url(endpoint, "qwencloud") == expected
+
+
 def test_qwencloud_discovery_preserves_valid_ipv6_port_and_safe_url_stripping():
     endpoint = (
         "https://user:secret@[2001:db8::1]:8443/api/v2/responses/"

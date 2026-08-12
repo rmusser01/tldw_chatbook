@@ -679,6 +679,12 @@ async def test_local_llm_provider_catalog_service_rejects_invalid_endpoint_befor
         "https://workspace.example/api/v2/models/responses",
         "https://workspace.example%evil/api/v2",
         "https://workspace.example\\@evil.example/api/v2",
+        "https://workspace.example/api%2fv2",
+        "https://workspace.example/api/v2/%252e%252e/responses",
+        "https://workspace.example/api/v2/res%70onses",
+        "https://workspace.example/api/v2/chat/%63ompletions",
+        "https://workspace.example/api/v2/res%2570onses",
+        "https://workspace.example/api/v2/res%252570onses",
     ],
 )
 async def test_qwencloud_structural_rejection_stops_before_discovery_client(endpoint):

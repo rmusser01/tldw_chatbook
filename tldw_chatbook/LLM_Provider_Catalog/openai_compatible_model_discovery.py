@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 import httpx
 
@@ -32,6 +32,9 @@ _ENDPOINT_TAILS = (
     ("chat", "completions"),
 )
 _REQUEST_ENDPOINT_TAILS = _ENDPOINT_TAILS[1:]
+_MAX_PATH_VALIDATION_DECODE_PASSES = 2
+_PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_ENCODED_PATH_SEPARATOR_RE = re.compile(r"%(?:2[fF]|5[cC])")
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -182,8 +185,19 @@ def _is_structurally_safe_endpoint(parsed: ParseResult) -> bool:
     ):
         return False
 
+    if _has_unsafe_endpoint_tail_structure(parsed.path):
+        return False
+
+    safe_url = urlunparse(
+        (parsed.scheme, _safe_netloc(parsed), parsed.path or "/", "", "", "")
+    )
+    return _is_safe_percent_encoded_path(parsed.path) and validate_url(safe_url)
+
+
+def _has_unsafe_endpoint_tail_structure(path: str) -> bool:
+    """Return whether request/model endpoint tails are repeated or non-terminal."""
     path_segments = tuple(
-        segment.lower() for segment in parsed.path.strip("/").split("/") if segment
+        segment.lower() for segment in path.strip("/").split("/") if segment
     )
     request_endpoint_tails = [
         (tail, index + len(tail))
@@ -194,17 +208,62 @@ def _is_structurally_safe_endpoint(parsed: ParseResult) -> bool:
     if len(request_endpoint_tails) > 1 or any(
         end != len(path_segments) for _tail, end in request_endpoint_tails
     ):
-        return False
+        return True
     for first_tail in _ENDPOINT_TAILS:
         for second_tail in _ENDPOINT_TAILS:
             stacked_tail = first_tail + second_tail
             if path_segments[-len(stacked_tail) :] == stacked_tail:
-                return False
+                return True
+    return False
 
-    safe_url = urlunparse(
-        (parsed.scheme, _safe_netloc(parsed), parsed.path or "/", "", "", "")
+
+def _is_safe_percent_encoded_path(path: str) -> bool:
+    """Validate decoded path structure without rewriting the request URL."""
+    validation_path = path
+    reserved_markers = _reserved_path_markers(validation_path)
+    for _pass in range(_MAX_PATH_VALIDATION_DECODE_PASSES):
+        if _ENCODED_PATH_SEPARATOR_RE.search(validation_path):
+            return False
+        try:
+            decoded_path = unquote(validation_path, errors="strict")
+        except UnicodeDecodeError:
+            return False
+        if decoded_path == validation_path:
+            break
+        decoded_markers = _reserved_path_markers(decoded_path)
+        if (
+            any(
+                ord(character) < 32 or ord(character) == 127
+                for character in decoded_path
+            )
+            or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+            or _has_unsafe_endpoint_tail_structure(decoded_path)
+            or decoded_markers - reserved_markers
+        ):
+            return False
+        validation_path = decoded_path
+        reserved_markers = decoded_markers
+    return _PERCENT_ESCAPE_RE.search(validation_path) is None
+
+
+def _reserved_path_markers(path: str) -> frozenset[tuple[int, str]]:
+    """Return reserved endpoint words and tails with their segment positions."""
+    segments = tuple(segment.lower() for segment in path.strip("/").split("/"))
+    markers = set()
+    for index, segment in enumerate(segments):
+        if "responses" in segment:
+            markers.add((index, "responses"))
+        if "completion" in segment:
+            markers.add((index, "completion"))
+        if segment == "models" and index == len(segments) - 1:
+            markers.add((index, "models"))
+    markers.update(
+        (index, "/".join(tail))
+        for tail in (("chat", "completions"),)
+        for index in range(len(segments) - len(tail) + 1)
+        if segments[index : index + len(tail)] == tail
     )
-    return validate_url(safe_url)
+    return frozenset(markers)
 
 
 def _normalized_path(parsed: ParseResult) -> str:
@@ -287,6 +346,31 @@ def _models_path_for_endpoint_path(
     return None
 
 
+def _models_path_preserving_encoding(
+    path: str,
+    provider_identity: str | None = None,
+) -> str:
+    """Return the models path without decoding or recasing its base prefix."""
+    raw_path = (path or "/").rstrip("/") or "/"
+    normalized_path = raw_path.lower()
+    normalized_models_path = _models_path_for_endpoint_path(
+        normalized_path, provider_identity
+    )
+    if normalized_models_path is None:
+        return raw_path
+    if normalized_path == "/" or normalized_path in {"/completion", "/completions"}:
+        return normalized_models_path
+    if normalized_path.endswith("/chat/completions"):
+        return f"{raw_path[: -len('/chat/completions')]}/models"
+    if _normalized_provider_identity(
+        provider_identity
+    ) == _QWENCLOUD_PROVIDER_KEY and normalized_path.endswith("/responses"):
+        return f"{raw_path[: -len('/responses')]}/models"
+    if normalized_path.endswith("/models"):
+        return raw_path
+    return f"{raw_path}/models"
+
+
 def _is_base_url_path(path: str) -> bool:
     """Return whether a path requires provider identity to infer ``/v1/models``."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
@@ -359,7 +443,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
                 )
             )
 
-    models_path = _models_path_for_endpoint_path(path, provider_identity) or path
+    models_path = _models_path_preserving_encoding(parsed.path, provider_identity)
 
     return urlunparse((parsed.scheme, _safe_netloc(parsed), models_path, "", "", ""))
 
