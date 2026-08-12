@@ -942,7 +942,22 @@ actually works: add the override to a `CSS_PATH`-bundled source file (`_navigati
 tcss` here), in the SAME tier as the rule being overridden, where ordinary
 specificity resolves it without needing `!important` at all.
 
-**What to do (all five instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
+**Sixth instance (2026-08-11, task-15455, height physics this time).** The Console
+transcript's height watermarks and the new hydration budget are pure geometry
+arithmetic, so staging "one message big enough to cross the high mark" needed a tall
+row. Under the transcript suites' own harnesses (bare `App`, CSS just
+`ConsoleTranscript { height: 10; }` — the shape used by
+`test_console_transcript_pruning.py` and `_tail_follow.py` since task-1365) a
+**150-line message rendered as a 1-row widget**: `.console-transcript-message {
+height: auto; }` lives in the bundle, and without it the row `Vertical` collapses.
+Measured directly — `outer_size` `Size(width=78, height=1)` for a 150-line body. Every
+watermark test in those files is therefore exercising ~3.4 rows per message regardless
+of content, which is fine for "does pruning fire" but silently useless for "how tall is
+this message". The fix used here was to keep the emergent-physics assertions off exact
+heights (arm the watermarks after seeding, the pruning suite's own idiom) rather than
+to invent tall rows a bare harness cannot produce.
+
+**What to do (all six instances).** Never trust a bare-`App`-no-`CSS_PATH` test's
 color/opacity or geometry as proof of live behavior — it can miss a rule entirely
 (instances 1-4) or miss a PRIORITY inversion where `CSS_PATH` beats `DEFAULT_CSS`
 regardless of `!important` (instance 5). Before shipping any "hide via CSS" trick
@@ -2939,3 +2954,35 @@ Two things follow, and the second matters more than the first:
 **What to do.** Treat every "deliberately reverted / do not reintroduce" comment as an
 experiment with a date on it. Re-run its named witnesses first; record the result in
 the task either way. Then keep the diagnosis even when the symptom is gone.
+
+---
+
+## `anchor()` does not re-attach the anchor — a sampled tail-follow predicate makes the follow-up no-op (2026-08-11)
+
+**Incident.** task-15455 protects hydrated Console scrollback from the height-watermark
+walk while the reader is reading it, and releases that protection when they return to
+the tail. The first implementation sampled the state: `_compute_prunable_prefix`
+protected the hydrated ids `if not self._is_following_tail()`, and `jump_to_latest()`
+scheduled a prune check right after `anchor()`. The test asserting the reclaim failed
+with the transcript still 132 rows over a 40-row high mark, `_is_following_tail()`
+reading `True` by the time the assertion ran, and no prune ever recorded.
+
+**Mechanism.** Textual's `Widget.anchor()` only sets `_anchored = True` and calls
+`scroll_end()`. It never clears `_anchor_released`; that flag is cleared exclusively by
+`_check_anchor()`, which runs from `watch_scroll_y` and only when `scroll_y >=
+max_scroll_y` — i.e. one or more frames later, after the scroll actually lands. So a
+callback scheduled by the jump (`call_after_refresh`) can run in the window where the
+widget still reads as detached, take the "protect" branch, find the whole head
+protected, and return having done nothing. Nothing re-schedules it, so the reclaim is
+lost for the rest of the session. A second, narrower path fails the same way for a
+different reason: a reader detached while already parked at the bottom gives
+`scroll_end()` nothing to do, so `watch_scroll_y` never fires at all.
+
+**What to do.** For "this state ends when the user does X", latch the state explicitly
+and clear it in X's handler; do not re-derive it from a widget predicate that settles
+asynchronously. Here: a `_scrollback_protected` boolean set at hydration time and
+cleared by `jump_to_latest()`, by the send/anchor path in `set_messages`, and by
+`watch_scroll_y` once follow is genuinely re-engaged — each clear also scheduling the
+check that consumes it. And when a mechanism has more than one entry point, mutation-
+test each one separately: removing the `jump_to_latest` clear left the whole suite
+green until a test was added for the no-scroll-change case specifically.
