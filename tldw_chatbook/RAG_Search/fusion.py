@@ -346,10 +346,9 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
             from .simplified.active_config import resolve_active_rag_config
 
             value = resolve_active_rag_config().search.rrf_k
-        except Exception as e:  # config loading must never break search
+        except Exception:  # config loading must never break search
             logger.warning(
-                f"Could not read rrf_k from active profile: {e}; "
-                f"falling back to the shipped default {shipped_k}"
+                "Could not read rrf_k from active profile; using shipped default"
             )
             return shipped_k
     if value is None:
@@ -363,7 +362,7 @@ def resolve_rrf_k(value: Optional[Any] = None) -> int:
         # OverflowError rather than ValueError -- Qodo PR-1487. Reachable
         # straight from a hand-edited config's `rrf_k`, so it must fall
         # back like every other invalid value, not crash hybrid search.
-        logger.warning(f"Invalid rrf_k {value!r}; falling back to {shipped_k}")
+        logger.warning("Invalid rrf_k; using shipped default")
         return shipped_k
     if k < 0:
         logger.warning(f"rrf_k {k} is negative; falling back to {shipped_k}")

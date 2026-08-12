@@ -242,11 +242,7 @@ def _resolve_keyword_source_types(
     requested = frozenset(str(source_type) for source_type in selection)
     unknown = requested - KEYWORD_LEG_SOURCE_TYPES
     if unknown:
-        logger.debug(
-            "Ignoring unknown keyword-leg source type(s) {}; the leg serves {}",
-            sorted(unknown),
-            sorted(KEYWORD_LEG_SOURCE_TYPES),
-        )
+        logger.debug("Ignoring unknown keyword-leg source types.")
     return requested & KEYWORD_LEG_SOURCE_TYPES
 
 
@@ -559,10 +555,7 @@ def _resolve_hybrid_pool_multiplier(value: Any) -> int:
         # hand-edited config (Qodo PR-1487, same defect as
         # ``fusion.resolve_rrf_k``). Must fall back like every other
         # invalid value, not raise before either hybrid leg launches.
-        logger.warning(
-            f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
-            f"{DEFAULT_HYBRID_POOL_MULTIPLIER}"
-        )
+        logger.warning("Invalid hybrid_pool_multiplier; using shipped default")
         return DEFAULT_HYBRID_POOL_MULTIPLIER
     if multiplier < 1:
         logger.warning(f"hybrid_pool_multiplier {multiplier} < 1; flooring to 1")
