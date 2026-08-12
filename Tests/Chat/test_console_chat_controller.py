@@ -5200,3 +5200,118 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
         "mcp__tldw_chatbook__chat_with_llm",
         "mcp__docs__library_list_media",
     }
+
+
+# -----------------------------------------------------------------------------
+# PR3a-1 Task 6b (audit F3): a surviving child's spend must not vanish silently
+# -----------------------------------------------------------------------------
+#
+# The agent path attaches usage exactly ONCE, the instant `run_reply` returns.
+# A fleet child that outlives its turn keeps streaming into the SAME
+# `ConsoleProviderStreamSignals`, so every payload it closes out afterwards is
+# appended to an object nobody reads again: the user is billed, and the chip
+# and the message row never show it. Re-attaching needs a "last child done"
+# signal the bridge does not emit (PR 3a-2 builds it for auto-wake), so 3a-1's
+# job is to make the loss OBSERVABLE, not to fix it.
+
+
+@pytest.mark.asyncio
+async def test_a_survivors_post_turn_spend_is_readable_not_silently_dropped():
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    signals = ConsoleProviderStreamSignals()
+    signals.record_usage_payload({"prompt_tokens": 100, "completion_tokens": 20})
+    signals.close_usage_call()
+    resolution = SimpleNamespace(provider="openai", model="gpt-4o")
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=False,
+        stream_signals=signals,
+        resolution=resolution,
+    )
+
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+    assert controller.unattributed_fleet_tokens(session.id) == 0
+
+    # The turn is over. The survivor makes one more provider call.
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+
+    # Pinned as the KNOWN 3a-1 limitation, not as desirable: the message
+    # row is deliberately not re-attached here (that is 3a-2's signal).
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+
+    assert controller.unattributed_fleet_tokens(session.id) == 45, (
+        "the survivor's spend was billed and is visible nowhere"
+    )
+
+
+@pytest.mark.asyncio
+async def test_re_attaching_the_same_signals_is_idempotent():
+    """Recorded for PR 3a-2, which will do exactly this on last-child-done.
+
+    `_attach_stream_usage` recomputes the TOTAL from every payload and
+    `set_message_usage` REPLACES -- so a second attach is a replace, not an
+    add. 3a-2 inherits a safe path; this pins it so a later refactor to
+    accumulate-in-place cannot quietly double-bill.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    signals = ConsoleProviderStreamSignals()
+    signals.record_usage_payload({"prompt_tokens": 100, "completion_tokens": 20})
+    signals.close_usage_call()
+    resolution = SimpleNamespace(provider="openai", model="gpt-4o")
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=False,
+        stream_signals=signals,
+        resolution=resolution,
+    )
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+    controller._attach_stream_usage(
+        placeholder.id, signals, resolution, partial=False
+    )
+
+    assert store.get_message(placeholder.id).usage.total_tokens == 165, (
+        "a second attach must REPLACE with the recomputed total, not add"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unattributed_fleet_tokens_is_zero_for_an_unwatched_session():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    assert controller.unattributed_fleet_tokens(session.id) == 0
+    assert controller.unattributed_fleet_tokens("no-such-session") == 0

@@ -143,6 +143,8 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import join_fleet_children
+
 
 def _svc_fence(name, args):
     return {"choices": [{"message": {"content": _fence(name, args)}}]}
@@ -214,6 +216,7 @@ def test_subagent_cannot_call_install_skill(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]
     assert len(child_runs) == 1

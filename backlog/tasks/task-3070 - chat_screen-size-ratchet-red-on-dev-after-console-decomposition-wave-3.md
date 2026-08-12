@@ -38,4 +38,28 @@ decomposition stream's owner explicitly decides the budget is wrong.
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-08-10, supervisor-fleet PR 2b: still red. Verified failing at 48a54ed9c (pre-fleet dev) and at 762596846 (dev after fleet PR 2a), so this predates all fleet work. Recorded here because PR 2b adds +121 net lines to chat_screen.py (Task 4's fleet-section wiring and Task 5's coalescer/cancel handler/cost-ticker wiring), all DOM-adjacent and placed alongside the existing precedents they mirror — i.e. this PR grows an already-violated budget rather than breaching a green one. Also observed at the same commits: Tests/UI/test_console_control_bar_coalescing.py fails 2/3 on dev independently of any fleet change.
+
+2026-08-11, supervisor-fleet PR 3a-1 (Task 7) — **the figure in this task's Description is
+now three orders of magnitude out of date, and that is the finding.** Measured in this
+worktree, not inherited:
+
+| what | lines | budget | over |
+|---|---|---|---|
+| when this task was filed | 18,930 | 18,909 | **+21** |
+| this PR's own merge base (`ecfc9ab95`) | 20,045 | 17,727 | **+2,318** |
+| this PR's HEAD (`d87bef16d`) | 20,063 | 17,727 | **+2,336** |
+| current `origin/dev` tip | 22,047 | 17,727 | **+4,320** |
+
+Two things moved at once: the budget was RATCHETED DOWN (18,909 → 17,727) by later
+decomposition waves, and the file kept growing. PR 3a-1 contributed **18** of the
+overage, in one commit (`cced002ab`, the F3 cost-chip wiring in
+`_build_console_cost_state`); PR 2b contributed +119 before it. Neither breached a green
+budget — both grew an already-violated one.
+
+This task's own stated purpose was to stop the red becoming "pre-existing noise that
+hides something real". A 21-line figure sitting in the Description while the real number
+is 2,336 (4,320 on dev) does exactly that: anyone triaging reads "21 lines, transitional"
+and moves on. The budget is deliberately NOT raised here — `Tests/Architecture/
+test_screen_size_ratchet.py` documents it as a one-way ratchet, and raising it is the
+decomposition owner's call, not a passing PR's.
 <!-- SECTION:NOTES:END -->

@@ -2921,3 +2921,193 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     assert not target.exists(), (
         "a revoked approval executed the tool for real -- the file was written"
     )
+
+
+# -- PR3a-1 Task 6b (audit F4): a survivor's round binds ITS OWN cancel signal
+#
+# `_is_session_cancelled` used to resolve `_active_cancel_events[session_id]`
+# at POLL time, once a second, for the whole life of an approval round. That
+# is correct only while the round's own turn is the turn that owns the
+# session's entry. A fleet child that outlives its turn (PR3a-1's whole
+# point) breaks the assumption in two directions, both silent:
+#
+#   * between turns the entry is gone, so `.get()` returns None; and
+#   * DURING THE NEXT TURN the entry is the NEXT turn's Event, so pressing
+#     Stop on turn 2 denies turn 1's survivor's still-open card and fails a
+#     legitimate tool call closed with nothing saying why.
+#
+# The audit labelled the second direction INFERENCE FROM STRUCTURE, NOT
+# EXECUTION. These tests execute it. The fix binds the Event BY VALUE at arm
+# time, which is what `revoke_approval_rounds_for_run`'s run-keyed sweep
+# already does for the push side.
+
+#: The child of turn 1 that is still running when turn 2 begins.
+RUN_SURVIVOR = "run-turn1-survivor"
+
+
+def _begin_turn(controller, session_id: str) -> threading.Event:
+    """Register one turn's own per-run cancel Event, as `_run_agent_reply` does."""
+    cancel_event = threading.Event()
+    controller._active_cancel_events[session_id] = cancel_event
+    return cancel_event
+
+
+def _end_turn(controller, session_id: str) -> None:
+    """Drop the turn's per-session entry, as `_stream_assistant_response_inner`
+    does once the turn (not its surviving children) has finished."""
+    controller._active_cancel_events.pop(session_id, None)
+
+
+def test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card():
+    """Stop on turn 2 must not fail turn 1's survivor's tool call closed."""
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    turn_one_cancel = _begin_turn(controller, session_id)
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+    survivor_round = _round_id_for(controller, RUN_SURVIVOR)
+
+    # Turn 1 returns; its child (and the child's card) outlive it.
+    _end_turn(controller, session_id)
+    # Turn 2 starts with its OWN Event, and the user presses Stop on IT.
+    _begin_turn(controller, session_id)
+    controller._signal_stop(session_id=session_id)
+
+    # More than one poll interval (`_MCP_APPROVAL_POLL_SECONDS` = 1.0s).
+    worker.join(timeout=2.5)
+
+    assert worker.is_alive(), (
+        "turn 2's Stop denied turn 1's survivor's still-open card: "
+        f"{results}"
+    )
+    assert survivor_round in controller._pending_approval_rounds
+    assert results == {}
+    assert not turn_one_cancel.is_set(), (
+        "turn 2's Stop reached back into turn 1's own cancel Event"
+    )
+
+    # The survivor IS still stoppable -- through its own run-keyed revoke,
+    # which is what the fleet panel's Cancel presses.
+    assert controller.revoke_approval_rounds_for_run(RUN_SURVIVOR) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+def test_a_round_armed_between_turns_is_not_deniable_by_a_later_turns_stop():
+    """The other direction: a survivor arms a card with NO turn in flight.
+
+    At poll time `_active_cancel_events.get(session_id)` was None -- and
+    then became the NEXT turn's Event the moment the user sent again, so a
+    Stop on that unrelated turn denied this card too.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # No turn in flight: turn 1 has returned, turn 2 has not begun.
+    assert session_id not in controller._active_cancel_events
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+    survivor_round = _round_id_for(controller, RUN_SURVIVOR)
+
+    _begin_turn(controller, session_id)
+    controller._signal_stop(session_id=session_id)
+    worker.join(timeout=2.5)
+
+    assert worker.is_alive(), (
+        f"a later turn's Stop denied a between-turns round: {results}"
+    )
+    assert survivor_round in controller._pending_approval_rounds
+
+    assert controller.revoke_approval_rounds_for_run(RUN_SURVIVOR) == 1
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+def test_the_owning_turns_own_stop_still_denies_its_round():
+    """The control: binding by value must not make Stop stop working.
+
+    A round armed by the turn that owns the session's Event is denied by
+    that turn's Stop, exactly as before -- the fix narrows WHICH Event a
+    round listens to, it does not remove the signal.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Owner").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    _begin_turn(controller, session_id)
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_A,
+        session_id=session_id,
+        llm_name="mcp__srv__tool",
+        results=results,
+    )
+    time.sleep(0.15)
+    assert _round_id_for(controller, RUN_A)
+
+    controller._signal_stop(session_id=session_id)
+    worker.join(timeout=3.0)
+
+    assert not worker.is_alive(), "the owning turn's Stop no longer reaches its round"
+    assert results[RUN_A] == {"mcp__srv__tool": "deny"}
+
+
+def test_shutdown_still_denies_a_survivors_round():
+    """Teardown is the one signal that legitimately reaches every round.
+
+    `shutdown()` sets `_shutdown_requested`, which is never reset for this
+    controller instance -- a survivor whose bound Event is None must still
+    fail closed when the Console screen it is attached to goes away.
+    """
+    controller, store = _build_controller()
+    session_id = store.create_session(title="Fleet").id
+    store.switch_session(session_id)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    results: dict[str, dict[str, str]] = {}
+    worker = _arm_round(
+        controller,
+        run_id=RUN_SURVIVOR,
+        session_id=session_id,
+        llm_name="mcp__srv__write",
+        results=results,
+    )
+    time.sleep(0.15)
+
+    controller._shutdown_requested.set()
+    worker.join(timeout=3.0)
+
+    assert not worker.is_alive(), "teardown left a survivor's round parked"
+    assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}

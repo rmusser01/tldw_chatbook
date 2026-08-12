@@ -709,6 +709,35 @@ Prove both `--help` and the unconfirmed refusal path in a subprocess whose
 `TLDW_CONFIG_PATH` points to a nonexistent file, then assert that file was not
 created. A guard is only real if importing the command cannot bypass it.
 
+## Detecting Textual focus from a captured pane: diff the STYLE, not the line — a ticking counter is not focus (supervisor-fleet PR 3a-1 Task 7, 2026-08-11)
+
+**Incident.** Live-verifying the Console fleet panel's per-row cancel (focus a
+sub-agent row, press `Delete`) needed a way to know *when* the row had focus, since
+`tmux` gives no focus readout. The first attempt tabbed one key at a time and compared
+the row's captured line by `md5`, treating any change as "focus moved here". It fired on
+Tab #2 — and it was wrong twice over:
+
+- The row's text contains a **live elapsed segment** (`· 48s`). It ticks. Any
+  line-content hash changes on its own, with no focus anywhere near it.
+- Tab **scrolls the rail** as focus walks widgets above the panel, so the row's line can
+  move or disappear entirely; `grep | head -1` then returns empty, whose hash also
+  differs.
+
+Both false positives were "confirmed" by a capture that looked right. Meanwhile the real
+signal is one CSS rule — `.console-inspector-section-row:focus { background: ... }` — so
+the honest probe is to extract just the background SGR codes from the row's line
+(`grep -o '48;2;[0-9;]*'`) and watch for the focus tint appearing. With that, the row was
+found at Shift-Tab #7 and `Delete` cancelled the child for real (`running` → `cancelled`).
+
+Three live sub-agents were spent chasing this: each check needed a child still running,
+and the diagnosis cost longer than the children lived.
+
+**What to do.** To prove a Textual widget has focus from a terminal capture, find its
+`:focus` rule in the TCSS first and assert on **that specific style token**, not on the
+line's bytes. Never treat "the captured line changed" as evidence about focus when the
+widget renders anything time-varying. And prefer `Shift+Tab` when the target sits near
+the end of a scrollable container — walking forward from the top scrolls the target out
+of the very capture you are reading.
 ## PNG compression is not image-token compression (TASK-15482 / TASK-15505, 2026-08-11)
 
 **Incident.** The first valid raw-context visual-compaction run sent two

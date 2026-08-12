@@ -4,10 +4,12 @@ import asyncio
 import contextlib
 import json
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tldw_chatbook.Chat import console_agent_bridge
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
     FIND_LOAD_DISCOVERY_HINT,
@@ -41,6 +43,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
+    TERMINAL_RUN_STATUSES,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
@@ -669,9 +672,9 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     )
 
 
-def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
+def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
     """PR2a Task 6.5: a fleet child's turn must survive overlapping the
-    parent's on the run's ONE shared event loop.
+    parent's. PR3a-1 Task 1: on a lifeline of its OWN, not the turn's.
 
     Found by probe when the fleet default was flipped, and it failed every
     overlapping child: `chat_call` drove the shared loop with
@@ -688,17 +691,24 @@ def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
     are in flight together (a turn that yields without awaiting can slip
     through the window); the child additionally blocks until the parent has
     entered its own next turn, so the overlap is pinned rather than raced
-    for. PR #629 Fix 1(c) is re-asserted here too: it is still ONE loop.
+    for. PR #629 Fix 1(c) is re-asserted here too, now scoped to the agent
+    it was always about: the PRIMARY agent still runs every turn of the run
+    on ONE loop, so the gateway's per-loop client is swapped at most once
+    per run. The child's own loop is the price PR3a-1 pays for a child that
+    can outlive its turn -- measured in that task's report.
     """
     parent_in_flight = threading.Event()
-    seen_loops = []
+    parent_loops = []
+    child_loops = []
 
     class _OverlappingGateway(_FleetChunkGateway):
         async def stream_chat(self, resolution, messages, tools=None, **kwargs):
             system = str(messages[0].get("content", "")) if messages else ""
-            if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                child_loops.append(asyncio.get_running_loop())
+            else:
                 parent_in_flight.set()
-            seen_loops.append(asyncio.get_running_loop())
+                parent_loops.append(asyncio.get_running_loop())
             # Yield control so the other agent's coroutine can be scheduled
             # onto this same loop while this one is still open.
             await asyncio.sleep(0.01)
@@ -743,10 +753,146 @@ def test_a_concurrent_child_can_use_the_runs_shared_event_loop(tmp_path):
     assert child_runs[0]["result"] == "child answer"
     # ... and its answer really reached the parent, through wait_agents.
     assert "child answer" in str(outcome.steps)
-    # Still ONE loop for the whole run tree, children included (Fix 1(c)).
-    assert len(seen_loops) == 4  # 3 parent turns + 1 child turn
-    assert all(loop is seen_loops[0] for loop in seen_loops)
-    assert seen_loops[0].is_closed()
+    # PR3a-1 Task 1: the PRIMARY agent still runs every one of its turns on
+    # the ONE per-turn loop (Fix 1(c) -- at most one httpx client swap per
+    # run), and that loop is still closed when the turn returns.
+    assert len(parent_loops) == 3
+    assert len({id(loop) for loop in parent_loops}) == 1
+    assert parent_loops[0].is_closed()
+    # The child no longer shares it. It owns a lifeline of its own from
+    # birth -- so the turn's teardown cannot kill a call it has in flight
+    # (see `test_a_fleet_child_completes_its_model_call_after_the_turn_
+    # loop_is_gone`) -- and that lifeline is torn down when the CHILD
+    # finishes, which by here it has.
+    assert len(child_loops) == 1
+    assert child_loops[0] is not parent_loops[0]
+    assert child_loops[0].is_closed()
+
+
+async def _await_event(event: threading.Event, timeout: float) -> bool:
+    """Await a threading.Event without blocking the loop it is awaited on.
+
+    A bare ``event.wait()`` inside an async gateway double would block that
+    coroutine's whole event loop, which would mask the very cross-loop
+    behaviour these tests pin (on the pre-fix code the parent and the child
+    share one loop, and a blocked loop is indistinguishable from a dead one).
+    """
+    deadline = time.monotonic() + timeout
+    while not event.is_set():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.01)
+    return True
+
+
+class _CrossTurnGateway:
+    """Parent answers WITHOUT collecting; the child's turn outlives it.
+
+    The parent's final-answer turn waits until the child is actually inside
+    a ``stream_chat`` call, and the child's turn then waits until the test
+    says the spawning turn has fully returned -- so the child's model call
+    is guaranteed to be completed after ``run_reply``'s own loop is closed.
+    """
+
+    def __init__(self, turn_over: threading.Event):
+        self._turn_over = turn_over
+        self.child_in_flight = threading.Event()
+        self._parent_turns = [
+            [_fence("spawn_subagent", {"task": "outlive the turn"})],
+            ["parent final"],
+        ]
+        self._lock = threading.Lock()
+        self.parent_loops = []
+        self.child_loops = []
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        loop = asyncio.get_running_loop()
+        if system.startswith(SUBAGENT_PROMPT_PREFIX):
+            self.child_loops.append(loop)
+            self.child_in_flight.set()
+            assert await _await_event(self._turn_over, 30.0), (
+                "the spawning turn never returned"
+            )
+            yield "child answer after the turn"
+            return
+        with self._lock:
+            chunks = self._parent_turns.pop(0)
+            is_final_turn = not self._parent_turns
+        self.parent_loops.append(loop)
+        if is_final_turn:
+            # Pin the interleave: the parent may not finish its turn until
+            # the child is demonstrably mid-model-call.
+            assert await _await_event(self.child_in_flight, 30.0), (
+                "the child never reached the gateway"
+            )
+        for chunk in chunks:
+            yield chunk
+
+
+def test_a_fleet_child_completes_its_model_call_after_the_turn_loop_is_gone(
+    tmp_path, monkeypatch
+):
+    """PR3a-1 Task 1: a fleet child must own its model-call lifeline.
+
+    Before this task every agent of a run -- primary and children alike --
+    bridged to the provider through the ONE loop `run_reply` builds per
+    invocation, which `run_reply`'s `finally` stops, joins and CLOSES. The
+    teardown comment stated the invariant that made that safe: "by this
+    point `run_turn` has already settled every fleet child ... so nothing
+    should still be submitting." PR 3a makes children outlive their
+    spawning turn, so that sentence stops being true and the dependency is
+    actively DESTROYED under a live child: its `run_coroutine_threadsafe`
+    future is never scheduled again and its turn can never complete.
+
+    The fix is not a transfer at settle time; a child owns its own loop and
+    driver thread FROM BIRTH, torn down when the child finishes. This test
+    asserts the observable consequence -- the child's persisted run row
+    reaches a terminal status with its real answer -- with the turn's loop
+    verified closed before the child's model call is even released.
+    """
+    turn_over = threading.Event()
+    gateway = _CrossTurnGateway(turn_over)
+    # Task 1 proves only that a child CAN survive; end-of-turn settling
+    # (which cancels and then abandons stragglers) is Task 2's to change,
+    # so it is bypassed HERE, in the test, and not in production code.
+    monkeypatch.setattr(AgentService, "_settle_fleet", lambda self, *a, **k: None)
+    # Bound the failure mode. Without a per-child lifeline the child's
+    # future is submitted onto the turn's loop and is never completed once
+    # that loop closes, so the production `_CHAT_CALL_TIMEOUT_SECONDS`
+    # backstop of an hour would turn a regression into a CI hang. The
+    # fixed path needs milliseconds, so 30s can never pre-empt it.
+    monkeypatch.setattr(console_agent_bridge, "_CHAT_CALL_TIMEOUT_SECONDS", 30.0)
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    try:
+        outcome = _run(
+            bridge, store, session, aid, conversation_id="conv-cross-turn"
+        )
+
+        assert outcome.status == "done"
+        assert outcome.final_text == "parent final"
+        # The turn is over and its loop really is gone ...
+        assert gateway.parent_loops, "the parent never reached the gateway"
+        assert gateway.parent_loops[0].is_closed()
+        # ... while the child is still mid-call on a lifeline of its own.
+        assert gateway.child_loops, "the child never reached the gateway"
+        assert gateway.child_loops[0] is not gateway.parent_loops[0]
+        assert not gateway.child_loops[0].is_closed()
+        # Release the child: from here it has to finish a model call with
+        # the spawning turn's loop already closed.
+        turn_over.set()
+        _join_fleet_threads(timeout=30.0)
+    finally:
+        # Never leave a wedged child blocking the whole suite's teardown.
+        turn_over.set()
+
+    child_runs = [
+        r for r in db.list_runs("conv-cross-turn") if r["agent_kind"] == "subagent"
+    ]
+    assert len(child_runs) == 1
+    assert child_runs[0]["status"] == RUN_DONE
+    assert child_runs[0]["result"] == "child answer after the turn"
 
 
 def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
@@ -791,6 +937,11 @@ def test_provider_stream_signal_survives_subagent_turns(tmp_path):
         provider_stream_signals=signals,
     )
 
+    # PR3a-1 Task 2: the sub-agent outlives the turn by default, so its
+    # provider call -- the third one this test is counting -- may still be
+    # in flight when `run_reply` returns. The subject here is that the
+    # SAME signals object reaches a child's call, not when it does.
+    _join_fleet_threads()
     assert outcome.status == "done"
     assert gateway.signals_seen == [signals, signals, signals]
     assert all(item is signals for item in gateway.signals_seen)
@@ -834,6 +985,10 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     ]
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
+    # PR3a-1 Task 2: the child outlives the turn, so its run ROW may not
+    # exist yet when `run_reply` returns. This test is about the marker
+    # and the lineage, not about when the row lands.
+    _join_fleet_threads()
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-1") == 1
     spawn_markers = [
@@ -3748,6 +3903,26 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
     test -- the per-run entry is popped in the SAME `finally` that tears
     the run's event loop down, so a completed run's snapshot goes back to
     `[]`, NOT the run's terminal handles.
+
+    PR3a-1 Task 6a, two changes to this test, both forced by children now
+    OUTLIVING their turn (Task 2) and neither weakening what it asserts:
+
+    1. The mid-run peek now happens AFTER `run_reply` has already
+       returned -- measured, not assumed: the primary answers while both
+       children sit in their gated turn, so `run_reply` returns ~1.3ms
+       BEFORE `entered_event` fires. That is exactly the case that used
+       to report `[]` (the published service was torn down the instant
+       the turn ended, taking every survivor with it); the assertion
+       below is unchanged and is now the regression guard for it.
+    2. `_join_fleet_threads()` before the final `== []`. The children are
+       released by `gate.set()` in the `finally` above and settle on
+       their own threads a millisecond or so later; before this PR
+       `_settle_fleet` blocked the turn until they had, which is what
+       made an unsynchronised read deterministic. It no longer does --
+       that IS the feature -- so the test synchronises on the children
+       themselves, the same way every other survivor test on this branch
+       does. The `[]` assertion itself is untouched: once the last child
+       settles, a finished conversation's live fleet is empty again.
     """
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
@@ -3804,6 +3979,7 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
 
     assert result["outcome"].status == "done"
     assert result["outcome"].final_text == "parent final"
+    _join_fleet_threads()
     assert bridge.fleet_snapshot("conv-fleet-peek") == []
 
 
@@ -3811,13 +3987,24 @@ class _FakeFleetService:
     """Stands in for `AgentService` for `_teardown_fleet_service` tests --
     only needs to be a distinct object (for `is` identity) with a
     `fleet_snapshot()` method (what `ConsoleAgentBridge.fleet_snapshot`
-    actually calls)."""
+    actually calls) and, since PR3a-1 Task 6a,
+    `live_subagent_handles()` (what decides whether this service is
+    retained past its own run as the owner of a still-running child).
+    The double owns everything it can see, which is the single-service
+    case these tests are about."""
 
     def __init__(self, handles):
         self._handles = list(handles)
 
     def fleet_snapshot(self):
         return list(self._handles)
+
+    def live_subagent_handles(self):
+        return [
+            handle
+            for handle in self._handles
+            if handle.status not in TERMINAL_RUN_STATUSES
+        ]
 
 
 def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
@@ -3878,9 +4065,29 @@ def test_fleet_teardown_pop_is_identity_checked_not_blind(tmp_path):
     assert bridge.fleet_snapshot("conv-resend") == [live_handle]
     assert bridge._fleet_services.get("conv-resend") is service_b
 
-    # And B's OWN (later) teardown still works normally.
+    # And B's OWN (later) teardown still works normally -- the
+    # identity-checked pop this test exists for happens exactly as
+    # before.
     bridge._teardown_fleet_service("conv-resend", service_b)
+    assert bridge._fleet_services.get("conv-resend") is None
+
+    # PR3a-1 Task 6a: what "normally" MEANS after the pop has changed,
+    # and this is the change. B's child is still `"running"`, and a
+    # child that outlives its turn (Task 2) is the case this whole PR
+    # exists for -- so B's service is RETAINED as that child's owner
+    # (nothing else holds its cancel Event) and the row stays on the
+    # panel instead of vanishing the instant the turn ended. The
+    # published-entry pop above is what makes it a survivor row rather
+    # than an in-flight one.
+    assert bridge.fleet_snapshot("conv-resend") == [live_handle]
+
+    # Once that last child settles, the conversation's live fleet is
+    # empty again and the retained service is dropped -- the `[]` this
+    # test asserted before Task 6a, now reached by the child finishing
+    # rather than by the turn ending.
+    live_handle.status = "done"
     assert bridge.fleet_snapshot("conv-resend") == []
+    assert bridge._fleet_survivor_services.get("conv-resend") is None
 
 
 # -- PR2b Task 5: ConsoleAgentBridge.cancel_subagent delegation ----------
@@ -3962,11 +4169,17 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     runner.join(10)
     assert not runner.is_alive(), "run_reply never returned"
 
-    # The run has finished -- `run_reply`'s own teardown has popped this
-    # conversation's `_fleet_services` entry (mirroring `fleet_snapshot`'s
-    # own post-completion behavior, pinned by `test_fleet_snapshot_
-    # reflects_two_live_handles_in_flight_then_empty_after_run_completes`
-    # above), so the same real handle id no longer succeeds either.
+    # The run has finished AND (PR3a-1 Task 6a) its cancelled child has
+    # settled -- joined explicitly, because `run_reply` no longer waits
+    # for it. Both halves of "no longer succeeds" now hold and are worth
+    # separating: `run_reply`'s teardown popped this conversation's
+    # `_fleet_services` entry (mirroring `fleet_snapshot`'s own
+    # post-completion behavior, pinned by `test_fleet_snapshot_reflects_
+    # two_live_handles_in_flight_then_empty_after_run_completes` above),
+    # and the handle is terminal, so the survivor tier that now backs a
+    # still-live child declines it too rather than reporting a cancel it
+    # cannot deliver.
+    _join_fleet_threads()
     assert bridge.cancel_subagent("conv-cancel", handle_id) is False
 
 
@@ -3982,6 +4195,17 @@ def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     touches `AgentRunsDB`); only a restart's `historical_snapshot`
     re-derivation ever saw the real status before. This proves the LIVE
     path itself now agrees, with no restart needed.
+
+    PR3a-1 Task 6a: `_join_fleet_threads()` added, and the assertion is
+    strictly STRONGER for it. The child is no longer settled by the turn
+    (`_settle_fleet` stopped waiting when children were allowed to
+    outlive their turn); measured, it goes terminal ~1.3ms AFTER
+    `run_reply` returns. So this now proves the rail reaches "done" for a
+    child that finished when NOTHING was left running to publish it --
+    `live_snapshot` re-reads the conversation's own coordinator per call
+    rather than serving whatever the last run froze. Reading without the
+    join would have measured the freeze, and would have read "running"
+    on ~28 of 30 attempts (probed).
     """
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -3991,6 +4215,7 @@ def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
 
     outcome = _run(bridge, store, session, aid)
+    _join_fleet_threads()
 
     assert outcome.status == "done"
     subagents = bridge.live_snapshot("conv-1").subagents
@@ -4011,6 +4236,11 @@ def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_pa
     """PR2b Task 2: an errored child must show `status == "error"` on the
     live path, not the permanently-stuck "running" the pre-task code
     always showed regardless of how the child actually ended.
+
+    PR3a-1 Task 6a: `_join_fleet_threads()` added for the same reason as
+    its `..._reaches_done_...` sibling above -- the turn no longer waits
+    for the child, so the test must, and the rail must still reach the
+    real terminal status afterwards.
     """
 
     class _FleetChildRaisesGateway:
@@ -4046,6 +4276,7 @@ def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_pa
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
 
     outcome = _run(bridge, store, session, aid)
+    _join_fleet_threads()
 
     assert outcome.status == "done"  # the PRIMARY still finishes fine
     subagents = bridge.live_snapshot("conv-1").subagents
@@ -4155,6 +4386,13 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
         gate.set()
     runner.join(10)
     assert not runner.is_alive(), "run_reply never returned"
+    # PR3a-1 Task 6a: the children are released by `gate.set()` above and
+    # settle on their OWN threads, which `run_reply` no longer waits for
+    # -- so the "final publish" this block checks is no longer a publish
+    # at all: `live_snapshot` re-derives from the conversation's live
+    # coordinator on every read. Joining the child threads is what makes
+    # "both reached done" a fact rather than a coin flip.
+    _join_fleet_threads()
 
     assert result["outcome"].status == "done"
     assert result["outcome"].final_text == "parent final"
@@ -4207,6 +4445,337 @@ def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
     assert subagents[0].status == "running"
     assert subagents[0].run_id == ""
     assert subagents[0].handle_id == ""
+
+
+# -- PR3a-1 Task 6a: the fleet outlives the turn --------------------------
+
+
+class _CancelDuringParentTurnGateway(_FleetTwoChildGateway):
+    """`_FleetTwoChildGateway` plus a callback fired inside one PARENT
+    turn, counted across every ``run_reply`` this gateway serves.
+
+    Firing from inside a model call is what makes the moment real: the
+    run is genuinely in flight, so ``_fleet_services`` holds THAT run's
+    service, which is the state a panel click during a streaming reply
+    actually meets. Doing it from the test thread after the call returned
+    would test a different (easier) state.
+    """
+
+    def __init__(self, *args, on_parent_turn, callback, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_parent_turn = on_parent_turn
+        self._callback = callback
+        self.parent_calls = 0
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        system = str(messages[0].get("content", "")) if messages else ""
+        if not system.startswith(SUBAGENT_PROMPT_PREFIX):
+            self.parent_calls += 1
+            if self.parent_calls == self._on_parent_turn:
+                self._callback()
+        async for chunk in super().stream_chat(
+            resolution, messages, tools=tools, **kwargs
+        ):
+            yield chunk
+
+
+def _second_turn_message(store, session):
+    """Append the next user/assistant pair, as a real second Send does."""
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="again")
+    return store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    ).id
+
+
+def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
+    """PR3a-1 Task 6a, the headline: `run_reply` returns while a child is
+    still working (Task 2), and that child must remain on every
+    supervision surface rather than becoming an invisible, unkillable
+    thread.
+
+    Before this task the bridge published its `AgentService` into
+    `_fleet_services` for exactly the duration of one `run_reply` call,
+    so the instant the turn returned `fleet_snapshot` went to `[]` (the
+    panel showed nothing to cancel) and `cancel_subagent` returned
+    `False` (there was nothing to cancel it through) -- with no error
+    anywhere, the failure class this PR's audit ranked most dangerous.
+
+    Asserts the stop actually STOPPED it (the child's run row ends
+    `cancelled`), not merely that the call returned `True`.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["parent final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    try:
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-survivor"
+        )
+        # The turn is genuinely OVER -- this is not a mid-run peek.
+        assert outcome.status == "done"
+        assert outcome.final_text == "parent final"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        live = bridge.fleet_snapshot("conv-survivor")
+        assert len(live) == 1, live
+        assert live[0].status == "running"
+        assert live[0].task == "long job"
+        # ... and on the rail, with a real handle id to press Cancel on.
+        rows = bridge.live_snapshot("conv-survivor").subagents
+        assert len(rows) == 1, rows
+        assert rows[0].status == "running"
+        assert rows[0].handle_id == live[0].handle_id
+
+        assert bridge.cancel_subagent("conv-survivor", live[0].handle_id) is True
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child = next(
+        row
+        for row in db.list_runs("conv-survivor")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "cancelled", child["status"]
+    # Settled: the conversation's live fleet is empty again and the
+    # retained owner has been dropped.
+    assert bridge.fleet_snapshot("conv-survivor") == []
+    assert bridge._fleet_survivor_services.get("conv-survivor") is None
+    assert bridge.live_snapshot("conv-survivor").subagents[0].status == "cancelled"
+
+
+def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
+    """PR3a-1 Task 6a: the NEXT message must not blind or disarm the
+    panel.
+
+    Turn 2 publishes its own `AgentService` over turn 1's entry, so a
+    single-tier lookup would find turn 2's service -- which shares the
+    conversation's coordinator (it can SEE the survivor) but holds none
+    of its cancel Events (it cannot STOP it). `AgentService.cancel_
+    subagent` refuses a handle it does not own precisely so that miss
+    cannot be reported as a success, and the bridge falls through to the
+    survivor's real owner.
+    """
+    gate = threading.Event()
+    cancels: list = []
+    gateway = _CancelDuringParentTurnGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+            ["turn 2 final"],  # turn 2 spawns nothing
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+        # Fires DURING turn 2's own model call -- the one moment turn 2's
+        # service is the published one, which is exactly when a user
+        # presses Cancel on a survivor's panel row while the next reply
+        # is streaming.
+        on_parent_turn=3,
+        callback=lambda: cancels.append(
+            bridge.cancel_subagent("conv-survivor", handle_box["id"])
+        ),
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    handle_box: dict = {}
+    try:
+        _run(bridge, store, session, assistant.id, conversation_id="conv-survivor")
+        assert gateway.entered_event.wait(5), "the child never started"
+        handle_id = bridge.fleet_snapshot("conv-survivor")[0].handle_id
+        handle_box["id"] = handle_id
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(
+            bridge, store, session, second, conversation_id="conv-survivor"
+        )
+        assert outcome_2.status == "done"
+        assert outcome_2.final_text == "turn 2 final"
+
+        # The Cancel pressed mid-turn-2 reached the survivor's real owner
+        # -- turn 2's service can see the handle in the shared
+        # coordinator but holds none of its cancel Events, and it is the
+        # PUBLISHED service at that moment, so a single-tier lookup
+        # would have answered from it.
+        assert cancels == [True], cancels
+
+        # Still there, after a whole second turn published over it.
+        live = bridge.fleet_snapshot("conv-survivor")
+        assert [h.handle_id for h in live] == [handle_id], live
+        assert live[0].status == "running"
+        assert bridge.live_snapshot("conv-survivor").subagents[0].handle_id == (
+            handle_id
+        )
+        # Exactly ONE retained owner: turn 2's service shares the
+        # conversation's coordinator and can SEE the survivor, but owns
+        # no live child of its own, so it is not kept -- otherwise a
+        # chatty conversation would pile up one dead service per message
+        # for as long as any survivor runs. (That turn 2's service
+        # cannot cancel what it does not own is pinned directly at the
+        # service level: `Tests/Agents/test_fleet_runtime.py::test_only_
+        # the_service_that_spawned_a_child_can_cancel_it`.)
+        assert len(bridge._fleet_survivor_services["conv-survivor"]) == 1
+        # NOTE: no second cancel here, deliberately. The mid-turn-2 press
+        # above must be the ONE that stops this child, or the terminal
+        # status below proves nothing about it -- a later press from a
+        # state with no run in flight (which
+        # `test_a_survivor_is_visible_and_stoppable_after_its_turn_
+        # returns` already covers) would mask a mid-turn press that
+        # returned True and did nothing.
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child = next(
+        row
+        for row in db.list_runs("conv-survivor")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "cancelled", child["status"]
+
+
+def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
+    tmp_path,
+):
+    """PR3a-1 Task 6a: a coordinator that now lives as long as the
+    CONVERSATION must not accumulate every child the conversation ever
+    ran.
+
+    `FleetCoordinator` was built to never forget a handle -- free when it
+    lived for one turn, unbounded now. So the bridge prunes terminal
+    handles at the START of each turn (not mid-turn: `_settle_fleet`,
+    `wait_agents` and `check_agents` all resolve ids through the
+    coordinator and this turn's own finished children must stay
+    resolvable until it ends). The visible consequence is the rail
+    behaviour it already had: turn 2's sub-agent rows are turn 2's, not
+    turn 1's plus turn 2's, growing forever.
+    """
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-prune")
+    _join_fleet_threads()
+    first_rows = bridge.live_snapshot("conv-prune").subagents
+    assert [row.text for row in first_rows] == ["first job"], first_rows
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-prune")
+    _join_fleet_threads()
+
+    rows = bridge.live_snapshot("conv-prune").subagents
+    assert [row.text for row in rows] == ["second job"], rows
+    assert len(bridge._fleet_coordinators["conv-prune"].snapshot()) == 1
+
+
+def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
+    """PR3a-1 Task 6a: `[agents] max_live_subagents` is a bound on the
+    CONVERSATION, not on one message.
+
+    Task 5's review disproved the opposite claim by execution: a fresh
+    `FleetCoordinator` per `run_turn`, plus a fresh `AgentService` per
+    `run_reply` with no coordinator injected, meant aggregate live
+    children scaled with messages sent and were bounded by nothing. This
+    is the same scenario at the level where production actually runs it
+    -- two `run_reply` calls on one conversation -- and the counterpart
+    of `Tests/Agents/test_fleet_runtime.py::test_live_children_are_
+    capped_across_turns`, which pins the service-level half.
+    """
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            2 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "task A"})],
+            [_fence("spawn_subagent", {"task": "task B"})],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "task C"})],
+            ["turn 2 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    try:
+        _run(bridge, store, session, assistant.id, conversation_id="conv-cap")
+        assert gateway.entered_event.wait(5), "turn 1's children never started"
+        assert len(bridge.fleet_snapshot("conv-cap")) == 2
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(
+            bridge, store, session, second, conversation_id="conv-cap"
+        )
+        assert outcome_2.status == "done"
+
+        # The cap held: turn 2's spawn was refused, and refused
+        # RETRYABLY -- the supervisor is told why rather than handed a
+        # silent no-op.
+        live = bridge.fleet_snapshot("conv-cap")
+        assert len(live) == 2, live
+        assert sorted(h.task for h in live) == ["task A", "task B"]
+        refusals = [
+            step.text
+            for step in bridge.live_snapshot("conv-cap").steps
+            if "live sub-agent limit reached" in step.text
+        ]
+        assert refusals, bridge.live_snapshot("conv-cap").steps
+        # No third child was ever created -- the refusal happens before
+        # any run row or thread exists.
+        child_rows = [
+            row
+            for row in db.list_runs("conv-cap")
+            if row["agent_kind"] == "subagent"
+        ]
+        assert len(child_rows) == 2, [row["task"] for row in child_rows]
+    finally:
+        gate.set()
+    _join_fleet_threads()
 
 
 # -- PR2b Task 2 round 2 (review correction): all-or-nothing is right ---
@@ -4289,3 +4858,295 @@ def test_subagent_summaries_from_fleet_inline_path_renders_fallback_unchanged():
     rows = _subagent_summaries_from_fleet([], fallback)
 
     assert rows == tuple(fallback)
+
+
+# -- PR3a-1 Task 6b (audit F1): the rail's live slot is per RUN, not per
+# -- conversation
+#
+# `on_step` published into `self._live[conversation_id]` -- a bridge-lifetime
+# dict the NEXT turn also owns. A child that outlives its turn keeps calling
+# that same closure, so every step it takes after the turn returned
+# overwrote the conversation's rail entry with TURN 1's step list and count,
+# and its LAST write left `status="running"` there permanently: the rail
+# claims a run is live long after everything finished, with no error
+# anywhere. `on_step` has always received the step's own `run_id` and
+# explicitly ignored it; these tests are why it may not.
+
+
+def test_a_survivors_steps_do_not_overwrite_the_next_turns_rail(tmp_path):
+    """Turn 1's surviving child must not repaint turn 2's rail summary.
+
+    The child is held inside its own model call for the whole of turn 2,
+    then released -- so every step it emits lands strictly AFTER turn 2
+    published its own final snapshot. Under the pre-fix code that step
+    reset the conversation's slot to turn 1's steps and left it
+    `"running"` forever.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+            ["turn 2 final"],  # turn 2 spawns nothing
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    try:
+        outcome_1 = _run(bridge, store, session, aid, conversation_id="conv-rail")
+        assert outcome_1.status == "done"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        second = _second_turn_message(store, session)
+        outcome_2 = _run(bridge, store, session, second, conversation_id="conv-rail")
+        assert outcome_2.status == "done"
+        assert outcome_2.final_text == "turn 2 final"
+
+        # Turn 2's own published summary -- the baseline the survivor must
+        # not be able to move.
+        after_turn_two = bridge.live_snapshot("conv-rail")
+        assert after_turn_two.status == "done"
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    final = bridge.live_snapshot("conv-rail")
+    assert final.status == "done", (
+        "a survivor's step left the conversation's rail stuck at "
+        f"{final.status!r} after every run had finished"
+    )
+    assert final.step == after_turn_two.step, (
+        "the survivor's step count overwrote turn 2's: "
+        f"{final.step} != {after_turn_two.step}"
+    )
+    assert final.steps == after_turn_two.steps, (
+        "the survivor repainted turn 2's step list with turn 1's"
+    )
+
+
+def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
+    """... and are not merely suppressed: dropping them would be the same
+    silent loss, one turn later.
+
+    A live child's steps exist NOWHERE else while it runs -- `AgentService`
+    persists a run's steps to `AgentRunsDB` once, at the end
+    (`_persist`), so the drill-in has nothing to show for a child still
+    working. The per-run slot is that missing live source.
+    """
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    try:
+        _run(bridge, store, session, aid, conversation_id="conv-rail-child")
+        assert gateway.entered_event.wait(5), "the child never started"
+        child_run_id = bridge.fleet_snapshot("conv-rail-child")[0].run_id
+        assert child_run_id, "the child's run never attached"
+        # The DB has the row but no steps yet -- this is the gap.
+        assert not db.get_run(child_run_id)["steps"]
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    child_live = bridge.live_run_snapshot("conv-rail-child", child_run_id)
+    assert child_live is not None, "the survivor's own steps were dropped"
+    assert child_live.step > 0, child_live
+    assert child_live.steps, child_live
+
+
+def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
+    tmp_path,
+):
+    """`_live` gains one key per sub-agent run and this bridge outlives
+    every turn -- so the same bound `FleetCoordinator` handles get.
+
+    Pruned at the START of a turn (never mid-turn, for the reason
+    `_conversation_fleet_coordinator` documents), keeping the current
+    summary key plus any run still live: a survivor's steps must stay
+    readable while it works, and a finished child's are in `AgentRunsDB`
+    by then.
+    """
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-live-prune")
+    _join_fleet_threads()
+    # Turn 1: its own summary slot plus its child's own slot.
+    assert len(bridge._live["conv-live-prune"]) == 2, bridge._live[
+        "conv-live-prune"
+    ]
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-live-prune")
+    _join_fleet_threads()
+
+    assert len(bridge._live["conv-live-prune"]) == 2, (
+        "turn 1's finished slots were never dropped: "
+        f"{bridge._live['conv-live-prune']}"
+    )
+    assert (
+        bridge._live_primary_keys["conv-live-prune"]
+        in bridge._live["conv-live-prune"]
+    )
+
+
+# -- PR3a-1 Task 6b (audit F5, second half): the navigate confirm's count
+#
+# `busy_fleet_session_count()` is the number the user is shown before
+# "Leave" -- and the number the post-navigate toast reports as killed. It
+# was (session with an active stream task) UNION (session with a pending
+# approval round). A survivor is NEITHER, so the dialog said "0 runs will
+# be killed" and then killed one. A dialog that lies to the user is worse
+# than no dialog.
+
+
+def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=bridge
+    )
+    try:
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id=session.id
+        )
+        assert outcome.status == "done"
+        assert gateway.entered_event.wait(5), "the child never started"
+
+        # Nothing else is busy: the turn is over, no approval is armed.
+        assert controller.in_flight_run_count() == 0
+        assert bridge.fleet_snapshot(session.id), "precondition: a live survivor"
+
+        assert controller.busy_fleet_session_count() == 1, (
+            "the confirm dialog would tell the user 0 runs will be killed, "
+            "and then kill one"
+        )
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+    # ... and it goes back to 0 once the survivor settles, so an idle
+    # Console still navigates away with no dialog at all.
+    assert controller.busy_fleet_session_count() == 0
+
+
+def test_busy_fleet_session_count_ignores_a_terminal_child():
+    """Only a STILL-RUNNING child counts.
+
+    `fleet_snapshot` includes terminal handles while a run is in flight
+    (`FleetCoordinator` never forgets one mid-turn), and a finished child
+    is nothing teardown would kill -- counting it would inflate the number
+    the confirm dialog shows in the opposite direction.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class _FinishedFleetBridge:
+        def fleet_snapshot(self, conversation_id):
+            return [SimpleNamespace(status="done", handle_id="h1")]
+
+    store = ConsoleChatStore()
+    store.ensure_session()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=_FinishedFleetBridge()
+    )
+    assert controller.busy_fleet_session_count() == 0
+
+
+def test_busy_fleet_session_count_degrades_when_the_bridge_raises():
+    """Under-counting is the pre-PR3a-1 behaviour; a broken fleet read must
+    never be the thing that blocks a navigation."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class _RaisingFleetBridge:
+        def fleet_snapshot(self, conversation_id):
+            raise RuntimeError("boom")
+
+    store = ConsoleChatStore()
+    store.ensure_session()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=_RaisingFleetBridge()
+    )
+    assert controller.busy_fleet_session_count() == 0
+
+
+def test_inline_child_live_slots_are_bounded_with_the_fleet_switched_off(
+    tmp_path, monkeypatch
+):
+    """The kill-switch path emits child steps but has NO coordinator.
+
+    So slot pruning cannot key off coordinator membership -- there is none
+    to be a member of -- or `[agents] max_live_subagents <= 1` would leak
+    one rail slot per inline sub-agent for the life of the process.
+    """
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-inline-prune")
+    assert bridge._fleet_coordinators.get("conv-inline-prune") is None
+    assert len(bridge._live["conv-inline-prune"]) == 2
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-inline-prune")
+
+    assert len(bridge._live["conv-inline-prune"]) == 2, (
+        "the inline path leaked a rail slot per child: "
+        f"{bridge._live['conv-inline-prune']}"
+    )

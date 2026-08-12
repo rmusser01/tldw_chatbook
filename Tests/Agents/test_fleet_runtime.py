@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
+    RUN_RUNNING,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
@@ -60,6 +61,12 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from Tests.Agents.conftest import (
+    join_fleet_children,
+    pin_agent_settings,
+    pin_max_live_subagents,
+    pin_turn_scoped_children,
+)
 from Tests.Agents.test_agent_service import (
     SUBAGENT_PROMPT_PREFIX,
     FleetChat,
@@ -123,6 +130,7 @@ def make_fleet_service(
     review_tool_calls=None,
     run_skill_script_tool=None,
     allow_unconsumed=False,
+    run_log_writer=None,
 ):
     """An AgentService wired for the fleet (explicit coordinator = opt in).
 
@@ -130,6 +138,9 @@ def make_fleet_service(
     deliberately strands scripted turns (a cancelled, wedged, or exploding
     child), so the teardown consumption sweep does not flag them. Mis-keyed
     scripts stay fatal either way.
+
+    `run_log_writer` injects a writer double (a `_SpyRunLogWriter`) for the
+    tests that assert on the run tree's finalization order.
     """
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
@@ -147,6 +158,7 @@ def make_fleet_service(
         revoke_approvals=revoke_approvals,
         review_tool_calls=review_tool_calls,
         run_skill_script_tool=run_skill_script_tool,
+        run_log_writer=run_log_writer,
     )
     return service, chat, coordinator
 
@@ -154,16 +166,12 @@ def make_fleet_service(
 def _patch_max_live(monkeypatch, value):
     """Make `[agents] max_live_subagents` read as `value`.
 
-    Every OTHER `_setting` key (the run-log eviction knobs read by
-    `_make_call_model`) must keep returning its own default, or this
-    fixture would silently reconfigure unrelated behaviour.
+    Delegates to the shared conftest helper rather than re-patching
+    `_setting` itself: since PR3a-1 Task 2 a second knob
+    (`subagents_outlive_turn`) is pinned by some of these tests too, and
+    two independent whole-function patches would silently drop each other.
     """
-    real_key = agent_service.MAX_LIVE_SUBAGENTS_KEY
-
-    def fake_setting(key, default):
-        return value if key == real_key else default
-
-    monkeypatch.setattr(agent_service, "_setting", fake_setting)
+    pin_max_live_subagents(monkeypatch, value)
 
 
 def make_inline_service(db, replies, monkeypatch, *, max_live=1):
@@ -202,6 +210,46 @@ FLEET_CFG = AgentConfig(
     budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
 )
 
+#: How long a parked approval card waits for the test to answer it.
+_CARD_TIMEOUT = 10.0
+
+#: `FLEET_CFG` with a wall clock short enough that a REGRESSION (a settle
+#: that waits for a child parked on a card nobody will answer until the
+#: turn is over) fails in 20s instead of the 240s default. PR3a-1 Task 5
+#: correction: a THREADED survivor's own budget is no longer clamped
+#: from this config's `max_wall_seconds=20.0` at all -- it gets
+#: `contain_child_budget`'s independent ceiling
+#: (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`, 1800s by default),
+#: unrelated to this 20s value. This config's short wall clock only
+#: bounds a TURN-SCOPED child (`clamp_child_budget` still derives from
+#: it) and the parent's own settle-loop timing.
+CARD_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=("calculator", SPAWN_TOOL_NAME),
+    budget=RunBudget(
+        max_steps=40,
+        max_model_turns=40,
+        max_subagents=2,
+        max_wall_seconds=20.0,
+    ),
+)
+
+#: `FLEET_CFG` with a 1s wall clock, so a TURN-SCOPED settle stops waiting
+#: for a straggler almost immediately instead of humouring it for the
+#: default budget. Used where both settle modes must run the same script.
+SHORT_WALL_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
+    budget=RunBudget(
+        max_steps=40,
+        max_model_turns=40,
+        max_subagents=4,
+        max_wall_seconds=1.0,
+    ),
+)
+
 
 def _tool_results(run: dict, tool_name: str) -> list[str]:
     """That tool's results as recorded in the run's STEP log.
@@ -231,6 +279,27 @@ def _history_tool_results(chat: FleetChat, tool_name: str) -> list[str]:
         for message in payload
         if str(message.get("content", "")).startswith(prefix)
     ]
+
+
+def _wait_until(predicate, message, timeout=_JOIN_TIMEOUT):
+    """Poll until ``predicate()`` holds, or fail with ``message``.
+
+    Since PR3a-1 Task 2 a child can still be working when `run_turn`
+    returns, so any assertion about a child's finished state has to say
+    when it expects that state to exist.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(message)
+
+
+def _child_row(db, conversation_id="c"):
+    """The single sub-agent run row for this conversation."""
+    rows = db.list_runs(conversation_id, include_superseded=True)
+    return next(row for row in rows if row["agent_kind"] == "subagent")
 
 
 # -- registration (the runtime-tool mandate: name + set + schema) ---------
@@ -415,6 +484,12 @@ def test_live_cap_refuses_beyond_max_live_subagents(db):
     assert spawn_results[0].startswith("started ")
     assert "ERROR" in spawn_results[1]
     assert "wait_agents" in spawn_results[1]  # tells the model how to recover
+    # PR3a-1 Task 2: the accepted child outlives the turn by default, so
+    # its run ROW may not exist yet when run_turn returns -- the
+    # end-of-turn wait used to guarantee it did. This test's subject is
+    # the cap refusal, not the settle, so it waits for the accepted child
+    # rather than pinning a settle mode it does not care about.
+    _wait_until(coordinator.all_finished, "the accepted child never finished")
     # The refused spawn created no run and reserved no handle.
     assert db.count_subagent_runs("c") == 1
     assert len(coordinator.snapshot()) == 1
@@ -457,7 +532,7 @@ def test_live_cap_refusal_does_not_burn_the_per_turn_spawn_budget(db):
         allowed_tools=(SPAWN_TOOL_NAME,),
         budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=2),
     )
-    service, _chat, _coordinator = make_fleet_service(
+    service, _chat, coordinator = make_fleet_service(
         db,
         [
             fence(SPAWN_TOOL_NAME, {"task": "task one", "agent": "researcher"}),
@@ -483,11 +558,22 @@ def test_live_cap_refusal_does_not_burn_the_per_turn_spawn_budget(db):
     assert "wait_agents" in spawn_results[1]  # the cap refusal
     assert spawn_results[2].startswith("started ")  # NOT budget-exhausted
     assert "budget exhausted" not in spawn_results[2]
+    # The third child outlives the turn by default (PR3a-1 Task 2); wait
+    # for it rather than counting rows that are still being written.
+    _wait_until(coordinator.all_finished, "the third child never finished")
     assert db.count_subagent_runs("c") == 2
 
 
-def test_end_of_turn_waits_for_stragglers(db):
-    """The turn must not return with a child still running."""
+def test_end_of_turn_waits_for_stragglers(db, monkeypatch):
+    """Turn-scoped: the turn must not return with a child still running.
+
+    PR3a-1 Task 2 made survival the default, so this -- the phase-2 rule
+    in full -- is now what `[agents] subagents_outlive_turn = false`
+    buys, and this test is its guard. Everything below the pin is
+    unchanged from phase 2 on purpose: the settle path must stay
+    byte-identical under the kill switch.
+    """
+    pin_turn_scoped_children(monkeypatch)
     started = threading.Event()
 
     def slow_child():
@@ -523,15 +609,20 @@ def test_end_of_turn_waits_for_stragglers(db):
     assert child["parent_run_id"] == run_id
 
 
-def test_end_of_turn_cancels_and_abandons_a_wedged_child(db):
-    """A child that never returns is cancelled, abandoned, and recorded.
+def test_end_of_turn_cancels_and_abandons_a_wedged_child(db, monkeypatch):
+    """Turn-scoped: a child that never returns is cancelled and abandoned.
 
     The parent's wall-clock budget is 1s, so the end-of-turn wait expires
     almost immediately; the child ignores its cooperative cancel entirely
     (it is blocked inside the provider call), so it must be abandoned after
     the join timeout with its handle AND its run row marked cancelled --
     never left ``running``.
+
+    Pinned turn-scoped (PR3a-1 Task 2): under the shipped default this
+    child would simply keep running, which is what
+    ``test_a_straggler_outlives_its_turn_by_default`` asserts.
     """
+    pin_turn_scoped_children(monkeypatch)
     never = threading.Event()
     entered = threading.Event()
 
@@ -573,6 +664,379 @@ def test_end_of_turn_cancels_and_abandons_a_wedged_child(db):
         assert child["status"] == RUN_CANCELLED
     finally:
         never.set()
+
+
+# -- crossing the turn boundary (PR3a-1 Task 2) ---------------------------
+#
+# The shipped default is now `[agents] subagents_outlive_turn = true`: a
+# child still running when the turn returns KEEPS RUNNING. The tests above
+# pin the kill switch and describe what it buys; these describe the
+# default. Each of them gates its child inside its first provider call, so
+# "still running when run_turn returned" is a fact the test controls rather
+# than a race it hopes to win.
+
+
+def _gated_child(entered, release, reply="late answer", timeout=10.0):
+    """A child provider reply that blocks until the test releases it.
+
+    Args:
+        entered: set once the child has actually reached its model call --
+            the precondition every survival assertion below rests on.
+        release: the test's go signal.
+        reply: what the child answers once released.
+        timeout: fail loudly rather than hang the suite forever if the
+            test forgets to release it.
+
+    Returns:
+        A zero-arg callable for a ``FleetChat`` child script.
+    """
+
+    def child():
+        entered.set()
+        if not release.wait(timeout):
+            raise AssertionError("child was never released by the test")
+        return reply
+
+    return child
+
+
+def _after(entered, reply, timeout=_JOIN_TIMEOUT):
+    """A PARENT reply held until the child is provably live.
+
+    Without this the parent can answer -- and the turn can end -- before
+    the child thread has reached ``create_run``, which would leave these
+    tests asserting about a child that has no run row yet and a scripted
+    child turn nobody ever asked for. Gating removes the race instead of
+    sleeping through it.
+
+    Args:
+        entered: the child's "I am at my model call" signal.
+        reply: what the parent answers once the child is live.
+        timeout: fail loudly rather than hang if the child never starts.
+
+    Returns:
+        A zero-arg callable for a ``FleetChat`` parent script.
+    """
+
+    def parent():
+        if not entered.wait(timeout):
+            raise AssertionError("the child never reached its model call")
+        return reply
+
+    return parent
+
+
+def test_a_straggler_outlives_its_turn_by_default(db):
+    """The turn returns; the child is neither cancelled nor forced.
+
+    This is the whole feature: `run_turn` comes back with the supervisor's
+    answer while the child is still working, and NOTHING about the child
+    is touched on the way out -- its handle still reads ``running`` and so
+    does its run row. Phase 2 would have waited for it and then marked
+    both ``cancelled``.
+    """
+    entered = threading.Event()
+    release = threading.Event()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),  # no wait_agents
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+    )
+    try:
+        started_at = time.monotonic()
+        run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        elapsed = time.monotonic() - started_at
+        assert entered.is_set(), "precondition: the child reached its model call"
+        assert outcome.status == RUN_DONE
+        assert outcome.final_text == "parent answered early"
+        # The turn did not wait out the child's 10s block, nor the 5s join.
+        assert elapsed < 3.0, f"the turn was held open for {elapsed:.2f}s"
+        # Still live -- the point of the change.
+        assert not coordinator.all_finished()
+        assert [h.status for h in coordinator.snapshot()] == [RUN_RUNNING]
+        child = _child_row(db)
+        assert child["status"] == RUN_RUNNING
+        assert child["parent_run_id"] == run_id
+    finally:
+        release.set()
+        _wait_until(
+            coordinator.all_finished, "the released child never finished"
+        )
+
+
+def test_a_survivor_persists_a_real_terminal_status_after_its_turn(db):
+    """Finishing after the turn is a REAL completion, not a leak.
+
+    The child answers for real once released -- long after `run_turn`
+    returned -- and both its handle and its run row land on ``done`` with
+    its actual result, which is what `wait_agents`/`check_agents` and the
+    fleet panel will read from.
+    """
+    entered = threading.Event()
+    release = threading.Event()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release, reply="late answer")]},
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        assert _child_row(db)["status"] == RUN_RUNNING
+    finally:
+        release.set()
+    _wait_until(coordinator.all_finished, "the released child never finished")
+    handle = coordinator.snapshot()[0]
+    assert handle.status == RUN_DONE
+    assert handle.result == "late answer"
+    child = _child_row(db)
+    assert child["status"] == RUN_DONE
+    assert child["result"] == "late answer"
+
+
+def test_a_survivors_pending_approval_is_answerable_after_its_turn(db):
+    """A live child's approval card outlives the turn AND still works.
+
+    This is the property `_cancel_fleet_handles`' survivor exclusion
+    exists for, tested where the Console actually parks a run: INSIDE
+    `review_tool_calls`, which is where an approval card is armed and
+    where the child's thread waits for the human. The card here is
+    answered only AFTER `run_turn` has returned -- the case the exclusion
+    protects -- and the gate must then release for real: the tool
+    dispatches, its result reaches the child's next provider call, and
+    the child lands `done`.
+
+    An earlier version of this test only asserted that `revoke_approvals`
+    was never called while a child blocked in its PROVIDER call. That
+    child never armed a card at all, so the assertion held even with the
+    exclusion deleted and `_revoke_handle_approvals` no-opped -- vacuous.
+    """
+    parked = threading.Event()
+    answered = threading.Event()
+    revoked: list[str] = []
+
+    def review(calls, run_id):
+        # Only the CHILD calls calculator; the parent's own spawn review
+        # must not park, or the turn would never reach its answer.
+        if any(call.name == "calculator" for call in calls):
+            parked.set()
+            if not answered.wait(_CARD_TIMEOUT):
+                raise AssertionError("the card was never answered")
+        return {}
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "probe task"}),
+            # The parent answers while the child sits on its card.
+            _after(parked, "parent answered early"),
+        ],
+        {
+            "probe task": [
+                fence("calculator", {"expression": "1+1"}),
+                "child done",
+            ]
+        },
+        revoke_approvals=revoked.append,
+        review_tool_calls=review,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=CARD_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        assert parked.is_set(), "precondition: the child armed a card"
+        # The turn ended with the card still pending: it must NOT have
+        # been failed closed on the way out, and the child must still be
+        # live to receive the answer.
+        assert revoked == [], f"a live child's card was revoked: {revoked}"
+        assert not coordinator.all_finished()
+        assert _child_row(db)["status"] == RUN_RUNNING
+    finally:
+        # The human approves -- one turn late, which is the whole point.
+        answered.set()
+    _wait_until(coordinator.all_finished, "the approved child never finished")
+
+    assert revoked == []
+    # The gate released for real: the tool ran and produced its answer...
+    child_row = _child_row(db)
+    calc_results = _tool_results(db.get_run(child_row["id"]), "calculator")
+    assert calc_results and "2" in calc_results[0], calc_results
+    # ... that answer reached the child's NEXT provider call ...
+    child_turns = chat.child_calls["probe task"]
+    assert len(child_turns) == 2, "the child never got a turn after the card"
+    assert any(
+        "2" in str(message.get("content", ""))
+        for message in child_turns[1]["messages_payload"]
+    )
+    # ... and the child finished properly, a turn after the one that
+    # spawned it.
+    assert coordinator.snapshot()[0].status == RUN_DONE
+    assert child_row["status"] == RUN_DONE
+    assert child_row["result"] == "child done"
+
+
+def test_stopping_the_turn_still_stops_its_children(db, monkeypatch):
+    """User cancellation still reaches the fleet, survival default or not.
+
+    Stop is the user's only kill switch for a run tree, and spec Sec 10
+    puts any change to its semantics in PR 3b. So a cancelled turn settles
+    exactly as phase 2 did -- the survival path is for a turn that ENDED,
+    not for one the user killed. Note this runs on the SHIPPED default:
+    nothing is pinned here.
+    """
+    # The child is blocked inside its provider call, so it can only be
+    # abandoned, never joined; 0.2s of grace makes the point in 0.2s.
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def spawn_then_cancel():
+        # Cancel once the child is provably live, so the turn ends with a
+        # running child AND a cancellation -- the combination under test.
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        return "parent stopped"
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), spawn_then_cancel],
+        {"slow task": [_gated_child(entered, release)]},
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=cancelled.is_set,
+        )
+        assert entered.is_set()
+        assert outcome.status == RUN_CANCELLED
+        # Wedged inside its provider call, so it is abandoned rather than
+        # unwound -- but never left live, and never left `running`.
+        assert coordinator.all_finished()
+        assert [h.status for h in coordinator.snapshot()] == [RUN_CANCELLED]
+        assert _child_row(db)["status"] == RUN_CANCELLED
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize(
+    "outlive, expect_finished",
+    [(True, False), (False, True)],
+)
+def test_the_kill_switch_decides_the_same_childs_fate(
+    db, monkeypatch, outlive, expect_finished
+):
+    """One script, one child, two configs -- opposite outcomes.
+
+    The regression guard in its strongest form: everything except
+    `[agents] subagents_outlive_turn` is held identical -- one script, one
+    child, one config object -- so the knob is provably the only thing
+    deciding whether the turn settles this child or leaves it running.
+    """
+    pin_agent_settings(
+        monkeypatch,
+        **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: outlive},
+    )
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
+    entered = threading.Event()
+    release = threading.Event()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=SHORT_WALL_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert entered.is_set()
+        assert outcome.status == RUN_DONE
+        assert coordinator.all_finished() is expect_finished
+        expected_row = RUN_CANCELLED if expect_finished else RUN_RUNNING
+        assert _child_row(db)["status"] == expected_row
+    finally:
+        release.set()
+        if outlive:
+            _wait_until(
+                coordinator.all_finished, "the released child never finished"
+            )
+
+
+def test_a_survivor_is_out_of_reach_of_the_next_turns_settle(db):
+    """`mine` scoping: a later turn must not settle an earlier turn's child.
+
+    The comment on `mine = list(self._fleet_cancels)` called this defensive
+    when children could not outlive their turn. It is load-bearing now: the
+    injected coordinator here is long-lived (as the Console's will be), so
+    turn two can SEE turn one's survivor -- and must leave it alone, even
+    though turn two is itself turn-scoped.
+    """
+    entered = threading.Event()
+    release = threading.Event()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+    )
+    try:
+        service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert entered.is_set()
+        # A second turn on the same service, spawning nothing at all.
+        _chat.parent_replies.append("second answer")
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "again"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.final_text == "second answer"
+        # Turn one's child is untouched by turn two's settle.
+        assert [h.status for h in coordinator.snapshot()] == [RUN_RUNNING]
+        assert _child_row(db)["status"] == RUN_RUNNING
+    finally:
+        release.set()
+        _wait_until(
+            coordinator.all_finished, "the released child never finished"
+        )
+    assert _child_row(db)["status"] == RUN_DONE
 
 
 def test_single_child_under_a_live_fleet_routes_through_wait_agents(db):
@@ -742,6 +1206,699 @@ def test_fleet_tools_are_primary_only(db):
 )
 def test_coerce_max_live_subagents(configured, expected):
     assert agent_service._coerce_max_live_subagents(configured) == expected
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (True, True),
+        (False, False),
+        # TOML strings and env-var strings both land here as text.
+        ("true", True),
+        ("False", False),
+        ("YES", True),
+        ("off", False),
+        ("1", True),
+        ("0", False),
+        # Unparseable -> the documented default, never a raise: a typo in
+        # the config file must not decide a run's containment silently.
+        ("maybe", agent_service.DEFAULT_SUBAGENTS_OUTLIVE_TURN),
+        (None, agent_service.DEFAULT_SUBAGENTS_OUTLIVE_TURN),
+        ("", agent_service.DEFAULT_SUBAGENTS_OUTLIVE_TURN),
+    ],
+)
+def test_coerce_subagents_outlive_turn(configured, expected):
+    assert (
+        agent_service._coerce_subagents_outlive_turn(configured) is expected
+    )
+
+
+def test_children_outlive_their_turn_by_default():
+    """The shipped default is survival -- asserted, not assumed."""
+    assert agent_service.DEFAULT_SUBAGENTS_OUTLIVE_TURN is True
+    assert agent_service.SUBAGENTS_OUTLIVE_TURN_KEY == "subagents_outlive_turn"
+
+
+# -- containment for a THREADED survivor: replacing clamp_child_budget's --
+# -- parent-remainder clamp on THAT path only (spec Sec 5)             ----
+#
+# PR3a-1 Task 5 (spec Sec 5 "Containment"), scope corrected after review
+# (Defect 1): a THREADED, non-inline background child deliberately
+# outlives its parent (Task 2's default), so its own wall-clock ceiling
+# can no longer be `min(child, parent's remaining budget)` for THAT
+# child -- that made a surviving child's effective bound an accident of
+# WHEN in the turn it was spawned. The replacement:
+# `agent_models.contain_child_budget` gives a threaded child its OWN
+# independent ceiling, resolved from `[agents] child_max_wall_seconds`
+# (default `DEFAULT_CHILD_MAX_WALL_SECONDS`) -- same `_setting`-driven
+# config chain as `max_live_subagents` above. A TURN-SCOPED or
+# `inline=True` child is UNAFFECTED by any of this: `AgentService.spawn`
+# branches on `fleet is None or inline`, and that child still gets
+# `clamp_child_budget`'s old parent-remainder clamp, byte-identical to
+# every release before this task (see
+# `test_clamp_child_budget_for_the_turn_scoped_path_*` in
+# `test_agent_models.py`, and `test_an_inline_childs_budget_still_clamps_
+# to_the_parents_remainder` below).
+#
+# SPEND (`max_total_tokens`, passed through unchanged) is untouched by
+# this task and already bounds each run independently of the parent's
+# lifetime. COUNT was NOT bounded across turns when Task 5 shipped --
+# `[agents] max_live_subagents` capped live children WITHIN one
+# `run_turn` call only (Task 5 review, Defect 2, disproved by execution:
+# two consecutive `run_turn` calls each spawning 2 blocking children
+# yielded 4 simultaneously running against a cap of 2). PR3a-1 Task 6a
+# fixed it by moving the coordinator's ownership up to
+# `ConsoleAgentBridge`, one per conversation, injected into every
+# service; `test_live_children_are_capped_across_turns` below is that
+# test, INVERTED to assert the cap now holds.
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("900", 900.0),
+        (900, 900.0),
+        (900.5, 900.5),
+        ("0.5", 0.5),
+        # The 1s FLOOR is deliberately NOT this function's job -- it lives
+        # in `contain_child_budget` (single source of truth, same place
+        # `clamp_child_budget`'s own floor already lived), so a
+        # non-positive config value passes through unfloored here.
+        (0, 0.0),
+        (-5, -5.0),
+        # Unparseable -> the documented default, never a raise.
+        ("plenty", agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (None, agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        ("", agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (float("inf"), agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+        (float("nan"), agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS),
+    ],
+)
+def test_coerce_child_max_wall_seconds(configured, expected):
+    assert agent_service._coerce_child_max_wall_seconds(configured) == expected
+
+
+def test_a_threaded_childs_own_wall_clock_matches_the_config_default(db):
+    """A THREADED child's persisted budget carries the INDEPENDENT
+    default ceiling, not the parent's own (`FLEET_CFG.budget.
+    max_wall_seconds == 240.0`, deliberately different from the default
+    below so this distinguishes old vs new behaviour). `make_fleet_service`
+    builds an explicit coordinator, so `fleet is not None` and this spawn
+    call is non-inline -- the `contain_child_budget` branch. Also pins
+    the depth-1 guarantee end to end.
+    """
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert (
+        child["budget"]["max_wall_seconds"]
+        == agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS
+    )
+    assert child["budget"]["max_wall_seconds"] != FLEET_CFG.budget.max_wall_seconds
+    assert child["budget"]["max_subagents"] == 0  # depth-1 preserved
+
+
+def test_a_threaded_childs_wall_clock_ceiling_respects_a_config_override(
+    db, monkeypatch
+):
+    """The config key actually reaches the THREADED spawn call, not just
+    the default (`make_fleet_service` -> non-inline, so this exercises
+    `contain_child_budget`, not `clamp_child_budget`)."""
+    pin_agent_settings(monkeypatch, child_max_wall_seconds="77.0")
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["budget"]["max_wall_seconds"] == 77.0
+
+
+def test_a_threaded_childs_other_budget_fields_still_inherit_the_parents(db):
+    """`contain_child_budget`'s own "everything but wall clock and
+    subagent count is unchanged" half, end to end through the real
+    spawn() closure on the THREADED path (`make_fleet_service` below
+    builds an explicit coordinator, so `fleet is not None` and this
+    spawn call is non-inline): the child still inherits the parent's
+    round budget, same fields `clamp_child_budget` passes through
+    unchanged on the turn-scoped/inline path."""
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(
+            max_steps=40,
+            max_model_turns=17,
+            max_subagents=2,
+            max_total_tokens=5000,
+            max_tool_call_seconds=45.0,
+        ),
+    )
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child task"}), "handled"],
+        {"child task": ["child done"]},
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["budget"]["max_model_turns"] == 17
+    assert child["budget"]["max_steps"] == 40
+    assert child["budget"]["max_total_tokens"] == 5000
+    assert child["budget"]["max_tool_call_seconds"] == 45.0
+
+
+def test_an_inline_childs_budget_still_clamps_to_the_parents_remainder(
+    db, monkeypatch
+):
+    """PR3a-1 Task 5 review, Defect 1 (Major, blocking) -- the regression
+    this pins.
+
+    The first version of this task swapped the child-budget call at
+    `AgentService.spawn`'s ONE spawn site with no branch, so it hit the
+    INLINE path too: every skill call (`functools.partial(spawn,
+    inline=True)`), and every spawn when the fleet is off entirely
+    (`fleet is None`, this test's own setup via `max_live_subagents = 1`).
+    An inline child is turn-scoped by construction -- it blocks the
+    parent inside `deps.spawn`, and there is no `_settle_fleet` to bound
+    it externally -- so handing it `contain_child_budget`'s INDEPENDENT
+    ceiling (unrelated to how much of the parent's own wall clock was
+    left) violated the plan's Global Constraint verbatim: "Turn-scoped
+    behaviour must stay byte-identical when no child outlives its turn."
+    Proved by execution at review time: a child with a 30s ceiling ran
+    1.5s past a parent whose own ceiling was 1.0s and returned RUN_DONE;
+    reverted to the parent-remainder clamp, it correctly went `stuck`
+    instead of returning done.
+
+    This test pins the FIXED behaviour: an inline child's persisted
+    budget still comes from `clamp_child_budget` (parent-remainder),
+    never from `contain_child_budget`'s independent
+    `DEFAULT_CHILD_MAX_WALL_SECONDS` default.
+    """
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(
+            max_steps=10, max_model_turns=10, max_subagents=1, max_wall_seconds=100.0
+        ),
+    )
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "child task"}),
+            "sub answer",  # consumed by the child, INLINE and in order
+            "handled",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None  # confirms this really is the inline path
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    # NOT the independent default -- the defect this pins would have made
+    # this equal DEFAULT_CHILD_MAX_WALL_SECONDS (1800.0) regardless of the
+    # parent's own 100.0s ceiling.
+    assert (
+        child["budget"]["max_wall_seconds"]
+        != agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS
+    )
+    # Clamped to (approximately) the parent's own remaining wall clock at
+    # spawn time -- never exceeding the parent's own ceiling, the
+    # pre-Task-5 invariant, restored byte-identical.
+    assert 0 < child["budget"]["max_wall_seconds"] <= cfg.budget.max_wall_seconds
+    assert child["budget"]["max_subagents"] == 0  # depth-1 still holds
+
+
+def test_live_children_are_capped_across_turns(db, monkeypatch):
+    """PR3a-1 Task 6a -- the INVERSION of Task 5's
+    `test_live_children_are_not_capped_across_turns`, kept as an
+    inversion rather than a rewrite so the gap it pinned cannot quietly
+    reopen.
+
+    What that test proved by execution (and Task 5's review disproved a
+    claim with): `[agents] max_live_subagents` bounded live children
+    WITHIN one `run_turn` call only. `AgentService._run_one` builds a
+    brand-new `FleetCoordinator` every `run_turn` that did not have one
+    injected, and Console built a new `AgentService` per `run_reply` with
+    no `fleet_coordinator=` at all -- so two turns each spawning 2
+    children ran 4 at once against a cap of 2, and aggregate live
+    children scaled with MESSAGES SENT, bounded by nothing.
+
+    What changed, and why the construction below is now the
+    production-faithful one: Task 6a moved the coordinator's ownership UP
+    to `ConsoleAgentBridge`, which keeps ONE per conversation and injects
+    it into the fresh `AgentService` it still builds for every
+    `run_reply`. So this test builds TWO separate services -- one per
+    turn, exactly as Console does -- sharing ONE coordinator. It
+    deliberately still does not use `make_fleet_service`: that helper
+    builds a single service and would prove only that one service reuses
+    its own coordinator, which was never the failing case. The failing
+    case was the SERVICE being replaced between turns, and that is what
+    is reproduced here.
+
+    Sequential by construction, not concurrent threads: PR3a-1 Task 2
+    made a still-running child outlive the `run_turn` call that spawned
+    it BY DEFAULT, so turn 1's `run_turn()` returns once its own primary
+    answers -- without waiting for its two spawned children, which stay
+    running in the background -- before this test ever calls turn 2's
+    `run_turn()`. Both children stay blocked on the same `Event` until
+    released at teardown. `FleetChat`'s parent-reply queue is per
+    PRIMARY-run-at-a-time (task-vs-no-task addressing, not run-id), so
+    two truly concurrent primaries sharing one `FleetChat` would race on
+    it -- sequential calls sidestep that entirely and still prove the
+    bound, since this is about COUNT accounting, not concurrency.
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    _patch_max_live(monkeypatch, 2)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=10, max_model_turns=10, max_subagents=2),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "a"}),
+            fence(SPAWN_TOOL_NAME, {"task": "b"}),
+            "turn 1 done",
+        ]
+        + [
+            fence(SPAWN_TOOL_NAME, {"task": "c"}),
+            fence(SPAWN_TOOL_NAME, {"task": "d"}),
+            "turn 2 done",
+        ],
+        {
+            "a": [blocked_child],
+            "b": [blocked_child],
+            "c": [blocked_child],
+            "d": [blocked_child],
+        },
+        allow_unconsumed=True,
+    )
+    # The bridge's own construction, reduced to its load-bearing part: one
+    # coordinator per CONVERSATION, one service per TURN.
+    fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+    service_1 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    try:
+        _run_id_1, outcome_1 = service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_1.status == RUN_DONE
+        _wait_until(
+            lambda: len(
+                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
+            )
+            == 2,
+            "turn 1's 2 children never both started running",
+        )
+
+        # Turn 2: a SECOND, independent service -- a new `run_reply` in
+        # Console terms -- on the SAME conversation. Its two spawns must
+        # now be REFUSED: turn 1's survivors still hold both slots.
+        run_id_2, outcome_2 = service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_2.status == RUN_DONE
+        assert service_2._fleet is fleet, (
+            "the injected coordinator must be honored as-is, not rebuilt"
+        )
+
+        # The headline, inverted: 2 live children across two turns
+        # against a cap of 2, where before Task 6a it was 4.
+        running = [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
+        assert len(running) == 2, (
+            f"the cap of 2 must hold ACROSS turns; saw {len(running)} "
+            f"live: {[h.task for h in running]}"
+        )
+        assert sorted(h.task for h in running) == ["a", "b"], (
+            "the live children must still be turn 1's -- a cap that "
+            "held by killing the survivors would be worse than no cap"
+        )
+
+        # And the refusal is REAL, not merely uncounted: no child run row
+        # was ever created for turn 2's tasks. (`reserve()` returns None
+        # before any thread starts, so a capped spawn costs nothing.)
+        child_tasks = sorted(
+            row["task"]
+            for row in db.list_runs("c", include_superseded=True)
+            if row["agent_kind"] == "subagent"
+        )
+        assert child_tasks == ["a", "b"], child_tasks
+        # The supervisor is TOLD why, in a retryable form -- an invisible
+        # refusal would just look like a broken spawn tool.
+        spawn_results = _tool_results(db.get_run(run_id_2), SPAWN_TOOL_NAME)
+        assert spawn_results and all(
+            "live sub-agent limit reached" in result for result in spawn_results
+        ), spawn_results
+    finally:
+        # Unblocks turn 1's children (turn 2 never started any).
+        released.set()
+        drain_deadline = time.monotonic() + 2.0
+        while time.monotonic() < drain_deadline:
+            if not [h for h in fleet.snapshot() if h.status == RUN_RUNNING]:
+                break
+            time.sleep(0.02)
+
+
+def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(
+    db, monkeypatch
+):
+    """PR3a-1 Task 6a regression guard for `_settle_fleet`'s
+    `mine = list(self._fleet_cancels)` scoping (Task 2), which a
+    long-lived coordinator makes load-bearing rather than merely
+    defensive.
+
+    Before Task 6a the scoping could not be observed at all: each turn
+    built its own coordinator, so "every handle in the fleet" and "this
+    turn's handles" were the same set by construction. Now they are not
+    -- turn 2 shares a coordinator that still holds turn 1's live
+    survivor -- and settling by coordinator membership instead of by
+    `_fleet_cancels` would cancel, join and abandon that survivor at the
+    end of turn 2, marking its run row `cancelled` while its thread is
+    still working. "The next message you send kills your background
+    agents" is the feature deleting itself.
+
+    Why turn 2 runs under the KILL SWITCH (`subagents_outlive_turn =
+    false`) while turn 1 did not -- this is the whole trick, and without
+    it the test is vacuous: on the default path `_surviving_handles`
+    returns EVERY pending handle, so a wrongly-widened `mine` still
+    spares the survivor and the mutation goes undetected (verified: it
+    does). The scoping only bites when a turn genuinely settles -- the
+    kill switch, or a user Stop. So turn 1 spawns a survivor under the
+    default, then the switch is flipped and turn 2 settles for real,
+    which is also a realistic sequence (the user flips the knob, or a
+    later turn is cancelled) rather than a contrivance.
+
+    Mutation-checked: rewriting `_settle_fleet`'s `mine` to
+    `[h.handle_id for h in fleet.snapshot()]` fails this test on its own
+    assertions -- the survivor's cancel Event comes back set, its handle
+    terminal and its run row `cancelled`.
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    outlive = {"value": True}
+
+    def fake_setting(key, default):
+        if key == agent_service.MAX_LIVE_SUBAGENTS_KEY:
+            return 3
+        if key == agent_service.SUBAGENTS_OUTLIVE_TURN_KEY:
+            return outlive["value"]
+        return default
+
+    monkeypatch.setattr(agent_service, "_setting", fake_setting)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=10, max_model_turns=10, max_subagents=2),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "survivor"}), "turn 1 done"]
+        + [fence(SPAWN_TOOL_NAME, {"task": "turn 2 child"}), "turn 2 done"],
+        {"survivor": [blocked_child], "turn 2 child": ["quick answer"]},
+        allow_unconsumed=True,
+    )
+    fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service_1 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    try:
+        _run_id_1, outcome_1 = service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_1.status == RUN_DONE
+        _wait_until(
+            lambda: len(
+                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
+            )
+            == 1,
+            "turn 1's child never started running",
+        )
+        survivor = next(
+            h for h in fleet.snapshot() if h.status == RUN_RUNNING
+        )
+        # Turn 1's own service still holds the survivor's cancel Event --
+        # this is exactly what the bridge keeps a finished run's service
+        # for, and what turn 2 must not touch.
+        cancel_event = service_1._fleet_cancels[survivor.handle_id]
+
+        outlive["value"] = False  # turn 2 settles its own children for real
+        _run_id_2, outcome_2 = service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_2.status == RUN_DONE
+        # Turn 2 really did settle: its own child is terminal, waited for
+        # inside its own turn the phase-2 way.
+        turn_2_child = next(
+            h for h in fleet.snapshot() if h.task == "turn 2 child"
+        )
+        assert turn_2_child.status == RUN_DONE, turn_2_child
+
+        # ... and turn 1's survivor is untouched by ALL of it.
+        assert not cancel_event.is_set(), (
+            "turn 2's settle cancelled turn 1's survivor -- `mine` "
+            "scoping lost"
+        )
+        after = fleet.get(survivor.handle_id)
+        assert after is not None and after.status == RUN_RUNNING, after
+        row = next(
+            r
+            for r in db.list_runs("c", include_superseded=True)
+            if r["agent_kind"] == "subagent" and r["task"] == "survivor"
+        )
+        assert row["status"] == RUN_RUNNING, row["status"]
+
+        # ... and it still finishes on its own terms afterwards.
+        released.set()
+        _wait_until(
+            lambda: fleet.get(survivor.handle_id).status == RUN_DONE,
+            "the survivor never completed after being released",
+        )
+        assert fleet.get(survivor.handle_id).result == "released"
+    finally:
+        released.set()
+
+
+def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
+    """PR3a-1 Task 6a: `cancel_subagent` reports what it can DELIVER.
+
+    With a per-conversation coordinator, a later turn's service can SEE
+    every live handle -- including a survivor it did not start -- but the
+    cancel Event lives in the service that spawned it and nowhere else.
+    Answering `True` from the wrong service would set no Event, stop
+    nothing, and take the user's Cancel button down to a no-op that looks
+    like a success: the exact silent-failure class this PR's audit was
+    written to hunt. The bridge relies on the honest `False` to fall
+    through to the real owner (`ConsoleAgentBridge.cancel_subagent`).
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    _patch_max_live(monkeypatch, 3)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=10, max_model_turns=10, max_subagents=2),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "survivor"}), "turn 1 done"]
+        + ["turn 2 done"],
+        {"survivor": [blocked_child]},
+        allow_unconsumed=True,
+    )
+    fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service_1 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    try:
+        service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        _wait_until(
+            lambda: len(
+                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
+            )
+            == 1,
+            "turn 1's child never started running",
+        )
+        survivor = next(
+            h for h in fleet.snapshot() if h.status == RUN_RUNNING
+        )
+        service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+
+        # Turn 2's service SEES it ...
+        assert any(
+            h.handle_id == survivor.handle_id
+            for h in service_2.fleet_snapshot()
+        )
+        # ... does not own it ...
+        assert service_2.live_subagent_handles() == []
+        assert service_2.cancel_subagent(survivor.handle_id) is False
+        assert not service_1._fleet_cancels[survivor.handle_id].is_set(), (
+            "a refusal must not have set the Event anyway"
+        )
+        # ... and turn 1's service, which does, still can.
+        assert [h.handle_id for h in service_1.live_subagent_handles()] == [
+            survivor.handle_id
+        ]
+        assert service_1.cancel_subagent(survivor.handle_id) is True
+        assert service_1._fleet_cancels[survivor.handle_id].is_set()
+    finally:
+        released.set()
+        _wait_until(
+            lambda: fleet.get(survivor.handle_id).status != RUN_RUNNING,
+            "the cancelled survivor never unwound",
+        )
+
+
+def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
+    db, monkeypatch
+):
+    """PR3a-1 Task 6a: a survivor must be VISIBLE to the supervisor that
+    comes after it, not merely alive.
+
+    `check_agents` scoped its whole answer to `my_handle_ids`, so with a
+    per-conversation coordinator a child still working from an earlier
+    message would be absent from the one surface that answers "what is
+    still running?" -- present in the process, invisible to the agent.
+    It is reported in a separate labelled section because `wait_agents`
+    deliberately still refuses it (collecting a foreign child's result is
+    PR 3a-2's delivery work).
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    _patch_max_live(monkeypatch, 3)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(SPAWN_TOOL_NAME, CHECK_AGENTS_TOOL_NAME),
+        budget=RunBudget(max_steps=10, max_model_turns=10, max_subagents=2),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "long job"}), "turn 1 done"]
+        + [fence(CHECK_AGENTS_TOOL_NAME, {}), "turn 2 done"],
+        {"long job": [blocked_child]},
+        allow_unconsumed=True,
+    )
+    fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service_1 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry, chat_call=chat, fleet_coordinator=fleet
+    )
+    try:
+        service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        _wait_until(
+            lambda: len(
+                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
+            )
+            == 1,
+            "turn 1's child never started running",
+        )
+        run_id_2, _outcome_2 = service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=cfg,
+            api_endpoint="llama_cpp",
+        )
+        checks = _tool_results(db.get_run(run_id_2), CHECK_AGENTS_TOOL_NAME)
+        assert checks, "turn 2 never called check_agents"
+        rendered = "\n".join(checks)
+        assert "No sub-agents have been started yet." not in rendered, rendered
+        assert "Still running from an earlier turn" in rendered, rendered
+        assert "long job" in rendered, rendered
+    finally:
+        released.set()
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
@@ -1069,7 +2226,9 @@ def test_wait_agents_cancellation_stops_children_and_ends_the_run(db):
     assert child["status"] == RUN_CANCELLED
 
 
-def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db):
+def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(
+    db, monkeypatch
+):
     """PR2a Task 7: a stopped child's pending approval card is revoked.
 
     The approval wait lives on the child's own per-call daemon thread, so
@@ -1083,7 +2242,14 @@ def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db):
     The child here is wedged inside its provider call, so it is both
     cooperatively cancelled AND abandoned -- the two moments that must
     revoke.
+
+    Pinned turn-scoped (PR3a-1 Task 2): revocation is what STOPPING a
+    child does, and a surviving child is not stopped -- its card belongs
+    to a run that is still live, so revoking it would fail a legitimate
+    tool call closed (asserted by
+    ``test_a_survivors_approval_cards_are_not_revoked``).
     """
+    pin_turn_scoped_children(monkeypatch)
     never = threading.Event()
     entered = threading.Event()
 
@@ -1296,7 +2462,13 @@ def test_finished_children_record_their_measured_token_spend_on_the_handle(db):
 def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(
     db, monkeypatch
 ):
-    """A wedged child must not hold wait_agents past the run's budget."""
+    """A wedged child must not hold wait_agents past the run's budget.
+
+    Pinned turn-scoped (PR3a-1 Task 2) so the tail assertions -- every
+    handle and every run row terminal once the turn returns -- still
+    describe this test's own subject rather than the new default.
+    """
+    pin_turn_scoped_children(monkeypatch)
     # Keep the post-cancel drain short: the behaviour under test is the
     # wall-clock BOUND, not how long an abandoned thread is humoured.
     monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
@@ -1431,8 +2603,11 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(
     real_initial_disclosure = agent_service.initial_disclosure
 
     def exploding_initial_disclosure(registry, budget):
-        # Only a depth-1 CHILD's budget is clamped to max_subagents == 0
-        # (`clamp_child_budget`); the primary's is > 0. This fires only
+        # Only a depth-1 CHILD's budget has max_subagents == 0 -- zeroed
+        # by whichever containment function built it (this test's child
+        # is threaded, via `contain_child_budget`; an inline child would
+        # get the same zero from `clamp_child_budget` instead, PR3a-1
+        # Task 5) -- the primary's is > 0. This fires only
         # for the child -- standing in for a misbehaving provider's
         # `list_catalog()` recursing into the tool catalog's RLock
         # (Task 4's own documented trigger for this exact exception).
@@ -1466,14 +2641,24 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(
 
 
 class _SpyRunLogWriter:
-    """Minimal stand-in recording the run tree's two cleanup calls."""
+    """Minimal stand-in recording the run tree's two cleanup calls.
 
-    def __init__(self):
+    Args:
+        observe: optional zero-arg callable invoked from INSIDE
+            ``write_manifest``; whatever it returns is appended to
+            ``observed``. That is the only honest way to assert what was
+            true *at manifest time* rather than after the turn -- the
+            ordering constraint the settle sits under.
+    """
+
+    def __init__(self, observe=None):
         self.is_active = False
         self.log_dir = None
         self.bound: str | None = None
         self.manifests: list[dict] = []
         self.closed = 0
+        self._observe = observe
+        self.observed: list = []
 
     def bind(self, run_id):
         self.bound = run_id
@@ -1482,6 +2667,8 @@ class _SpyRunLogWriter:
         return None
 
     def write_manifest(self, data):
+        if self._observe is not None:
+            self.observed.append(self._observe())
         self.manifests.append(data)
 
     def close(self):
@@ -1585,6 +2772,100 @@ def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     assert db.count_subagent_runs("c") == 1
     waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
     assert waits and "answer two" in waits[0]
+
+
+def test_a_settled_child_is_settled_before_the_manifest_is_written(
+    db, monkeypatch
+):
+    """The ordering constraint, asserted AT manifest time.
+
+    Whatever the turn still settles must be finished before
+    `write_manifest`/`close` run -- otherwise the run tree's manifest
+    describes a tree still in motion and the writer is closed under a
+    child that is still appending. Observed from inside `write_manifest`,
+    because after `run_turn` returns every ordering looks the same.
+    """
+    pin_turn_scoped_children(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    live: dict = {}
+    spy = _SpyRunLogWriter(
+        observe=lambda: [h.status for h in live["coordinator"].snapshot()]
+    )
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release, reply="on time")]},
+        run_log_writer=spy,
+    )
+    live["coordinator"] = coordinator
+    # Released from another thread shortly after the turn ends, so the
+    # child finishes NORMALLY inside the settle's wait -- the ordinary
+    # case, not the abandonment path.
+    releaser = threading.Thread(target=lambda: (time.sleep(0.1), release.set()))
+    releaser.start()
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+    finally:
+        release.set()
+        releaser.join(_JOIN_TIMEOUT)
+    assert outcome.status == RUN_DONE
+    # Read from INSIDE write_manifest: the child was already terminal.
+    assert spy.observed == [[RUN_DONE]], (
+        f"handle statuses at manifest time: {spy.observed}"
+    )
+    assert len(spy.manifests) == 1
+    assert spy.closed == 1
+
+
+def test_a_survivor_does_not_cost_the_turn_its_manifest(db):
+    """Survival must not skip finalization -- only defer the child.
+
+    The settle is wrapped precisely so nothing about the fleet can cost
+    the run tree its manifest or leak the writer's descriptor. A turn that
+    leaves a child running still writes exactly one manifest and closes
+    exactly once, and it does so with the survivor still live -- which is
+    the seam Task 3 (writer lifetime) owns, recorded here rather than
+    left to be discovered.
+    """
+    entered = threading.Event()
+    release = threading.Event()
+    spy = _SpyRunLogWriter()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+        run_log_writer=spy,
+    )
+    try:
+        run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        assert len(spy.manifests) == 1
+        assert spy.manifests[0]["run_id"] == run_id
+        assert spy.closed == 1
+        # Written while the child is still working, deliberately.
+        assert not coordinator.all_finished()
+    finally:
+        release.set()
+        _wait_until(
+            coordinator.all_finished, "the released child never finished"
+        )
 
 
 def test_failed_child_is_reported_in_wait_result(db):

@@ -12,15 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import os
 import threading
 import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -37,6 +39,7 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     RunBudget,
     RUNTIME_TOOL_NAMES,
+    TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_SPAWN,
@@ -50,9 +53,10 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
-from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
+from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     SkillToolProvider,
@@ -140,18 +144,64 @@ _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 #     covers the 30-turn worst case. This is a backstop, not a target -- fast
 #     cloud models finish 30 turns in a fraction of it, and the user can Stop
 #     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
-#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
-#     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
-#     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
-#     clock bounds that in TIME but not in SPEND. This ceiling is a PER-RUN
-#     bound, not a shared one: `agent_runtime.run_agent_loop`'s
-#     `total_tokens` is a local to each run, and `clamp_child_budget` passes
-#     `max_total_tokens` through to a child UNCHANGED rather than dividing
-#     it -- so the parent and each of up to max_subagents=2 children can
-#     independently spend up to this ceiling. The real worst-case aggregate
-#     across one Console message is therefore roughly 3x this value
+#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget.
+#     Which function bounds a child's OWN wall clock now depends on the
+#     path (PR3a-1 Task 5, spec Sec 5 "Containment"; corrected after a
+#     Task 5 review caught an over-broad first draft, Defect 1):
+#     `AgentService.spawn` branches on `fleet is None or inline`. A
+#     turn-scoped or skill-invoked (`inline=True`) child still gets
+#     `agent_models.clamp_child_budget`'s parent-remainder clamp,
+#     byte-identical to every release before Task 5 -- its worst case is
+#     UNCHANGED by any of this. Only a THREADED, non-inline child (a
+#     native `spawn_subagent` call with the fleet on, the common case
+#     here) goes through `agent_models.contain_child_budget` instead,
+#     which gives it an INDEPENDENT ceiling
+#     (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`, 1800s by default)
+#     unrelated to the parent's own remaining budget -- because PR3a-1
+#     Task 2 lets that kind of child survive past the turn that spawned
+#     it. So: one message can reach 30 * (1 + max_subagents) = 90
+#     provider turns, and for a THREADED survivor the wall clock no
+#     longer bounds that 90-turn worst case in TIME the way it used to --
+#     a child spawned near the end of the parent's own 1800s window can
+#     go on running for up to its own independent 1800s afterward, so the
+#     worst-case wall-clock span from "user sends the message" to "every
+#     threaded child has settled" is now up to roughly double
+#     CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at today's defaults), not
+#     CONSOLE_MAX_WALL_SECONDS alone. Also true and easy to miss: a child
+#     blocked INSIDE one provider call is not stopped by its own wall
+#     clock AT ALL -- `run_agent_loop`'s check only runs BETWEEN loop
+#     iterations (before each `deps.call_model`), so a hung provider call
+#     can hold a child open past its ceiling until that call itself
+#     returns, independent of every number in this comment.
+#
+#     SPEND is unaffected by any of this: this ceiling is a PER-RUN
+#     bound, not a shared one -- `agent_runtime.run_agent_loop`'s
+#     `total_tokens` is a local to each run, and BOTH containment
+#     functions pass `max_total_tokens` through to a child UNCHANGED
+#     rather than dividing it -- so the parent and each of up to
+#     max_subagents=2 children can independently spend up to this
+#     ceiling, for a real worst-case aggregate of roughly 3x this value
 #     (~3M tokens), not a value bounded BY it directly. It still sits far
 #     above any normal 30-turn run.
+#
+#     COUNT is bounded across turns as of PR3a-1 Task 6a, and was NOT
+#     before it (Task 5's review disproved that by execution: two
+#     consecutive `run_turn` calls each spawning 2 blocking children ran
+#     4 at once against a cap of 2). `[agents] max_live_subagents` used
+#     to cap children WITHIN one `run_turn` call only -- a brand-new
+#     `FleetCoordinator` per `run_turn`, and a brand-new `AgentService`
+#     per `run_reply` with no coordinator injected -- so aggregate live
+#     children scaled with MESSAGES SENT. Task 6a moved the coordinator's
+#     ownership to this bridge, one per CONVERSATION
+#     (`_conversation_fleet_coordinator`), and injects it into every
+#     service it builds, so a later turn's spawn is refused while an
+#     earlier turn's survivors hold the slots. Read the bound precisely:
+#     it is PER CONVERSATION and per PROCESS -- N concurrent
+#     conversations can hold N * max_live_subagents live children between
+#     them, and nothing caps the aggregate across conversations. What it
+#     does guarantee is that one conversation cannot accumulate an
+#     unbounded fleet by the user pressing Send repeatedly, which is what
+#     it could do before.
 # The engine's own RunBudget defaults (agent_models.RunBudget) keep the
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
@@ -175,15 +225,42 @@ CONSOLE_MAX_WALL_SECONDS = 1800.0
 
 #: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
 #: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
-#: `clamp_child_budget` passes this value through to each sub-agent
-#: UNCHANGED rather than dividing it among children. Sub-agents also
-#: inherit the turn and step budget (agent_models.clamp_child_budget,
-#: operator decision 2026-07-25), so one message can reach
-#: 30 * (1 + max_subagents) = 90 provider turns across the parent and up to
-#: max_subagents=2 children -- each independently able to spend up to this
-#: ceiling, for a real worst-case aggregate of roughly 3x this value
-#: (~3M tokens), not a value THIS constant bounds directly. It still sits
-#: far above any normal 30-turn run.
+#: BOTH of `AgentService.spawn`'s containment functions -- `agent_models.
+#: clamp_child_budget` (turn-scoped/inline children) and `agent_models.
+#: contain_child_budget` (threaded survivor candidates, PR3a-1 Task 5) --
+#: pass this value through to each sub-agent UNCHANGED rather than
+#: dividing it among children. Sub-agents also inherit the turn and step
+#: budget, so one message can reach 30 * (1 + max_subagents) = 90
+#: provider turns across the parent and up to max_subagents=2 children --
+#: each independently able to spend up to this ceiling, for a real
+#: worst-case aggregate SPEND of roughly 3x this value (~3M tokens), not
+#: a value THIS constant bounds directly. It still sits far above any
+#: normal 30-turn run.
+#:
+#: Unlike SPEND, the aggregate is no longer bounded in TIME by this run's
+#: own wall clock for every child: a THREADED survivor (PR3a-1 Task 2
+#: default) can keep running for up to its own independent wall-clock
+#: ceiling (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`) AFTER this
+#: run's own 1800s window ends, so the worst-case wall-clock span from
+#: "user sends the message" to "every threaded child has settled" is now
+#: up to roughly double CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at
+#: today's defaults). A turn-scoped or skill-invoked (`inline=True`)
+#: child is UNAFFECTED -- it still clamps to the parent's own remaining
+#: budget exactly as before PR3a-1 Task 5, so its worst case stays
+#: CONSOLE_MAX_WALL_SECONDS alone. Separately, ANY child blocked INSIDE
+#: one provider call is not stopped by its own wall clock at all -- the
+#: ceiling only bites BETWEEN loop iterations, not during one, so a hung
+#: provider call holds its child open past every figure above until that
+#: call itself returns.
+#:
+#: COUNT (`[agents] max_live_subagents`, referenced by max_subagents=2
+#: above) became a real cross-turn bound in PR3a-1 Task 6a and was not
+#: one before it (see Task 5's review, Defect 2): `ConsoleAgentBridge`
+#: now keeps ONE `FleetCoordinator` per conversation and injects it into
+#: the fresh `AgentService` it builds for every `run_reply`, so live
+#: children are capped per CONVERSATION rather than per message. The
+#: cap is not global: N conversations can hold N * max_live_subagents
+#: live children between them in one process.
 CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
 
 CONSOLE_RUN_BUDGET = RunBudget(
@@ -508,6 +585,62 @@ def format_change_summary_marker(
     return (
         f"✎ Edited {files_changed} {noun}  +{adds} −{dels}"
         " — review with `v`"
+    )
+
+
+#: PR3a-1 Task 6c (audit F2): which window a ``change_snapshots`` row
+#: covers. A row's kind is what lets resume re-derive the same transcript
+#: rows the live run emitted -- without it, a post-turn row and a turn row
+#: are indistinguishable and collapse into one summary that never happened.
+CHANGE_KIND_TURN = "turn"
+#: The turn's own window, taken while a sub-agent from an EARLIER turn was
+#: still writing: the diff may contain changes this turn's agent never made.
+CHANGE_KIND_TURN_CONCURRENT_SUBAGENT = "turn_concurrent_subagent"
+#: The window AFTER a turn's E snapshot, during which that turn's surviving
+#: sub-agents kept working.
+CHANGE_KIND_SUBAGENT_POST_TURN = "subagent_post_turn"
+
+
+def format_subagent_post_turn_change_marker(
+    files_changed: int, adds: int, dels: int
+) -> str:
+    """The change-summary row for a turn's SURVIVORS (PR3a-1 Task 6c).
+
+    A separate row rather than folding into the turn's own counts: these
+    changes were made after the turn answered, by a sub-agent the user may
+    have forgotten was running. Same live/resume parity rule as
+    :func:`format_change_summary_marker`.
+
+    Args:
+        files_changed: Changed-file count across the window's roots.
+        adds: Total added lines.
+        dels: Total deleted lines.
+
+    Returns:
+        The row text.
+    """
+    noun = "file" if files_changed == 1 else "files"
+    return (
+        f"✎ A sub-agent edited {files_changed} {noun} after this turn"
+        f"  +{adds} −{dels} — review with `v`"
+    )
+
+
+def format_concurrent_subagent_change_marker() -> str:
+    """The disclosure row for a turn that shared the tree (Task 6c).
+
+    Change tracking diffs a working tree; it cannot tell two concurrent
+    writers apart. When a sub-agent from an earlier turn was still running
+    during this one, this turn's diff may hold changes its own agent never
+    made -- and a review surface the user makes trust decisions from must
+    say so rather than imply sole authorship.
+
+    Returns:
+        The row text ("⚠ a sub-agent from an earlier turn ...").
+    """
+    return (
+        "⚠ a sub-agent from an earlier turn was still writing during this "
+        "turn — some of these changes may be its, not this turn's"
     )
 
 
@@ -872,6 +1005,103 @@ class AgentLiveSnapshot:
     subagents: tuple[SubAgentSummary, ...] = ()
 
 
+@dataclass
+class _PostTurnChangeWindow:
+    """One conversation's open "what did the survivors do" change window.
+
+    PR3a-1 Task 6c (audit F2). Its ``handle``'s baselines are the shas the
+    turn's own E snapshot recorded, so this window starts exactly where
+    that turn's record stopped -- the property that makes a survivor's
+    write land in exactly ONE record rather than in none.
+
+    Attributes:
+        run_id: The run whose survivors this window covers; the record and
+            its transcript row are filed against it.
+        session_id: Session the transcript row is appended to.
+        handle: The pre-satisfied follow-on handle (see
+            ``ChangeTurnTracker.continuation``).
+        successor: The NEXT turn's ``TurnHandle``, once one has started.
+            Its baseline shas become this window's end, whoever closes it
+            and whenever -- because from the instant that baseline is
+            taken, the tree belongs to the next turn's record, and a
+            window ending anywhere later would put the same write on two
+            cards (found by mutation: a survivor finishing mid-turn was
+            counted twice).
+    """
+
+    run_id: str
+    session_id: str
+    handle: Any
+    successor: Any = None
+
+
+class _ModelCallLifeline:
+    """An event loop plus the one thread that drives it: a model-call transport.
+
+    ``_StreamingModelAdapter.chat_call`` is called from ordinary (blocking)
+    agent threads and has to reach async gateway code, which it does by
+    submitting to a loop with ``run_coroutine_threadsafe``. That loop must
+    be alive for as long as anything might still submit to it, and only one
+    thread may ever drive it -- so the loop and its driver thread are one
+    object with one lifetime, and *whoever owns that lifetime* decides how
+    long calls through it stay possible.
+
+    Two owners exist:
+
+    * ``run_reply`` owns one per turn for the PRIMARY agent, torn down when
+      the turn returns (PR #629 Fix 1(c): one loop, and therefore at most
+      one ``httpx`` client swap, per run -- see ``ConsoleProviderGateway.
+      _active_http_client``).
+    * Each fleet CHILD owns one of its own from birth (PR3a-1 Task 1),
+      entered on the child's own thread and torn down when the child
+      finishes. A child never borrows the turn's loop, so there is nothing
+      to transfer when the turn ends and nothing dies underneath a child
+      that outlives it.
+
+    Construction and ``start`` are deliberately separate: a raise between
+    them would otherwise leave a daemon thread spinning ``run_forever``
+    with nothing left to stop it. Start it as the FIRST statement of the
+    try/finally that owns its ``shutdown``.
+    """
+
+    __slots__ = ("loop", "_thread", "_name")
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self.loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self.loop.run_forever, name=name, daemon=True
+        )
+
+    def start(self) -> None:
+        """Start the driver thread. Raises only on thread exhaustion."""
+        self._thread.start()
+
+    def shutdown(self) -> None:
+        """Stop the driver thread, join it, then close the loop.
+
+        ``close()`` on a still-running loop raises, and a loop closed out
+        from under its own thread is undefined -- hence stop, then join,
+        then close. ``ident`` is ``None`` only when ``start()`` itself never
+        succeeded (thread exhaustion): ``join()`` would raise RuntimeError
+        and skip the close below, leaking the loop's fd, and nothing was
+        ever scheduled anyway, so close it directly. A thread still alive
+        after the bounded join keeps its loop OPEN: a leaked loop is
+        survivable, a segfaulting one is not, and the thread is a daemon so
+        it dies with the process either way.
+        """
+        if self._thread.ident is not None:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
+        if self._thread.is_alive():
+            logger.warning(
+                f"model-call loop '{self._name}' did not stop within "
+                f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the daemon thread"
+            )
+        else:
+            self.loop.close()
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -951,6 +1181,104 @@ class _StreamingModelAdapter:
         self._should_cancel = should_cancel
         self._loop = loop
         self._provider_stream_signals = provider_stream_signals
+        # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
+        # its own thread and enters `child_lifeline()` there before its run
+        # begins, which parks that child's private loop here; every
+        # `chat_call` made on that thread -- the child's, and only the
+        # child's -- resolves to it. Threading it through a thread-local
+        # rather than a constructor argument is what keeps the one
+        # `chat_call` callable AgentService holds correct for both the
+        # primary agent and every child, without the adapter having to
+        # guess which agent is calling (`_is_subagent`'s prompt-prefix
+        # sniff answers a different question -- what to do with the
+        # STREAMED TEXT -- and would be the wrong authority for lifetime).
+        self._thread_loop = threading.local()
+
+    @property
+    def _submit_loop(self) -> asyncio.AbstractEventLoop:
+        """The loop THIS thread submits model calls to.
+
+        A fleet child's own lifeline when one is active on this thread,
+        else the turn's loop (the primary agent, and any inline sub-agent
+        it runs on its own thread, where turn-scoped is exactly right).
+
+        **Before wiring a new caller through here, read this.** The
+        fallback is the TURN's loop, and thread-locals do not inherit: any
+        thread that did not itself enter ``child_lifeline`` gets the turn's
+        loop no matter which agent's work it is doing. That is correct for
+        every caller today -- ``chat_call`` has exactly one consumer
+        (``AgentService.chat_call``) and is only ever reached on the
+        agent's own thread, so the ``tool-*`` daemon threads
+        ``_call_with_timeout`` spawns never arrive here. But if one ever
+        did, after its turn had ended, it would submit onto a loop that is
+        stopped-but-not-closed and block for the full
+        ``_CHAT_CALL_TIMEOUT_SECONDS`` rather than failing loudly. A new
+        caller on a borrowed thread needs its own lifeline, not this
+        fallback.
+        """
+        child_loop = getattr(self._thread_loop, "loop", None)
+        return self._loop if child_loop is None else child_loop
+
+    @contextlib.contextmanager
+    def child_lifeline(self):
+        """Own a private model-call lifeline for ONE fleet child's run.
+
+        Entered on the child's own thread, before its run starts, and
+        exited when that run ends -- so the loop the child calls the model
+        through lives exactly as long as the child does, whether that is
+        shorter or LONGER than the turn that spawned it. Wired into
+        ``AgentService(child_model_scope=...)`` by ``run_reply``.
+
+        A child is one agent on one thread, so the override is a plain
+        set/restore rather than a stack: nothing nests here (a child never
+        spawns -- ``contain_child_budget`` zeroes its ``max_subagents``,
+        PR3a-1 Task 5's replacement for ``clamp_child_budget`` on this
+        THREADED child's path specifically -- an inline/skill child never
+        reaches ``child_lifeline`` at all, since it runs on the parent's
+        own thread). The
+        previous value is restored anyway so a future nested caller cannot
+        silently lose its own lifeline.
+
+        Raises:
+            RuntimeError: If the process cannot start the driver thread
+                (thread exhaustion). Deliberately propagated rather than
+                degraded to the turn's loop: a child that quietly ran on a
+                loop due to die at end of turn would make survival
+                unpredictable from the user's side. Note where the reason
+                surfaces -- this scope is entered OUTSIDE ``_run_one``, so
+                ``create_run`` has not happened and **no run row exists**
+                to carry a status (probe-verified: ``child_run_rows == 0``).
+                ``run_child``'s ``except BaseException`` catches it and
+                reports it on the FLEET HANDLE (``fleet.finish(...,
+                RUN_ERROR, error=...)``), which is what the parent reads
+                back from ``wait_agents``/``check_agents``.
+        """
+        # Name it WITHOUT the `fleet-` prefix that names a child's RUN
+        # thread (`AgentService.spawn`): the plain concatenation produced
+        # `fleet-loop-fleet-<handle>`, which `Tests/Chat/
+        # test_console_agent_bridge.py::_join_fleet_threads` -- and anything
+        # else enumerating children by that prefix -- would pick up as a
+        # second, phantom child. Harmless while lifelines shut down
+        # promptly; a wedged one would make every such sweep burn its full
+        # timeout. The handle still identifies it.
+        lifeline = _ModelCallLifeline(
+            "child-loop-"
+            + threading.current_thread().name.removeprefix("fleet-")
+        )
+        try:
+            lifeline.start()
+        except BaseException:
+            # Nothing was ever scheduled; close the loop directly so a
+            # failed start never leaks its fd.
+            lifeline.shutdown()
+            raise
+        previous = getattr(self._thread_loop, "loop", None)
+        self._thread_loop.loop = lifeline.loop
+        try:
+            yield
+        finally:
+            self._thread_loop.loop = previous
+            lifeline.shutdown()
 
     def chat_call(
         self,
@@ -1022,7 +1350,13 @@ class _StreamingModelAdapter:
         # provider connection and any locks it owns for the life of the
         # session. Timing out turns that into an ordinary turn failure the
         # run loop already knows how to report.
-        future = asyncio.run_coroutine_threadsafe(_consume(), self._loop)
+        #
+        # PR3a-1 Task 1: `_submit_loop`, not `self._loop`. A fleet child
+        # submits to the lifeline IT owns (parked on this thread by
+        # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
+        # TURN's loop can no longer strand a child mid-call -- the case the
+        # timeout above was the last line of defence against.
+        future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
         try:
             future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
         except FuturesTimeoutError:
@@ -1642,7 +1976,28 @@ class ConsoleAgentBridge:
         self._allowed_tools = tuple(e.name for e in registry.list_catalog()) + (
             SPAWN_TOOL_NAME,
         )
-        self._live: dict[str, AgentLiveSnapshot] = {}
+        #: PR3a-1 Task 6b (audit F1): the rail's live slots, keyed
+        #: ``conversation_id -> run key -> snapshot`` -- NOT one snapshot
+        #: per conversation.
+        #:
+        #: `on_step` is called for EVERY agent kind, and a fleet child now
+        #: outlives the turn that spawned it, so a single per-conversation
+        #: slot made a survivor's every step overwrite the NEXT turn's rail
+        #: entry with its own turn's step list and count -- and its last
+        #: write left `status="running"` there permanently. The step's own
+        #: run id (an argument `on_step` has always received and ignored)
+        #: is the key that makes each run's progress land in its own slot.
+        #:
+        #: The PRIMARY's key is a per-turn token rather than its run id:
+        #: `run_turn` only returns the run id when the turn ENDS, and the
+        #: rail must publish "running" the moment it starts.
+        #: `_live_primary_keys` records which key `live_snapshot`'s summary
+        #: line reads; a child's slot is reachable through
+        #: `live_run_snapshot` and is never the summary.
+        self._live: dict[str, dict[str, AgentLiveSnapshot]] = {}
+        #: Which `_live[conversation_id]` key holds the rail's summary --
+        #: the newest turn's primary run. Only `run_reply` writes it.
+        self._live_primary_keys: dict[str, str] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
         # PR2b Task 1: published for the DURATION of one `run_reply` call
         # -- set right before `service.run_turn(...)` is invoked (below),
@@ -1700,6 +2055,83 @@ class ConsoleAgentBridge:
         # -- see that `finally` block's own comment and
         # `test_fleet_teardown_pop_is_identity_checked_not_blind`.
         self._fleet_services: dict[str, AgentService] = {}
+        # PR3a-1 Task 6a -- THE COORDINATOR'S LIFETIME, one per
+        # CONVERSATION.
+        #
+        # `AgentService` builds a fresh `FleetCoordinator` on every
+        # `run_turn` unless one is injected, and this bridge builds a
+        # fresh `AgentService` on every `run_reply` -- so before this
+        # task the coordinator's lifetime was ONE TURN, twice over.
+        # That was coherent only while `_settle_fleet` guaranteed no
+        # child outlived its turn. Since PR3a-1 Task 2 one can, and a
+        # turn-scoped coordinator made every survivor invisible to
+        # `check_agents`/the fleet panel, unstoppable (nothing held its
+        # cancel Event any more), and -- proved by execution in Task 5's
+        # review -- UNCOUNTED: `[agents] max_live_subagents` capped
+        # children WITHIN a turn only, so two turns each spawning 2
+        # children ran 4 at once against a cap of 2, and aggregate live
+        # children scaled with messages sent, bounded by nothing.
+        #
+        # Owning it HERE, above the service, is what makes the cap real:
+        # every `AgentService` this bridge builds for a conversation is
+        # handed the SAME coordinator, so turn 2's `fleet.reserve()`
+        # sees turn 1's survivors still occupying slots and refuses (a
+        # retryable refusal the model is told to collect a child for --
+        # see `AgentService.spawn`'s "live sub-agent limit reached").
+        # Keyed by conversation, not global, because that is the unit
+        # the panel, the cancel button and the user's mental model all
+        # use -- see `_conversation_fleet_coordinator` for the sizing,
+        # pruning and kill-switch rules.
+        self._fleet_coordinators: dict[str, FleetCoordinator] = {}
+        # PR3a-1 Task 6a -- the services of FINISHED runs that still have
+        # a live child, kept only so that child stays STOPPABLE.
+        #
+        # A child's cancel Event lives in the `AgentService` that spawned
+        # it (`spawn` registers it in that service's own
+        # `_fleet_cancels`, which `run_turn` resets per turn), and its
+        # approval-card revoke callback likewise. The shared coordinator
+        # above can SEE a survivor from any later turn, but only its own
+        # service can actually stop it -- which is why
+        # `AgentService.cancel_subagent` now refuses a handle it does not
+        # own rather than reporting a success it cannot deliver. Each
+        # entry is dropped as soon as its last child settles
+        # (`_prune_settled_fleet_survivors`), so this holds at most one
+        # service per turn that left a child running, and live children
+        # are themselves capped by the coordinator above.
+        self._fleet_survivor_services: dict[str, list[AgentService]] = {}
+        # The ONE lock in this class's fleet state, and only because this
+        # entry is the only read-modify-write among them. Every other
+        # dict here is single-operation (a `.get`, a `[k] = v`, a `.pop`)
+        # and rides the GIL, as their own docstrings above argue. Pruning
+        # a retained list is not: it reads the list, filters it, and
+        # writes the result back, so a `run_reply` finally appending its
+        # own survivor in that window would be silently dropped -- and a
+        # dropped owner is an unstoppable child, the precise failure this
+        # retention exists to prevent. Held only across list rebuilds and
+        # never while calling into a coordinator's own lock in a way that
+        # could nest (a snapshot copy is taken, then the lock is
+        # released).
+        self._fleet_survivor_lock = threading.Lock()
+        # PR3a-1 Task 6c (audit F2) -- the change-review window that covers
+        # what a turn's SURVIVORS do after that turn's E snapshot.
+        #
+        # `[conversation_id] -> _PostTurnChangeWindow`, at most one per
+        # conversation: opened by `run_reply`'s finally when children are
+        # still running, closed by whichever comes first -- the last of
+        # them exiting `_child_run_scope`, or the NEXT turn's end (using
+        # that turn's BASELINE shas, so the two windows share a boundary
+        # and nothing can land between them).
+        self._post_turn_change_windows: dict[str, "_PostTurnChangeWindow"] = {}
+        # Live sub-agent count per conversation, incremented/decremented by
+        # `_child_run_scope` on the CHILD's own thread. Deliberately not
+        # read off the coordinator: `fleet.finish()` runs AFTER the child's
+        # scope exits, so a coordinator read at that instant still reports
+        # the child as running and the window would never close.
+        self._live_child_counts: dict[str, int] = {}
+        # Guards both of the above together -- their invariant is a pair
+        # ("a window is open only while a child is live"), so a lock per
+        # dict could not express it.
+        self._change_window_lock = threading.Lock()
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2165,25 +2597,49 @@ class ConsoleAgentBridge:
         # would otherwise leave a daemon thread spinning `run_forever`
         # forever with nothing to stop it. Same ordering rule -- and the
         # same failure -- as `AgentService`'s own `thread.start()` guard.
-        run_loop = asyncio.new_event_loop()
-        loop_thread = threading.Thread(
-            target=run_loop.run_forever,
-            name="console-agent-loop",
-            daemon=True,
-        )
+        #
+        # PR3a-1 Task 1: the loop+thread pair is now a `_ModelCallLifeline`
+        # (identical construction, start ordering and teardown -- see its
+        # docstring), because a fleet CHILD now owns one of its own from
+        # birth via `adapter.child_lifeline`. This one stays exactly what
+        # it always was: the PRIMARY agent's, turn-scoped.
+        turn_lifeline = _ModelCallLifeline("console-agent-loop")
         adapter = _StreamingModelAdapter(
             store=self._store,
             provider_gateway=self._gateway,
             resolution=resolution,
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
-            loop=run_loop,
+            loop=turn_lifeline.loop,
             provider_stream_signals=provider_stream_signals,
         )
 
+        # PR3a-1 Task 6b (audit F1): this turn's own key into
+        # `self._live[conversation_id]`. Minted here because `run_turn`
+        # only hands back the primary run id when the turn ENDS, and the
+        # rail must show "running" from the moment it starts; every write
+        # below (start, each primary step, the terminal publish) uses this
+        # one key, so an earlier turn's surviving child -- which writes
+        # under its OWN run id -- can never land in it.
+        primary_live_key = uuid4().hex
         live_steps: list[AgentLiveStep] = []
         subagents: list[SubAgentSummary] = []
-        self._live[conversation_id] = AgentLiveSnapshot(status="running")
+        #: run key -> that run's own live step feed. The primary's entry is
+        #: `live_steps` itself, so every existing reader of that local is
+        #: unchanged.
+        run_live_steps: dict[str, list[AgentLiveStep]] = {
+            primary_live_key: live_steps
+        }
+        self._publish_live(
+            conversation_id,
+            primary_live_key,
+            AgentLiveSnapshot(status="running"),
+            primary=True,
+        )
+        # PR3a-1 Task 6b (audit F1): bound the per-run slots -- one turn's
+        # worth plus whatever is still live. Must run AFTER the publish
+        # above, which is what tells it which key is this turn's.
+        self._prune_live_run_slots(conversation_id)
         # A live run is starting -- live_snapshot takes over as the rail's
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
@@ -2192,19 +2648,27 @@ class ConsoleAgentBridge:
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             # PR 2a (task-3): AgentService now attributes every step to its
             # run id so a fleet of concurrent children can be told apart.
-            # PR 2b Task 2: still accepted (the `LoopDeps.on_step`
-            # signature this closure must match always passes it) but
-            # still not used -- routing fleet rows turned out not to need
-            # it. `service.fleet_snapshot()` below (the `service` local
-            # this closure closes over, late-bound: `on_step` is only ever
-            # CALLED once `service = AgentService(...)` a little further
-            # down has already run) already returns every live child's
-            # real status/run_id/handle_id, correctly told apart by
-            # `FleetCoordinator` itself -- keying `live_steps`/`self._live`
-            # per run_id here too would be redundant bookkeeping for
-            # nothing this bridge (still single-primary-run-at-a-time)
-            # actually needs.
-            live_steps.append(
+            # PR3a-1 Task 6b (audit F1): that attribution is finally USED.
+            # PR 2b Task 2 argued it was redundant because the bridge runs
+            # one primary at a time -- true only while a run cannot outlive
+            # its turn. It can now, so a child's step arriving after this
+            # turn returned would otherwise be published into the slot the
+            # NEXT turn owns: wrong step list, wrong count, and a
+            # `status="running"` that never clears. Each run's feed and
+            # each run's published snapshot are keyed by that run instead.
+            # (`service.fleet_snapshot()` below still supplies the
+            # `subagents` rows, and is still the authority for a child's
+            # STATUS -- this splits the STEP feed, not the row list.)
+            live_key = (
+                primary_live_key
+                if agent_kind == AGENT_KIND_PRIMARY
+                # An empty run id (no run attributed) falls back to this
+                # turn's own key -- the pre-fix destination, so nothing
+                # regresses for a step that cannot be attributed.
+                else (run_id or primary_live_key)
+            )
+            key_steps = run_live_steps.setdefault(live_key, [])
+            key_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
             # TASK-1366: pair this result step with the raw before/after
@@ -2281,17 +2745,24 @@ class ConsoleAgentBridge:
                     summary=step.summary,
                     step_index=step.index,
                 )
-            self._live[conversation_id] = AgentLiveSnapshot(
-                status="running",
-                step=len(live_steps),
-                steps=tuple(live_steps[-5:]),
-                # PR2b Task 2: rebuilt from the fleet's REAL live state on
-                # every publish, not appended once and left stuck at the
-                # "running" default -- see
-                # `_subagent_summaries_from_fleet`'s docstring.
-                subagents=_subagent_summaries_from_fleet(
-                    service.fleet_snapshot(), subagents
+            self._publish_live(
+                conversation_id,
+                live_key,
+                AgentLiveSnapshot(
+                    status="running",
+                    step=len(key_steps),
+                    steps=tuple(key_steps[-5:]),
+                    # PR2b Task 2: rebuilt from the fleet's REAL live state
+                    # on every publish, not appended once and left stuck at
+                    # the "running" default -- see
+                    # `_subagent_summaries_from_fleet`'s docstring.
+                    subagents=_subagent_summaries_from_fleet(
+                        service.fleet_snapshot(), subagents
+                    ),
                 ),
+                # PR3a-1 Task 6b: a step from a child NEVER moves the rail's
+                # summary pointer. Only `run_reply` (this turn) may.
+                primary=False,
             )
 
         # C1 (probe-verified security regression): thread the composed MCP
@@ -2340,9 +2811,20 @@ class ConsoleAgentBridge:
         # the run (spec failure posture): begin_turn cannot raise, and the
         # wrapper's await records timeouts as per-root disclosures.
         change_handle = None
+        # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
+        # running now belongs to an EARLIER turn (this one has not spawned
+        # anything yet), and a working-tree differ cannot tell its writes
+        # from this turn's agent's -- so this turn's record is stamped
+        # `turn_concurrent_subagent` and discloses the overlap rather than
+        # implying sole authorship.
+        concurrent_subagent = self._live_child_count(conversation_id) > 0
         if self._change_tracker is not None and change_roots:
             try:
                 change_handle = self._change_tracker.begin_turn(change_roots)
+                # PR3a-1 Task 6c: an earlier turn's survivor window ends
+                # HERE, at this turn's baseline -- fixed now, applied
+                # whenever that window is actually closed.
+                self._note_successor_turn(conversation_id, change_handle)
             except Exception:  # noqa: BLE001 -- tracking must never block a run
                 logger.opt(exception=True).warning(
                     "change_review: begin_turn failed; turn untracked"
@@ -2373,6 +2855,28 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
             revoke_approvals=revoke_approvals,
+            # PR3a-1 Task 1: every fleet child gets its own model-call
+            # lifeline, entered on the child's own thread and torn down
+            # when the CHILD finishes -- never when this turn does.
+            # PR3a-1 Task 6c wraps that lifeline (it does not replace it)
+            # so the same enter/exit also counts live children: "the last
+            # child of this conversation just finished" is the signal that
+            # closes a survivor's change-review window, and nothing else
+            # in the bridge knows it (the coordinator marks a handle
+            # terminal only AFTER this scope exits).
+            child_model_scope=functools.partial(
+                self._child_run_scope, conversation_id, adapter
+            ),
+            # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
+            # turn's -- the only thing that makes `[agents]
+            # max_live_subagents` a bound on the fleet rather than on one
+            # message, and the only thing an earlier turn's survivor is
+            # still visible and stoppable through. `None` when the fleet
+            # kill switch is on, which leaves `AgentService` to take its
+            # own inline path exactly as before.
+            fleet_coordinator=self._conversation_fleet_coordinator(
+                conversation_id
+            ),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
         # `self._fleet_services`'s own docstring in `__init__` for the
@@ -2417,7 +2921,7 @@ class ConsoleAgentBridge:
             # finally still runs and still closes the loop; `is_alive()`
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
-            loop_thread.start()
+            turn_lifeline.start()
             run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=run_messages,
@@ -2463,34 +2967,20 @@ class ConsoleAgentBridge:
             # then_empty_after_run_completes`).
             self._teardown_fleet_service(conversation_id, service)
             # PR2a Task 6.5: stop the driver thread before closing, and
-            # join it -- `close()` on a still-running loop raises, and a
-            # loop closed out from under its own thread is undefined. By
-            # this point `run_turn` has already settled every fleet child
-            # (`AgentService._settle_fleet` joins/abandons them before it
-            # returns), so nothing should still be submitting; the join is
-            # bounded anyway so an abandoned straggler can never wedge the
-            # Console. The thread is a daemon, so even a wedged one dies
-            # with the process rather than holding it open.
+            # join it (the stop/join/close ordering, and why a wedged
+            # thread keeps its loop open, now live in
+            # `_ModelCallLifeline.shutdown`).
             #
-            # `ident` is None only if `start()` itself never succeeded
-            # (thread exhaustion): `join()` on a never-started thread
-            # raises RuntimeError, which would escape this finally and
-            # skip the close below -- leaking the loop's fd. Nothing was
-            # ever scheduled in that case, so close it directly.
-            if loop_thread.ident is not None:
-                run_loop.call_soon_threadsafe(run_loop.stop)
-                loop_thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
-            if loop_thread.is_alive():
-                # Leave it (and its loop) rather than closing a loop its
-                # own thread is still inside -- a leaked loop is survivable,
-                # a segfaulting one is not.
-                logger.warning(
-                    "console agent run loop did not stop within "
-                    f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the "
-                    "daemon thread"
-                )
-            else:
-                run_loop.close()
+            # PR3a-1 Task 1: this tears down the PRIMARY agent's loop and
+            # nothing else. It used to be the whole run tree's -- and the
+            # comment here used to argue that was safe because "run_turn
+            # has already settled every fleet child ... so nothing should
+            # still be submitting", an invariant PR 3a deliberately
+            # breaks. A fleet child submits to a lifeline it owns itself
+            # (see `_StreamingModelAdapter.child_lifeline`), so a child
+            # still running when this line executes keeps a live transport
+            # to the model rather than losing one out from under it.
+            turn_lifeline.shutdown()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
             # editing is when review matters most. `run_id` is unbound when
@@ -2499,8 +2989,25 @@ class ConsoleAgentBridge:
             # them to), and the exception still propagates unchanged.
             if change_handle is not None:
                 try:
+                    # PR3a-1 Task 6c: close the EARLIER turn's survivor
+                    # window (if its children are still going and nothing
+                    # closed it yet) -- so its record lands here rather
+                    # than waiting on a child that need never finish, and
+                    # in the transcript position resume re-derives it in.
+                    # It ends at THIS turn's baseline shas, bound by
+                    # `_note_successor_turn` at turn start, so the two
+                    # windows abut on one sha: a survivor's write lands in
+                    # exactly one of them, never in the crack between and
+                    # never on both cards.
+                    self._close_post_turn_change_window(conversation_id)
                     _steps = (
                         outcome.steps if "outcome" in locals() else []
+                    )
+                    # Read before E: a child still running when the end
+                    # snapshot is taken is a child whose later writes this
+                    # turn's record cannot contain.
+                    _had_live_children = (
+                        self._live_child_count(conversation_id) > 0
                     )
                     _records = self._change_tracker.end_turn(
                         change_handle,
@@ -2509,22 +3016,32 @@ class ConsoleAgentBridge:
                         ),
                     )
                     if "run_id" in locals():
-                        for _rec in _records:
-                            self._db.record_change_snapshot(
-                                run_id=run_id,
-                                root=_rec.root,
-                                baseline_sha=_rec.baseline_sha,
-                                end_sha=_rec.end_sha,
-                                files_changed=_rec.files_changed,
-                                adds=_rec.adds,
-                                dels=_rec.dels,
-                                tracking_error=_rec.tracking_error,
-                                untracked_oversize=_rec.untracked_oversize,
-                                nested_repos=_rec.nested_repos,
-                            )
-                        self._append_change_markers(
-                            session_id, run_id, _records
+                        self._record_change_snapshots(
+                            run_id=run_id,
+                            records=_records,
+                            kind=(
+                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                                if concurrent_subagent
+                                else CHANGE_KIND_TURN
+                            ),
                         )
+                        self._append_change_markers(
+                            session_id,
+                            run_id,
+                            _records,
+                            kind=(
+                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                                if concurrent_subagent
+                                else CHANGE_KIND_TURN
+                            ),
+                        )
+                        if _had_live_children:
+                            self._open_post_turn_change_window(
+                                conversation_id,
+                                run_id=run_id,
+                                session_id=session_id,
+                                handle=change_handle,
+                            )
                     elif _records:
                         logger.warning(
                             "change_review: run crashed before a run row "
@@ -2552,26 +3069,36 @@ class ConsoleAgentBridge:
             final_text_len=len(outcome.final_text),
             step_count=len(outcome.steps),
         )
-        self._live[conversation_id] = AgentLiveSnapshot(
-            status=outcome.status,
-            step=len(live_steps),
-            steps=tuple(live_steps[-5:]),
-            # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
-            # conversation_id)` -- deliberately: the `finally` block just
-            # above already ran `self._teardown_fleet_service`, which pops
-            # THIS run's own `self._fleet_services` entry (assuming no
-            # overlapping resend already overwrote it -- see that
-            # method's docstring), so a lookup by conversation_id here
-            # would see `[]` and wipe out every child's final status right
-            # when the run ends. The `service` local variable is
-            # unaffected by that pop -- by this point `_settle_fleet`
-            # (called from inside `run_turn`, before it returned above)
-            # has already joined/abandoned every fleet child, so every
-            # handle `service.fleet_snapshot()` returns here is already
-            # terminal.
-            subagents=_subagent_summaries_from_fleet(
-                service.fleet_snapshot(), subagents
+        # PR3a-1 Task 6b (audit F1): under THIS turn's own key, so the
+        # terminal status it writes is final -- a surviving child's later
+        # steps land in the child's own slot and can no longer reset this
+        # one to "running" for the rest of the process's life.
+        self._publish_live(
+            conversation_id,
+            primary_live_key,
+            AgentLiveSnapshot(
+                status=outcome.status,
+                step=len(live_steps),
+                steps=tuple(live_steps[-5:]),
+                # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
+                # conversation_id)` -- deliberately: the `finally` block
+                # just above already ran `self._teardown_fleet_service`,
+                # which pops THIS run's own `self._fleet_services` entry
+                # (assuming no overlapping resend already overwrote it --
+                # see that method's docstring), so a lookup by
+                # conversation_id here would see `[]` and wipe out every
+                # child's final status right when the run ends. The
+                # `service` local variable is unaffected by that pop -- by
+                # this point `_settle_fleet` (called from inside
+                # `run_turn`, before it returned above) has already
+                # joined/abandoned every fleet child, so every handle
+                # `service.fleet_snapshot()` returns here is already
+                # terminal.
+                subagents=_subagent_summaries_from_fleet(
+                    service.fleet_snapshot(), subagents
+                ),
             ),
+            primary=True,
         )
         # The run just finished -- drop any stale historical cache entry so
         # a *later* resume (in a future process) always re-derives fresh
@@ -2619,11 +3146,490 @@ class ConsoleAgentBridge:
         """
         if self._fleet_services.get(conversation_id) is service:
             self._fleet_services.pop(conversation_id, None)
+        # PR3a-1 Task 6a: the pop above stays exactly as it was -- always,
+        # identity-checked -- but it is no longer the END of this
+        # service's usefulness. If it still has a live child (Task 2's
+        # survivor: the run returned, the child did not), that child's
+        # cancel Event and approval-revoke callback live in THIS service
+        # and nowhere else, so dropping the last reference to it is what
+        # made a survivor unstoppable. Retained until its last child
+        # settles; `_prune_settled_fleet_survivors` does the dropping,
+        # lazily, off the read paths below. Retained on the identity-miss
+        # path too (a stale teardown from an overtaken run still owns its
+        # own children) -- `service` is this call's own object either way.
+        if service.live_subagent_handles():
+            with self._fleet_survivor_lock:
+                retained = self._fleet_survivor_services.setdefault(
+                    conversation_id, []
+                )
+                if service not in retained:
+                    retained.append(service)
+
+    @contextlib.contextmanager
+    def _child_run_scope(self, conversation_id: str, adapter: Any):
+        """One fleet child's whole life, as seen by this bridge (Task 6c).
+
+        Wraps the per-child model-call lifeline PR3a-1 Task 1 introduced
+        (``adapter.child_lifeline``) with the one fact change review needs
+        and nothing else has: **when a child's run actually ends**.
+
+        Entered on the child's own thread before its run starts and exited
+        when that run returns, so the count it maintains is the count of
+        children genuinely still working -- unlike the coordinator, whose
+        ``finish()`` lands AFTER this scope exits and which therefore still
+        reports the last child as running at the exact moment the window
+        should close.
+
+        The lifeline's own contract is preserved exactly: a failure to
+        start it still propagates (see ``child_lifeline``'s docstring for
+        why that must not degrade), and the count is still decremented,
+        because a child that never started is not a child still running.
+
+        Args:
+            conversation_id: The conversation this child belongs to.
+            adapter: The turn's ``_StreamingModelAdapter``.
+        """
+        with self._change_window_lock:
+            self._live_child_counts[conversation_id] = (
+                self._live_child_counts.get(conversation_id, 0) + 1
+            )
+        try:
+            with adapter.child_lifeline():
+                yield
+        finally:
+            with self._change_window_lock:
+                remaining = self._live_child_counts.get(conversation_id, 1) - 1
+                if remaining > 0:
+                    self._live_child_counts[conversation_id] = remaining
+                    last = False
+                else:
+                    self._live_child_counts.pop(conversation_id, None)
+                    last = True
+            if last:
+                # The window is closed OUTSIDE the lock: closing takes a
+                # git snapshot and writes a DB row, and holding a lock
+                # every child thread contends on across that would
+                # serialise fleet teardown behind disk I/O.
+                self._close_post_turn_change_window(conversation_id)
+
+    def _live_child_count(self, conversation_id: str) -> int:
+        """How many of this conversation's sub-agents are mid-run."""
+        with self._change_window_lock:
+            return self._live_child_counts.get(conversation_id, 0)
+
+    def _open_post_turn_change_window(
+        self,
+        conversation_id: str,
+        *,
+        run_id: str,
+        session_id: str,
+        handle: Any,
+    ) -> None:
+        """Start tracking what this turn's survivors do from here on.
+
+        Called from ``run_reply``'s ``finally``, right after the turn's own
+        E snapshot, and only when a child was still running when that
+        snapshot was taken. The window's baseline IS that E sha, so the
+        two windows share a boundary: no write can land between them.
+
+        Closed immediately when the last child turns out to have finished
+        in the meantime -- the window then covers the sliver between E and
+        now, which is exactly where that child's final writes would be.
+
+        Never raises: change tracking must not fail a reply.
+
+        Args:
+            conversation_id: The conversation the survivors belong to.
+            run_id: The turn whose survivors this window covers.
+            session_id: Session for the transcript row.
+            handle: The turn's own (already ended) ``TurnHandle``.
+        """
+        if self._change_tracker is None:
+            return
+        try:
+            follow_on = self._change_tracker.continuation(handle)
+            if follow_on is None:
+                return
+            window = _PostTurnChangeWindow(
+                run_id=run_id, session_id=session_id, handle=follow_on
+            )
+            # A previous window for this conversation should already be
+            # closed (this turn closed it at its own baseline), so this is
+            # a no-op -- but installing over one that ISN'T would drop its
+            # record with nothing said, which is the exact failure class
+            # this window exists to remove. Mutation-found: deleting the
+            # baseline close made the previous window vanish silently
+            # instead of merely recording a wider one.
+            self._close_post_turn_change_window(conversation_id)
+            with self._change_window_lock:
+                self._post_turn_change_windows[conversation_id] = window
+                still_live = self._live_child_counts.get(conversation_id, 0) > 0
+            if not still_live:
+                self._close_post_turn_change_window(conversation_id)
+        except Exception:  # noqa: BLE001 -- tracking never breaks a reply
+            logger.opt(exception=True).warning(
+                "change_review: could not open the post-turn window"
+            )
+
+    def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
+        """Tell an open survivor window where it must stop (Task 6c).
+
+        Called as soon as a new turn's baseline is KICKED (not settled) --
+        the window's end is decided by that turn's existence, not by when
+        its snapshot finishes, so a survivor that ends mid-turn stops at
+        the same sha as one that ends after it.
+
+        Args:
+            conversation_id: The conversation starting a turn.
+            handle: That turn's ``TurnHandle``.
+        """
+        with self._change_window_lock:
+            window = self._post_turn_change_windows.get(conversation_id)
+            if window is not None and window.successor is None:
+                window.successor = handle
+
+    def _close_post_turn_change_window(self, conversation_id: str) -> None:
+        """Close this conversation's survivor window and record it.
+
+        Two callers, and the pop under the lock is what makes them safe
+        together: the last child leaving ``_child_run_scope`` (on the
+        child's own thread, promptly) and the next turn's ``finally``.
+
+        Where the window ENDS does not depend on which of them closes it:
+        at the successor turn's baseline shas when a next turn has
+        started, else at a fresh snapshot. That is the whole attribution
+        rule -- windows abut, never overlap, so a write belongs to exactly
+        one record.
+
+        Never raises: it runs inside a child's teardown and inside a
+        turn's ``finally``, neither of which may die of a git failure.
+
+        Known gap, stated rather than hidden: no ``touched_paths`` are
+        passed, so the ``.gitignore`` force-add carve-out does not apply
+        to a survivor's window -- a child writing to an ignored path
+        (`.env`) surfaces inside its own TURN's window but not after it.
+        Closing that needs the survivor's persisted steps, which means
+        tracking which child runs a window covers; deliberately left to a
+        follow-up rather than half-built here.
+
+        Args:
+            conversation_id: The conversation whose window to close.
+        """
+        with self._change_window_lock:
+            window = self._post_turn_change_windows.pop(conversation_id, None)
+        if window is None or self._change_tracker is None:
+            return
+        try:
+            end_shas = None
+            if window.successor is not None:
+                # The same wait `end_turn` does anyway; here it only makes
+                # the boundary sha available to a closer that may be
+                # running well before the successor turn ends.
+                window.successor.await_baseline()
+                end_shas = dict(window.successor.baselines)
+            records = self._change_tracker.end_turn(
+                window.handle, end_shas=end_shas
+            )
+            if not records:
+                return
+            self._record_change_snapshots(
+                run_id=window.run_id,
+                records=records,
+                kind=CHANGE_KIND_SUBAGENT_POST_TURN,
+            )
+            self._append_change_markers(
+                window.session_id,
+                window.run_id,
+                records,
+                kind=CHANGE_KIND_SUBAGENT_POST_TURN,
+            )
+        except Exception:  # noqa: BLE001 -- never break a child's teardown
+            logger.opt(exception=True).warning(
+                "change_review: post-turn window failed; a survivor's "
+                "changes are untracked"
+            )
+
+    def _record_change_snapshots(
+        self, *, run_id: str, records: list, kind: str
+    ) -> None:
+        """Persist one window's records against a run.
+
+        Args:
+            run_id: The run the rows belong to.
+            records: ``TurnChangeRecord`` list from the tracker.
+            kind: Which window these rows cover (``CHANGE_KIND_*``).
+        """
+        for record in records:
+            self._db.record_change_snapshot(
+                run_id=run_id,
+                root=record.root,
+                baseline_sha=record.baseline_sha,
+                end_sha=record.end_sha,
+                files_changed=record.files_changed,
+                adds=record.adds,
+                dels=record.dels,
+                tracking_error=record.tracking_error,
+                untracked_oversize=record.untracked_oversize,
+                nested_repos=record.nested_repos,
+                kind=kind,
+            )
+
+    def _retained_fleet_owners(self, conversation_id: str) -> list[AgentService]:
+        """A stable copy of this conversation's retained survivor owners.
+
+        A copy, taken under the lock, so a caller iterating it cannot
+        trip over a concurrent prune or retention (both rebuild the
+        list). Cheap: at most one entry per turn that left a child
+        running, itself capped by the conversation's live-children cap.
+
+        Args:
+            conversation_id: The conversation to read.
+
+        Returns:
+            The retained services, oldest first.
+        """
+        with self._fleet_survivor_lock:
+            return list(self._fleet_survivor_services.get(conversation_id, ()))
+
+    def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
+        """Forget retained services whose last child has settled.
+
+        PR3a-1 Task 6a. Called off the read paths (`fleet_snapshot`,
+        `cancel_subagent`, `live_snapshot`) rather than from a completion
+        callback ON PURPOSE: the "last child of a turn finished" signal
+        does not exist yet and PR 3a-2 builds it for auto-wake, so
+        inventing a second one here would be built twice and thrown away
+        once. Nothing depends on the pruning being prompt -- a settled
+        service is inert, and every read that could observe it prunes it
+        first.
+
+        Args:
+            conversation_id: The conversation to prune.
+        """
+        with self._fleet_survivor_lock:
+            retained = self._fleet_survivor_services.get(conversation_id)
+            if not retained:
+                return
+            still_live = [
+                service
+                for service in retained
+                if service.live_subagent_handles()
+            ]
+            if still_live:
+                self._fleet_survivor_services[conversation_id] = still_live
+            else:
+                self._fleet_survivor_services.pop(conversation_id, None)
+
+    def _conversation_fleet_coordinator(
+        self, conversation_id: str
+    ) -> FleetCoordinator | None:
+        """The coordinator for this conversation, built on first use.
+
+        PR3a-1 Task 6a. Called once per ``run_reply``, on the run's own
+        thread, before the ``AgentService`` that will use it exists.
+
+        Three rules, each with a reason:
+
+        * **Kill switch.** ``[agents] max_live_subagents <= 1`` means NO
+          fleet (`AgentService`'s own long-standing meaning of that
+          value), so no coordinator is created and none is injected --
+          the service then takes its pre-PR2a inline path unchanged. An
+          existing coordinator is deliberately KEPT (not dropped) so that
+          children spawned before the switch was flipped stay visible and
+          stoppable while they finish.
+        * **Re-sizing, not replacing.** A cap change mid-conversation
+          re-sizes the live coordinator in place. Replacing it would drop
+          every live handle from the only surface that can see or stop
+          it -- a silent loss of exactly the survivors this PR exists to
+          keep.
+        * **Pruning between turns.** Terminal handles are dropped here,
+          at the START of a turn, so the coordinator holds at most the
+          live children plus whatever this turn adds. It cannot be done
+          mid-turn: `_settle_fleet`, `wait_agents` and `check_agents` all
+          resolve their ids through `FleetCoordinator.get`, and this
+          turn's own terminal children must stay resolvable until the
+          turn ends. The cost of pruning here is that the previous turn's
+          finished children leave the rail when the next turn starts --
+          which is what the rail already did anyway (`_live` is
+          overwritten per turn).
+
+        Args:
+            conversation_id: The conversation whose fleet this run joins.
+
+        Returns:
+            The conversation's coordinator, or ``None`` when the fleet is
+            switched off.
+        """
+        # Read through the MODULE, not a from-import: `agent_service.
+        # _setting` is what tests monkeypatch to flip the kill switch
+        # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
+        # subagent_row`), and a bound from-import would not see it.
+        max_live = agent_service_module._coerce_max_live_subagents(
+            agent_service_module._setting(
+                agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
+                agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
+            )
+        )
+        if max_live <= 1:
+            return None
+        coordinator = self._fleet_coordinators.get(conversation_id)
+        if coordinator is None:
+            coordinator = FleetCoordinator(max_live=max_live, clock=self._clock)
+            self._fleet_coordinators[conversation_id] = coordinator
+            return coordinator
+        if coordinator.max_live != max_live:
+            coordinator.set_max_live(max_live)
+        coordinator.prune_terminal()
+        return coordinator
+
+    def _conversation_fleet_handles(
+        self, conversation_id: str
+    ) -> list[FleetHandle]:
+        """Every handle this conversation's coordinator still holds.
+
+        Terminal ones included -- this is the rail's source for "the
+        child finished, and here is how" after the turn that spawned it
+        has already returned (PR3a-1 Task 6a). Pruned only between turns
+        (see `_conversation_fleet_coordinator`).
+
+        Args:
+            conversation_id: The conversation to read.
+
+        Returns:
+            Copies of the handles, or ``[]`` when this conversation has
+            no coordinator (never ran, or the fleet kill switch is on).
+        """
+        coordinator = self._fleet_coordinators.get(conversation_id)
+        return coordinator.snapshot() if coordinator is not None else []
 
     # -- rail reads -----------------------------------------------------
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        return self._live.get(conversation_id, AgentLiveSnapshot())
+        """The rail's view of this conversation's agent activity.
+
+        PR3a-1 Task 6a: the ``subagents`` rows are re-derived from the
+        conversation's LIVE coordinator on every read, instead of being
+        frozen at whatever `run_reply` last published. A survivor's
+        status changes AFTER the turn that spawned it has returned --
+        measured at ~1.3ms after `run_reply` returns for a child that was
+        already finishing, and unbounded for one that is genuinely still
+        working -- so a snapshot frozen at the run's last publish shows
+        that child "running" forever, which is precisely the permanently
+        stuck row the audit's F1 describes. Everything else in the
+        snapshot (the primary's own status/steps) is still the published
+        value: it belongs to a run that has ended and does not change.
+
+        Falls back to the published snapshot untouched when this
+        conversation has no coordinator -- the inline/kill-switch path,
+        where there is no live status to read and never was.
+        """
+        self._prune_settled_fleet_survivors(conversation_id)
+        # PR3a-1 Task 6b (audit F1): the summary line is the NEWEST TURN's
+        # primary run, resolved through `_live_primary_keys` -- never
+        # whichever run wrote to this conversation last, which is how a
+        # survivor's post-turn step used to repaint it.
+        snapshot = (self._live.get(conversation_id) or {}).get(
+            self._live_primary_keys.get(conversation_id, ""),
+            AgentLiveSnapshot(),
+        )
+        handles = self._conversation_fleet_handles(conversation_id)
+        if not handles:
+            return snapshot
+        return dataclass_replace(
+            snapshot,
+            subagents=_subagent_summaries_from_fleet(
+                handles, list(snapshot.subagents)
+            ),
+        )
+
+    def live_run_snapshot(
+        self, conversation_id: str, run_id: str
+    ) -> AgentLiveSnapshot | None:
+        """One RUN's own live step feed, or ``None`` if this process has
+        none for it (PR3a-1 Task 6b, audit F1).
+
+        This is the only live source of a still-running sub-agent's steps.
+        ``AgentService`` persists a run's steps to ``AgentRunsDB`` once, at
+        the end (``_persist``), so ``subagent_run``'s record carries an
+        EMPTY step list for the whole time a child is actually working --
+        and a fleet child now works on past the turn that spawned it. The
+        rail's drill-in prefers this when it is present and falls back to
+        the DB record otherwise (see ``Console_Modules/agent.py``).
+
+        Args:
+            conversation_id: The conversation whose slots to read.
+            run_id: The run id to look up -- a sub-agent's own, as carried
+                on its ``FleetHandle``/its ``agent_runs`` row.
+
+        Returns:
+            That run's last published snapshot, or ``None`` when this
+            bridge has never seen a step for it (never ran here, ran in a
+            previous process, or its slot has since been pruned).
+        """
+        return (self._live.get(conversation_id) or {}).get(run_id)
+
+    def _publish_live(
+        self,
+        conversation_id: str,
+        run_key: str,
+        snapshot: AgentLiveSnapshot,
+        *,
+        primary: bool,
+    ) -> None:
+        """Write one run's rail snapshot into its own slot.
+
+        ``primary=True`` additionally points the conversation's summary
+        line at ``run_key``; only ``run_reply`` (i.e. the turn itself)
+        passes it. A child -- including one that outlives its turn -- can
+        write its own slot but can never move that pointer, which is the
+        whole of audit F1's fix.
+
+        Thread-safety: same unguarded-dict convention as the rest of this
+        class's per-conversation caches. Both statements are single
+        dict/`setdefault` operations, atomic under the GIL; the only
+        cross-thread contention is one child publishing its own key while
+        the primary publishes another, and distinct keys never collide.
+        """
+        self._live.setdefault(conversation_id, {})[run_key] = snapshot
+        if primary:
+            self._live_primary_keys[conversation_id] = run_key
+
+    def _prune_live_run_slots(self, conversation_id: str) -> None:
+        """Drop finished runs' live slots at the start of a turn (Task 6b).
+
+        `_live[conversation_id]` gains one key per sub-agent run, and this
+        bridge outlives every turn, so without this a long conversation
+        would accumulate one snapshot per child it ever ran. Kept: the
+        conversation's current summary key (just published by the turn
+        calling this), and any run still LIVE in the conversation's
+        coordinator -- a survivor's steps must stay readable while it
+        works. Everything else has, by then, finished and persisted its
+        steps to ``AgentRunsDB``, where the drill-in reads them from.
+
+        Liveness is read from handle STATUS rather than from coordinator
+        membership, deliberately: `FleetCoordinator` keeps terminal handles
+        until `prune_terminal` runs (later in this same turn, in
+        `_conversation_fleet_coordinator`), and the inline/kill-switch path
+        has no coordinator at ALL yet still emits child steps -- so a
+        membership test would leak a slot per inline child forever.
+
+        Called once per turn, at the start -- never mid-turn, for the same
+        reason `prune_terminal` is not: this turn's own children must stay
+        readable until it ends.
+        """
+        slots = self._live.get(conversation_id)
+        if not slots:
+            return
+        keep = {
+            handle.run_id
+            for handle in self._conversation_fleet_handles(conversation_id)
+            if handle.run_id and handle.status not in TERMINAL_RUN_STATUSES
+        }
+        primary_key = self._live_primary_keys.get(conversation_id)
+        if primary_key is not None:
+            keep.add(primary_key)
+        for key in [k for k in slots if k not in keep]:
+            slots.pop(key, None)
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.
@@ -2655,10 +3661,34 @@ class ConsoleAgentBridge:
         outside ``agent_service.py``) touches on ``AgentService`` for this
         purpose.
         """
+        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
-        if service is None:
-            return []
-        return service.fleet_snapshot()
+        if service is not None:
+            return service.fleet_snapshot()
+        # PR3a-1 Task 6a -- SECOND TIER: no run is in flight, but a child
+        # of a finished one may still be working. Before this tier a
+        # survivor was invisible the instant its turn returned
+        # (`fleet_snapshot` -> `[]`, so the panel showed nothing and the
+        # cancel button had no row to press), which is the F6 defect
+        # dev's own panel tests caught.
+        #
+        # Only LIVE handles here, deliberately: with no run in flight
+        # "the fleet" IS the survivors, and dev's pinned choice -- a
+        # completed run's snapshot goes back to `[]`, not its terminal
+        # handles -- is preserved exactly for the overwhelmingly common
+        # case where nothing outlived the turn. The rail's own row list
+        # (`live_snapshot().subagents`) is where a FINISHED child's final
+        # status is read from; this method answers "what is still
+        # running".
+        handles: list[FleetHandle] = []
+        seen: set[str] = set()
+        for survivor in self._retained_fleet_owners(conversation_id):
+            for handle in survivor.live_subagent_handles():
+                if handle.handle_id in seen:
+                    continue
+                seen.add(handle.handle_id)
+                handles.append(handle)
+        return handles
 
     def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
         """Cooperatively cancel ONE live child of this conversation's fleet.
@@ -2683,10 +3713,25 @@ class ConsoleAgentBridge:
             published run's fleet is off) or `handle_id` is unknown/already
             terminal; `True` when a live handle was found and cancelled.
         """
+        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
-        if service is None:
-            return False
-        return service.cancel_subagent(handle_id)
+        if service is not None and service.cancel_subagent(handle_id):
+            return True
+        # PR3a-1 Task 6a -- SECOND TIER, same shape as `fleet_snapshot`'s.
+        # A survivor's cancel Event lives in the service that spawned it,
+        # which is no longer the published one once its turn returned (or
+        # once a LATER turn published over it). `AgentService.cancel_
+        # subagent` returns `False` for a handle it does not own -- it
+        # can SEE any handle in the shared coordinator but can only stop
+        # its own -- so falling through to the retained owners here is
+        # what turns "the row is on screen" into "pressing Cancel stops
+        # it". Ordered current-run-first: the common case is one press on
+        # a child of the run in flight, and that answers without touching
+        # this list.
+        for survivor in self._retained_fleet_owners(conversation_id):
+            if survivor.cancel_subagent(handle_id):
+                return True
+        return False
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         """Rail summary derived from ``AgentRunsDB`` for a conversation this
@@ -3007,13 +4052,35 @@ class ConsoleAgentBridge:
                         )
                     )
             snap_rows = snap_by_run.get(str(record.get("id")), [])
-            clean = [r for r in snap_rows if not r.get("tracking_error")]
-            files = sum(int(r.get("files_changed") or 0) for r in clean)
-            if files:
+            # PR3a-1 Task 6c: a run can now hold rows from TWO windows --
+            # its own turn, and the window covering what its surviving
+            # sub-agents did afterwards. Live emits one counts row per
+            # window (in this order); summing them into a single row here
+            # would resume a transcript showing a turn that never happened.
+            turn_rows = [
+                r
+                for r in snap_rows
+                if str(r.get("kind") or CHANGE_KIND_TURN)
+                != CHANGE_KIND_SUBAGENT_POST_TURN
+            ]
+            post_turn_rows = [
+                r
+                for r in snap_rows
+                if str(r.get("kind") or CHANGE_KIND_TURN)
+                == CHANGE_KIND_SUBAGENT_POST_TURN
+            ]
+            for _rows, _summary in (
+                (turn_rows, format_change_summary_marker),
+                (post_turn_rows, format_subagent_post_turn_change_marker),
+            ):
+                clean = [r for r in _rows if not r.get("tracking_error")]
+                files = sum(int(r.get("files_changed") or 0) for r in clean)
+                if not files:
+                    continue
                 block.append(
                     ConsoleChatMessage(
                         role=ConsoleMessageRole.TOOL,
-                        content=format_change_summary_marker(
+                        content=_summary(
                             files,
                             sum(int(r.get("adds") or 0) for r in clean),
                             sum(int(r.get("dels") or 0) for r in clean),
@@ -3022,6 +4089,18 @@ class ConsoleAgentBridge:
                         change_review_run_id=str(record.get("id")),
                     )
                 )
+                if _rows is turn_rows and any(
+                    str(r.get("kind") or "")
+                    == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                    for r in clean
+                ):
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_concurrent_subagent_change_marker(),
+                            status="complete",
+                        )
+                    )
             # Parity for the FAILURE shape too (review finding 2): live
             # emits a disclosure row per failed root; resume must render
             # byte-identical or a resumed transcript hides that a turn's
@@ -3056,7 +4135,12 @@ class ConsoleAgentBridge:
     # -- internals ------------------------------------------------------
 
     def _append_change_markers(
-        self, session_id: str, run_id: str, records: list
+        self,
+        session_id: str,
+        run_id: str,
+        records: list,
+        *,
+        kind: str = CHANGE_KIND_TURN,
     ) -> None:
         """Append the turn's change rows to the transcript (TASK-1972).
 
@@ -3069,21 +4153,38 @@ class ConsoleAgentBridge:
             session_id: The run's owning session.
             run_id: The run the rows review (carried on the counts row).
             records: The turn's ``TurnChangeRecord`` list.
+            kind: Which window produced ``records`` (``CHANGE_KIND_*``).
+                PR3a-1 Task 6c: a survivor's window gets its own counts
+                row rather than being folded into the turn's, and a turn
+                that shared the tree with an earlier turn's sub-agent gets
+                an extra disclosure row. ``resume_marker_messages``
+                re-derives exactly these rows from the stored ``kind``.
         """
         try:
             changed = [r for r in records if not r.tracking_error]
             files = sum(r.files_changed for r in changed)
             if files:
+                summary = (
+                    format_subagent_post_turn_change_marker
+                    if kind == CHANGE_KIND_SUBAGENT_POST_TURN
+                    else format_change_summary_marker
+                )
                 self._store.append_message(
                     session_id,
                     role=ConsoleMessageRole.TOOL,
-                    content=format_change_summary_marker(
+                    content=summary(
                         files,
                         sum(r.adds for r in changed),
                         sum(r.dels for r in changed),
                     ),
                     change_review_run_id=run_id,
                 )
+                if kind == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT:
+                    self._store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_concurrent_subagent_change_marker(),
+                    )
             for rec in records:
                 if rec.tracking_error:
                     self._store.append_message(

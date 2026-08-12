@@ -106,6 +106,12 @@ class TurnHandle:
         #: TASK-1977: per-root REL paths auto-registered as sub-roots this
         #: turn — excluded from that root's nested-repo disclosure.
         self.auto_registered: dict[str, tuple[str, ...]] = {}
+        #: PR3a-1 Task 6c: each root's E sha, recorded by ``end_turn`` for
+        #: EVERY root it snapshotted — including the unchanged ones, which
+        #: yield no record. It is the boundary a follow-on window starts
+        #: from (see :meth:`ChangeTurnTracker.continuation`), so a write
+        #: made after this turn's E cannot fall between two windows.
+        self.end_shas: dict[str, str] = {}
         self._thread: threading.Thread | None = None
 
     def await_baseline(self, timeout: float = _BASELINE_TIMEOUT_SECONDS) -> None:
@@ -236,10 +242,46 @@ class ChangeTurnTracker:
             thread.start()
         return handle
 
+    def continuation(self, handle: TurnHandle) -> "TurnHandle | None":
+        """A follow-on window starting exactly where ``handle`` ended.
+
+        PR3a-1 Task 6c. A sub-agent that outlives its turn keeps writing
+        after that turn's E snapshot, so its work needs a window of its
+        own — and that window must START at the previous one's END sha,
+        not at a fresh snapshot taken some milliseconds later, or a write
+        in between belongs to no window at all.
+
+        No I/O: the returned handle is pre-satisfied (no baseline thread),
+        because its baseline shas were already taken by ``end_turn``.
+
+        Args:
+            handle: A handle ``end_turn`` has already run over.
+
+        Returns:
+            A handle whose baselines are ``handle``'s end shas, or
+            ``None`` when that turn recorded no usable end sha (tracking
+            failed for every root) — there is nothing to continue from.
+        """
+        if not handle.end_shas:
+            return None
+        follow_on = TurnHandle(
+            [root for root in tuple(handle.roots) if str(root) in handle.end_shas]
+        )
+        follow_on.baselines = dict(handle.end_shas)
+        # Carry the disclosure baselines forward: a file that was ALREADY
+        # oversize / a repo that was ALREADY nested at the turn's end is
+        # not news in the follow-on window either.
+        follow_on.baseline_oversize = dict(handle.baseline_oversize)
+        follow_on.baseline_nested = dict(handle.baseline_nested)
+        follow_on.auto_registered = dict(handle.auto_registered)
+        return follow_on
+
     def end_turn(
         self,
         handle: TurnHandle,
         touched_paths: Sequence[str] = (),
+        *,
+        end_shas: "dict[str, str] | None" = None,
     ) -> list[TurnChangeRecord]:
         """Take E snapshots and return one record per root that changed.
 
@@ -252,6 +294,15 @@ class ChangeTurnTracker:
             touched_paths: Absolute paths the run's WRITE tools touched
                 (see :meth:`tool_touched_paths`) — force-added before E so
                 ignored-but-edited files surface.
+            end_shas: PR3a-1 Task 6c. Per-root shas to use as E INSTEAD of
+                taking a snapshot — how a survivor's window is closed at
+                the exact sha the next turn's baseline recorded, so the
+                two windows share a boundary and nothing can fall between
+                them. Roots absent from the mapping still snapshot.
+                Oversize/nested disclosure is skipped for a provided sha:
+                those measurements belong to whoever took that snapshot,
+                and re-deriving them here would report the state of a tree
+                this window never observed.
 
         Returns:
             Records for roots with changes or tracking errors.
@@ -284,6 +335,27 @@ class ChangeTurnTracker:
                 continue
             try:
                 repo = self.service.repo_for_root(root)
+                provided = (end_shas or {}).get(key)
+                if provided:
+                    # No force-add and no oversize/nested disclosure on
+                    # this path: both describe a snapshot, and this window
+                    # ends at one somebody else took.
+                    end = provided
+                    handle.end_shas[key] = end
+                    if end == baseline:
+                        continue
+                    changed = repo.changed_files(baseline, end)
+                    records.append(
+                        TurnChangeRecord(
+                            root=key,
+                            baseline_sha=baseline,
+                            end_sha=end,
+                            files_changed=len(changed),
+                            adds=sum(c.adds for c in changed),
+                            dels=sum(c.dels for c in changed),
+                        )
+                    )
+                    continue
                 in_root = self._paths_within(root, touched_paths)
                 if in_root:
                     # TASK-1975: force-add exists to defeat IGNORE rules,
@@ -300,6 +372,7 @@ class ChangeTurnTracker:
                 if in_root:
                     repo.force_add(in_root)
                 end = repo.snapshot("turn end")
+                handle.end_shas[key] = end
                 oversize = repo.last_oversize_excluded
                 # TASK-1977: a TRACKED sub-root is not an untracked hole —
                 # disclosure covers exactly what is not tracked.

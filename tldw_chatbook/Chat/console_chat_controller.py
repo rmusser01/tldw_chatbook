@@ -1402,6 +1402,15 @@ class ConsoleChatController:
         #: most controller-only tests, matching every other UI bridge slot
         #: here.
         self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
+        #: PR3a-1 Task 6b (audit F3): per session, the turn's provider
+        #: signals object plus HOW MANY of its usage payloads were attached
+        #: to the assistant message. A fleet child keeps streaming into the
+        #: SAME signals object after `run_reply` returns, and the agent path
+        #: attaches usage exactly ONCE (`_finalize_agent_reply`), so every
+        #: payload closed out after that instant is real money billed to the
+        #: user and read by nobody. This slot is what makes the difference
+        #: readable (`unattributed_fleet_tokens`) instead of silent.
+        self._post_turn_usage_watch: dict[str, tuple[Any, Any, int]] = {}
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
         #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
@@ -2118,15 +2127,72 @@ class ConsoleChatController:
         the union of the two predicates those existing callers already
         use.
 
+        PR3a-1 Task 6b (audit F5, second half): a THIRD leg -- sessions
+        holding a surviving fleet child. Since PR3a-1 a sub-agent keeps
+        running after the turn that spawned it returns, and such a session
+        has no active stream task and no pending approval round, so the two
+        legs above both read it as idle. The confirm dialog therefore told
+        the user "0 runs will be killed" and `shutdown()` then killed one:
+        a dialog that lies to the user is worse than no dialog. Reproduced
+        by execution in `Tests/Chat/test_console_agent_bridge.py::test_busy_
+        fleet_session_count_sees_a_session_whose_only_work_is_a_survivor`.
+
         Returns:
-            The number of live sessions with in-flight work and/or an
-            outstanding approval-like round -- 0 when the fleet is idle.
+            The number of live sessions with in-flight work, an outstanding
+            approval-like round, and/or a still-running sub-agent -- 0 when
+            the fleet is idle.
         """
         live_ids = {session.id for session in self.store.sessions()}
         with self._approval_state_lock:
             pending_ids = set(self._pending_approvals)
         busy_ids = set(self._live_busy_session_ids())
-        return len(busy_ids | (pending_ids & live_ids))
+        return len(
+            busy_ids
+            | (pending_ids & live_ids)
+            | self._fleet_survivor_session_ids()
+        )
+
+    def _fleet_survivor_session_ids(self) -> set[str]:
+        """Live sessions with at least one still-running sub-agent.
+
+        Reads the agent bridge's own live coordinator view
+        (`fleet_snapshot`, per conversation) rather than any DB row: a
+        child's real status lives in `FleetCoordinator` while it runs, and
+        `agent_runs` only catches up when it ends. Terminal handles are
+        filtered out -- `fleet_snapshot` includes them while a run is in
+        flight, and a finished child is nothing teardown would kill.
+
+        Called only from `busy_fleet_session_count` (navigation confirm and
+        the teardown record), never on the rail's 0.2s tick. Degrades to an
+        empty set with no bridge, no `fleet_snapshot`, or a raising one:
+        under-counting is the pre-PR3a-1 behaviour, and this must never be
+        the thing that breaks a navigation.
+        """
+        from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
+
+        bridge = self._agent_bridge
+        # `is not None`, not truthiness: a bridge double defining `__len__`
+        # would otherwise read as absent.
+        snapshot = (
+            getattr(bridge, "fleet_snapshot", None) if bridge is not None else None
+        )
+        if snapshot is None:
+            return set()
+        busy: set[str] = set()
+        for session in self.store.sessions():
+            try:
+                handles = snapshot(self._agent_conversation_id(session.id))
+            except Exception:  # noqa: BLE001 -- never block a navigation
+                logger.opt(exception=True).debug(
+                    "fleet survivor count failed for a session; treated as idle"
+                )
+                continue
+            if any(
+                getattr(handle, "status", "") not in TERMINAL_RUN_STATUSES
+                for handle in handles or ()
+            ):
+                busy.add(session.id)
+        return busy
 
     @property
     def max_parallel_runs(self) -> int:
@@ -3002,10 +3068,76 @@ class ConsoleChatController:
         )
         return cancel_event is not None and cancel_event.is_set()
 
-    def _is_session_cancelled(self, session_id: str | None) -> bool:
+    def _bind_round_cancel_signal(
+        self, session_id: str | None
+    ) -> threading.Event | None:
+        """Resolve the cancel Event an approval round must listen to, ONCE,
+        at ARM time -- PR3a-1 Task 6b, audit F4.
+
+        Callers pass the resolved Event to ``_is_session_cancelled`` for
+        the whole life of the round instead of letting that method re-read
+        ``_active_cancel_events[session_id]`` on every poll. The
+        difference only shows up once a run can outlive the turn that
+        started it (``[agents] subagents_outlive_turn``, PR3a-1), and it
+        shows up in both directions, silently:
+
+        * **Between turns** the per-session entry has been popped, so a
+          poll-time ``.get()`` returns ``None`` and the round listens to
+          nothing at all -- until the user sends again.
+        * **During the NEXT turn** the entry is the NEXT turn's Event, so
+          pressing Stop on turn 2 denied turn 1's surviving child's
+          still-open card and failed a legitimate tool call closed, with
+          nothing anywhere saying the denial came from another turn.
+          Reproduced by execution in
+          ``Tests/UI/test_console_mcp_approval.py::test_the_next_turns_
+          stop_does_not_deny_an_earlier_turns_survivors_card`` (the audit
+          had this direction as inference from structure only).
+
+        Binding by value is the same discipline ``_run_agent_reply``'s own
+        ``should_cancel`` closure already applies to this exact Event, and
+        the pull-side counterpart to ``revoke_approval_rounds_for_run``'s
+        run-keyed push: a round is answerable to the run that armed it,
+        never to whatever run happens to own the session later.
+
+        ``None`` -- a round armed with no turn in flight, i.e. a survivor's
+        -- means no SESSION Stop can reach it. That is deliberate and it is
+        not a lost signal: such a round is still released by its own run's
+        revoke (``revoke_approval_rounds_for_run``, what the fleet panel's
+        Cancel presses), by its own approval timeout, and by
+        ``_shutdown_requested`` on teardown. What it is no longer reachable
+        by is an UNRELATED turn's Stop button, which never had any business
+        answering for it. (The Stop button itself no-ops between turns
+        anyway -- ``stop_active_run`` returns ``False`` with no active
+        assistant message -- so nothing that used to work stops working.)
+
+        Args:
+            session_id: The round's OWNING session, or ``None`` for a
+                legacy caller with no session context (which keeps the
+                viewed-session fallback; see ``_is_session_cancelled``).
+
+        Returns:
+            The owning run's cancel Event, or ``None`` when the session has
+            no run in flight right now.
+        """
+        if session_id is None:
+            return None
+        return self._active_cancel_events.get(session_id)
+
+    def _is_session_cancelled(
+        self, session_id: str | None, *, cancel_event: threading.Event | None
+    ) -> bool:
         """Cancellation check for the three worker-thread approval/confirm
-        bridges below, scoped to ``session_id``'s OWN cancel event when
-        known (PA-T9 finding #1 fix).
+        bridges below, scoped to the round's OWN cancel event
+        (PA-T9 finding #1 fix; bound at arm time since PR3a-1 Task 6b).
+
+        ``cancel_event`` is keyword-only and has NO default on purpose:
+        every call site must state which Event this round answers to, so a
+        future bridge cannot silently inherit "no signal" (fail-open) by
+        forgetting the argument. Get it from
+        ``_bind_round_cancel_signal(session_id)`` at arm time -- see that
+        method for why binding by value, rather than re-reading
+        ``_active_cancel_events`` per poll, is what keeps one turn's Stop
+        out of another turn's surviving child's approval round.
 
         Pre-Task-9, all three bridges checked ``self._stop_requested or
         self._is_active_session_cancelled()`` -- the shared global flag
@@ -3096,7 +3228,10 @@ class ConsoleChatController:
         if session_id is not None:
             if self._shutdown_requested.is_set():
                 return True
-            cancel_event = self._active_cancel_events.get(session_id)
+            # PR3a-1 Task 6b (audit F4): the ARM-TIME binding, not a fresh
+            # `self._active_cancel_events.get(session_id)` per poll. See
+            # `_bind_round_cancel_signal` for the two silent cross-turn
+            # failures that re-read produced.
             return cancel_event is not None and cancel_event.is_set()
         return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
 
@@ -3208,6 +3343,10 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): the cancel signal THIS round answers
+        # to, resolved once, HERE, and passed to every poll below. See
+        # `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         # PR2a Task 7: which RUN armed this round. Read from the
         # `run_context` ContextVar, which `AgentService` binds around both
         # arming paths -- the per-turn review hook (`build_tool_review_
@@ -3316,7 +3455,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
                     # `run_agent_loop`'s own `should_cancel()` check fires
@@ -4309,6 +4450,9 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
+        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
                 "event": event,
@@ -4356,7 +4500,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -4599,6 +4745,9 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
+        # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
         # PR2a Task 7 (review M1): same run-ownership stamp
         # `request_mcp_approvals` carries, and for a WIDER hazard --
         # `run_skill_script` is all-agents scope (no agent_kind gate in
@@ -4648,7 +4797,9 @@ class ConsoleChatController:
             else:
                 self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(session_id):
+                if self._is_session_cancelled(
+                    session_id, cancel_event=round_cancel_event
+                ):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -8482,6 +8633,99 @@ class ConsoleChatController:
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
 
+    @staticmethod
+    def _usage_payloads(stream_signals: Any) -> list[Any]:
+        """Every provider-call usage payload this turn has closed out so far.
+
+        Extracted so ``_attach_stream_usage`` and ``unattributed_fleet_
+        tokens`` read the accumulator through ONE seam -- the second is
+        defined entirely as "what the first has not billed yet", and a
+        second copy of this tolerance would let the two drift.
+        """
+        payloads_getter = getattr(stream_signals, "usage_payloads", None)
+        if callable(payloads_getter):
+            return list(payloads_getter())
+        # Tolerate narrow stand-ins that only expose the single-call
+        # attribute (the pre-accumulation shape), same defensive posture as
+        # the getattr-based resolution reads in `_attach_stream_usage`.
+        single = getattr(stream_signals, "usage_payload", None)
+        return [single] if single else []
+
+    def _watch_post_turn_usage(
+        self,
+        session_id: str,
+        stream_signals: ConsoleProviderStreamSignals | None,
+        resolution: Any,
+    ) -> None:
+        """Remember where this turn's billing stopped (PR3a-1 Task 6b, F3).
+
+        Called immediately after the turn's ONE usage attach. Everything
+        appended to ``stream_signals`` from here on is a surviving fleet
+        child's spend: real money, on a message nobody attaches to again.
+
+        NOT the full fix, deliberately. Re-attaching when the last child of
+        a turn finishes needs a "last child done" signal the bridge does not
+        emit, and PR 3a-2 builds exactly that signal for auto-wake; building
+        it twice is waste. **The re-attach itself is already safe**:
+        ``_attach_stream_usage`` recomputes the TOTAL from all payloads and
+        ``ConsoleChatStore.set_message_usage`` REPLACES rather than adds
+        (and persists immediately for an already-terminal message), so
+        calling it a second time with the same signals object is idempotent
+        -- 3a-2 inherits a safe path and does not need to re-derive that.
+        Until then the spend is at least VISIBLE, via
+        ``unattributed_fleet_tokens`` -> the cost chip's "Sub-agents: N tok
+        (not priced)" line.
+        """
+        if stream_signals is None:
+            self._post_turn_usage_watch.pop(session_id, None)
+            return
+        self._post_turn_usage_watch[session_id] = (
+            stream_signals,
+            resolution,
+            len(self._usage_payloads(stream_signals)),
+        )
+
+    def unattributed_fleet_tokens(self, session_id: str) -> int:
+        """Tokens this session billed AFTER its turn's usage was attached.
+
+        A fleet child outlives the turn that spawned it and keeps streaming
+        into the same ``ConsoleProviderStreamSignals``; the agent path
+        attaches usage once, the instant ``run_reply`` returns. This is the
+        difference -- spend the user was charged for that the message row
+        and its cost figure do not include.
+
+        Read by ``ChatScreen._build_console_cost_state`` and folded into the
+        chip's unpriced sub-agent token line, so the money is named rather
+        than silently gone. Cheap: a list slice and a normalize per payload,
+        over the handful of calls one turn's survivors make.
+
+        Args:
+            session_id: The session to report.
+
+        Returns:
+            The unattributed token total, or 0 when the session has no
+            watched turn, nothing new since the attach, or nothing that
+            normalizes to usage.
+        """
+        watch = self._post_turn_usage_watch.get(session_id)
+        if watch is None:
+            return 0
+        stream_signals, resolution, attached_count = watch
+        payloads = self._usage_payloads(stream_signals)[attached_count:]
+        if not payloads:
+            return 0
+        provider = str(getattr(resolution, "provider", "") or "")
+        model = str(getattr(resolution, "model", "") or "")
+        total: ProviderUsage | None = None
+        for payload in payloads:
+            usage = ProviderUsage.from_provider_payload(
+                payload, provider=provider, model=model, partial=True
+            )
+            if usage is None:
+                continue
+            total = usage if total is None else total.plus(usage)
+        return total.total_tokens if total is not None else 0
+
     def _attach_stream_usage(
         self,
         assistant_message_id: str,
@@ -8501,15 +8745,7 @@ class ConsoleChatController:
         """
         if stream_signals is None:
             return
-        payloads_getter = getattr(stream_signals, "usage_payloads", None)
-        if callable(payloads_getter):
-            payloads = list(payloads_getter())
-        else:
-            # Tolerate narrow stand-ins that only expose the single-call
-            # attribute (the pre-accumulation shape), same defensive posture
-            # as the getattr-based resolution reads below.
-            single = getattr(stream_signals, "usage_payload", None)
-            payloads = [single] if single else []
+        payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
         total: ProviderUsage | None = None
@@ -9370,6 +9606,10 @@ class ConsoleChatController:
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
+                # PR3a-1 Task 6b (audit F3): a Stop ends the TURN, not its
+                # surviving children -- so this branch needs the same
+                # post-turn watch the normal finalizer sets.
+                self._watch_post_turn_usage(session_id, stream_signals, resolution)
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
@@ -9521,6 +9761,10 @@ class ConsoleChatController:
             resolution,
             partial=stopped_now or getattr(outcome, "status", None) != RUN_DONE,
         )
+        # PR3a-1 Task 6b (audit F3): mark where THIS turn's billing stopped,
+        # so a surviving child's later provider calls are readable rather
+        # than silently dropped -- see `_watch_post_turn_usage`.
+        self._watch_post_turn_usage(session_id, stream_signals, resolution)
         if stopped_now:
             # The stopped message was already persisted by
             # `mark_message_stopped` (`_persist_existing_message`), so its

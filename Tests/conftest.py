@@ -67,6 +67,7 @@ import asyncio  # noqa: E402
 import sqlite3  # noqa: E402
 import sys  # noqa: E402
 import gc  # noqa: E402
+import time  # noqa: E402
 from typing import Iterator  # noqa: E402
 import warnings  # noqa: E402
 
@@ -1192,6 +1193,18 @@ def _fleet_chat_scripts_fully_consumed():
     yield
     instances = list(fleet_chat._live_instances)
     fleet_chat._live_instances.clear()
+    # PR3a-1 Task 2: a sub-agent now outlives the turn that spawned it by
+    # default, so a child can still be on its way to its FIRST scripted
+    # reply when the test body ends -- "unused turn" and "not used YET"
+    # look identical at this instant. Wait for the difference rather than
+    # guessing at it: a script that is merely late is consumed within
+    # milliseconds, while a genuinely mis-keyed one costs this bounded
+    # wait once, on a test that is failing anyway.
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and any(
+        chat.unconsumed() for chat in instances
+    ):
+        time.sleep(0.02)
     problems = []
     for chat in instances:
         problems.extend(chat.harness_errors)

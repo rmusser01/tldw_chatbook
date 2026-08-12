@@ -2840,6 +2840,41 @@ CSS class selector. Then verify both `get_component_rich_style()` and final
 compositor segments. Span-level or stylesheet-compilation tests alone do not
 prove that Textual registered or painted a component.
 
+## A report's "already handled / out of scope" is an UNTESTED CLAIM (supervisor-fleet PR 3a-1, 2026-08-11)
+
+**Incident.** PR 3a-1 Task 5 gave a background sub-agent its own wall-clock ceiling and
+reported the containment story in two halves. It **mutation-tested the TIME half** and was
+right. It stated the **COUNT half** — "aggregate live children are still bounded by
+`[agents] max_live_subagents`" — from *reading the code next to it*, and wrote that into the
+report and a docstring as settled. The review then proved by **execution** that it was false:
+two consecutive `run_turn` calls each spawning two blocking children ran **4 simultaneously
+against a configured cap of 2**, because `run_turn` built a brand-new `FleetCoordinator` every
+call, and Console built a brand-new `AgentService` per `run_reply` and injected no coordinator
+at all. Before this PR the bug was structurally impossible (children could not outlive their
+turn), so the claim had been true right up until the change that broke it — which is exactly
+the shape that survives a careful read.
+
+That claim had already propagated: the plan's own seam map said `FleetCoordinator` was
+"already reusable, no reset, never pruned", Task 5 relied on it, and the fix (a
+per-conversation coordinator owned by the bridge) had to be a whole extra task. The retraction
+is now pinned by `test_live_children_are_not_capped_across_turns` so it cannot be silently
+re-assumed.
+
+**This was the third instance in one programme**, all the same shape — a confident reading
+stated as a finding:
+
+1. A "vanishing row" window a fix was ordered for; measurement showed it was **sub-millisecond
+   against a 200ms poll**, i.e. unobservable.
+2. A run-log "closed writer" diagnosis, **wrong twice**: the records were being *misfiled into
+   the next turn's tree* (not dropped), and `close()` was never a barrier at all — it fsyncs
+   and returns without clearing `_active`, and `append()` opens its own handle per record.
+3. This one.
+
+**What to do.** When a report says a risk is *already handled*, *unreachable*, *out of scope*,
+or *unchanged by this task*, treat it as a hypothesis until a test executes it. Write the test
+that would go red if it were false — and prefer probing with a recording double over reading
+the call path, because the two failures above were both found by a probe and missed by a read.
+A dismissal is a claim about behavior, and behavior is the one thing reading cannot establish.
 ---
 
 ## A mechanism sentence is an ORACLE — read your prose against your own tables (TASK-15020, 2026-08-11)

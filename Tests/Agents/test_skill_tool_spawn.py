@@ -19,7 +19,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-from Tests.Agents.conftest import pin_max_live_subagents
+from Tests.Agents.conftest import join_fleet_children, pin_max_live_subagents
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
@@ -311,6 +311,7 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     assert db.count_subagent_runs("c1") == 1  # only the native spawn ran
     assert runner.spawned_with is None  # the skill call never actually ran
@@ -440,6 +441,7 @@ def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
         ),
         api_endpoint="llama_cpp",
     )
+    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
     assert outcome.status == RUN_DONE
     assert runner.spawned_with is None  # never actually rendered/run
 

@@ -4,6 +4,7 @@ import dataclasses
 import http.server
 import json
 import threading
+import time
 
 import httpx
 import pytest
@@ -3789,3 +3790,106 @@ async def test_auxiliary_direct_llama_rejects_malformed_completion_shape() -> No
         await gateway.complete_auxiliary(request)
 
     await client.aclose()
+
+
+# -- PR3a-1 Task 6b (audit F5, first half) ---------------------------------
+#
+# `aclose()`'s stale sweep skips only loops that are already `is_closed()`.
+# A fleet child owns a `_ModelCallLifeline` -- an event loop plus the one
+# thread driving `run_forever` -- for as long as the CHILD lives, which
+# (PR3a-1) can be well past the turn that spawned it. That loop is running,
+# not closed, so the sweep handed its client to `_schedule_stale_client_
+# close`, which closes the pool ON THE CHILD'S OWN LOOP, mid-request.
+#
+# Not fleet-introduced -- `run_reply` is dispatched via `asyncio.to_thread`,
+# which survives Task cancellation, so `on_unmount`'s `aclose()` (called
+# AFTER `controller.shutdown()`, which only cancels Tasks) could already
+# reach the primary. What this PR changes is the population: one loop
+# becomes one per live child.
+
+
+def _running_child_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """A `_ModelCallLifeline`-shaped loop: `run_forever` on its own thread."""
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    return loop, thread
+
+
+def test_aclose_does_not_close_a_still_running_childs_client():
+    gateway = ConsoleProviderGateway()
+    child_loop, child_thread = _running_child_loop()
+
+    async def touch() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    try:
+        child_client = asyncio.run_coroutine_threadsafe(
+            touch(), child_loop
+        ).result(5)
+        assert child_client.is_closed is False
+
+        async def close_from_the_app_loop() -> None:
+            await gateway.aclose()
+
+        asyncio.run(close_from_the_app_loop())
+
+        # The scheduled close runs on the CHILD's loop, so give that loop
+        # real time to execute it -- asserting immediately would pass
+        # against the bug by simply outrunning it.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not child_client.is_closed:
+            time.sleep(0.02)
+
+        assert child_client.is_closed is False, (
+            "aclose() closed a live child's connection pool on the child's "
+            "own loop, mid-request"
+        )
+        # ... and the child keeps the SAME pool, rather than silently
+        # rebuilding one per call for the rest of its life.
+        again = asyncio.run_coroutine_threadsafe(touch(), child_loop).result(5)
+        assert again is child_client
+    finally:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                child_client.aclose(), child_loop
+            ).result(5)
+        except Exception:  # noqa: BLE001 -- teardown best-effort
+            pass
+        child_loop.call_soon_threadsafe(child_loop.stop)
+        child_thread.join(5)
+        child_loop.close()
+
+
+def test_aclose_still_sweeps_a_finished_turns_idle_loop():
+    """The control: a per-turn loop that has STOPPED (its lifeline shut it
+    down) is still swept -- narrowing the sweep to skip live loops must not
+    turn it into a no-op."""
+    gateway = ConsoleProviderGateway()
+    idle_loop = asyncio.new_event_loop()
+
+    async def touch() -> None:
+        gateway._active_http_client()
+
+    idle_loop.run_until_complete(touch())
+    idle_client = gateway._loop_clients[idle_loop]
+    assert idle_client.is_closed is False
+    assert idle_loop.is_running() is False
+
+    scheduled: list = []
+    original = ConsoleProviderGateway._schedule_stale_client_close
+    try:
+        ConsoleProviderGateway._schedule_stale_client_close = staticmethod(
+            lambda client, loop: scheduled.append((client, loop))
+        )
+
+        async def close_from_the_app_loop() -> None:
+            await gateway.aclose()
+
+        asyncio.run(close_from_the_app_loop())
+    finally:
+        ConsoleProviderGateway._schedule_stale_client_close = original
+        idle_loop.run_until_complete(idle_client.aclose())
+        idle_loop.close()
+
+    assert scheduled == [(idle_client, idle_loop)]

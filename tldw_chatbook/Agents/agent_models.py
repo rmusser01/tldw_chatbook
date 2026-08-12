@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -356,7 +357,29 @@ class RunOutcome:
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
-    """Clamp a sub-agent's budget so it cannot outlive its parent.
+    """Clamp a TURN-SCOPED/INLINE sub-agent's budget so it cannot outlive its parent.
+
+    Scope, stated explicitly (PR3a-1 Task 5 review, Defect 1): this is
+    NOT a system-wide "a child can never outlive its parent" invariant --
+    that claim is false of this system since PR3a-1 Task 2 let a threaded
+    child survive past `_settle_fleet`. This function's real, current
+    scope is production's call site for exactly ONE spawn path: a
+    turn-scoped or explicitly ``inline=True`` child, which blocks the
+    parent inside ``AgentService.spawn`` and has no `_settle_fleet` to
+    bound it externally (``spawn``'s own branch on
+    ``fleet is None or inline`` -- the identical predicate its dispatch
+    below tests). A THREADED, non-inline child -- the one kind that can
+    actually survive past `_settle_fleet` -- never reaches this function;
+    it goes through ``contain_child_budget`` below instead, which has its
+    own independent ceiling and makes no parent-outlive-proof claim at
+    all.
+
+    (An earlier draft of this docstring said this function was "no
+    longer production's call site" -- that was true only briefly, for a
+    version of Task 5 that applied `contain_child_budget` unconditionally
+    and broke the turn-scoped/inline path's own byte-identical-behaviour
+    guarantee. Corrected: this function IS still production's call site,
+    for the turn-scoped/inline half of `spawn`'s branch.)
 
     Sub-agents deliberately INHERIT ``max_model_turns`` and ``max_steps``
     rather than being clamped down (operator decision, 2026-07-25, first
@@ -364,18 +387,22 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     went 20 -> 30). A child therefore gets the same round budget as its
     parent, so one Console message can reach
     ``max_model_turns * (1 + max_subagents)`` provider turns in the worst
-    case — 90 at the Console's current 30/2. That worst case is bounded in
-    TIME by the wall-clock clamp below (a child can never outlive its
-    parent's remaining budget). ``max_total_tokens`` is passed through
-    UNCHANGED below, not divided among children, so it bounds each run's
-    OWN spend independently, not the aggregate: the parent and each of up
-    to ``max_subagents`` children can each spend up to that ceiling, for a
-    real worst-case aggregate of roughly ``(1 + max_subagents)x`` it — not
-    a value it bounds directly (the Console sets it non-zero for exactly
-    this containment reason regardless — see
-    ``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS`` for its concrete
-    numbers). Do not "fix" this by clamping turns without checking the
-    inherit-turns decision above.
+    case — 90 at the Console's current 30/2. For a child THIS FUNCTION
+    bounds (turn-scoped/inline only), that worst case is bounded in TIME
+    by the wall-clock clamp below (such a child can never outlive its
+    parent's remaining budget) -- but that TIME bound does NOT hold for a
+    threaded survivor candidate, which is bounded by
+    ``contain_child_budget``'s own independent ceiling instead (see that
+    function's docstring for the resulting worst-case aggregate).
+    ``max_total_tokens`` is passed through UNCHANGED below, not divided
+    among children, so it bounds each run's OWN spend independently, not
+    the aggregate: the parent and each of up to ``max_subagents`` children
+    can each spend up to that ceiling, for a real worst-case aggregate of
+    roughly ``(1 + max_subagents)x`` it — not a value it bounds directly
+    (the Console sets it non-zero for exactly this containment reason
+    regardless — see ``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS`` for
+    its concrete numbers). Do not "fix" this by clamping turns without
+    checking the inherit-turns decision above.
 
     Wall-clock is clamped to the parent's remainder (floored at 1s);
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
@@ -386,6 +413,133 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_wall_seconds=min(
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
+        max_subagents=0,
+        max_active_tools=child.max_active_tools,
+        max_subagent_result_chars=child.max_subagent_result_chars,
+        max_tool_result_chars=child.max_tool_result_chars,
+        max_model_turns=child.max_model_turns,
+        max_total_tokens=child.max_total_tokens,
+        max_tool_call_seconds=child.max_tool_call_seconds,
+    )
+
+
+def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget:
+    """Bound a THREADED SURVIVOR CANDIDATE's own budget -- independent of its parent.
+
+    Scope, stated explicitly (PR3a-1 Task 5 review, Defect 1): this does
+    NOT replace ``clamp_child_budget``'s "child can never outlive its
+    parent" clamp everywhere -- ``AgentService.spawn`` BRANCHES on
+    ``fleet is None or inline``, and a turn-scoped or explicitly
+    ``inline=True`` child still goes through ``clamp_child_budget``,
+    unmodified, exactly as before this task (that child blocks the
+    parent and has no `_settle_fleet` to bound it externally, so it must
+    keep byte-identical turn-scoped behaviour -- an earlier draft of this
+    task applied THIS function unconditionally and broke that; see
+    ``clamp_child_budget``'s own docstring for the correction). This
+    function is production's call site for the OTHER half of that
+    branch only: a THREADED, non-inline child -- the one kind that can
+    actually survive past `_settle_fleet` (PR3a-1 Task 2, spec Sec 5
+    "Containment") -- for which a still-``running`` child is expected
+    background work, not a dead attempt. Tying THAT child's wall-clock
+    ceiling to how much of the PARENT's own budget happened to be left
+    at spawn time made its effective bound an accident of WHEN in the
+    turn it was spawned -- a child spawned in the run's last second would
+    have gotten almost no time of its own, and a child spawned early
+    would have inherited most of the parent's, neither of which
+    describes a bound on the CHILD's own work.
+
+    ``run_agent_loop``'s own wall-clock check (``agent_runtime.py``) is
+    already measured from the RUN'S OWN ``started``, not the parent's, so
+    handing a child a plain, caller-resolved ceiling here needs no
+    engine-side change -- only the caller (``AgentService.spawn``, for
+    its threaded/non-inline branch only) stops deriving it from the
+    parent's remainder and instead resolves it from
+    ``[agents] child_max_wall_seconds`` (default
+    ``agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS``; see that constant's
+    own comment for the sizing rationale and the resulting worst-case
+    aggregate).
+
+    Containment is bounded in three dimensions, none of them the
+    parent's lifetime: TIME (this function's own ``max_wall_seconds``
+    argument -- genuinely independent of the parent, this task's actual
+    fix; caveat easy to miss: a child blocked INSIDE one provider call is
+    not stopped by its own wall clock at all -- ``run_agent_loop``'s
+    check only runs BETWEEN loop iterations, before each
+    ``deps.call_model``, so a hung provider call can hold a child open
+    past this ceiling until that call itself returns), SPEND
+    (``max_total_tokens``, passed through UNCHANGED below
+    exactly as ``clamp_child_budget`` already did -- see that function's
+    own docstring for why the real worst-case aggregate spend is
+    ``(1 + max_subagents)x`` that ceiling, not a value it bounds
+    directly; this task does not change that math), and COUNT --
+    ``[agents] max_live_subagents``, enforced by ``FleetCoordinator.
+    reserve``. Read its scope precisely, because it changed twice and
+    the first version of this docstring got it wrong: it bounds live
+    children per COORDINATOR, and a coordinator's lifetime belongs to
+    whoever owns it. For a bare ``AgentService`` with no injected
+    coordinator that is still ONE ``run_turn`` call -- which was ALSO
+    Console's situation until PR3a-1 Task 6a, and is why two consecutive
+    turns each spawning 2 blocking children ran 4 at once against a cap
+    of 2 (Task 5 review, Defect 2, disproved by execution, not
+    argument). Task 6a gave Console a coordinator per CONVERSATION,
+    owned by ``ConsoleAgentBridge`` and injected into every service it
+    builds, so there the cap now holds across turns; nothing caps the
+    aggregate across conversations or across processes. This function
+    does not participate in any of that -- it is stated here only so the
+    third dimension is not read as bounded by something it is not.
+
+    Sub-agents still deliberately INHERIT ``max_model_turns`` and
+    ``max_steps`` unchanged (the same 2026-07-25 operator decision
+    ``clamp_child_budget`` documents) -- only ``max_wall_seconds`` and
+    ``max_subagents`` are ever touched here.
+
+    ``clamp_child_budget`` above is UNCHANGED and remains a live
+    production call site (for the OTHER, turn-scoped/inline branch of
+    ``AgentService.spawn`` -- see its own docstring). Keeping the two
+    functions separate, rather than branching inside one, avoids forcing
+    a single function to serve both the parent-remainder-clamp shape and
+    this independent-ceiling shape through a conditional -- and it is
+    ``AgentService.spawn`` itself that branches between them, so each
+    function's contract stays a flat, unconditional description of ONE
+    path.
+
+    Args:
+        child: The would-be child's budget (today: the parent's own
+            ``config.budget``, since sub-agents inherit steps/turns/tokens
+            from the parent -- see ``AgentService.spawn``).
+        max_wall_seconds: The child's own wall-clock ceiling, resolved by
+            the caller -- counted from the CHILD's own start, never from
+            the parent's, and never shrunk by how much of the parent's own
+            budget remains.
+
+    Returns:
+        A new ``RunBudget`` with ``max_wall_seconds`` set to the given
+        ceiling (floored at 1s, same floor ``clamp_child_budget`` uses)
+        and ``max_subagents`` zeroed -- depth-1 sub-agents never spawn,
+        an invariant this function preserves exactly, not just by
+        omission. Every other field passes through unchanged.
+
+        NaN and infinite input are both treated as invalid and floored to
+        1s exactly like any other non-positive value, not passed through:
+        ``max(float("nan"), 1.0)`` evaluates to ``nan`` in Python (``1.0 >
+        nan`` is ``False``, so ``max`` keeps its first argument), and
+        ``deps.clock() - started > nan`` -- ``run_agent_loop``'s own
+        wall-clock check -- is then always ``False``, silently disabling
+        the ceiling entirely rather than flooring it. A plain
+        ``max(..., 1.0)`` alone does not defend against that; it only
+        looks like it does. This function's only production call site
+        (the threaded/non-inline branch of ``AgentService.spawn``)
+        already can't reach this, since ``_coerce_child_max_wall_seconds``
+        falls back to the config default before a non-finite value ever
+        gets here -- but this function's own floor must hold for ANY
+        caller regardless of argument provenance, not rely on a single
+        upstream guard staying in place forever.
+    """
+    if not math.isfinite(max_wall_seconds):
+        max_wall_seconds = 1.0
+    return RunBudget(
+        max_steps=child.max_steps,
+        max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,

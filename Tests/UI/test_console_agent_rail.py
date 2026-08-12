@@ -1152,3 +1152,113 @@ async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
         console._console_agent_bridge = _FakeBridge()
         console._current_console_rail_conversation_id = lambda: "conv-A"
         assert console._agent._cancel_console_agent_fleet_row("") is False
+
+
+# -- PR3a-1 Task 6b (audit F1): a LIVE child's steps exist nowhere but the
+# -- bridge's own per-run slot
+#
+# `AgentService` persists a run's steps to `AgentRunsDB` once, at the end
+# (`_persist`), so `subagent_run`'s record carries an EMPTY step list for
+# the whole time a child is actually working -- and a fleet child now works
+# on past the turn that spawned it, so "the whole time" can be minutes with
+# no run in flight at all. Keying `_live` per run (the F1 fix) is what makes
+# that progress addressable; this is the surface it is addressed FROM.
+
+
+@pytest.mark.asyncio
+async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                # Row exists from `create_run`; steps land only at the end.
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "running",
+                    "task": "long job",
+                    "steps": [],
+                }
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot()
+
+            def live_run_snapshot(self, conversation_id, run_id):
+                return AgentLiveSnapshot(
+                    status="running",
+                    step=2,
+                    steps=(
+                        AgentLiveStep("tool_result", "read notes.md", "subagent"),
+                    ),
+                )
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-child"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        status_line, steps_text, task_text = (
+            console._agent._console_agent_section_lines()
+        )
+
+        assert status_line.startswith("Sub-agent ·")
+        assert "read notes.md" in steps_text, (
+            "a live child's steps were dropped: the DB has none yet"
+        )
+        assert task_text == "long job"
+
+
+@pytest.mark.asyncio
+async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
+    """The DB record is COMPLETE; the live slot only keeps the last few.
+
+    So the live feed fills the gap and never replaces the record -- a
+    finished child must still drill in to its full persisted history.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "long job",
+                    "steps": [{"kind": "tool_result", "summary": "persisted step"}],
+                }
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot()
+
+            def live_run_snapshot(self, conversation_id, run_id):
+                return AgentLiveSnapshot(
+                    status="done",
+                    step=1,
+                    steps=(AgentLiveStep("tool_result", "live step", "subagent"),),
+                )
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-child"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        _status, steps_text, _task = console._agent._console_agent_section_lines()
+
+        assert "persisted step" in steps_text
+        assert "live step" not in steps_text
