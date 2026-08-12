@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     parse_profile_migration_journal,
 )
 from tldw_chatbook.TTS.profile_migration_namespace import (
+    ParentAuthority,
     move_exact_noreplace,
     remove_exact as remove_exact_namespace,
 )
@@ -110,6 +111,7 @@ class _PublicationSlotState:
     artifact: PreparedProfileMigrationArtifact
     destination: RetainedProfileMigrationDestination
     rollback_path: Path
+    parent_authority: ParentAuthority
     prior_retained: bool = False
     candidate_published: bool = False
 
@@ -470,6 +472,7 @@ def _require_absent(path: Path, parent_identity: os.stat_result) -> None:
 def _rename_exact(
     source: _OpaqueIdentity,
     destination_path: Path,
+    parent_authority: ParentAuthority,
 ) -> _OpaqueIdentity:
     source_parent_fd, source_fd, source_leaf = _open_exact(source)
     try:
@@ -477,7 +480,7 @@ def _rename_exact(
         move_exact_noreplace(
             source._path,
             destination_path,
-            parent_identity=source._parent_identity,
+            parent_authority=parent_authority,
             file_identity=source._file_identity,
         )
         moved = _identity_at(
@@ -599,7 +602,11 @@ def _publish_slot(
 ) -> None:
     is_active = state.artifact._slot is ProfileMigrationPublicationSlot.ACTIVE
     if state.destination._file_identity is not None:
-        _rename_exact(state.destination, state.rollback_path)
+        _rename_exact(
+            state.destination,
+            state.rollback_path,
+            state.parent_authority,
+        )
         state.prior_retained = True
         _fsync_exact(
             _identity_at(
@@ -621,7 +628,11 @@ def _publish_slot(
             state.destination._parent_identity,
         )
 
-    published = _rename_exact(state.artifact, state.destination._path)
+    published = _rename_exact(
+        state.artifact,
+        state.destination._path,
+        state.parent_authority,
+    )
     state.candidate_published = True
     _post_ponr_stage(
         stage_hook,
@@ -656,7 +667,11 @@ def _restore_slot(state: _PublicationSlotState) -> None:
             state.destination._path,
             state.artifact._file_identity,
         )
-        restored_candidate = _rename_exact(published, state.artifact._path)
+        restored_candidate = _rename_exact(
+            published,
+            state.artifact._path,
+            state.parent_authority,
+        )
         _fsync_exact(restored_candidate)
         state.candidate_published = False
     if state.prior_retained:
@@ -666,7 +681,11 @@ def _restore_slot(state: _PublicationSlotState) -> None:
             state.rollback_path,
             state.destination._file_identity,
         )
-        restored_prior = _rename_exact(rollback, state.destination._path)
+        restored_prior = _rename_exact(
+            rollback,
+            state.destination._path,
+            state.parent_authority,
+        )
         _fsync_exact(restored_prior)
         _immutable_validate(restored_prior)
         state.prior_retained = False
@@ -799,14 +818,14 @@ def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
 def _unlink_exact(
     path: Path,
     identity: os.stat_result | None,
-    parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
 ) -> bool:
     if identity is None:
         return False
     try:
         remove_exact_namespace(
             path,
-            parent_identity=parent_identity,
+            parent_authority=parent_authority,
             file_identity=identity,
         )
         return True
@@ -829,9 +848,9 @@ def _finish_claim(
 def _cleanup_exact(
     path: Path,
     identity: os.stat_result | None,
-    parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
 ) -> None:
-    if not _unlink_exact(path, identity, parent_identity):
+    if not _unlink_exact(path, identity, parent_authority):
         raise OSError
 
 
@@ -856,8 +875,10 @@ def publish_profile_migration(
     states: tuple[_PublicationSlotState, ...] = ()
     ponr = False
     completed = False
+    parent_authority: ParentAuthority | None = None
     try:
         journal_path, key = _claim(artifacts, destinations)
+        parent_authority = ParentAuthority(journal_path.parent.stat())
         for artifact in artifacts:
             _immutable_validate(artifact)
         for destination in destinations:
@@ -868,6 +889,7 @@ def publish_profile_migration(
         authority = _journal_authority(artifacts, destinations)
         payload, authority_checksum = _encode_initial_journal(authority)
         journal_identity = _write_new_journal(journal_path, payload)
+        parent_authority = ParentAuthority(journal_path.parent.stat())
         if stage_hook is not None:
             stage_hook(ProfileMigrationPublicationStage.JOURNAL_DURABLE)
         states = tuple(
@@ -877,6 +899,7 @@ def publish_profile_migration(
                 rollback_path=destination._path.with_name(
                     f".{destination._path.name}.{artifact._slot.value}.rollback"
                 ),
+                parent_authority=parent_authority,
             )
             for artifact, destination in zip(artifacts, destinations, strict=True)
         )
@@ -915,7 +938,7 @@ def publish_profile_migration(
                     _cleanup_exact(
                         state.rollback_path,
                         state.destination._file_identity,
-                        state.destination._parent_identity,
+                        state.parent_authority,
                     )
                 except BaseException as caught:
                     complete_cleanup_errors.append(caught)
@@ -923,12 +946,13 @@ def publish_profile_migration(
             not complete_cleanup_errors
             and journal_path is not None
             and journal_identity is not None
+            and parent_authority is not None
         ):
             try:
                 _cleanup_exact(
                     journal_path,
                     journal_identity.file,
-                    journal_identity.parent,
+                    parent_authority,
                 )
             except BaseException as caught:
                 complete_cleanup_errors.append(caught)
@@ -939,6 +963,7 @@ def publish_profile_migration(
         return
 
     if ponr:
+        assert parent_authority is not None
         journal_update_errors: list[BaseException] = []
         if (
             journal_path is not None
@@ -982,7 +1007,7 @@ def publish_profile_migration(
                 _cleanup_exact(
                     artifact._path,
                     artifact._file_identity,
-                    artifact._parent_identity,
+                    parent_authority,
                 )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
@@ -995,7 +1020,7 @@ def publish_profile_migration(
                 _cleanup_exact(
                     journal_path,
                     journal_identity.file,
-                    journal_identity.parent,
+                    parent_authority,
                 )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
@@ -1012,12 +1037,13 @@ def publish_profile_migration(
         raise _safe_failure() from None
 
     prepublication_cleanup_errors: list[BaseException] = []
+    assert parent_authority is not None
     for artifact in artifacts:
         try:
             _cleanup_exact(
                 artifact._path,
                 artifact._file_identity,
-                artifact._parent_identity,
+                parent_authority,
             )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
@@ -1026,11 +1052,7 @@ def publish_profile_migration(
             _cleanup_exact(
                 journal_path,
                 None if journal_identity is None else journal_identity.file,
-                (
-                    destinations[0]._parent_identity
-                    if journal_identity is None
-                    else journal_identity.parent
-                ),
+                parent_authority,
             )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)

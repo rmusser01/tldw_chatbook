@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from tldw_chatbook.Utils import private_paths
@@ -16,12 +17,23 @@ _LIBC = ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
 
 
+@dataclass(slots=True, repr=False)
+class ParentAuthority:
+    """Mutable exact parent metadata advanced only by owned removals."""
+
+    identity: os.stat_result
+
+    def __repr__(self) -> str:
+        return "ParentAuthority(<private>)"
+
+
 def _same_parent(current: os.stat_result, expected: os.stat_result) -> bool:
     return (
         private_paths._same_identity(current, expected)
         and stat.S_IFMT(current.st_mode) == stat.S_IFMT(expected.st_mode)
         and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
         and current.st_uid == expected.st_uid
+        and current.st_nlink == expected.st_nlink
         and stat.S_ISDIR(current.st_mode)
         and current.st_uid == os.geteuid()
         and stat.S_IMODE(current.st_mode) == 0o700
@@ -67,12 +79,12 @@ def _rename_noreplace(
         raise OSError(code, os.strerror(code))
 
 
-def _open_parent(path: Path, expected: os.stat_result) -> int:
+def _open_parent(path: Path, authority: ParentAuthority) -> int:
     parent_fd, _leaf = private_paths._open_verified_parent(
         path,
         missing_leaf_allowed=True,
     )
-    if not _same_parent(os.fstat(parent_fd), expected):
+    if not _same_parent(os.fstat(parent_fd), authority.identity):
         os.close(parent_fd)
         raise ValueError
     return parent_fd
@@ -92,7 +104,7 @@ def move_exact_noreplace(
     source: Path,
     destination: Path,
     *,
-    parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     file_identity: os.stat_result,
     allowed_links: frozenset[int] = frozenset({1}),
 ) -> os.stat_result:
@@ -100,7 +112,7 @@ def move_exact_noreplace(
 
     if source.parent != destination.parent or source.name == destination.name:
         raise ValueError
-    parent_fd = _open_parent(source, parent_identity)
+    parent_fd = _open_parent(source, parent_authority)
     file_fd = -1
     moved = False
     try:
@@ -145,9 +157,9 @@ def move_exact_noreplace(
                 pass
             raise ValueError
         os.fsync(parent_fd)
-        reopened = _open_parent(source, parent_identity)
+        reopened = _open_parent(source, parent_authority)
         try:
-            if os.fstat(reopened).st_nlink != os.fstat(parent_fd).st_nlink:
+            if not _same_parent(os.fstat(reopened), parent_authority.identity):
                 raise ValueError
         finally:
             os.close(reopened)
@@ -169,7 +181,7 @@ def move_exact_noreplace(
 def remove_exact(
     path: Path,
     *,
-    parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     file_identity: os.stat_result,
     allowed_links: frozenset[int] = frozenset({1}),
 ) -> None:
@@ -180,12 +192,12 @@ def remove_exact(
         moved = move_exact_noreplace(
             path,
             holding,
-            parent_identity=parent_identity,
+            parent_authority=parent_authority,
             file_identity=file_identity,
             allowed_links=allowed_links,
         )
     except FileNotFoundError:
-        parent_fd = _open_parent(holding, parent_identity)
+        parent_fd = _open_parent(holding, parent_authority)
         try:
             moved = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
             if (
@@ -196,7 +208,7 @@ def remove_exact(
                 raise ValueError
         finally:
             os.close(parent_fd)
-    parent_fd = _open_parent(holding, parent_identity)
+    parent_fd = _open_parent(holding, parent_authority)
     try:
         current = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
         if not private_paths._same_identity(current, moved) or not _valid_file(
@@ -205,14 +217,28 @@ def remove_exact(
             raise ValueError
         os.unlink(holding.name, dir_fd=parent_fd)
         os.fsync(parent_fd)
-        reopened = _open_parent(path, parent_identity)
+        # Only this exact owned removal may advance link metadata. Confirm the
+        # lexical parent and pinned directory still agree before retaining it.
+        current_parent = os.fstat(parent_fd)
+        reopened_fd, _leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=True,
+        )
         try:
-            if os.fstat(reopened).st_nlink != os.fstat(parent_fd).st_nlink:
+            reopened_parent = os.fstat(reopened_fd)
+            if (
+                not private_paths._same_identity(reopened_parent, current_parent)
+                or stat.S_IMODE(reopened_parent.st_mode)
+                != stat.S_IMODE(current_parent.st_mode)
+                or reopened_parent.st_uid != current_parent.st_uid
+                or reopened_parent.st_nlink != current_parent.st_nlink
+            ):
                 raise ValueError
+            parent_authority.identity = current_parent
         finally:
-            os.close(reopened)
+            os.close(reopened_fd)
     finally:
         os.close(parent_fd)
 
 
-__all__ = ["move_exact_noreplace", "remove_exact"]
+__all__ = ["ParentAuthority", "move_exact_noreplace", "remove_exact"]

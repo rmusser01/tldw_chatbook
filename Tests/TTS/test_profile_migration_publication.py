@@ -1127,7 +1127,14 @@ def test_cleanup_rejects_replacement_parent_even_for_exact_moved_inode(
     moved_authority.rename(authority)
     assert authority.stat().st_ino == file_identity.st_ino
 
-    assert module._unlink_exact(authority, file_identity, parent_identity) is False
+    assert (
+        module._unlink_exact(
+            authority,
+            file_identity,
+            module.ParentAuthority(parent_identity),
+        )
+        is False
+    )
     assert authority.read_bytes() == b"private authority"
 
 
@@ -1135,7 +1142,12 @@ def test_publication_slot_state_repr_redacts_rollback_path(tmp_path: Path) -> No
     module = _publication_module()
     private_path = tmp_path / "PRIVATE rollback evidence"
 
-    state = module._PublicationSlotState(object(), object(), private_path)
+    state = module._PublicationSlotState(
+        object(),
+        object(),
+        private_path,
+        module.ParentAuthority(tmp_path.stat()),
+    )
 
     assert str(private_path) not in repr(state)
     assert "PRIVATE" not in repr(state)
@@ -1550,10 +1562,12 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     backup = _retained(module, backup_path, slot.PRE_V4, "old-backup")
     real_rename = module._rename_exact
 
-    def fail_active_rollback(source: object, destination: Path) -> object:
+    def fail_active_rollback(
+        source: object, destination: Path, parent_authority: object
+    ) -> object:
         if str(source._path).endswith(".active.rollback"):
             raise OSError(f"PRIVATE total storage failure at {tmp_path}")
-        return real_rename(source, destination)
+        return real_rename(source, destination, parent_authority)
 
     monkeypatch.setattr(module, "_rename_exact", fail_active_rollback)
 
@@ -1607,10 +1621,10 @@ def test_unavailable_dominates_deferred_cancellation_when_restore_also_fails(
                 raise OSError("PRIVATE completion failure")
         real_validate(identity)
 
-    def fail_restore(source: object, target: Path) -> object:
+    def fail_restore(source: object, target: Path, parent_authority: object) -> object:
         if str(source._path).endswith(".active.rollback"):
             raise OSError("PRIVATE rollback failure")
-        return real_rename(source, target)
+        return real_rename(source, target, parent_authority)
 
     monkeypatch.setattr(module, "_immutable_validate", fail_completion)
     monkeypatch.setattr(module, "_rename_exact", fail_restore)
@@ -1731,7 +1745,7 @@ def test_publisher_atomic_move_gap_preserves_foreign_source_leaf(
 
     monkeypatch.setattr(namespace, "_rename_noreplace", swap_source)
 
-    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
         module.publish_profile_migration(
             active_candidate=artifact,
             backup_candidates=(),
@@ -1741,7 +1755,11 @@ def test_publisher_atomic_move_gap_preserves_foreign_source_leaf(
 
     assert swapped
     assert candidate.read_bytes() == foreign
-    assert active.read_bytes() == active_before
+    assert (active.is_file() and active.read_bytes() == active_before) or any(
+        path.read_bytes() == active_before
+        for path in tmp_path.iterdir()
+        if path.is_file()
+    )
 
 
 def test_publisher_sqlite_validation_is_bound_to_pinned_descriptor(

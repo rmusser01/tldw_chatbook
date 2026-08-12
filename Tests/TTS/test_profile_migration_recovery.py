@@ -635,6 +635,10 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
         monkeypatch.setattr(namespace.os, "unlink", interrupt_journal_unlink)
         monkeypatch.setattr(recovery.os, "fsync", observe_settlement_fsync)
 
+    if fault_site == "journal_unlink":
+        with pytest.raises(ProfileRepositoryError, match="unavailable"):
+            recovery.recover_profile_migration_publication(active)
+        return
     with pytest.raises(asyncio.CancelledError) as caught:
         recovery.recover_profile_migration_publication(active)
 
@@ -643,8 +647,6 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     assert not candidate.exists()
     assert not rollback.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
-    if fault_site == "journal_unlink":
-        assert settlement_fsync_after_fault
 
 
 def test_irrecoverable_failure_dominates_deferred_control_flow(

@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     parse_profile_migration_journal,
 )
 from tldw_chatbook.TTS.profile_migration_namespace import (
+    ParentAuthority,
     move_exact_noreplace,
     remove_exact as remove_exact_namespace,
 )
@@ -354,13 +355,14 @@ def _fsync_parent(parent_fd: int, parent_identity: os.stat_result) -> None:
 def _remove_exact(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     expected: _ObservedArtifact,
 ) -> None:
     _require_configured_parent(selected, parent_identity)
     remove_exact_namespace(
         selected.parent / expected.leaf,
-        parent_identity=parent_identity,
+        parent_authority=parent_authority,
         file_identity=expected.identity,
         allowed_links=frozenset({1, 2}),
     )
@@ -369,6 +371,7 @@ def _remove_exact(
 def _move_exact(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     source: _ObservedArtifact,
     destination_leaf: str,
@@ -378,7 +381,7 @@ def _move_exact(
     moved = move_exact_noreplace(
         selected.parent / source.leaf,
         selected.parent / destination_leaf,
-        parent_identity=parent_identity,
+        parent_authority=parent_authority,
         file_identity=identity,
         allowed_links=frozenset({1, 2}),
     )
@@ -398,6 +401,7 @@ def _move_exact(
 def _remove_journal(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     journal_leaf: str,
     snapshot: _JournalSnapshot,
@@ -418,7 +422,7 @@ def _remove_journal(
     _require_configured_parent(selected, parent_identity)
     remove_exact_namespace(
         selected.parent / journal_leaf,
-        parent_identity=parent_identity,
+        parent_authority=parent_authority,
         file_identity=current.identity,
     )
 
@@ -459,6 +463,7 @@ def _only_completed_authority(rows: Sequence[_ObservedRow]) -> bool:
 def _rollback(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     rows: Sequence[_ObservedRow],
 ) -> None:
@@ -469,21 +474,35 @@ def _rollback(
                 _move_exact(
                     parent_fd,
                     parent_identity,
+                    parent_authority,
                     selected,
                     target,
                     item.row.candidate,
                 )
             else:
-                _remove_exact(parent_fd, parent_identity, selected, target)
+                _remove_exact(
+                    parent_fd,
+                    parent_identity,
+                    parent_authority,
+                    selected,
+                    target,
+                )
             target = None
         if item.row.had_prior:
             if target is not None and target.kind == "prior":
                 if rollback is not None:
-                    _remove_exact(parent_fd, parent_identity, selected, rollback)
+                    _remove_exact(
+                        parent_fd,
+                        parent_identity,
+                        parent_authority,
+                        selected,
+                        rollback,
+                    )
             elif target is None and rollback is not None:
                 _move_exact(
                     parent_fd,
                     parent_identity,
+                    parent_authority,
                     selected,
                     rollback,
                     item.row.target,
@@ -495,12 +514,19 @@ def _rollback(
     for item in rows:
         candidate = _observe_artifact(parent_fd, item.row.candidate, item.row)
         if candidate is not None:
-            _remove_exact(parent_fd, parent_identity, selected, candidate)
+            _remove_exact(
+                parent_fd,
+                parent_identity,
+                parent_authority,
+                selected,
+                candidate,
+            )
 
 
 def _complete(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     rows: Sequence[_ObservedRow],
 ) -> None:
@@ -511,6 +537,7 @@ def _complete(
                 _move_exact(
                     parent_fd,
                     parent_identity,
+                    parent_authority,
                     selected,
                     target,
                     item.row.rollback,
@@ -518,7 +545,13 @@ def _complete(
             elif not private_paths._same_identity(target.identity, rollback.identity):
                 raise ValueError
             else:
-                _remove_exact(parent_fd, parent_identity, selected, target)
+                _remove_exact(
+                    parent_fd,
+                    parent_identity,
+                    parent_authority,
+                    selected,
+                    target,
+                )
             target = None
         if target is None:
             if candidate is None:
@@ -526,6 +559,7 @@ def _complete(
             _move_exact(
                 parent_fd,
                 parent_identity,
+                parent_authority,
                 selected,
                 candidate,
                 item.row.target,
@@ -534,7 +568,13 @@ def _complete(
         elif target.kind != "candidate":
             raise ValueError
         if candidate is not None:
-            _remove_exact(parent_fd, parent_identity, selected, candidate)
+            _remove_exact(
+                parent_fd,
+                parent_identity,
+                parent_authority,
+                selected,
+                candidate,
+            )
     refreshed = _observe_rows(
         parent_fd,
         ParsedProfileMigrationJournal(
@@ -549,19 +589,28 @@ def _complete(
         if item.target is None or item.target.kind != "candidate":
             raise ValueError
         if item.rollback is not None:
-            _remove_exact(parent_fd, parent_identity, selected, item.rollback)
+            _remove_exact(
+                parent_fd,
+                parent_identity,
+                parent_authority,
+                selected,
+                item.rollback,
+            )
 
 
 def _validate_authoritative_targets(
     parent_fd: int,
     parent_identity: os.stat_result,
+    parent_authority: ParentAuthority,
     selected: Path,
     parsed: ParsedProfileMigrationJournal,
     *,
     kind: str,
 ) -> None:
     for row in parsed.recovery_rows:
-        _require_configured_parent(selected, parent_identity)
+        _require_configured_parent(
+            selected, parent_authority.identity, exact_links=True
+        )
         if kind == "prior" and not row.had_prior:
             try:
                 os.stat(row.target, dir_fd=parent_fd, follow_symlinks=False)
@@ -601,7 +650,9 @@ def _validate_authoritative_targets(
                 raise ValueError
         finally:
             os.close(file_fd)
-        _require_configured_parent(selected, parent_identity)
+        _require_configured_parent(
+            selected, parent_authority.identity, exact_links=True
+        )
         after = _observe_artifact(parent_fd, row.target, row)
         if (
             after is None
@@ -610,7 +661,7 @@ def _validate_authoritative_targets(
             or not private_paths._same_identity(before.identity, after.identity)
         ):
             raise ValueError
-    _require_configured_parent(selected, parent_identity)
+    _require_configured_parent(selected, parent_authority.identity, exact_links=True)
 
 
 def _choose_action(
@@ -661,6 +712,7 @@ def recover_profile_migration_publication(
                 missing_leaf_allowed=True,
             )
             parent_identity = os.fstat(parent_fd)
+            parent_authority = ParentAuthority(parent_identity)
             if not _valid_parent_stat(parent_identity):
                 raise ValueError
             journal_snapshot = _read_journal(parent_fd, journal_leaf)
@@ -698,22 +750,26 @@ def recover_profile_migration_publication(
         # Admission pins the only authority this invocation may consume. From
         # here through settlement, control-flow signals are deferred and the
         # exact action is replayed from fresh observations until it converges.
-        first_attempt = True
         while True:
             attempt_error: BaseException | None = None
             settled = False
             try:
-                _require_configured_parent(selected, parent_identity)
+                _require_configured_parent(
+                    selected, parent_authority.identity, exact_links=True
+                )
                 current_snapshot = _read_journal(parent_fd, journal_leaf)
                 if current_snapshot is None:
                     # A deferred signal may have arrived after journal unlink
                     # but before its namespace fsync. Re-durably settle that
                     # exact absence before treating recovery as complete.
                     _fsync_parent(parent_fd, parent_identity)
-                    _require_configured_parent(selected, parent_identity)
+                    _require_configured_parent(
+                        selected, parent_authority.identity, exact_links=True
+                    )
                     _validate_authoritative_targets(
                         parent_fd,
                         parent_identity,
+                        parent_authority,
                         selected,
                         parsed,
                         kind="prior" if action == "rollback" else "candidate",
@@ -746,14 +802,14 @@ def recover_profile_migration_publication(
                         _stage_hook("admitted")
                     _require_configured_parent(
                         selected,
-                        parent_identity,
-                        exact_links=first_attempt,
+                        parent_authority.identity,
+                        exact_links=True,
                     )
-                    first_attempt = False
                     if action == "rollback":
                         _rollback(
                             parent_fd,
                             parent_identity,
+                            parent_authority,
                             selected,
                             current_rows,
                         )
@@ -761,6 +817,7 @@ def recover_profile_migration_publication(
                         _complete(
                             parent_fd,
                             parent_identity,
+                            parent_authority,
                             selected,
                             current_rows,
                         )
@@ -769,6 +826,7 @@ def recover_profile_migration_publication(
                     _validate_authoritative_targets(
                         parent_fd,
                         parent_identity,
+                        parent_authority,
                         selected,
                         current_parsed,
                         kind="prior" if action == "rollback" else "candidate",
@@ -778,13 +836,16 @@ def recover_profile_migration_publication(
                     _remove_journal(
                         parent_fd,
                         parent_identity,
+                        parent_authority,
                         selected,
                         journal_leaf,
                         admitted_snapshot,
                     )
                     if _stage_hook is not None:
                         _stage_hook("settled")
-                    _require_configured_parent(selected, parent_identity)
+                    _require_configured_parent(
+                        selected, parent_authority.identity, exact_links=True
+                    )
                     settled = True
             except BaseException as error:
                 attempt_error = error
