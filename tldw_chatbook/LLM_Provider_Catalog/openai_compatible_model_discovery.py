@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from ipaddress import IPv6Address
 from typing import Any
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 import httpx
 
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
+from tldw_chatbook.LLM_Calls.qwencloud_url import (
+    QwenCloudBaseURLValidationError,
+    normalize_qwencloud_base_url,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     DiscoveredModel,
     DiscoveryErrorKind,
@@ -24,6 +30,14 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
+_QWENCLOUD_PROVIDER_KEY = "qwencloud"
+_MAX_ENDPOINT_LENGTH = 2000
+_MAX_GENERIC_PATH_DECODE_PASSES = 2
+_GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
+_GENERIC_REQUEST_ENDPOINT_TAILS = _GENERIC_ENDPOINT_TAILS[1:]
+_PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_ENCODED_PATH_SEPARATOR_RE = re.compile(r"%(?:2[fF]|5[cC])")
+_ZONE_ID_RE = re.compile(r"[A-Za-z0-9._~-]+")
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -38,6 +52,7 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "local_vllm",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
     }
@@ -106,7 +121,9 @@ _ANTHROPIC_MODELS_PAGE_LIMIT = 1000
 _ANTHROPIC_MAX_MODEL_PAGES = 10
 
 
-def build_discovery_auth_headers(provider_identity: str, api_key: str | None) -> dict[str, str]:
+def build_discovery_auth_headers(
+    provider_identity: str, api_key: str | None
+) -> dict[str, str]:
     """Return provider-appropriate auth headers for a models request.
 
     Args:
@@ -135,9 +152,14 @@ def _normalized_provider_identity(provider_identity: str | None) -> str:
 def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
     """Parse a configured endpoint, accepting host-only local URLs."""
     raw_endpoint = str(endpoint or "").strip()
-    if not raw_endpoint:
+    if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    if "\\" in candidate or any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in candidate
+    ):
+        return None
     try:
         parsed = urlparse(candidate)
     except ValueError:
@@ -152,7 +174,97 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed.port
     except ValueError:
         return None
-    return parsed
+    return parsed if _is_structurally_safe_generic_endpoint(parsed) else None
+
+
+def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
+    """Validate generic discovery structure without provider suffix policy."""
+    if not _is_safe_generic_authority(parsed.netloc):
+        return False
+    if not _is_safe_generic_path(parsed.path):
+        return False
+    safe_url = urlunparse(
+        (parsed.scheme, _safe_netloc(parsed), parsed.path or "/", "", "", "")
+    )
+    return validate_url(safe_url)
+
+
+def _is_safe_generic_authority(netloc: str) -> bool:
+    """Allow percent only for an RFC 6874 bracketed IPv6 zone identifier."""
+    if any(character in netloc for character in '\\|^{}<>"`') or netloc.endswith(":"):
+        return False
+    if "%" not in netloc:
+        return True
+
+    host_port = netloc.rsplit("@", 1)[-1]
+    closing_bracket = host_port.find("]")
+    if not host_port.startswith("[") or closing_bracket < 0:
+        return False
+    bracketed_host = host_port[1:closing_bracket]
+    remainder = host_port[closing_bracket + 1 :]
+    if bracketed_host.count("%25") != 1 or (
+        remainder and not re.fullmatch(r":\d+", remainder)
+    ):
+        return False
+    address, zone_id = bracketed_host.split("%25", 1)
+    try:
+        IPv6Address(address)
+    except ValueError:
+        return False
+    return _ZONE_ID_RE.fullmatch(zone_id) is not None
+
+
+def _is_safe_generic_path(path: str) -> bool:
+    """Reject parser-ambiguous path structure without rewriting the URL."""
+    if (
+        "//" in path
+        or re.search(r"%(?![0-9A-Fa-f]{2})", path) is not None
+        or any(segment in {".", ".."} for segment in path.split("/"))
+        or _has_unsafe_generic_endpoint_tail_structure(path)
+    ):
+        return False
+
+    validation_path = path
+    for _pass in range(_MAX_GENERIC_PATH_DECODE_PASSES):
+        if _ENCODED_PATH_SEPARATOR_RE.search(validation_path):
+            return False
+        try:
+            decoded_path = unquote(validation_path, errors="strict")
+        except UnicodeDecodeError:
+            return False
+        if decoded_path == validation_path:
+            break
+        if (
+            any(
+                ord(character) < 32 or ord(character) == 127
+                for character in decoded_path
+            )
+            or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+            or _has_unsafe_generic_endpoint_tail_structure(decoded_path)
+        ):
+            return False
+        validation_path = decoded_path
+    return _PERCENT_ESCAPE_RE.search(validation_path) is None
+
+
+def _has_unsafe_generic_endpoint_tail_structure(path: str) -> bool:
+    """Reject repeated or non-terminal generic request endpoint tails."""
+    segments = tuple(segment.lower() for segment in path.strip("/").split("/"))
+    request_tails = [
+        (tail, index + len(tail))
+        for tail in _GENERIC_REQUEST_ENDPOINT_TAILS
+        for index in range(len(segments) - len(tail) + 1)
+        if segments[index : index + len(tail)] == tail
+    ]
+    if len(request_tails) > 1 or any(
+        end != len(segments) for _tail, end in request_tails
+    ):
+        return True
+    return any(
+        segments[-len(first + second) :] == first + second
+        for first in _GENERIC_ENDPOINT_TAILS
+        for second in _GENERIC_ENDPOINT_TAILS
+    )
 
 
 def _normalized_path(parsed: ParseResult) -> str:
@@ -176,7 +288,7 @@ def _safe_netloc(parsed: ParseResult) -> str:
 def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
     """Parse any URL-like endpoint so safe display can strip credentials."""
     raw_endpoint = str(endpoint or "").strip()
-    if not raw_endpoint:
+    if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
     try:
@@ -206,6 +318,22 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
     return None
 
 
+def _models_path_preserving_encoding(path: str) -> str:
+    """Return the models path without decoding or recasing its base prefix."""
+    raw_path = (path or "/").rstrip("/") or "/"
+    normalized_path = raw_path.lower()
+    normalized_models_path = _models_path_for_endpoint_path(normalized_path)
+    if normalized_models_path is None:
+        return raw_path
+    if normalized_path == "/" or normalized_path in {"/completion", "/completions"}:
+        return normalized_models_path
+    if normalized_path.endswith("/chat/completions"):
+        return f"{raw_path[: -len('/chat/completions')]}/models"
+    if normalized_path.endswith("/models"):
+        return raw_path
+    return f"{raw_path}/models"
+
+
 def _is_base_url_path(path: str) -> bool:
     """Return whether a path requires provider identity to infer ``/v1/models``."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
@@ -215,9 +343,8 @@ def _is_base_url_path(path: str) -> bool:
 def _is_explicit_openai_compatible_path(path: str) -> bool:
     """Return whether a path explicitly opts into OpenAI-compatible discovery."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
-    return (
-        normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS
-        or normalized_path.endswith("/chat/completions")
+    return normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS or (
+        normalized_path.endswith("/chat/completions")
     )
 
 
@@ -231,11 +358,18 @@ def supports_openai_compatible_model_discovery(
     provider discovery URLs are rejected even when the provider can also expose
     an OpenAI-compatible API at another configured endpoint.
     """
+    provider_key = _normalized_provider_identity(provider_identity)
+    if provider_key == _QWENCLOUD_PROVIDER_KEY:
+        try:
+            normalize_qwencloud_base_url(normalized_endpoint)
+        except QwenCloudBaseURLValidationError:
+            return False
+        return True
+
     parsed = _parse_endpoint(normalized_endpoint)
     if parsed is None:
         return False
 
-    provider_key = _normalized_provider_identity(provider_identity)
     path = _normalized_path(parsed)
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
@@ -251,6 +385,13 @@ def supports_openai_compatible_model_discovery(
 
 def build_models_url(endpoint: str, provider_identity: str) -> str:
     """Return the OpenAI-compatible models endpoint for a configured URL."""
+    if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
+        try:
+            base_url = normalize_qwencloud_base_url(endpoint)
+        except QwenCloudBaseURLValidationError:
+            return fingerprint_endpoint(endpoint)
+        return f"{base_url}/models"
+
     parsed = _parse_endpoint(endpoint)
     if parsed is None:
         return str(endpoint or "").strip()
@@ -271,7 +412,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
                 )
             )
 
-    models_path = _models_path_for_endpoint_path(path) or path
+    models_path = _models_path_preserving_encoding(parsed.path)
 
     return urlunparse((parsed.scheme, _safe_netloc(parsed), models_path, "", "", ""))
 
@@ -465,7 +606,9 @@ async def discover_openai_compatible_models(
         )
         for _page in range(_ANTHROPIC_MAX_MODEL_PAGES if paginate else 1):
             try:
-                response = await active_client.get(models_url, headers=headers, params=params)
+                response = await active_client.get(
+                    models_url, headers=headers, params=params
+                )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {401, 403}:
@@ -517,7 +660,9 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("data"), list):
+            if not isinstance(payload, Mapping) or not isinstance(
+                payload.get("data"), list
+            ):
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
@@ -576,7 +721,9 @@ async def discover_openai_compatible_models(
     for payload in payloads:
         combined_data.extend(payload["data"])
 
-    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now_iso = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     try:
         models = normalize_models_response(
             {"data": combined_data},

@@ -1,7 +1,6 @@
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     SELECTOR_MERGE_CAP,
-    ModelCatalogSettings,
     load_model_catalog_settings,
 )
 
@@ -44,8 +43,15 @@ def test_zero_stale_hours_is_allowed():
     assert settings.stale_after_hours == 0.0
 
 
-def test_six_providers_and_cap():
+def test_qwencloud_is_seventh_auto_refresh_cloud_provider():
     assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == {
-        "OpenAI", "Anthropic", "MistralAI", "Moonshot", "OpenRouter", "ZAI",
+        "OpenAI",
+        "Anthropic",
+        "MistralAI",
+        "Moonshot",
+        "OpenRouter",
+        "QwenCloud",
+        "ZAI",
     }
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 7
     assert SELECTOR_MERGE_CAP == 50

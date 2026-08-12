@@ -19,6 +19,7 @@ _MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS = frozenset(
         "custom-openai-api-2",
         "local-llm",
         "mistralai",
+        "qwencloud",
     }
 )
 

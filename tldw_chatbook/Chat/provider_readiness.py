@@ -25,7 +25,10 @@ from typing import Mapping, Optional
 # already takes, and cannot cycle back: `config.py`'s own top-level
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
 from ..config import (
+    ProviderSettingsError,
     is_valid_provider_api_key,
+    normalize_provider_config_key,
+    provider_settings_for_key,
     resolve_provider_api_key as _valid_api_key,
 )
 
@@ -43,6 +46,7 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "moonshot",
         "openai",
         "openrouter",
+        "qwencloud",
         "zai",
     }
 )
@@ -91,6 +95,7 @@ KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     "mistralai": "MISTRAL_API_KEY",
+    "qwencloud": "DASHSCOPE_API_KEY",
 }
 
 
@@ -124,7 +129,7 @@ class ProviderReadiness:
 
 def provider_config_key(provider: Optional[str]) -> str:
     """Return the normalized key used under ``api_settings``."""
-    return (provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_config_key(provider)
 
 
 def _requires_api_key(provider_key: str) -> bool:
@@ -155,24 +160,6 @@ def default_api_key_env_var(provider_key: str) -> Optional[str]:
     return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
         provider_key, f"{provider_key.upper()}_API_KEY"
     )
-
-
-def _provider_settings_for_key(
-    api_settings: object,
-    provider_key: str,
-) -> Mapping[str, object]:
-    """Return settings whose configured provider key normalizes to provider_key."""
-    if not isinstance(api_settings, Mapping):
-        return {}
-
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(str(configured_provider)) != provider_key:
-            continue
-        if isinstance(configured_value, Mapping):
-            return configured_value
-        return {}
-
-    return {}
 
 
 def get_provider_readiness(
@@ -210,7 +197,23 @@ def get_provider_readiness(
         )
 
     api_settings = app_config.get("api_settings", {})
-    provider_settings = _provider_settings_for_key(api_settings, provider_key)
+    try:
+        provider_settings = provider_settings_for_key(api_settings, provider_key)
+    except ProviderSettingsError:
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=_requires_api_key(provider_key),
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Invalid provider settings",
+            recovery=(
+                "Replace api_settings.qwencloud with a configuration table "
+                "in Advanced Config or config.toml."
+            ),
+        )
 
     requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))

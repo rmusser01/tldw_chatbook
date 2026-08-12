@@ -7,6 +7,7 @@ import pytest
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import (
+    _MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS,
     resolve_provider_list_key,
 )
 
@@ -18,6 +19,17 @@ def test_resolves_exact_top_level_provider_key_for_openrouter():
 
     assert result.status == "resolved"
     assert result.provider_list_key == "OpenRouter"
+
+
+def test_qwencloud_model_discovery_identity_uses_qwencloud():
+    providers = {"QwenCloud": ["qwen3.8-max"], "OpenAI": ["gpt-4.1"]}
+
+    result = resolve_provider_list_key(" QwenCloud ", providers)
+
+    assert result.status == "resolved"
+    assert result.normalized_provider == "qwencloud"
+    assert result.provider_list_key == "QwenCloud"
+    assert "qwencloud" in _MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS
 
 
 def test_preserves_custom_2_key_spelling():

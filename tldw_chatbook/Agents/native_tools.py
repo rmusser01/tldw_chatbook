@@ -32,6 +32,10 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
         "mistral",
         "deepseek",
         "moonshot",
+        # TASK-3771: both QwenCloud wire modes normalize function calls to
+        # OpenAI shape and translate canonical assistant/tool continuation.
+        # Joined Console tests exercise the real dispatcher and HTTP boundary.
+        "qwencloud",
         "custom-openai-api",
         "custom-openai-api-2",
         # task-263: chat_with_anthropic converts OpenAI tools/tool-history to

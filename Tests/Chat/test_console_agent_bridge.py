@@ -15,6 +15,8 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     SubAgentSummary,
+    _StreamingModelAdapter,
+    _openai_usage_from_provider_call,
     compose_agent_system_prompt,
     format_agent_step_marker,
     format_todo_marker,
@@ -33,6 +35,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
 )
@@ -439,7 +443,10 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     # provider is built once at bridge-construction time, before any
     # session exists, so it is out of scope for a per-session binding.
     outcome = _run(
-        bridge, store, session, assistant.id,
+        bridge,
+        store,
+        session,
+        assistant.id,
         builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
     )
     assert outcome.status == "done"
@@ -467,9 +474,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         config_module,
         "get_cli_setting",
         lambda section, key=None, default=None: (
-            True
-            if section == "tools" and key == "write_file_enabled"
-            else default
+            True if section == "tools" and key == "write_file_enabled" else default
         ),
     )
 
@@ -496,7 +501,10 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
     )
     outcome = _run(
-        bridge, store, session, assistant.id,
+        bridge,
+        store,
+        session,
+        assistant.id,
         builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
     )
     assert outcome.status == "done"
@@ -515,9 +523,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
     db2 = AgentRunsDB(tmp_path / "runs2.db", client_id="t")
     store2 = ConsoleChatStore()
     normal_session = store2.create_session()
-    store2.append_message(
-        normal_session.id, role=ConsoleMessageRole.USER, content="hi"
-    )
+    store2.append_message(normal_session.id, role=ConsoleMessageRole.USER, content="hi")
     normal_assistant = store2.append_message(
         normal_session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
@@ -529,7 +535,10 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
         agent_runs_db=db2, store=store2, provider_gateway=_ChunkGateway(scripts2)
     )
     outcome2 = _run(
-        bridge2, store2, normal_session, normal_assistant.id,
+        bridge2,
+        store2,
+        normal_session,
+        normal_assistant.id,
         builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
     )
     assert outcome2.status == "done"
@@ -734,13 +743,9 @@ def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
-    outcome = _run(
-        bridge, store, session, assistant.id, conversation_id="conv-overlap"
-    )
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-overlap")
 
     assert outcome.status == "done"
     assert outcome.final_text == "parent final"
@@ -965,6 +970,627 @@ def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
     assert gateway.signals_seen == [signals]
     assert gateway.signal_states_seen == [True]
     assert signals.synthetic_fallback_emitted is True
+
+
+def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
+    tmp_path,
+):
+    usage = {
+        "input_tokens": 9,
+        "input_tokens_details": {"cached_tokens": 2},
+        "output_tokens": 3,
+        "output_tokens_details": {"reasoning_tokens": 1},
+        "total_tokens": 12,
+    }
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="qwen3.8-max",
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "answer"
+    assert outcome.total_tokens == 12
+    assert store.get_message(aid).content == "answer"
+    assert signals.synthetic_fallback_emitted is False
+    assert signals.usage_payloads() == [usage]
+
+
+@pytest.mark.parametrize(
+    ("cache_creation_input_tokens", "expected_total"),
+    [(0, 10_954), (111, 11_065)],
+    ids=("cache-read", "cache-read-and-creation"),
+)
+def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
+    tmp_path,
+    monkeypatch,
+    cache_creation_input_tokens,
+    expected_total,
+):
+    estimator_calls: list[str] = []
+    captured_usage: list[dict] = []
+
+    def fail_estimator(*_args, **_kwargs):
+        estimator_calls.append("called")
+        raise AssertionError("provider usage must bypass the local estimator")
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
+    monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+    real_usage_total_tokens = agent_service._usage_total_tokens
+
+    def capture_usage(response):
+        captured_usage.append(response["usage"])
+        return real_usage_total_tokens(response)
+
+    monkeypatch.setattr(agent_service, "_usage_total_tokens", capture_usage)
+    input_usage = {
+        "input_tokens": 3_571,
+        "cache_read_input_tokens": 6_656,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+    }
+    output_usage = {"output_tokens": 727}
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [], "usage": input_usage},
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": output_usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="Anthropic",
+        base_url="",
+        model="claude-sonnet-4-6",
+        ready=True,
+        readiness_key="anthropic",
+        execution_key="anthropic",
+        api_key="anthropic-test-key",
+        streaming=True,
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="claude-sonnet-4-6",
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "answer"
+    assert outcome.total_tokens == expected_total
+    assert estimator_calls == []
+    assert captured_usage == [
+        {
+            "prompt_tokens": 3_571 + 6_656 + cache_creation_input_tokens,
+            "prompt_tokens_details": {"cached_tokens": 6_656},
+            "completion_tokens": 727,
+            "total_tokens": expected_total,
+        }
+    ]
+    assert signals.synthetic_fallback_emitted is False
+    assert signals.usage_payloads() == [{**input_usage, **output_usage}]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"tokens": 12},
+        {"prompt_tokens": "not-a-number", "completion_tokens": -5},
+        {
+            "input_tokens": 0,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 0,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 0,
+        },
+    ],
+)
+def test_provider_usage_handoff_omits_absent_or_nonpositive_payloads(payload):
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "count_key",
+    [
+        "prompt_tokens",
+        "input_tokens",
+        "completion_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ],
+)
+def test_budget_usage_handoff_rejects_each_malformed_top_level_count(count_key):
+    payload = {
+        "prompt_tokens": 1,
+        "input_tokens": 1,
+        "completion_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        count_key: "1",
+    }
+
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("details_key", "details"),
+    [
+        ("prompt_tokens_details", None),
+        ("input_tokens_details", []),
+        ("input_token_details", {"cached_tokens": "1"}),
+        ("completion_tokens_details", {"cached_tokens": False}),
+        ("output_tokens_details", {"reasoning_tokens": 1.5}),
+        ("output_token_details", {"reasoning_tokens": -1}),
+    ],
+)
+def test_budget_usage_handoff_rejects_each_malformed_details_shape_or_count(
+    details_key,
+    details,
+):
+    payload = {
+        "prompt_tokens": 1,
+        "input_tokens": 1,
+        "completion_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        details_key: details,
+    }
+
+    assert (
+        _openai_usage_from_provider_call(
+            payload,
+            provider="openai",
+            model="gpt-4.1",
+        )
+        is None
+    )
+
+
+def test_openai_usage_handoff_preserves_chat_completion_cache_details():
+    assert _openai_usage_from_provider_call(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        },
+        provider="openai",
+        model="gpt-4.1",
+    ) == {
+        "prompt_tokens": 100,
+        "prompt_tokens_details": {"cached_tokens": 80},
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"input_tokens": True, "output_tokens": 3, "total_tokens": 4},
+        {"input_tokens": "9", "output_tokens": 3, "total_tokens": 12},
+        {"input_tokens": 9.5, "output_tokens": 3, "total_tokens": 12},
+        {"input_tokens": -1, "output_tokens": 3, "total_tokens": 2},
+        {"input_tokens": 9, "output_tokens": 3, "total_tokens": "12"},
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": False},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"reasoning_tokens": 1.5},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": [],
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "cache_read_input_tokens": "2",
+            "cache_creation_input_tokens": 1.5,
+            "output_tokens": 3,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {"cached_tokens": 0, "audio_tokens": True},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {
+                "cached_tokens": 2,
+                "cached_tokens_details": [],
+            },
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"accepted_prediction_tokens": "1"},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {"text_tokens": 9.5},
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "output_tokens": 3,
+            "output_token_details": {"image_tokens": -1},
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "input_token_details": {
+                "cached_tokens": 2,
+                "cached_tokens_details": {"audio_tokens": "1"},
+            },
+            "output_tokens": 3,
+            "total_tokens": 12,
+        },
+        {
+            "input_tokens": 9,
+            "output_tokens": 3,
+            "output_tokens_details": {"rejected_prediction_tokens": False},
+            "total_tokens": 12,
+        },
+    ],
+    ids=(
+        "bool",
+        "numeric-string",
+        "fractional-float",
+        "negative",
+        "malformed-total",
+        "nested-bool",
+        "nested-float",
+        "malformed-details-shape",
+        "anthropic-cache-fields",
+        "boolean-audio",
+        "malformed-cached-details-shape",
+        "numeric-string-accepted-prediction",
+        "fractional-singular-text",
+        "negative-singular-image",
+        "malformed-nested-cached-count",
+        "boolean-rejected-prediction",
+    ),
+)
+def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
+    tmp_path,
+    monkeypatch,
+    usage,
+):
+    estimator_calls: list[str] = []
+
+    def count_messages(*_args, **_kwargs):
+        estimator_calls.append("messages")
+        return 40
+
+    def count_text(*_args, **_kwargs):
+        estimator_calls.append("text")
+        return 2
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", count_messages)
+    monkeypatch.setattr(agent_service, "estimate_tokens", count_text)
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="OpenAI",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        api_key="openai-test-key",
+        streaming=True,
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="gpt-4.1",
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert outcome.total_tokens == 42
+    assert estimator_calls == ["messages", "text"]
+    # The raw aggregate remains tolerant/unchanged for persistence and cost
+    # consumers; only the AgentService budget handoff fails closed.
+    assert signals.usage_payloads() == [usage]
+
+
+def test_exact_zero_streamed_usage_counts_remain_authoritative(
+    tmp_path,
+    monkeypatch,
+):
+    usage = {
+        "input_tokens": 0,
+        "input_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "cached_tokens_details": {
+                "audio_tokens": 0,
+                "text_tokens": 0,
+                "image_tokens": 0,
+                "vendor_metadata": "preserved",
+            },
+        },
+        "input_token_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "cached_tokens_details": {
+                "audio_tokens": 0,
+                "text_tokens": 0,
+                "image_tokens": 0,
+            },
+        },
+        "output_tokens": 3,
+        "output_tokens_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+            "vendor_metadata": "preserved",
+        },
+        "output_token_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "text_tokens": 0,
+            "image_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+        "total_tokens": 3,
+    }
+
+    def fail_estimator(*_args, **_kwargs):
+        raise AssertionError("valid exact-integer usage must remain authoritative")
+
+    monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
+    monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+
+    def chat_api_call(**_kwargs):
+        return iter(
+            (
+                {"choices": [{"delta": {"content": "answer"}}]},
+                {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                    "usage": usage,
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="qwen3.8-max",
+    )
+
+    assert outcome.status == "done"
+    assert outcome.total_tokens == 3
+
+
+def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_path):
+    terminal_seen = threading.Barrier(3)
+    release_terminal = threading.Event()
+    usage_by_prompt = {"alpha": 12, "beta": 34}
+
+    def chat_api_call(**kwargs):
+        prompt = kwargs["messages_payload"][-1]["content"]
+        total = usage_by_prompt[prompt]
+
+        def stream():
+            yield {"choices": [{"delta": {"content": prompt}}]}
+            yield {
+                "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                "usage": {
+                    "input_tokens": total - 3,
+                    "input_tokens_details": {"cached_tokens": total // 6},
+                    "output_tokens": 3,
+                    "output_tokens_details": {"reasoning_tokens": 1},
+                    "total_tokens": total,
+                },
+            }
+            terminal_seen.wait(timeout=5)
+            release_terminal.wait(timeout=5)
+
+        return stream()
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=chat_api_call)
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    signals = ConsoleProviderStreamSignals()
+    resolution = ConsoleProviderResolution(
+        provider="QwenCloud",
+        base_url="https://workspace.example.test/compatible-mode/v1",
+        model="qwen3.8-max",
+        ready=True,
+        readiness_key="qwencloud",
+        execution_key="qwencloud",
+        api_key="qwen-test-key",
+        streaming=True,
+        api_mode="responses",
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=resolution,
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        provider_stream_signals=signals,
+    )
+    responses: dict[str, dict] = {}
+    errors: list[BaseException] = []
+
+    def call(prompt: str) -> None:
+        try:
+            responses[prompt] = adapter.chat_call(
+                messages_payload=[
+                    {"role": "system", "content": SUBAGENT_PROMPT_PREFIX},
+                    {"role": "user", "content": prompt},
+                ]
+            )
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+
+    callers = [
+        threading.Thread(target=call, args=(prompt,)) for prompt in usage_by_prompt
+    ]
+    try:
+        for caller in callers:
+            caller.start()
+        terminal_seen.wait(timeout=5)
+        assert sorted(
+            payload["total_tokens"] for payload in signals.usage_payloads()
+        ) == [12, 34]
+        release_terminal.set()
+        for caller in callers:
+            caller.join(timeout=5)
+    finally:
+        release_terminal.set()
+        for caller in callers:
+            caller.join(timeout=5)
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+    assert errors == []
+    assert all(not caller.is_alive() for caller in callers)
+    assert {
+        prompt: response["usage"]["total_tokens"]
+        for prompt, response in responses.items()
+    } == usage_by_prompt
+    assert responses["alpha"]["usage"] == {
+        "prompt_tokens": 9,
+        "prompt_tokens_details": {"cached_tokens": 2},
+        "completion_tokens": 3,
+        "completion_tokens_details": {"reasoning_tokens": 1},
+        "total_tokens": 12,
+    }
+    assert sorted(payload["total_tokens"] for payload in signals.usage_payloads()) == [
+        12,
+        34,
+    ]
 
 
 def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_path):
@@ -1274,19 +1900,22 @@ def test_step_truncation_cuts_on_newline_and_tab_boundaries():
     text = "### Heading\n\nsome body text that keeps going well past the limit here"
     out = _truncate_step_text(text, limit=15)
     assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
+
+
 def test_format_todo_marker_renders_statuses_and_active_form():
     text = format_todo_marker(
         [
             {"content": "write tests", "status": "completed"},
-            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+            {
+                "content": "implement",
+                "status": "in_progress",
+                "activeForm": "implementing",
+            },
             {"content": "commit", "status": "pending"},
         ]
     )
     assert text == (
-        "☰ Todos (1 in progress):\n"
-        "  [x] write tests\n"
-        "  [~] implementing\n"
-        "  [ ] commit"
+        "☰ Todos (1 in progress):\n  [x] write tests\n  [~] implementing\n  [ ] commit"
     )
 
 
@@ -1315,7 +1944,8 @@ def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
         session.id, [{"content": "ship it", "status": "in_progress"}]
     )
     tool_messages = [
-        m for m in store.messages_for_session(session.id)
+        m
+        for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert [m.content for m in tool_messages] == [
@@ -1990,8 +2620,9 @@ def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
         skills_service=skills_service,
     )
 
-    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
-        AgentService, "__init__", spy_service_init
+    with (
+        patch.object(_BridgeSkillRunner, "__init__", spy_runner_init),
+        patch.object(AgentService, "__init__", spy_service_init),
     ):
         outcome = _run(
             bridge, store, session, assistant.id, conversation_id="conv-bindings"
@@ -2037,8 +2668,9 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
         skills_service=skills_service,
     )
 
-    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
-        AgentService, "__init__", spy_service_init
+    with (
+        patch.object(_BridgeSkillRunner, "__init__", spy_runner_init),
+        patch.object(AgentService, "__init__", spy_service_init),
     ):
         outcome = _run(
             bridge,
@@ -2241,7 +2873,9 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
             },
         ],
     }
-    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(context)
+    registry, allowed_tools, builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(context)
+    )
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
@@ -2252,8 +2886,8 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
 
 def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
     mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
     )
     assert "mcp__srv_a__search" in allowed_tools
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
@@ -2266,7 +2900,9 @@ def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
 def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
     """`mcp_provider=None` (the default) must not add anything -- the
     pre-P5-T6 no-MCP behavior stays byte-identical."""
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed({})
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({})
+    )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     assert len(registry.list_catalog()) == 2
 
@@ -2290,8 +2926,8 @@ def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider
     else a decision the caller's review hook stamped on that gate would
     never be visible to `invoke()`."""
     gate = _FakeBuiltinGateForRegistry(refuse=True)
-    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, builtin_gate=gate
+    registry, _allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, builtin_gate=gate)
     )
     result = registry.invoke_by_name("calculator", {"expression": "6*7"})
     assert result.ok is False
@@ -2302,7 +2938,9 @@ def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider
 def test_compose_run_registry_and_allowed_no_builtin_gate_is_unchanged():
     """`builtin_gate=None` (the default) must not alter the pre-task-545
     no-skills/no-MCP behavior -- the provider builds its own lazy gate."""
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed({})
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({})
+    )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     result = registry.invoke_by_name("calculator", {"expression": "6*7"})
     assert result.ok is True
@@ -2325,10 +2963,12 @@ def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider
     """task-6 (settings-workspaces-folder-roots spec Sec3): `workspace_id=`
     must reach the freshly-built `BuiltinToolProvider` so its `invoke()`
     binds the run's workspace around every tool call."""
-    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {},
-        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
-        workspace_id="ws-compose",
+    registry, _allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="ws-compose",
+        )
     )
     # registry._providers[0] is the BuiltinToolProvider this call just built
     # (see _compose_run_registry_and_allowed's own body) -- poke a probe
@@ -2343,8 +2983,10 @@ def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider
 def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     """`workspace_id=None` (the default) must not alter the pre-task-6
     behavior -- the provider leaves the run workspace unbound."""
-    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    registry, _allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+        )
     )
     registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
     result = registry.invoke_by_name("probe_workspace", {})
@@ -2372,10 +3014,12 @@ def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
     `BuiltinToolProvider` so its `invoke()` refuses the write-shaped
     built-ins for a temporary session. Mirrors ``..._threads_workspace_id_
     into_the_provider`` exactly."""
-    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {},
-        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
-        ephemeral=True,
+    registry, _allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            ephemeral=True,
+        )
     )
     registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
     result = registry.invoke_by_name("write_file", {})
@@ -2386,8 +3030,10 @@ def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
 def test_compose_run_registry_and_allowed_no_ephemeral_is_unchanged():
     """`ephemeral=False` (the default) must not alter pre-F4 behavior --
     the provider dispatches the tool normally."""
-    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    registry, _allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+        )
     )
     registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
     result = registry.invoke_by_name("write_file", {})
@@ -2637,8 +3283,8 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_built
     mcp_provider = _FakeMCPProvider(
         [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
     )
     assert allowed_tools.count("calculator") == 1
     assert "mcp__srv_a__search" in allowed_tools
@@ -2652,8 +3298,8 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_runti
     tool named like one of the loop's own in-loop runtime handlers must
     never become a distinct, MCP-routable catalog entry."""
     mcp_provider = _FakeMCPProvider([(LOAD_TOOLS_NAME, "shadowing MCP tool")])
-    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider
+    registry, allowed_tools, builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
     )
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
@@ -2676,8 +3322,8 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_skill
     mcp_provider = _FakeMCPProvider(
         [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        context, mcp_provider=mcp_provider
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(context, mcp_provider=mcp_provider)
     )
     assert allowed_tools.count("code-review") == 1
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
@@ -2690,8 +3336,8 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
     """When every MCP entry collides, the provider is not registered at
     all -- no dangling catalog entries the model could never reach."""
     mcp_provider = _FakeMCPProvider([("calculator", "shadowing MCP tool")])
-    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
     )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
@@ -2900,9 +3546,11 @@ def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
     harmful, not merely unnecessary.
     """
     monkeypatch.setattr(
-        agent_service, "_setting", lambda key, default: (
+        agent_service,
+        "_setting",
+        lambda key, default: (
             1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
-        )
+        ),
     )
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -3016,9 +3664,7 @@ def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_p
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     def release_then_settle():
         # The parent is about to cash in its verdict. Let the child finish
@@ -3370,7 +4016,9 @@ def _install_skills_service():
     def enforce_install_remote():
         return None
 
-    async def import_skill_file(*a, **k):  # not used (install_skill_from_url is patched)
+    async def import_skill_file(
+        *a, **k
+    ):  # not used (install_skill_from_url is patched)
         return {"name": "unused"}
 
     svc.enforce_install_remote = enforce_install_remote
@@ -3385,7 +4033,11 @@ def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
 
     async def fake_install(url, *, scope_service, **kw):
         installed.append(url)
-        return {"name": "demo", "trust_status": "quarantined_added", "trust_blocked": True}
+        return {
+            "name": "demo",
+            "trust_status": "quarantined_added",
+            "trust_blocked": True,
+        }
 
     monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
 
@@ -3397,23 +4049,33 @@ def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=_install_skills_service(),
     )
     confirmed = []
 
     outcome = _run(
-        bridge, store, session, assistant.id,
+        bridge,
+        store,
+        session,
+        assistant.id,
         conversation_id="conv-install",
         request_skill_install_confirm=lambda url: confirmed.append(url) or True,
     )
     assert outcome.status == "done"
     assert confirmed == ["https://github.com/o/r"]
     assert installed == ["https://github.com/o/r"]
-    tool_msgs = [m.content for m in store.messages_for_session(session.id)
-                 if m.role == ConsoleMessageRole.TOOL]
+    tool_msgs = [
+        m.content
+        for m in store.messages_for_session(session.id)
+        if m.role == ConsoleMessageRole.TOOL
+    ]
     assert any("demo" in c and "pending" in c.lower() for c in tool_msgs)
 
 
@@ -3433,19 +4095,29 @@ def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=_install_skills_service(),
     )
     outcome = _run(
-        bridge, store, session, assistant.id,
+        bridge,
+        store,
+        session,
+        assistant.id,
         conversation_id="conv-deny",
         request_skill_install_confirm=lambda url: False,
     )
     assert outcome.status == "done"
-    tool_msgs = [m.content for m in store.messages_for_session(session.id)
-                 if m.role == ConsoleMessageRole.TOOL]
+    tool_msgs = [
+        m.content
+        for m in store.messages_for_session(session.id)
+        if m.role == ConsoleMessageRole.TOOL
+    ]
     assert any("declined" in c.lower() for c in tool_msgs)
 
 
@@ -3460,13 +4132,21 @@ def test_install_skill_malformed_url_never_prompts(tmp_path):
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=_install_skills_service(),
     )
     outcome = _run(
-        bridge, store, session, assistant.id, conversation_id="conv-bad",
+        bridge,
+        store,
+        session,
+        assistant.id,
+        conversation_id="conv-bad",
         request_skill_install_confirm=lambda url: prompted.append(url) or True,
     )
     assert outcome.status == "done"
@@ -3489,18 +4169,29 @@ def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=_install_skills_service(),
     )
     outcome = _run(
-        bridge, store, session, assistant.id, conversation_id="conv-exists",
+        bridge,
+        store,
+        session,
+        assistant.id,
+        conversation_id="conv-exists",
         request_skill_install_confirm=lambda url: True,
     )
     assert outcome.status == "done"  # turn survives the bare ValueError
-    tool_msgs = [m.content for m in store.messages_for_session(session.id)
-                 if m.role == ConsoleMessageRole.TOOL]
+    tool_msgs = [
+        m.content
+        for m in store.messages_for_session(session.id)
+        if m.role == ConsoleMessageRole.TOOL
+    ]
     assert any("local_skill_exists" in c for c in tool_msgs)
 
 
@@ -3520,18 +4211,29 @@ def test_install_skill_absent_without_confirm_callback(tmp_path):
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=_install_skills_service(),
     )
     outcome = _run(
-        bridge, store, session, assistant.id, conversation_id="conv-no-confirm",
+        bridge,
+        store,
+        session,
+        assistant.id,
+        conversation_id="conv-no-confirm",
         # request_skill_install_confirm intentionally omitted.
     )
     assert outcome.status == "done"
-    tool_msgs = [m.content for m in store.messages_for_session(session.id)
-                 if m.role == ConsoleMessageRole.TOOL]
+    tool_msgs = [
+        m.content
+        for m in store.messages_for_session(session.id)
+        if m.role == ConsoleMessageRole.TOOL
+    ]
     assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
     assert not any("declined" in c.lower() for c in tool_msgs)
 
@@ -3609,9 +4311,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
     assert exited == ["builtin", "mcp"]
 
 
-def test_resumed_markers_carry_the_same_full_output_as_live_ones(
-    tmp_path, monkeypatch
-):
+def test_resumed_markers_carry_the_same_full_output_as_live_ones(tmp_path, monkeypatch):
     """TASK-1860 AC#5: resume is a second door, and it has been missed before.
 
     `resume_marker_messages` re-derives markers from AgentRunsDB and builds
@@ -3660,10 +4360,7 @@ def test_resumed_markers_carry_the_same_full_output_as_live_ones(
     assert [m.content for m in resumed] == [m.content for m in live]
     assert [m.tool_output_full for m in resumed] == [
         m.tool_output_full for m in live
-    ], (
-        "a resumed marker exposes a different amount of its result than the "
-        "live one did"
-    )
+    ], "a resumed marker exposes a different amount of its result than the live one did"
 
 
 # -- task-1337: Library/RAG provider registration order and inheritance --
@@ -3849,7 +4546,9 @@ class _FleetTwoChildGateway:
     is paused.
     """
 
-    def __init__(self, parent_script, child_result, gate: threading.Event, needed: int = 2):
+    def __init__(
+        self, parent_script, child_result, gate: threading.Event, needed: int = 2
+    ):
         self._parent = list(parent_script)
         self._child_result = list(child_result)
         self._gate = gate
@@ -3941,9 +4640,7 @@ def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     result: dict = {}
 
@@ -4138,9 +4835,7 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     result: dict = {}
 
@@ -4152,9 +4847,7 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     runner = threading.Thread(target=do_run, name="test-bridge-cancel-subagent-run")
     runner.start()
     try:
-        assert gateway.entered_event.wait(5), (
-            "the child never reached its gated turn"
-        )
+        assert gateway.entered_event.wait(5), "the child never reached its gated turn"
         live = bridge.fleet_snapshot("conv-cancel")
         assert len(live) == 1
         handle_id = live[0].handle_id
@@ -4318,9 +5011,7 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     result: dict = {}
 

@@ -178,6 +178,45 @@ button, the Model section's **Configure** button in the left rail, or the
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
 
+#### QwenCloud in Console
+
+QwenCloud behaves like the other hosted providers: select it once, use the
+normal streaming Console and native function tools, and discover models
+through the shared cached catalog. Configure its durable **API mode** in
+**F9 ▸ Providers & Models**; it is not a per-session Console override. A run
+pins the selected mode and endpoint for every model turn, so changing Settings
+mid-run cannot switch its continuation to another API.
+
+- `responses` is the default. It re-sends the required history, does not send
+  `previous_response_id` or a provider conversation ID, and does not rely on
+  provider-managed session state. It requests `store=false` where the
+  compatible endpoint honors it; Chatbook makes no claim about provider
+  operational retention or caching.
+- `chat_completions` disables preserved-thinking replay because Chatbook does
+  not retain private reasoning content.
+- Existing Chatbook function tools work through the same approval, execution,
+  cancellation, budget, and continuation path in both modes. QwenCloud-hosted
+  built-in tools are not exposed.
+- The default model is `qwen3.8-max`. Model/mode availability still depends on
+  your QwenCloud account; use model discovery or the provider's recovery error
+  instead of assuming compatibility from the model name.
+- Token usage can be shown even when pricing is unavailable. **Pricing
+  unknown** means no verified rate is configured, not zero cost.
+
+Optional live verification makes paid requests and is never part of the
+default suite. With `DASHSCOPE_API_KEY` already exported, explicitly opt in:
+
+```bash
+TLDW_LIVE_QWENCLOUD=1 .venv/bin/python -m pytest -q \
+  Tests/Chat/test_live_qwencloud_api.py
+```
+
+The test runs both API modes in isolated temporary config and data profiles,
+checks identifying text plus a marker derived from one calculator result, and
+does not print the key, prompt, or response. Override the defaults only when
+your account requires it with `TLDW_LIVE_QWENCLOUD_MODEL` or
+`TLDW_LIVE_QWENCLOUD_API_BASE_URL`.
+
 ### Leaving Console during a run
 
 Agent runs are screen-scoped: navigating to any other screen cancels every

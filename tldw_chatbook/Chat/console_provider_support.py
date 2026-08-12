@@ -78,6 +78,7 @@ _PROVIDER_DISPLAY_NAMES = {
     "moonshot": "Moonshot",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
+    "qwencloud": "QwenCloud",
     "vllm": "vLLM",
     "zai": "Z.ai",
 }

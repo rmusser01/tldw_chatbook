@@ -226,6 +226,31 @@ after the fact** over raising inside code that catches broadly.
 
 ---
 
+## Trigger cancellation from the state the test claims to cancel
+
+**TASK-3771, 2026-08-11.** A QwenCloud native-tool regression claimed to prove
+that cancelling after an incomplete streamed function call never executes the
+tool. The test actually set its cancellation flag in the mock server's
+``on_request`` callback, before the response body or partial call reached the
+stream parser. Replacing both partial-call fixtures with ordinary final text
+still passed: the test proved only pre-response cancellation and closure.
+
+The corrected test waits until the real ``ConsoleChatStore`` receives a visible
+checkpoint that follows an incomplete tool-call delta, then requests
+cancellation while the chunked response remains non-terminal. A text-only
+mutation now fails at the fixture guard, and the test separately proves the
+live response closes exactly once without executing or pairing the partial
+call.
+
+**What to do.** If a cancellation test names a lifecycle state (after headers,
+after one chunk, after partial tool state), trigger cancellation from an
+observation downstream of that exact state. Do not trigger it at request
+receipt and infer that later layers ran. Mutation-replace the special prefix
+with a normal successful response; the test must fail for the reason it claims
+to cover.
+
+---
+
 ## A surviving mutant usually means a SECOND writer satisfies your assertion
 
 **The trap.** You delete the code under test, the test stays green, and the reflex is

@@ -132,6 +132,31 @@ async def test_uncapped_returns_full_catalog_for_picker():
 
 
 @pytest.mark.asyncio
+async def test_qwencloud_full_catalog_remains_searchable_in_model_popover():
+    discovered = _entries(
+        "QwenCloud",
+        [f"qwen-model-{index}" for index in range(SELECTOR_MERGE_CAP + 10)],
+    )
+
+    dropdown = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        _FakeScope(discovered),
+        provider="QwenCloud",
+    )
+    searchable = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        _FakeScope(discovered),
+        provider="QwenCloud",
+        merge_cap=None,
+    )
+
+    assert dropdown == []
+    assert [option.model_id for option in searchable] == [
+        f"qwen-model-{index}" for index in range(SELECTOR_MERGE_CAP + 10)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_current_model_inserted_as_transient_when_missing():
     options = await resolve_provider_model_options(
         {"OpenAI": ["saved-1"]},

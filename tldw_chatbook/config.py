@@ -864,6 +864,90 @@ def is_valid_provider_api_key(value: object) -> bool:
     return resolve_provider_api_key(value) is not None
 
 
+def normalize_provider_config_key(provider: object) -> str:
+    """Return the canonical lookup form used for provider config tables.
+
+    Args:
+        provider: Provider label or key to normalize.
+
+    Returns:
+        A stripped, lowercase provider key with spaces and hyphens replaced by
+        underscores.
+    """
+    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+class ProviderSettingsError(ValueError):
+    """Raised when a selected provider's config table is not a mapping."""
+
+
+def provider_settings_for_key(
+    api_settings: object,
+    provider_key: str,
+) -> Mapping[str, object]:
+    """Return provider settings without mutating the loaded configuration.
+
+    QwenCloud historically accepted normalized alias table names. When an
+    exact canonical table is also present, alias fields remain fallbacks while
+    exact ``api_settings.qwencloud`` fields win regardless of insertion order.
+    Other providers retain the existing first-normalized-match behavior.
+
+    Args:
+        api_settings: Loaded ``api_settings`` value.
+        provider_key: Canonical provider key to resolve.
+
+    Returns:
+        The resolved provider settings, or an empty mapping when none exist.
+
+    Raises:
+        ProviderSettingsError: If QwenCloud's authoritative table is present
+            but malformed, or its first normalized alias is malformed when no
+            canonical table exists.
+    """
+    if not isinstance(api_settings, Mapping):
+        return {}
+
+    if provider_key == "qwencloud":
+        if provider_key in api_settings:
+            canonical_settings = api_settings[provider_key]
+            if not isinstance(canonical_settings, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            alias_settings: Mapping[str, object] = {}
+            for configured_provider, configured_value in api_settings.items():
+                configured_key = str(configured_provider)
+                if configured_key == provider_key:
+                    continue
+                if normalize_provider_config_key(configured_key) != provider_key:
+                    continue
+                if isinstance(configured_value, Mapping):
+                    alias_settings = configured_value
+                break
+            merged = dict(alias_settings)
+            merged.update(canonical_settings)
+            return merged
+
+        for configured_provider, configured_value in api_settings.items():
+            if normalize_provider_config_key(configured_provider) != provider_key:
+                continue
+            if not isinstance(configured_value, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            return configured_value
+        return {}
+
+    for configured_provider, configured_value in api_settings.items():
+        if normalize_provider_config_key(configured_provider) != provider_key:
+            continue
+        if isinstance(configured_value, Mapping):
+            return configured_value
+        return {}
+
+    return {}
+
+
 #: Providers whose legacy `[API] <provider>_api_key` TOML key and
 #: `<PROVIDER>_API_KEY` environment variable both follow the plain
 #: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
@@ -2832,6 +2916,7 @@ HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
 Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
+QwenCloud = ["qwen3.8-max"]
 ZAI = ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
 # Local Providers
 Llama_cpp = ["None"]
@@ -2991,6 +3076,16 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     retries = 3
     retry_delay = 1.0
     streaming = false
+
+    [api_settings.qwencloud]
+    api_mode = "responses"
+    api_key_env_var = "DASHSCOPE_API_KEY"
+    api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    model = "qwen3.8-max"
+    timeout = 120
+    retries = 3
+    retry_delay = 1
+    streaming = true
 
     [api_settings.zai] # Matches key in [providers]
     api_key_env_var = "ZAI_API_KEY"
@@ -5588,7 +5683,7 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
 
 def _normalize_provider_lookup_key(provider: Any) -> str:
     """Return the canonical lookup form used for provider key comparisons."""
-    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return normalize_provider_config_key(provider)
 
 
 def resolve_provider_name(
@@ -6295,6 +6390,7 @@ _cloud_provider_keys = [
     "MistralAI",
     "Moonshot",
     "OpenRouter",
+    "QwenCloud",
     "ZAI",
 ]  # Example list
 

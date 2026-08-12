@@ -68,9 +68,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderCallSignals,
+    ConsoleProviderGateway,
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
@@ -283,6 +286,7 @@ FIND_LOAD_DISCOVERY_HINT = (
     "schemas before calling them."
 )
 
+
 def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
 
@@ -326,7 +330,9 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     return _combined
 
 
-def compose_agent_system_prompt(session_prompt: str, *, offer_find_load: bool = False) -> str:
+def compose_agent_system_prompt(
+    session_prompt: str, *, offer_find_load: bool = False
+) -> str:
     """Compose the primary system prompt: session prompt first, agent prompt appended.
 
     Args:
@@ -563,9 +569,7 @@ def _pair_step_diff(
 STEP_APPROVAL_TIMEOUT = "approval_timeout"
 
 
-def format_change_summary_marker(
-    files_changed: int, adds: int, dels: int
-) -> str:
+def format_change_summary_marker(files_changed: int, adds: int, dels: int) -> str:
     """The change-summary transcript row for one turn (TASK-1972).
 
     Shared by the live emit (run_reply's finally) and resume re-derivation
@@ -582,10 +586,7 @@ def format_change_summary_marker(
         The row text.
     """
     noun = "file" if files_changed == 1 else "files"
-    return (
-        f"✎ Edited {files_changed} {noun}  +{adds} −{dels}"
-        " — review with `v`"
-    )
+    return f"✎ Edited {files_changed} {noun}  +{adds} −{dels} — review with `v`"
 
 
 #: PR3a-1 Task 6c (audit F2): which window a ``change_snapshots`` row
@@ -1102,6 +1103,105 @@ class _ModelCallLifeline:
             self.loop.close()
 
 
+_BUDGET_USAGE_COUNT_KEYS = (
+    "prompt_tokens",
+    "input_tokens",
+    "completion_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+_BUDGET_USAGE_DETAILS_KEYS = (
+    "prompt_tokens_details",
+    "input_tokens_details",
+    "input_token_details",
+    "completion_tokens_details",
+    "output_tokens_details",
+    "output_token_details",
+)
+_BUDGET_USAGE_DETAIL_COUNT_KEYS = (
+    "cached_tokens",
+    "reasoning_tokens",
+    "audio_tokens",
+    "text_tokens",
+    "image_tokens",
+    "accepted_prediction_tokens",
+    "rejected_prediction_tokens",
+)
+
+
+def _has_strict_budget_usage_counts(payload: Mapping[str, Any]) -> bool:
+    for key in _BUDGET_USAGE_COUNT_KEYS:
+        if key in payload:
+            value = payload[key]
+            if type(value) is not int or value < 0:
+                return False
+    for key in _BUDGET_USAGE_DETAILS_KEYS:
+        if key not in payload:
+            continue
+        details = payload[key]
+        if not isinstance(details, Mapping):
+            return False
+        for count_key in _BUDGET_USAGE_DETAIL_COUNT_KEYS:
+            if count_key in details:
+                value = details[count_key]
+                if type(value) is not int or value < 0:
+                    return False
+        if "cached_tokens_details" in details:
+            cached_details = details["cached_tokens_details"]
+            if not isinstance(cached_details, Mapping):
+                return False
+            for count_key in _BUDGET_USAGE_DETAIL_COUNT_KEYS:
+                if count_key in cached_details:
+                    value = cached_details[count_key]
+                    if type(value) is not int or value < 0:
+                        return False
+    return True
+
+
+def _openai_usage_from_provider_call(
+    payload: Mapping[str, Any] | None,
+    *,
+    provider: str,
+    model: str,
+) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping) or not _has_strict_budget_usage_counts(payload):
+        return None
+    normalized = ProviderUsage.from_provider_payload(
+        payload,
+        provider=provider,
+        model=model,
+    )
+    if normalized is None or normalized.total_tokens <= 0:
+        return None
+
+    prompt_tokens = (
+        normalized.uncached_input + normalized.cache_read + normalized.cache_write
+    )
+    usage: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": normalized.output,
+        "total_tokens": normalized.total_tokens,
+    }
+    prompt_details = payload.get(
+        "prompt_tokens_details", payload.get("input_tokens_details")
+    )
+    normalized_prompt_details = (
+        dict(prompt_details) if isinstance(prompt_details, Mapping) else {}
+    )
+    if "cached_tokens" in normalized_prompt_details or normalized.cache_read:
+        normalized_prompt_details["cached_tokens"] = normalized.cache_read
+    if normalized_prompt_details:
+        usage["prompt_tokens_details"] = normalized_prompt_details
+    completion_details = payload.get(
+        "completion_tokens_details", payload.get("output_tokens_details")
+    )
+    if isinstance(completion_details, Mapping):
+        usage["completion_tokens_details"] = dict(completion_details)
+    return usage
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -1294,6 +1394,16 @@ class _StreamingModelAdapter:
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
+        call_signals: ConsoleProviderCallSignals | None = None
+        gateway_signals: (
+            ConsoleProviderStreamSignals | ConsoleProviderCallSignals | None
+        ) = self._provider_stream_signals
+        if isinstance(self._gateway, ConsoleProviderGateway):
+            aggregate_signals = (
+                self._provider_stream_signals or ConsoleProviderStreamSignals()
+            )
+            call_signals = aggregate_signals.new_usage_call()
+            gateway_signals = call_signals
 
         async def _consume() -> None:
             nonlocal any_streamed
@@ -1308,8 +1418,8 @@ class _StreamingModelAdapter:
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
             stream_kwargs = {"tools": tools} if tools is not None else {}
-            if self._provider_stream_signals is not None:
-                stream_kwargs["signals"] = self._provider_stream_signals
+            if gateway_signals is not None:
+                stream_kwargs["signals"] = gateway_signals
             async for chunk in self._gateway.stream_chat(
                 self._resolution, messages_payload, **stream_kwargs
             ):
@@ -1362,8 +1472,7 @@ class _StreamingModelAdapter:
         except FuturesTimeoutError:
             future.cancel()
             raise TimeoutError(
-                "provider turn did not complete within "
-                f"{_CHAT_CALL_TIMEOUT_SECONDS}s"
+                f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
@@ -1381,7 +1490,16 @@ class _StreamingModelAdapter:
         message: dict = {"content": gate.full_text}
         if native_calls:
             message["tool_calls"] = native_calls
-        return {"choices": [{"message": message}]}
+        response: dict[str, Any] = {"choices": [{"message": message}]}
+        if call_signals is not None:
+            usage = _openai_usage_from_provider_call(
+                call_signals.usage_snapshot(),
+                provider=self._resolution.provider,
+                model=self._resolution.model or model or "",
+            )
+            if usage is not None:
+                response["usage"] = usage
+        return response
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -1489,10 +1607,7 @@ def _non_colliding_skill_entries(
     name set) in agreement with dispatch.
     """
     collision_names = (
-        set(builtin_names)
-        | set(local_names)
-        | set(library_names)
-        | RUNTIME_TOOL_NAMES
+        set(builtin_names) | set(local_names) | set(library_names) | RUNTIME_TOOL_NAMES
     )
     return [
         item
@@ -2842,6 +2957,7 @@ class ConsoleAgentBridge:
                 if _inner_review is None:
                     return {}
                 return _inner_review(calls, run_id)
+
         service = AgentService(
             self._db,
             registry,
@@ -3011,9 +3127,7 @@ class ConsoleAgentBridge:
                     )
                     _records = self._change_tracker.end_turn(
                         change_handle,
-                        touched_paths=ChangeTurnTracker.tool_touched_paths(
-                            _steps
-                        ),
+                        touched_paths=ChangeTurnTracker.tool_touched_paths(_steps),
                     )
                     if "run_id" in locals():
                         self._record_change_snapshots(
@@ -4019,9 +4133,7 @@ class ConsoleAgentBridge:
         # resume (finding 3).
         snap_by_run: dict[str, list[dict]] = {}
         try:
-            for _row in self._db.change_snapshots_for_conversation(
-                conversation_id
-            ):
+            for _row in self._db.change_snapshots_for_conversation(conversation_id):
                 snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
         except Exception:  # noqa: BLE001 -- resume must not die on this
             snap_by_run = {}

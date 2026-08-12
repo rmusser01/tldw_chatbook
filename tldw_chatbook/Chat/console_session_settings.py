@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
@@ -57,6 +58,7 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "oobabooga",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
         "zai",
@@ -839,12 +841,10 @@ def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
-    value = {}
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(configured_provider) == provider_key:
-            value = configured_value
-            break
-    return value if isinstance(value, Mapping) else {}
+    try:
+        return provider_settings_for_key(api_settings, provider_key)
+    except ProviderSettingsError:
+        return {}
 
 
 def _model_default_profile(

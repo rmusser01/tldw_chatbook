@@ -732,6 +732,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "api_settings.<provider>.endpoint",
         "api_settings.<provider>.api_key",
         "api_settings.<provider>.api_key_env_var",
+        "api_settings.<provider>.api_mode",
         "api_settings.<provider>.model_defaults.<model>",
     )
     assert records_by_category[
@@ -6507,7 +6508,14 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
             == "sk-test-new-local-key"
         )
 
-        await pilot.click("#settings-provider-api-key-clear")
+        await pilot.pause()
+        clear_button = screen.query_one("#settings-provider-api-key-clear", Button)
+        assert clear_button.disabled is False
+        clear_button.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["api_key"] == ""
         await pilot.click("#settings-save-category")
 
     assert ("api_settings.openai", "api_key", "") in saved
