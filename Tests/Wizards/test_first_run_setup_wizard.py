@@ -501,43 +501,212 @@ async def test_provider_discovery_same_selection_idempotent_and_retry_adds_one()
 
 
 @pytest.mark.asyncio
-async def test_provider_discovery_reentry_and_unmount_do_not_duplicate_or_mutate_late():
+async def test_provider_discovery_reentry_restarts_cancelled_request_and_discards_late():
     import asyncio
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    started = asyncio.Event()
-    returned_after_cancel = asyncio.Event()
+    first_started = asyncio.Event()
+    first_cancelled = asyncio.Event()
+    second_started = asyncio.Event()
+    release_second = asyncio.Event()
+    attempt = 0
 
     async def discover(_provider_key):
-        started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            returned_after_cancel.set()
-            return ("late-private-value",)
+        nonlocal attempt
+        attempt += 1
+        if attempt == 1:
+            first_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                first_cancelled.set()
+                return ("late-private-value",)
+        second_started.set()
+        await release_second.wait()
+        return ("current-provider-result",)
 
     selected_discovery = AsyncMock(side_effect=discover)
-    step = _provider_step(discover=selected_discovery)
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=SimpleNamespace(status="success", models=("current-model",))
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={}, llm_provider_catalog_scope_service=scope_service
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=selected_discovery)
     app = _StepHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        step.on_show()
-        step.on_show()
-        await pilot.pause()
-        selected_discovery.assert_not_awaited()
-
         step.select_provider("ollama")
-        await asyncio.wait_for(started.wait(), timeout=2)
+        await asyncio.wait_for(first_started.wait(), timeout=2)
         status_widget = step.query_one("#setup-provider-probe-status", Static)
-        before = str(status_widget.renderable)
-        await step.remove()
-        await asyncio.wait_for(returned_after_cancel.wait(), timeout=2)
+        assert str(status_widget.renderable).startswith("Checking")
+
+        step.on_hide()
+        await asyncio.wait_for(first_cancelled.wait(), timeout=2)
+        assert step._selected_discovery_state == "cancelled"
+        assert "Checking" not in str(status_widget.renderable)
+
+        step.on_show()
+        await asyncio.wait_for(second_started.wait(), timeout=2)
+        assert step._selected_discovery_state == "in_progress"
+        assert selected_discovery.await_count == 2
+
+        release_second.set()
+        await pilot.pause(0.1)
+
+        assert step._selected_discovery_state == "complete"
+        assert step._selected_provider_models == {"ollama": ("current-model",)}
+        assert "late-private-value" not in str(status_widget.renderable)
+        scope_service.discover_models.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_complete_then_reentry_does_not_request_again():
+    from unittest.mock import AsyncMock
+
+    selected_discovery = AsyncMock(return_value=())
+    step = _provider_step(discover=selected_discovery)
+    step.wizard.app_instance.llm_provider_catalog_scope_service = None
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("ollama")
+        await pilot.pause(0.1)
+        assert step._selected_discovery_state == "complete"
+
+        step.on_hide()
+        step.on_show()
         await pilot.pause()
 
         assert selected_discovery.await_count == 1
-        assert str(status_widget.renderable) == before
+        assert step._selected_discovery_state == "complete"
+
+
+@pytest.mark.asyncio
+async def test_provider_neutral_discovery_reentry_restarts_cancelled_scan_once():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    first_started = asyncio.Event()
+    first_cancelled = asyncio.Event()
+    second_started = asyncio.Event()
+    release_second = asyncio.Event()
+    attempt = 0
+
+    async def discover_local(_app_config):
+        nonlocal attempt
+        attempt += 1
+        if attempt == 1:
+            first_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                first_cancelled.set()
+                return ()
+        second_started.set()
+        await release_second.wait()
+        return ()
+
+    local_discover = AsyncMock(side_effect=discover_local)
+    step = _provider_step(local_discover=local_discover)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+        step.on_hide()
+        await asyncio.wait_for(first_cancelled.wait(), timeout=2)
+        assert step._local_discovery_state == "cancelled"
+
+        step.on_show()
+        await asyncio.wait_for(second_started.wait(), timeout=2)
+        step.on_show()
+        await pilot.pause()
+
+        assert local_discover.await_count == 2
+        assert step._local_discovery_state == "in_progress"
+
+        release_second.set()
+        await pilot.pause(0.1)
+        assert step._local_discovery_state == "complete"
+
+
+@pytest.mark.asyncio
+async def test_provider_repeated_on_show_while_visible_does_not_duplicate_scan():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def discover_local(_app_config):
+        started.set()
+        await release.wait()
+        return ()
+
+    local_discover = AsyncMock(side_effect=discover_local)
+    step = _provider_step(local_discover=local_discover)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        step.on_show()
+        step.on_show()
+        await pilot.pause()
+        assert local_discover.await_count == 1
+
+        release.set()
+        await pilot.pause(0.1)
+
+
+@pytest.mark.asyncio
+async def test_provider_explicit_test_cancels_selected_discovery_before_probe():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    discovery_started = asyncio.Event()
+    discovery_cancelled = asyncio.Event()
+
+    async def discover(_provider_key):
+        discovery_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            discovery_cancelled.set()
+            return ("late-private-value",)
+
+    probe = AsyncMock(
+        return_value=SimpleNamespace(reachable=True, summary="Provider is reachable.")
+    )
+    step = _provider_step(discover=AsyncMock(side_effect=discover), probe=probe)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await asyncio.wait_for(discovery_started.wait(), timeout=2)
+
+        step.query_one("#setup-provider-test", Button).press()
+        await asyncio.wait_for(discovery_cancelled.wait(), timeout=2)
+        await pilot.pause(0.1)
+
+        assert step._selected_discovery_state == "cancelled"
         assert step._selected_provider_models == {}
+        probe.assert_awaited_once()
+        status = str(
+            step.query_one("#setup-provider-probe-status", Static).renderable
+        )
+        assert status.startswith("✓ ")
+        assert "late-private-value" not in status
 
 
 @pytest.mark.asyncio

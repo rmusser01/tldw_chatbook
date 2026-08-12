@@ -496,8 +496,12 @@ class ProviderStep(SetupStep):
         self._probe = probe or probe_settings_endpoint
         self._environ = dict(environ) if environ is not None else dict(os.environ)
         self.probe_generation = 0
+        self._discovery_visible = False
         self._local_discovery_generation = 0
-        self._local_discovery_started = False
+        self._local_discovery_state = "idle"
+        self._selected_discovery_provider_key = ""
+        self._selected_discovery_generation = 0
+        self._selected_discovery_state = "idle"
         self._selected_provider_models: dict[str, tuple[str, ...]] = {}
         self._selected_discovery_done: asyncio.Event | None = None
         self.selected_provider_key: str = ""
@@ -640,37 +644,77 @@ class ProviderStep(SetupStep):
 
     def on_show(self) -> None:
         super().on_show()
-        if not self._local_discovery_started:
-            self._local_discovery_started = True
+        if self._discovery_visible:
+            return
+        self._discovery_visible = True
+        if self.selected_provider_key:
+            is_current_provider = (
+                self._selected_discovery_provider_key
+                == self.selected_provider_key
+            )
+            if not is_current_provider or self._selected_discovery_state in {
+                "idle",
+                "cancelled",
+            }:
+                self._begin_selected_provider_discovery(
+                    self.selected_provider_key
+                )
+        elif self._local_discovery_state in {"idle", "cancelled"}:
             self._start_discovery()
 
     def on_hide(self) -> None:
         super().on_hide()
+        if not self._discovery_visible:
+            return
+        self._discovery_visible = False
         self._cancel_discovery_workers()
 
     def on_unmount(self) -> None:
+        self._discovery_visible = False
         self._cancel_discovery_workers()
 
     def _cancel_discovery_workers(self) -> None:
         """Invalidate and cancel setup-owned network work without publishing."""
 
-        if self._selected_discovery_done is not None:
-            self._selected_discovery_done.set()
-        self.probe_generation += 1
+        selected_was_in_progress = self._selected_discovery_state == "in_progress"
+        self._obsolete_provider_generation(
+            "setup-provider-discovery",
+            "setup-provider-probe",
+        )
+        if selected_was_in_progress:
+            try:
+                self.query_one("#setup-provider-probe-status", Static).update(
+                    "Check paused; returning will retry."
+                )
+            except Exception:
+                pass
+        if self._local_discovery_state == "in_progress":
+            self._local_discovery_state = "cancelled"
         self._local_discovery_generation += 1
+        self._cancel_worker_groups("setup-provider-local-discovery")
+
+    def _cancel_worker_groups(self, *groups: str) -> None:
         try:
-            for group in (
-                "setup-provider-discovery",
-                "setup-provider-probe",
-                "setup-provider-local-discovery",
-            ):
+            for group in groups:
                 self.workers.cancel_group(self, group)
         except Exception:
             pass
 
+    def _obsolete_provider_generation(self, *groups: str) -> int:
+        """Invalidate shared provider work and cancel the requested groups."""
+
+        if self._selected_discovery_done is not None:
+            self._selected_discovery_done.set()
+        if self._selected_discovery_state == "in_progress":
+            self._selected_discovery_state = "cancelled"
+        self.probe_generation += 1
+        self._cancel_worker_groups(*groups)
+        return self.probe_generation
+
     def _start_discovery(self) -> None:
         self._local_discovery_generation += 1
         generation = self._local_discovery_generation
+        self._local_discovery_state = "in_progress"
         self.run_worker(
             partial(self._discover_servers, generation),
             exclusive=True,
@@ -679,22 +723,23 @@ class ProviderStep(SetupStep):
 
     async def _discover_servers(self, generation: int) -> None:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        state = "complete"
         try:
             servers = tuple(await self._local_discover(app_config) or ())
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
+            state = "failed"
             logger.debug(
                 "Wizard local discovery failed (error_type={})",
                 type(exc).__name__,
             )
+            servers = ()
+        if generation != self._local_discovery_generation:
             return
-        if (
-            generation != self._local_discovery_generation
-            or not self.is_mounted
-            or not self.is_active
-            or not servers
-        ):
-            return
-        self._apply_discovered_server(servers[0])
+        self._local_discovery_state = state
+        if self.is_mounted and self.is_active and servers:
+            self._apply_discovered_server(servers[0])
 
     def _apply_discovered_server(self, server: Any) -> None:
         self.detected_server = server
@@ -721,16 +766,15 @@ class ProviderStep(SetupStep):
         canonical_key = self._canonical_provider_key(provider_key)
         if not canonical_key:
             return
-        if self._selected_discovery_done is not None:
-            self._selected_discovery_done.set()
-        self.probe_generation += 1
-        generation = self.probe_generation
+        generation = self._obsolete_provider_generation(
+            "setup-provider-discovery",
+            "setup-provider-probe",
+        )
+        self._selected_discovery_provider_key = canonical_key
+        self._selected_discovery_generation = generation
+        self._selected_discovery_state = "in_progress"
         self._selected_provider_models.clear()
         self._selected_discovery_done = asyncio.Event()
-        try:
-            self.workers.cancel_group(self, "setup-provider-probe")
-        except Exception:
-            pass
         self.query_one("#setup-provider-probe-status", Static).update(
             "Checking the selected provider…"
         )
@@ -747,7 +791,9 @@ class ProviderStep(SetupStep):
     def _owns_selected_discovery(self, provider_key: str, generation: int) -> bool:
         return (
             generation == self.probe_generation
+            and generation == self._selected_discovery_generation
             and provider_key == self.selected_provider_key
+            and provider_key == self._selected_discovery_provider_key
             and self.is_mounted
             and self.is_active
         )
@@ -837,6 +883,7 @@ class ProviderStep(SetupStep):
             if discovered_server is not None:
                 self._apply_discovered_server(discovered_server)
 
+            self._selected_discovery_state = "failed" if failed else "complete"
             from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
             display = provider_display_name(provider_key)
@@ -1015,8 +1062,10 @@ class ProviderStep(SetupStep):
         self._launch_probe(api_key=typed or None)
 
     def _launch_probe(self, *, api_key: str | None = None) -> None:
-        self.probe_generation += 1
-        generation = self.probe_generation
+        generation = self._obsolete_provider_generation(
+            "setup-provider-discovery",
+            "setup-provider-probe",
+        )
         provider_key = self.selected_provider_key
         base_url = getattr(self, "detected_base_url", None)
         self.query_one("#setup-provider-probe-status", Static).update("Testing…")
