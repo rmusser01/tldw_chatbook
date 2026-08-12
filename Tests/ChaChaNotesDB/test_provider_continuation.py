@@ -194,6 +194,49 @@ def test_add_message_rejects_invalid_or_wrong_owner_without_private_error_contex
         )
 
 
+def test_add_message_requires_exact_kimi_final_content_before_insert(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    canary = "PRIVATE-KIMI-ADD-CANARY"
+
+    with pytest.raises(InputError) as invalid:
+        db.add_message(
+            {
+                "id": "kimi-add-mismatch",
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "visible answer",
+                "provider_continuation_json": _kimi_checkpoint_json(
+                    "different answer", canary=canary
+                ),
+            }
+        )
+
+    assert canary not in str(invalid.value)
+    assert invalid.value.__cause__ is None
+    assert invalid.value.__context__ is None
+    assert db.get_message_by_id("kimi-add-mismatch") is None
+    assert _message_sync_entries(db, "kimi-add-mismatch") == []
+
+    checkpoint_json = _kimi_checkpoint_json("visible answer")
+    message_id = db.add_message(
+        {
+            "id": "kimi-add-match",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "visible answer",
+            "provider_continuation_json": checkpoint_json,
+        }
+    )
+    assert message_id == "kimi-add-match"
+    assert db.get_message_by_id(message_id)[
+        "provider_continuation_json"
+    ] == dump_provider_continuation_json(
+        parse_provider_continuation_json(checkpoint_json)
+    )
+
+
 def test_message_search_returns_public_fields_without_private_continuation(
     tmp_path: Path,
 ) -> None:
@@ -525,6 +568,55 @@ def test_clearing_image_only_owner_keeps_visible_image_and_one_update_intent(
     assert [entry["operation"] for entry in entries] == ["create", "update"]
     assert entries[-1]["version"] == after["version"]
     assert entries[-1]["payload"]["image_mime_type"] == "image/png"
+    assert entries[-1]["payload"]["provider_continuation_json"] is None
+
+
+def test_clearing_attachment_only_owner_keeps_attachment_and_one_update_intent(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    message_id = db.add_message(
+        {
+            "id": "attachment-owner",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "",
+            "provider_continuation_json": _checkpoint_json(),
+        }
+    )
+    db.set_message_attachments(
+        message_id,
+        [
+            {
+                "position": 1,
+                "data": b"visible-attachment-bytes",
+                "mime_type": "image/png",
+                "display_name": "visible.png",
+            }
+        ],
+    )
+    before = db.get_message_by_id(message_id)
+    before_attachments = db.get_attachments_for_messages([message_id])
+    before_entries = _message_sync_entries(db, message_id)
+    assert before is not None
+
+    assert db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=before["version"],
+        provider_continuation_json=None,
+    )
+
+    after = db.get_message_by_id(message_id)
+    assert after is not None
+    assert after["deleted"] == 0
+    assert after["provider_continuation_json"] is None
+    assert after["version"] == before["version"] + 1
+    assert db.get_attachments_for_messages([message_id]) == before_attachments
+    entries = _message_sync_entries(db, message_id)
+    assert len(entries) == len(before_entries) + 1
+    assert entries[-1]["operation"] == "update"
+    assert entries[-1]["version"] == after["version"]
+    assert entries[-1]["payload"]["deleted"] == 0
     assert entries[-1]["payload"]["provider_continuation_json"] is None
 
 

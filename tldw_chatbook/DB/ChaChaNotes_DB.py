@@ -8704,8 +8704,11 @@ UPDATE db_schema_version
                 raise InputError(
                     "Provider continuation requires an assistant message."
                 ) from None
-            _, provider_continuation_json = _validated_provider_continuation(
+            checkpoint, provider_continuation_json = _validated_provider_continuation(
                 msg_data["provider_continuation_json"]
+            )
+            _validate_continuation_owner_content(
+                checkpoint, msg_data.get("content", "")
             )
 
         if (
@@ -8914,7 +8917,12 @@ UPDATE db_schema_version
             with self.transaction() as conn:
                 current = conn.execute(
                     """
-                    SELECT role, content, image_data, deleted, version
+                    SELECT role, content, image_data, deleted, version,
+                           EXISTS (
+                               SELECT 1
+                                 FROM message_attachments AS attachment
+                                WHERE attachment.message_id = messages.id
+                           ) AS has_attachments
                       FROM messages
                      WHERE id = ?
                     """,
@@ -8942,7 +8950,9 @@ UPDATE db_schema_version
                     _validate_continuation_owner_content(checkpoint, next_content)
                 if canonical is None:
                     required_deleted = not (
-                        bool(next_content) or bool(current["image_data"])
+                        bool(next_content)
+                        or bool(current["image_data"])
+                        or bool(current["has_attachments"])
                     )
                     if deleted is not None and deleted != required_deleted:
                         raise InputError(
