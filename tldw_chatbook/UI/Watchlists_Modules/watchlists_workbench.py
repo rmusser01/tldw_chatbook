@@ -335,7 +335,7 @@ class WatchlistsWorkbench(Horizontal):
         """
         if not self.is_mounted:
             return
-        await self._sync_regions(previous, self._hidden)
+        await self._sync_regions(previous)
 
     async def apply_section_view(
         self,
@@ -383,7 +383,7 @@ class WatchlistsWorkbench(Horizontal):
         # moved, so the two changes would be applied in the wrong order and
         # the layout half would be done twice.
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
-        await self._sync_regions(previous_layout, previous_hidden)
+        await self._sync_regions(previous_layout)
         for region in rebuild_regions:
             if region in self._hidden:
                 continue
@@ -413,9 +413,7 @@ class WatchlistsWorkbench(Horizontal):
             region
         )
 
-    async def _sync_regions(
-        self, previous_layout: RegionLayout, previous_hidden: frozenset[Region]
-    ) -> None:
+    async def _sync_regions(self, previous_layout: RegionLayout) -> None:
         """Bring the mounted regions in line with `region_layout`/`_hidden`.
 
         Rails first (they are direct children of this `Horizontal` and are
@@ -429,12 +427,16 @@ class WatchlistsWorkbench(Horizontal):
                 continue
             index = 0 if region is Region.LEFT_RAIL else len(self.children) - 1
             await self._swap_region_widget(region, self, index)
-        await self._sync_centre_regions(previous_layout, previous_hidden)
+        await self._sync_centre_regions(previous_layout)
 
-    async def _sync_centre_regions(
-        self, previous_layout: RegionLayout, previous_hidden: frozenset[Region]
-    ) -> None:
-        """Mount, unmount, swap or repaint each centre region as required."""
+    async def _sync_centre_regions(self, previous_layout: RegionLayout) -> None:
+        """Mount, unmount, swap or repaint each centre region as required.
+
+        Reads the CURRENT `self._hidden` rather than needing the previous one:
+        a region that is newly shown simply has no mounted node, and a region
+        that is newly hidden is removed by the first loop below -- both cases
+        fall out of comparing the DOM against the desired set.
+        """
         try:
             centre = self.query_one("#wl-centre")
         except NoMatches:

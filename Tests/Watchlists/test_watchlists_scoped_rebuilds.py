@@ -603,6 +603,40 @@ async def test_layout_keys_still_persist_and_restore_the_layout():
         )
 
 
+async def test_z_collapsing_a_centre_region_is_not_one_way():
+    """The keyboard round trip, not just the chevron.
+
+    A collapsed region renders as a focusable header (`#wl-header-items`) and
+    `on_descendant_focus` maps that id back to the region, so `z` with the
+    header focused has to expand it again. Worth pinning next to the scoping
+    work: the scoped path removes the widget that had focus and mounts a
+    different one in its place, which is exactly where a "collapse is one
+    way" regression would come from.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
+        await _settle(pilot, host)
+        assert screen.query("#wl-header-items"), "ITEMS collapsed"
+
+        screen.query_one("#wl-header-items", Button).focus()
+        await _settle(pilot, host)
+        assert screen.focused_region is Region.ITEMS, (
+            "focusing a collapsed region's header must point the keybinding "
+            "at that region"
+        )
+
+        await pilot.press("z")
+        await _settle(pilot, host)
+
+        assert screen.query("#wl-region-items"), "z must expand it again"
+        assert screen.query("#watchlists-items-pane"), (
+            "and the region has to come back with its pane, not empty"
+        )
+
+
 async def test_a_collapsed_region_still_expands_from_its_header_button() -> None:
     """The chevron route through `RegionToggled`, not just the keybinding."""
     app = _build_test_app()
