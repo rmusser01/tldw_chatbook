@@ -82,6 +82,52 @@ def test_qwencloud_discovery_rejects_lookalike_or_malformed_paths(endpoint):
     assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://workspace.example/api//v2",
+        "https://workspace.example/api/v2/./responses",
+        "https://workspace.example/api/v2/../responses",
+        "https://workspace.example/api/v2/%zz/responses",
+        "https://workspace.example/api/v2/models/models",
+        "https://workspace.example/api/v2/models/responses",
+        "https://workspace.example/api/v2/models/chat/completions",
+        "https://workspace.example/api/v2/chat/completions/bridge/responses",
+        "https://workspace.example%evil/api/v2",
+        "https://workspace.example|evil/api/v2",
+        "https://workspace.example^evil/api/v2",
+        "https://workspace.example:/api/v2",
+        "https://workspace.example\\@evil.example/api/v2",
+        "https://workspace.example\x1f.evil/api/v2",
+    ],
+)
+def test_qwencloud_discovery_rejects_structurally_unsafe_endpoints(endpoint):
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
+
+
+def test_qwencloud_discovery_preserves_valid_ipv6_port_and_safe_url_stripping():
+    endpoint = (
+        "https://user:secret@[2001:db8::1]:8443/api/v2/responses/"
+        "?api_key=secret#fragment"
+    )
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert (
+        build_models_url(endpoint, "qwencloud")
+        == "https://[2001:db8::1]:8443/api/v2/models"
+    )
+
+
+def test_qwencloud_discovery_preserves_safe_reserved_word_inside_custom_prefix():
+    endpoint = "https://workspace.example/models/api/v2/chat/completions"
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert (
+        build_models_url(endpoint, "qwencloud")
+        == "https://workspace.example/models/api/v2/models"
+    )
+
+
 def test_responses_suffix_is_not_broadly_inferred_for_other_endpoint_shapes():
     for endpoint in (
         "https://api.example.test/v1/responses",

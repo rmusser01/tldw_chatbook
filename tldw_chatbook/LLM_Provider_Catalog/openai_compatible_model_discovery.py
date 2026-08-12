@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -25,6 +26,12 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "local_ollama": frozenset({"/api/tags"}),
 }
 _QWENCLOUD_PROVIDER_KEY = "qwencloud"
+_ENDPOINT_TAILS = (
+    ("models",),
+    ("responses",),
+    ("chat", "completions"),
+)
+_REQUEST_ENDPOINT_TAILS = _ENDPOINT_TAILS[1:]
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -140,6 +147,11 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
     if not raw_endpoint:
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    if "\\" in candidate or any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in candidate
+    ):
+        return None
     try:
         parsed = urlparse(candidate)
     except ValueError:
@@ -154,7 +166,45 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed.port
     except ValueError:
         return None
+    if not _is_structurally_safe_endpoint(parsed):
+        return None
     return parsed
+
+
+def _is_structurally_safe_endpoint(parsed: ParseResult) -> bool:
+    """Return whether a parsed endpoint is safe to classify or normalize."""
+    if (
+        any(character in parsed.netloc for character in '\\%|^{}<>"`')
+        or parsed.netloc.endswith(":")
+        or "//" in parsed.path
+        or re.search(r"%(?![0-9A-Fa-f]{2})", parsed.path) is not None
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
+    ):
+        return False
+
+    path_segments = tuple(
+        segment.lower() for segment in parsed.path.strip("/").split("/") if segment
+    )
+    request_endpoint_tails = [
+        (tail, index + len(tail))
+        for tail in _REQUEST_ENDPOINT_TAILS
+        for index in range(len(path_segments) - len(tail) + 1)
+        if path_segments[index : index + len(tail)] == tail
+    ]
+    if len(request_endpoint_tails) > 1 or any(
+        end != len(path_segments) for _tail, end in request_endpoint_tails
+    ):
+        return False
+    for first_tail in _ENDPOINT_TAILS:
+        for second_tail in _ENDPOINT_TAILS:
+            stacked_tail = first_tail + second_tail
+            if path_segments[-len(stacked_tail) :] == stacked_tail:
+                return False
+
+    safe_url = urlunparse(
+        (parsed.scheme, _safe_netloc(parsed), parsed.path or "/", "", "", "")
+    )
+    return validate_url(safe_url)
 
 
 def _normalized_path(parsed: ParseResult) -> str:

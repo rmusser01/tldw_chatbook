@@ -1,6 +1,6 @@
 import json
 from copy import deepcopy
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from loguru import logger
@@ -667,6 +667,39 @@ async def test_local_llm_provider_catalog_service_rejects_invalid_endpoint_befor
     assert result.error is not None
     assert result.error.kind == "unsupported_endpoint"
     discovery_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://workspace.example/api//v2",
+        "https://workspace.example/api/v2/../responses",
+        "https://workspace.example/api/v2/models/models",
+        "https://workspace.example/api/v2/models/responses",
+        "https://workspace.example%evil/api/v2",
+        "https://workspace.example\\@evil.example/api/v2",
+    ],
+)
+async def test_qwencloud_structural_rejection_stops_before_discovery_client(endpoint):
+    discovery_client = AsyncMock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"QwenCloud": ["qwen3.8-max"]},
+        settings_loader=lambda: {
+            "providers": {"QwenCloud": ["qwen3.8-max"]},
+            "api_settings": {
+                "qwencloud": {"api_base_url": endpoint},
+            },
+        },
+        discovery_client=discovery_client,
+    )
+
+    result = await service.discover_models(provider="QwenCloud")
+
+    assert result.status == "unsupported"
+    assert result.error is not None
+    assert result.error.kind == "unsupported_endpoint"
+    discovery_client.assert_not_awaited()
 
 
 @pytest.mark.asyncio
