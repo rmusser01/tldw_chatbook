@@ -5129,6 +5129,23 @@ def _build_notes_scope_service(
     )
 
 
+_SETUP_STARTUP_NETWORKING_ACTIONS = frozenset({"offer", "prompt", "home"})
+
+
+def setup_owns_startup_networking(
+    app_config: Mapping[str, Any], environ: Mapping[str, str]
+) -> bool:
+    """Return whether first-run setup owns automatic networking this startup."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        setup_recovery_action,
+    )
+
+    return (
+        setup_recovery_action(app_config, environ)
+        in _SETUP_STARTUP_NETWORKING_ACTIONS
+    )
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -9454,12 +9471,9 @@ class TldwCli(
             group="scheduling",
         )
 
-        # ADR-020: non-blocking startup refresh of stale model catalogs.
-        self.run_worker(
-            self._refresh_model_catalogs(),
-            exclusive=True,
-            group="model-catalog-refresh",
-        )
+        # ADR-020: setup owns startup networking until it completes, so a
+        # stale configured cloud provider cannot be contacted behind it.
+        self._schedule_startup_model_catalog_refresh()
 
         # task-688: index subscription_items rows scraped before the FTS5
         # index existed, so search covers a user's whole back catalogue
@@ -9560,6 +9574,29 @@ class TldwCli(
                 f"({', '.join(AUTO_REFRESH_PROVIDER_LIST_KEYS)}): "
                 f"{type(exc).__name__}"
             )
+
+    def _schedule_startup_model_catalog_refresh(
+        self,
+        *,
+        after_setup_completion: bool = False,
+        environ: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Schedule the automatic catalog pass once when setup releases it."""
+        if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
+            return False
+        if not after_setup_completion and setup_owns_startup_networking(
+            self.app_config,
+            os.environ if environ is None else environ,
+        ):
+            return False
+
+        self._startup_model_catalog_refresh_scheduled = True
+        self.run_worker(
+            self._refresh_model_catalogs,
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+        return True
 
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
@@ -9783,6 +9820,13 @@ class TldwCli(
         exit_route = result.get("exit_route")
         completed = result.get("completed")
         exit_context = result.get("exit_context")
+        if exit_route is None:
+            if completed is not True or exit_context is not None:
+                return
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+            return
         if type(exit_route) is not str:
             return
 
@@ -9813,6 +9857,11 @@ class TldwCli(
                 return
         else:
             return
+
+        if completed is True:
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 

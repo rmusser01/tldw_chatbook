@@ -20,6 +20,8 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ProviderStep,
     SetupWizardContainer,
 )
+from tldw_chatbook.app import TldwCli, setup_owns_startup_networking
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import RefreshReport
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +93,152 @@ def _build_clean_first_run_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
     return app
+
+
+def _unfinished_setup_config(*, resume_attempted: bool) -> dict[str, object]:
+    return {
+        "first_run": {
+            "setup_started": True,
+            "setup_completed": False,
+            "draft_version": 1,
+            "draft_track": "quick",
+            "active_step_id": "model",
+            "draft_values": {
+                "welcome": {"track": "quick"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                },
+            },
+            "resume_attempted": resume_attempted,
+        }
+    }
+
+
+class _CatalogRefreshScheduleHost:
+    def __init__(self, app_config: dict[str, object]) -> None:
+        self.app_config = app_config
+        self.run_worker = MagicMock()
+        self.post_message = MagicMock()
+        self._refresh_model_catalogs = AsyncMock()
+
+    _schedule_startup_model_catalog_refresh = (
+        TldwCli._schedule_startup_model_catalog_refresh
+    )
+
+
+@pytest.mark.parametrize(
+    ("app_config", "expected_action"),
+    [
+        ({}, "offer"),
+        (_unfinished_setup_config(resume_attempted=False), "prompt"),
+        (_unfinished_setup_config(resume_attempted=True), "home"),
+    ],
+)
+def test_setup_network_owner_actions_suppress_startup_catalog_refresh(
+    app_config: dict[str, object],
+    expected_action: str,
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
+
+    assert setup_recovery_action(app_config, {}) == expected_action
+    assert setup_owns_startup_networking(app_config, {}) is True
+
+    host = _CatalogRefreshScheduleHost(app_config)
+    assert host._schedule_startup_model_catalog_refresh(environ={}) is False
+    host.run_worker.assert_not_called()
+
+
+def test_normal_startup_schedules_catalog_refresh_once() -> None:
+    host = _CatalogRefreshScheduleHost(
+        {"first_run": {"setup_completed": True}}
+    )
+
+    assert host._schedule_startup_model_catalog_refresh(environ={}) is True
+    assert host._schedule_startup_model_catalog_refresh(environ={}) is False
+
+    host.run_worker.assert_called_once_with(
+        host._refresh_model_catalogs,
+        exclusive=True,
+        group="model-catalog-refresh",
+    )
+
+
+def test_completed_first_run_schedules_deferred_catalog_refresh_once() -> None:
+    host = _CatalogRefreshScheduleHost({})
+
+    TldwCli._handle_first_run_wizard_result(
+        host,
+        {"completed": True, "exit_route": None, "exit_context": None},
+    )
+    TldwCli._handle_first_run_wizard_result(
+        host,
+        {"completed": True, "exit_route": None, "exit_context": None},
+    )
+
+    host.run_worker.assert_called_once_with(
+        host._refresh_model_catalogs,
+        exclusive=True,
+        group="model-catalog-refresh",
+    )
+    host.post_message.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        None,
+        {"completed": False, "exit_route": None, "exit_context": None},
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "providers-models"},
+        },
+    ],
+)
+def test_incomplete_first_run_result_does_not_schedule_catalog_refresh(
+    result: dict[str, object] | None,
+) -> None:
+    host = _CatalogRefreshScheduleHost({})
+
+    TldwCli._handle_first_run_wizard_result(host, result)
+
+    host.run_worker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clean_first_run_mount_suppresses_global_catalog_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+    app.model_catalog_disk_store = MagicMock()
+    catalog_refresh = AsyncMock(return_value=RefreshReport())
+    app.local_llm_provider_catalog_service.refresh_stale_configured_providers = (
+        catalog_refresh
+    )
+
+    with (
+        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch.object(app, "notify", wraps=app.notify) as notify_spy,
+    ):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard",
+            )
+            await pilot.pause(0.1)
+
+    catalog_refresh.assert_not_awaited()
+    catalog_notifications = [
+        call
+        for call in notify_spy.call_args_list
+        if call.kwargs.get("title") == "Model catalog"
+    ]
+    assert catalog_notifications == []
 
 
 @pytest.mark.asyncio
