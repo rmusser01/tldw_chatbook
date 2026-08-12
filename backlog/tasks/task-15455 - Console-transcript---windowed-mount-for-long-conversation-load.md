@@ -1,7 +1,7 @@
 ---
 id: TASK-15455
 title: Console transcript: windowed mount for long-conversation load
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 12:05'
@@ -134,6 +134,13 @@ mutations of the new mechanisms killed by a targeted test; transcript surface
 (`test_console_citation_sources` stub lacking `set_presentation_context`);
 Chat-side console suites 119 passed; config/decomposition 204 passed with the
 known pre-existing `test_console_left_rail_sections_use_available_space`.
+
+**Suites (read counts).** New window suite 27 passed; transcript surface (13 suites)
+269 passed + 1 pre-existing failure; Chat-side console suites 119 passed;
+native_transcript + native_chat_flow 404 passed / 1 xfailed; parallel_runs +
+composer_collapse + realtime_wiring 141 passed (one non-reproducible collapse flake on
+the first run — that fixture seeds 24 messages, below the window, so this branch is
+inert in it); config/decomposition 204 passed + 1 pre-existing failure; ruff clean.
 
 **Files:** `tldw_chatbook/Widgets/Console/console_transcript.py`,
 `tldw_chatbook/config.py`, `Docs/User_Guide/console.md`,
