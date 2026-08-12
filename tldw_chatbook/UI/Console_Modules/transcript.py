@@ -227,6 +227,12 @@ class ConsoleTranscriptRegion(Vertical):
         transcript = self._transcript_or_none()
         if transcript is None:
             return
+        if state.selected_message_id is not None:
+            # TASK-15455: assigning the id directly bypasses `select_message`,
+            # so a selection captured before a re-window (a session switch
+            # between capture and restore) could name a message with no
+            # mounted row. Inert whenever the id is already mounted.
+            transcript.ensure_message_hydrated(state.selected_message_id)
         transcript.selected_message_id = state.selected_message_id
         if state.anchored:
             transcript.anchor()

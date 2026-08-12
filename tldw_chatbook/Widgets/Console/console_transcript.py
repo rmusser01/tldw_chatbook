@@ -219,6 +219,21 @@ def get_console_transcript_window(
     return window_messages, max(1, window_lines), max(1, hydrate_messages)
 
 
+def _gap_notice(skipped: int) -> Content:
+    """Return the one-line marker shown where mounted history is discontiguous.
+
+    Args:
+        skipped: How many messages sit in the hole.
+
+    Returns:
+        Dim single-line content naming the gap.
+    """
+    label = "message" if skipped == 1 else "messages"
+    return Content.assemble(
+        (f"⋯ {skipped} earlier {label} not shown (still in this conversation)", "dim")
+    )
+
+
 def _estimated_message_lines(message: ConsoleChatMessage) -> int:
     """Estimate a message's rendered height in terminal rows.
 
@@ -1637,6 +1652,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-empty-state",
             "console-transcript-rule",
             "console-transcript-summary-banner",
+            "console-transcript-gap",
             "console-transcript-citation-sources",
             # Textual scrollbars carry the generic system-widget class; ignore them
             # defensively if a scrollbar click ever bubbles up to the transcript.
@@ -1922,7 +1938,21 @@ class ConsoleTranscript(VerticalScroll):
         # whatever the reader has already hydrated.
         self._unhydrated_message_ids &= message_ids
         self._hydrated_message_ids &= message_ids
-        if not self._seen_message_ids or not (message_ids & self._seen_message_ids):
+        mounted_ids = (
+            message_ids - self._unhydrated_message_ids - self._pruned_message_ids
+        )
+        if (
+            not self._seen_message_ids
+            or not (message_ids & self._seen_message_ids)
+            # TASK-15455 (review): a `/rewind` -- or any truncation to a shared
+            # PREFIX -- can land entirely inside the windowed-out head, leaving
+            # a transcript that HAS messages and renders none. Measured: a
+            # 60-message session windowed to 40, rewound to 16, painted one
+            # rowless frame and then recovered only a hydration step's worth of
+            # rows. Re-window on the survivors instead of waiting for the
+            # scroll-back path to notice.
+            or (message_ids and not mounted_ids and self._unhydrated_message_ids)
+        ):
             self._hydrated_message_ids.clear()
             self._scrollback_protected = False
             self._unhydrated_message_ids = self._initial_unhydrated_ids()
@@ -2281,9 +2311,16 @@ class ConsoleTranscript(VerticalScroll):
         """Mount a windowed-out message (and everything after it) on demand.
 
         Jump targets -- a citation, a search hit, a programmatic selection --
-        can name a message the tail-first window never mounted. Hydrating from
-        that message forward keeps the mounted rows one contiguous suffix of
-        the history, which is what pruning and reconciliation both assume.
+        can name a message the tail-first window never mounted. Hydration always
+        runs from that message forward, never as an isolated row.
+
+        The true invariant (the earlier "one contiguous suffix" comment was
+        wrong): mounted messages form AT MOST TWO contiguous stretches of the
+        history -- the hydrated jump target's stretch and the tail -- separated
+        by whatever the watermark walk pruned in between, and
+        ``_transcript_rows`` marks that seam with a gap row. Nothing downstream
+        needs contiguity: the reconciler and ``_compute_prunable_prefix`` both
+        walk CHILD ORDER, which stays the message order either way.
 
         Args:
             message_id: Identifier of the message that must have a row.
@@ -2306,7 +2343,15 @@ class ConsoleTranscript(VerticalScroll):
         hydrate_ids = ordered[index:]
         self._unhydrated_message_ids.difference_update(hydrate_ids)
         self._hydrated_message_ids.update(hydrate_ids)
-        self._scrollback_protected = True
+        if not self._is_following_tail():
+            # Latch ONLY for a reader who is away from the tail. Latching while
+            # following would arm a protection whose documented release ("the
+            # reader returns to the tail") can never fire -- they are already
+            # there -- so the watermark walk would stay blocked through idle
+            # (review: mounted height 158 against a high mark of 40). A
+            # tail-position jump still keeps its target row: the selected
+            # message is protected by `_compute_prunable_prefix` on its own.
+            self._scrollback_protected = True
         if self.is_mounted:
             self.call_later(self.refresh_messages)
         return True
@@ -2790,18 +2835,40 @@ class ConsoleTranscript(VerticalScroll):
 
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
+        # TASK-15455: messages skipped since the last rendered one. A skipped
+        # run BEFORE the first rendered message is the ordinary head omission
+        # (older history sits above; scrolling up hydrates it). A skipped run
+        # BETWEEN two rendered messages is a hole -- a jump into windowed-out
+        # history lands above rows the watermark walk already pruned -- and
+        # without a marker the transcript renders two unrelated turns adjacent
+        # with no seam, which silently lies about the conversation.
+        skipped_since_rendered = 0
+        rendered_any = False
         for message in self._messages:
             if message.id in self._pruned_message_ids:
                 # TASK-1365: pruned by the height watermarks; the store keeps
                 # the message, the view window drops every row derived from it.
+                skipped_since_rendered += 1
                 continue
             if message.id in self._unhydrated_message_ids:
                 # TASK-15455: older than the tail-first load window. Same
                 # view-only contract as pruning above, except this one is
                 # reversible -- scrolling back hydrates these ids again.
+                skipped_since_rendered += 1
                 continue
             message = self._with_expanded_tool_output(message)
             selected = message.id == self.selected_message_id
+            if rendered_any and skipped_since_rendered:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"gap:{message.id}",
+                        kind="gap",
+                        signature=("gap", message.id, skipped_since_rendered),
+                        renderable=_gap_notice(skipped_since_rendered),
+                    )
+                )
+            skipped_since_rendered = 0
+            rendered_any = True
             rows.append(
                 _TranscriptRow(
                     key=f"rule:{message.id}",
@@ -3126,6 +3193,15 @@ class ConsoleTranscript(VerticalScroll):
             return Static(
                 row.renderable,
                 classes="console-transcript-summary-banner",
+            )
+        if row.kind == "gap":
+            # TASK-15455: non-interactive seam between two discontiguous
+            # stretches of mounted history. Dim via Content markup rather than
+            # a stylesheet rule, matching the summary banner (which likewise
+            # ships without one) -- no CSS bundle change needed.
+            return Static(
+                row.renderable,
+                classes="console-transcript-gap",
             )
         if row.kind == "empty":
             assert row.card_state is not None

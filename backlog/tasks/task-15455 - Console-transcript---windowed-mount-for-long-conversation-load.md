@@ -135,6 +135,36 @@ mutations of the new mechanisms killed by a targeted test; transcript surface
 Chat-side console suites 119 passed; config/decomposition 204 passed with the
 known pre-existing `test_console_left_rail_sections_use_available_space`.
 
+**Review round 1 (approved with two Importants).** Four fixes and two doc
+items landed on top:
+- The protection latch was armed unconditionally by `ensure_message_hydrated`,
+  including for a jump made FROM the tail — where its documented release
+  ("the reader returns to the tail") can never fire, so the walk stayed blocked
+  through idle (reviewer measured height 158 against a high mark of 40). It now
+  latches only when the reader is away from the tail; a tail-position jump still
+  keeps its target row through the pre-existing selection protection.
+- "Mounted rows stay one contiguous suffix" was FALSE after a prune: a jump into
+  windowed-out history mounts a stretch separated from the tail by the pruned
+  hole, and the two rendered adjacent with no seam. `_transcript_rows` now emits
+  a dim, non-interactive "⋯ N earlier messages not shown" row at an INTERIOR
+  hole only (a windowed-out head is not a hole), and the comment states the real
+  invariant: mounted messages form at most two contiguous stretches, and every
+  consumer walks child order, not contiguity. No CSS-bundle change — the marker
+  dims through Content markup, like the summary banner, which also ships without
+  a rule.
+- Pin #5 asserted through `to_plain_text`, which renders the store snapshot
+  whether or not a row is mounted (proven blind: it returns message 0 of 500
+  while nothing but the tail window is mounted). It now reads the mounted row's
+  body, and one windowing test pins that the reader really is mount-sensitive.
+- `restore_reading_state` assigned `selected_message_id` directly, bypassing
+  hydration; it now ensures the target is mounted first (inert today).
+- `/rewind` shape (truncation to a shared PREFIX) could land entirely inside the
+  windowed-out head: measured one ROWLESS frame, then recovery to only a
+  hydration step's worth of rows instead of a full window. `set_messages` now
+  re-windows on the survivors when an ingest would leave nothing mounted.
+- Guide: added the caveat that trimming is suspended while you sit in scrollback
+  and resumes on return, plus the gap-marker line.
+
 **Suites (read counts).** New window suite 27 passed; transcript surface (13 suites)
 269 passed + 1 pre-existing failure; Chat-side console suites 119 passed;
 native_transcript + native_chat_flow 404 passed / 1 xfailed; parallel_runs +

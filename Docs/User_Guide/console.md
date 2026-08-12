@@ -158,7 +158,12 @@ older turns load in as you reach them; the jump-to-latest pill (or a new send)
 takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
 context sent to the model always use the full history. Very long sessions
 still stop growing the view at the height watermarks, so the oldest turns can
-drop out of the scrollback. Tune it under `[chat_defaults]` in
+drop out of the scrollback — where that leaves a hole in what you are reading,
+the transcript marks it with a dim "⋯ N earlier messages not shown" line rather
+than joining two unrelated turns silently. While you are sitting in loaded
+scrollback the view stops trimming itself, so a long reply streaming in
+meanwhile can push it past the height limit; it trims again as soon as you
+return to the latest message. Tune it under `[chat_defaults]` in
 `config.toml` — `transcript_window_messages` (set it to `0` to mount
 everything at load, as before), `transcript_window_lines`,
 `transcript_hydrate_messages`, and the `prune_*_watermark` pair.

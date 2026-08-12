@@ -14,6 +14,7 @@ suites top out at 30 messages, so none of them would have noticed.
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -92,6 +93,22 @@ def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
     return [
         widget.message_id for widget in transcript.query(".console-transcript-message")
     ]
+
+
+def _mounted_row_body(transcript: ConsoleTranscript, message_id: str) -> str | None:
+    """Return the body text of a MOUNTED message row, or None when it has none.
+
+    Deliberately not `to_plain_text`, which renders the store snapshot whether
+    or not a row is mounted.
+    """
+    for widget in transcript.query(".console-transcript-message"):
+        if widget.message_id != message_id:
+            continue
+        body = getattr(widget, "_body_text", None)
+        if body is not None:
+            return str(body).strip()
+        return str(widget.renderable)
+    return None
 
 
 async def _wait_for(pilot, predicate, *, attempts: int = 50) -> bool:
@@ -218,9 +235,13 @@ async def test_pin_variant_navigation_on_a_mounted_row():
         await transcript.refresh_messages()
         await _settle(pilot)
 
+        # Read the MOUNTED row, not `to_plain_text`: that renders `_messages`
+        # whether or not a row exists, so it would pass with nothing mounted at
+        # all (proven blind in review).
+        assert _mounted_row_body(transcript, "mvariants") == "variant one"
         transcript.select_next_variant("mvariants")
         await _settle(pilot)
-        assert "variant two" in transcript.to_plain_text(width=60)
+        assert _mounted_row_body(transcript, "mvariants") == "variant two"
 
 
 @pytest.mark.asyncio
@@ -410,6 +431,10 @@ async def test_load_mounts_only_the_tail_window():
         )
         assert len(transcript._messages) == 500, "the store snapshot is untouched"
         assert transcript._is_following_tail()
+        # The mount-sensitive reader used by the variant pin: no row, no body
+        # (`to_plain_text` would happily return the content of all 500).
+        assert _mounted_row_body(transcript, "m0") is None
+        assert "line 0.0" in transcript.to_plain_text(width=40)
 
 
 @pytest.mark.asyncio
@@ -636,6 +661,15 @@ async def _hydrated_over_the_high_mark(pilot, app) -> ConsoleTranscript:
     await _settle(pilot)
     assert len(_mounted_message_ids(transcript)) == 10, "the window must be in play"
 
+    # Detach FIRST: protection is only latched for a reader who is away from
+    # the tail (a tail-position jump has nothing to protect against, and its
+    # release could never fire). Park mid-transcript, not at the top, so
+    # arming the marks below is the only thing that changes afterwards -- no
+    # extra hydration in between.
+    transcript.release_anchor()
+    transcript.scroll_to(y=transcript.max_scroll_y / 2, animate=False)
+    await _settle(pilot)
+
     # Hydrate without selecting: a selected message is protected from the
     # watermark walk on its own (TASK-1365), which would mask what this
     # fixture is here to exercise.
@@ -643,10 +677,7 @@ async def _hydrated_over_the_high_mark(pilot, app) -> ConsoleTranscript:
     assert await _wait_for(pilot, lambda: "m15" in _mounted_message_ids(transcript)), (
         "the scrollback the reader asked for was never hydrated"
     )
-    # Detach WITHOUT parking at the top, so arming the marks below is the only
-    # thing that changes -- no extra hydration in between.
-    transcript.release_anchor()
-    transcript.scroll_to(y=transcript.max_scroll_y / 2, animate=False)
+    assert transcript._scrollback_protected is True
     await _settle(pilot)
     assert transcript.virtual_size.height > 40, "the fixture must exceed the marks"
 
@@ -816,10 +847,16 @@ async def test_hydration_step_is_sized_to_the_watermark_headroom():
 async def test_jump_to_latest_releases_protection_without_a_scroll_change():
     """The jump pill must reclaim scrollback even when it moves nothing.
 
-    A reader detached at the very bottom (release without scrolling) gives
-    `scroll_end` nothing to do, so the scroll watcher never fires — the jump
-    itself has to drop the protection latch or the watermarks stay blocked for
-    the rest of the session.
+    When the jump changes `scroll_y`, the scroll watcher notices the re-engaged
+    anchor and releases the latch — but a jump that moves nothing (the reader is
+    already at the bottom, or the transcript is too short to scroll) fires no
+    watcher, and then only `jump_to_latest`'s own release keeps the watermarks
+    from staying blocked for the rest of the session.
+
+    The latch is set directly here: releasing the anchor while parked at the
+    bottom does not survive in Textual (the next `scroll_y` write re-attaches
+    via `_check_anchor`), so the physical route into "latched AND already at the
+    bottom" cannot be staged in a harness — the state itself can.
     """
     app = WindowHarness(low=25, high=0, window_messages=10, hydrate_messages=5)
     async with app.run_test() as pilot:
@@ -831,8 +868,7 @@ async def test_jump_to_latest_releases_protection_without_a_scroll_change():
         assert transcript.ensure_message_hydrated("m15")
         await transcript.refresh_messages()
         await _settle(pilot)
-        transcript.release_anchor()  # detached, still parked at the bottom
-        await _settle(pilot)
+        transcript._scrollback_protected = True  # as a detached hydration leaves it
         scroll_at_bottom = transcript.scroll_y
 
         app.app_config["chat_defaults"]["prune_high_watermark"] = 40
@@ -842,6 +878,9 @@ async def test_jump_to_latest_releases_protection_without_a_scroll_change():
         assert transcript.virtual_size.height > 40, "protection must hold here"
 
         transcript.jump_to_latest()
+        assert transcript._scrollback_protected is False, (
+            "the jump itself must drop the latch"
+        )
         assert transcript.scroll_y == scroll_at_bottom, (
             "this test only means something while the jump moves nothing"
         )
@@ -875,3 +914,176 @@ async def test_pending_swipe_selection_outside_the_window_is_hydrated():
         assert transcript.query(".console-transcript-action-row"), (
             "the handed-off selection must show its action row"
         )
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 fixes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tail_position_jump_leaves_pruning_live():
+    """A jump made from the tail must not latch scrollback protection.
+
+    The latch is released when the reader RETURNS to the tail; latching while
+    they are already there arms a protection nothing can release, and the
+    watermark walk stays blocked through idle (review: mounted height 158
+    against a high mark of 40).
+    """
+    app = WindowHarness(low=25, high=0, window_messages=10, hydrate_messages=5)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(40))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert transcript._is_following_tail(), "this test jumps from the tail"
+
+        # Hydrate a jump target from the tail position, WITHOUT selecting it:
+        # a selected message is protected by the watermark walk on its own
+        # (TASK-1365), which would hide whether the latch was armed.
+        assert transcript.ensure_message_hydrated("m15")
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert "m15" in _mounted_message_ids(transcript)
+        assert transcript._scrollback_protected is False, (
+            "a tail-position jump must not latch protection"
+        )
+
+        app.app_config["chat_defaults"]["prune_high_watermark"] = 40
+        app.app_config["chat_defaults"]["prune_low_watermark"] = 25
+        await transcript.refresh_messages()
+        assert await _wait_for(
+            pilot, lambda: transcript.virtual_size.height <= 40, attempts=60
+        ), (
+            "pruning must stay live after a tail-position jump "
+            f"(height {transcript.virtual_size.height})"
+        )
+        assert transcript._pruned_message_ids, "the trim must be recorded"
+
+        # The same holds through `select_message`, the production entry point.
+        transcript.select_message("m28")
+        await _settle(pilot)
+        assert transcript._scrollback_protected is False
+
+
+def _mounted_row_ids_in_dom_order(transcript: ConsoleTranscript) -> list[str]:
+    """Message ids and gap markers in child order, as the reader sees them."""
+    ordered: list[str] = []
+    for widget in transcript.children:
+        if widget.has_class("console-transcript-gap"):
+            ordered.append("<gap>")
+        elif widget.has_class("console-transcript-message"):
+            ordered.append(widget.message_id)
+    return ordered
+
+
+@pytest.mark.asyncio
+async def test_jump_into_pruned_out_history_marks_the_seam():
+    """Discontiguous mounted history renders a gap marker, not a silent join."""
+    app = WindowHarness(low=25, high=0, window_messages=10, hydrate_messages=5)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(40))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        # Prune the middle away: arm the marks while following the tail.
+        app.app_config["chat_defaults"]["prune_high_watermark"] = 40
+        app.app_config["chat_defaults"]["prune_low_watermark"] = 25
+        await transcript.refresh_messages()
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "pruning never fired"
+        )
+        pruned = set(transcript._pruned_message_ids)
+        assert _mounted_row_ids_in_dom_order(transcript).count("<gap>") == 0, (
+            "a pruned HEAD is not a hole -- no marker belongs there"
+        )
+
+        # Now jump above the pruned stretch.
+        target = "m2"
+        assert target in transcript.unhydrated_message_ids()
+        transcript.select_message(target)
+        assert await _wait_for(
+            pilot, lambda: target in _mounted_message_ids(transcript)
+        ), "the jump target was never hydrated"
+        await _settle(pilot)
+
+        ordered = _mounted_row_ids_in_dom_order(transcript)
+        assert ordered.count("<gap>") == 1, (
+            f"exactly one seam expected between the two stretches: {ordered}"
+        )
+        gap_index = ordered.index("<gap>")
+        above = ordered[:gap_index]
+        below = ordered[gap_index + 1 :]
+        assert above and below, f"the seam must sit BETWEEN stretches: {ordered}"
+        assert not (set(above) & pruned) and not (set(below) & pruned)
+        # Order is still the message order across the seam.
+        mounted = [row for row in ordered if row != "<gap>"]
+        assert mounted == sorted(mounted, key=lambda mid: int(mid[1:]))
+        # And the marker names the hole.
+        gap_widget = transcript.query_one(".console-transcript-gap", Static)
+        rendered = str(gap_widget.renderable)
+        assert "not shown" in rendered
+        assert str(len(pruned)) in rendered
+
+
+@pytest.mark.asyncio
+async def test_rewind_into_the_windowed_out_head_never_paints_a_rowless_frame():
+    """A truncation to a prefix inside the window re-windows on the survivors.
+
+    Measured before the fix: a 60-message session windowed to 40 and rewound to
+    16 rendered NO rows for a frame, then recovered only a hydration step's
+    worth.
+    """
+    app = WindowHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        history = _messages(60)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert len(_mounted_message_ids(transcript)) == 40
+
+        transcript.set_messages(history[:16])
+        await transcript.refresh_messages()
+        assert _mounted_message_ids(transcript) == [f"m{i}" for i in range(16)], (
+            "the frame right after the rewind must already render the survivors"
+        )
+        await _settle(pilot)
+        assert _mounted_message_ids(transcript) == [f"m{i}" for i in range(16)]
+        assert transcript.unhydrated_message_ids() == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_restored_reading_state_hydrates_its_selected_message():
+    """`restore_reading_state` assigns the id directly — it must mount it first.
+
+    Inert whenever the selection is already mounted; the case that matters is a
+    state captured before a re-window (a session switch between capture and
+    restore), where the id would otherwise name a message with no row.
+    """
+    from tldw_chatbook.UI.Console_Modules.transcript import (
+        ConsoleTranscriptRegion,
+        _ConsoleTranscriptReadingState,
+    )
+
+    app = WindowHarness(window_messages=10, hydrate_messages=5)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(60))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert "m12" in transcript.unhydrated_message_ids()
+
+        region = ConsoleTranscriptRegion.__new__(ConsoleTranscriptRegion)
+        region._transcript_or_none = lambda: transcript  # type: ignore[method-assign]
+        ConsoleTranscriptRegion.restore_reading_state(
+            region,
+            _ConsoleTranscriptReadingState(
+                anchored=True, scroll_y=0.0, selected_message_id="m12"
+            ),
+        )
+        assert await _wait_for(
+            pilot, lambda: "m12" in _mounted_message_ids(transcript)
+        ), "the restored selection was never hydrated"
+        assert transcript.selected_message_id == "m12"
