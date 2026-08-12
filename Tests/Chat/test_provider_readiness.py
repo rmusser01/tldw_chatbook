@@ -4,17 +4,20 @@ import os
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import fields
+from threading import Event, Thread
 
 import pytest
 
 from tldw_chatbook import config as config_mod
 from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
+from tldw_chatbook.Chat import provider_test_evidence as provider_test_evidence_module
 from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
 )
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
+    ProviderProbeResult,
     ProviderReadinessSnapshot,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
@@ -283,18 +286,14 @@ def test_evidence_for_requires_exact_semantic_identity():
     )
 
 
-def test_probe_outcome_can_settle_without_retaining_summary_or_body():
-    from types import SimpleNamespace
-
+def test_exact_probe_result_can_settle_without_retaining_server_content():
     store = ProviderTestEvidenceStore()
     identity = _evidence_identity()
     token = store.begin(identity)
-    probe = SimpleNamespace(
-        state="reachable",
+    probe = ProviderProbeResult(
+        endpoint="reachable",
         model_ids=("model-a", "model-b"),
         category=None,
-        summary="secret-bearing server response must not be retained",
-        body="server-body-secret",
     )
 
     assert store.settle(token, probe)
@@ -302,21 +301,67 @@ def test_probe_outcome_can_settle_without_retaining_summary_or_body():
     assert evidence == ProviderTestEvidence(
         identity, "reachable", ("model-a", "model-b")
     )
-    assert "summary" not in repr(evidence)
-    assert "server-body-secret" not in repr(evidence)
+    assert [item.name for item in fields(ProviderProbeResult)] == [
+        "endpoint",
+        "model_ids",
+        "category",
+    ]
+    assert not hasattr(probe, "__dict__")
 
 
-def test_probe_outcome_rejects_string_in_place_of_model_id_tuple():
-    from types import SimpleNamespace
+def test_probe_result_rejects_string_in_place_of_model_id_tuple():
+    with pytest.raises(ValueError):
+        ProviderProbeResult("reachable", "model-a", None)
+
+
+def test_probe_result_rejects_callback_bearing_string_subclasses():
+    class CallbackString(str):
+        def __repr__(self):
+            return "server-body-secret"
+
+    class CallbackTuple(tuple):
+        def __repr__(self):
+            return "server-body-secret"
+
+    with pytest.raises(ValueError):
+        ProviderProbeResult("reachable", (CallbackString("model-a"),))
+    with pytest.raises(ValueError):
+        ProviderProbeResult("reachable", CallbackTuple(("model-a",)))
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("not_tested", (), None),
+        ("testing", (), None),
+        ("reachable", (), "timeout"),
+        ("unreachable", ("model-a",), "timeout"),
+        ("model_listing_unavailable", (), "timeout"),
+        ("model_listing_unavailable", ("model-a",), "http_status"),
+        ("unreachable", (), "unbounded-category"),
+    ],
+)
+def test_provider_probe_result_rejects_nonterminal_or_incoherent_values(args):
+    with pytest.raises(ValueError):
+        ProviderProbeResult(*args)
+
+
+def test_settle_rejects_duck_typed_outcome_without_property_access():
+    class ReentrantOutcome:
+        accesses = 0
+
+        def __getattribute__(self, name):
+            if name not in {"accesses", "__class__"}:
+                type(self).accesses += 1
+                raise AssertionError("duck-typed property was accessed")
+            return object.__getattribute__(self, name)
 
     store = ProviderTestEvidenceStore()
     identity = _evidence_identity()
     token = store.begin(identity)
 
-    assert not store.settle(
-        token,
-        SimpleNamespace(state="reachable", model_ids="model-a", category=None),
-    )
+    assert not store.settle(token, ReentrantOutcome())
+    assert ReentrantOutcome.accesses == 0
     assert store.evidence_for(identity) is None
     assert not store.settle(
         token,
@@ -325,13 +370,15 @@ def test_probe_outcome_rejects_string_in_place_of_model_id_tuple():
 
 
 def test_rejected_settle_consumes_token_and_clears_testing_evidence():
-    from types import SimpleNamespace
-
     store = ProviderTestEvidenceStore()
     identity = _evidence_identity()
     token = store.begin(identity)
+    wrong_identity = _evidence_identity(draft_generation=2)
 
-    assert not store.settle(token, SimpleNamespace(state="testing", model_ids=()))
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(wrong_identity, "reachable", ("model-a",)),
+    )
     assert store.evidence_for(identity) is None
     assert not store.settle(
         token,
@@ -339,22 +386,94 @@ def test_rejected_settle_consumes_token_and_clears_testing_evidence():
     )
 
 
-def test_settle_contains_raising_outcome_and_still_consumes_token():
-    class RaisingOutcome:
-        @property
-        def state(self):
-            raise RuntimeError("server-secret")
-
+def test_nonterminal_exact_evidence_consumes_token_without_settling():
     store = ProviderTestEvidenceStore()
     identity = _evidence_identity()
     token = store.begin(identity)
 
-    assert not store.settle(token, RaisingOutcome())
+    assert not store.settle(token, ProviderTestEvidence(identity, "testing", ()))
     assert store.evidence_for(identity) is None
     assert not store.settle(
         token,
         ProviderTestEvidence(identity, "reachable", ("model-a",)),
     )
+
+
+def test_settle_rejects_hostile_token_without_attribute_access():
+    class ReentrantToken:
+        accesses = 0
+
+        def __getattribute__(self, name):
+            if name not in {"accesses", "__class__"}:
+                type(self).accesses += 1
+                raise AssertionError("token property was accessed")
+            return object.__getattribute__(self, name)
+
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    current = store.begin(identity)
+    result = ProviderProbeResult("reachable", ("model-a",))
+
+    assert not store.settle(ReentrantToken(), result)
+    assert ReentrantToken.accesses == 0
+    assert store.settle(current, result)
+
+
+def test_save_lease_captured_during_settlement_conversion_becomes_stale(
+    monkeypatch,
+):
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+    result = ProviderProbeResult("reachable", ("model-a",))
+    conversion_started = Event()
+    continue_conversion = Event()
+    original_conversion = provider_test_evidence_module._evidence_from_exact_outcome
+
+    def blocked_conversion(current_identity, current_outcome):
+        conversion_started.set()
+        assert continue_conversion.wait(timeout=2)
+        return original_conversion(current_identity, current_outcome)
+
+    monkeypatch.setattr(
+        provider_test_evidence_module,
+        "_evidence_from_exact_outcome",
+        blocked_conversion,
+    )
+    settled: list[bool] = []
+    thread = Thread(target=lambda: settled.append(store.settle(token, result)))
+    thread.start()
+    assert conversion_started.wait(timeout=2)
+    lease = store.begin_save(identity)
+    continue_conversion.set()
+    thread.join(timeout=2)
+
+    assert settled == [True]
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        config_mod.ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+
+
+def test_settlement_token_is_immutable_value_free_and_secret_free():
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity(
+        endpoint="https://secret-host.test/v1/chat/completions",
+        provider="custom",
+    )
+    token = store.begin(identity)
+
+    assert repr(token) == "<ProviderTestToken>"
+    assert not hasattr(token, "__dict__")
+    assert "custom" not in repr(token)
+    assert "secret-host" not in repr(token)
+    assert "identity" not in dir(token)
+    assert "sequence" not in dir(token)
+    assert "epoch" not in dir(token)
+    with pytest.raises(AttributeError):
+        token.identity = identity
 
 
 def test_evidence_records_are_frozen_slotted_and_secret_free():
@@ -381,6 +500,30 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
     assert "hash" not in field_names
     assert "digest" not in field_names
     assert "token" not in field_names
+
+
+@pytest.mark.parametrize(
+    ("provider_key", "connection_provider"),
+    [
+        ("custom_openai_api", "custom"),
+        ("custom_openai_api_2", "custom_2"),
+    ],
+)
+def test_draft_identity_keeps_execution_alias_separate_from_endpoint_provider(
+    provider_key,
+    connection_provider,
+):
+    endpoint = "https://example.test/v1/chat/completions"
+    identity = ProviderDraftIdentity(
+        provider_key=provider_key,
+        connection_identity=(connection_provider, endpoint),
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=1,
+    )
+
+    assert identity.provider_key == provider_key
+    assert identity.connection_identity == (connection_provider, endpoint)
 
 
 @pytest.mark.parametrize(
@@ -566,6 +709,59 @@ def test_snapshot_exact_identity_can_confirm_returned_model():
     assert verdict.verified is True
 
 
+@pytest.mark.parametrize(
+    ("provider_key", "connection_provider"),
+    [
+        ("custom_openai_api", "custom"),
+        ("custom_openai_api_2", "custom_2"),
+    ],
+)
+def test_alias_readiness_accepts_exact_execution_identity(
+    provider_key,
+    connection_provider,
+):
+    readiness = get_provider_readiness(
+        provider_key,
+        {"api_settings": {provider_key: {}}},
+        environ={},
+    )
+    identity = ProviderDraftIdentity(
+        provider_key=provider_key,
+        connection_identity=(
+            connection_provider,
+            "https://example.test/v1/chat/completions",
+        ),
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=1,
+    )
+    evidence = ProviderTestEvidence(identity, "reachable", ("model-a",))
+
+    assert readiness.snapshot(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=identity,
+    ).model == "confirmed"
+    assert readiness.verdict(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=identity,
+    ).code == "verified"
+
+    different_execution_identity = ProviderDraftIdentity(
+        provider_key=connection_provider,
+        connection_identity=identity.connection_identity,
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=1,
+    )
+    assert readiness.verdict(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=different_execution_identity,
+    ).code == "changed_since_test"
+
+
 def _legacy_readiness(**overrides):
     values = {
         "provider": "OpenAI",
@@ -675,7 +871,9 @@ def test_provider_readiness_accepts_coherent_legacy_states(readiness):
 
 
 def test_provider_readiness_preserves_legacy_field_order():
-    assert [item.name for item in fields(ProviderReadiness)] == [
+    assert [
+        item.name for item in fields(ProviderReadiness) if not item.name.startswith("_")
+    ] == [
         "provider",
         "provider_key",
         "requires_api_key",
@@ -686,6 +884,117 @@ def test_provider_readiness_preserves_legacy_field_order():
         "reason",
         "recovery",
     ]
+
+
+@pytest.mark.parametrize(
+    ("source", "env_var"),
+    [
+        ("config:api_settings.openai.api_key", None),
+        ("env:OPENAI_API_KEY", "OPENAI_API_KEY"),
+    ],
+)
+def test_provider_readiness_repr_never_contains_credentials(source, env_var):
+    credential = "malicious-secret-canary='leak'\\path"
+    readiness = _legacy_readiness(
+        ready=True,
+        api_key=credential,
+        api_key_source=source,
+        env_var=env_var,
+        reason="Ready",
+        recovery=None,
+    )
+
+    assert readiness.api_key == credential
+    assert credential not in repr(readiness)
+    assert next(item for item in fields(ProviderReadiness) if item.name == "api_key").repr is False
+
+
+def test_provider_readiness_properties_use_private_structured_authority():
+    readiness = _legacy_readiness()
+
+    object.__setattr__(readiness, "ready", True)
+    object.__setattr__(readiness, "reason", "Ready")
+
+    assert readiness.configuration_facet == "incomplete"
+    assert readiness.configuration_issue == "credential_missing"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_fragment"),
+    [
+        ({"provider": "OpenAI\nInjected"}, "provider"),
+        ({"provider": "x" * 257}, "provider"),
+        ({"provider_key": "OpenAI"}, "provider key"),
+        ({"provider_key": "openai\u200b"}, "provider key"),
+        (
+            {
+                "ready": True,
+                "reason": "Ready",
+                "recovery": None,
+                "api_key_source": "config:\u200bunsafe",
+                "api_key": "secret",
+            },
+            "source",
+        ),
+        ({"env_var": "OPENAI\nKEY"}, "environment"),
+        ({"reason": "Missing API key\u200b"}, "reason"),
+        ({"recovery": "retry\nnow"}, "recovery"),
+        ({"recovery": "x" * 1025}, "recovery"),
+    ],
+)
+def test_provider_readiness_rejects_unsafe_or_unbounded_display_strings(
+    overrides,
+    expected_fragment,
+):
+    with pytest.raises(ValueError) as error:
+        _legacy_readiness(**overrides)
+
+    assert expected_fragment in str(error.value).lower()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "configured-secret",
+            "api_key_source": "config:api_settings.other.api_key",
+        },
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "environment-secret",
+            "api_key_source": "env:OPENAI_API_KEY",
+            "env_var": None,
+        },
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "environment-secret",
+            "api_key_source": "env:OPENAI-API-KEY",
+            "env_var": "OPENAI-API-KEY",
+        },
+        {
+            "provider": "No provider",
+            "provider_key": "",
+            "requires_api_key": False,
+            "reason": "Missing API key",
+            "env_var": None,
+        },
+        {
+            "requires_api_key": False,
+            "reason": "Missing API key",
+            "env_var": None,
+        },
+    ],
+)
+def test_provider_readiness_rejects_incoherent_credential_branches(overrides):
+    with pytest.raises(ValueError):
+        _legacy_readiness(**overrides)
 
 
 def test_environment_rotation_is_resolved_on_each_readiness_call(monkeypatch):

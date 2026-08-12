@@ -60,6 +60,9 @@ _ENDPOINT_FACETS = frozenset(
     }
 )
 _EVIDENCE_ENDPOINT_FACETS = _ENDPOINT_FACETS - {"changed_since_test"}
+_PROBE_ENDPOINT_FACETS = frozenset(
+    {"reachable", "unreachable", "model_listing_unavailable"}
+)
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
 _CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment", "draft"})
 _CONFIGURATION_ISSUES = frozenset(
@@ -129,21 +132,21 @@ class ProviderReadinessSnapshot:
     configuration_issue: ConfigurationIssueCode | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.configuration, str) or (
+        if type(self.configuration) is not str or (
             self.configuration not in _CONFIGURATION_FACETS
         ):
             raise ValueError("Configuration facet is invalid.")
-        if not isinstance(self.endpoint, str) or self.endpoint not in _ENDPOINT_FACETS:
+        if type(self.endpoint) is not str or self.endpoint not in _ENDPOINT_FACETS:
             raise ValueError("Endpoint facet is invalid.")
-        if not isinstance(self.model, str) or self.model not in _MODEL_FACETS:
+        if type(self.model) is not str or self.model not in _MODEL_FACETS:
             raise ValueError("Model facet is invalid.")
         if self.category is not None and (
-            not isinstance(self.category, str)
+            type(self.category) is not str
             or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Endpoint failure category is invalid.")
         if self.configuration_issue is not None and (
-            not isinstance(self.configuration_issue, str)
+            type(self.configuration_issue) is not str
             or self.configuration_issue not in _CONFIGURATION_ISSUES
         ):
             raise ValueError("Configuration issue is invalid.")
@@ -169,10 +172,10 @@ class ProviderReadinessVerdict:
     verified: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.code, str) or self.code not in _VERDICT_CODES:
+        if type(self.code) is not str or self.code not in _VERDICT_CODES:
             raise ValueError("Readiness verdict code is invalid.")
         if (
-            not isinstance(self.detail, str)
+            type(self.detail) is not str
             or not self.detail
             or len(self.detail) > _MAX_VERDICT_DETAIL_CHARS
             or not self.detail.isprintable()
@@ -251,28 +254,30 @@ class ProviderDraftIdentity:
 
     def __post_init__(self) -> None:
         if (
-            not isinstance(self.provider_key, str)
+            type(self.provider_key) is not str
             or not self.provider_key
             or len(self.provider_key) > _MAX_PROVIDER_KEY_CHARS
             or _PROVIDER_KEY.fullmatch(self.provider_key) is None
         ):
             raise ValueError("Provider key is invalid.")
         if (
-            not isinstance(self.connection_identity, tuple)
+            type(self.connection_identity) is not tuple
             or len(self.connection_identity) != 2
-            or not all(isinstance(value, str) for value in self.connection_identity)
+            or not all(type(value) is str for value in self.connection_identity)
         ):
             raise ValueError("Connection identity is invalid.")
         identity_provider, identity_endpoint = self.connection_identity
         if (
-            identity_provider != self.provider_key
+            not identity_provider
+            or len(identity_provider) > _MAX_PROVIDER_KEY_CHARS
+            or _PROVIDER_KEY.fullmatch(identity_provider) is None
             or not identity_endpoint
             or len(identity_endpoint) > _MAX_CONNECTION_ENDPOINT_CHARS
             or canonical_connection_identity(self.provider_key, identity_endpoint)
             != self.connection_identity
         ):
             raise ValueError("Connection identity is not canonical.")
-        if not isinstance(self.credential_source, str) or (
+        if type(self.credential_source) is not str or (
             self.credential_source not in _CREDENTIAL_SOURCES
         ):
             raise ValueError("Credential source is invalid.")
@@ -280,6 +285,18 @@ class ProviderDraftIdentity:
             raise ValueError("Credential revision must be a non-negative integer.")
         if type(self.draft_generation) is not int or self.draft_generation < 0:
             raise ValueError("Draft generation must be a non-negative integer.")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderProbeResult:
+    """Exact bounded probe result accepted by the evidence store."""
+
+    endpoint: EndpointFacet
+    model_ids: tuple[str, ...]
+    category: EndpointFailureCategory | None = None
+
+    def __post_init__(self) -> None:
+        _validate_probe_result(self.endpoint, self.model_ids, self.category)
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,16 +309,16 @@ class ProviderTestEvidence:
     category: EndpointFailureCategory | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identity, ProviderDraftIdentity):
-            raise ValueError("Provider evidence identity is invalid.")  # noqa: TRY004
+        if type(self.identity) is not ProviderDraftIdentity:
+            raise ValueError("Provider evidence identity is invalid.")
         if (
-            not isinstance(self.endpoint, str)
+            type(self.endpoint) is not str
             or self.endpoint not in _EVIDENCE_ENDPOINT_FACETS
         ):
             raise ValueError("Provider evidence endpoint facet is invalid.")
         _validate_model_ids(self.model_ids)
         if self.category is not None and (
-            not isinstance(self.category, str)
+            type(self.category) is not str
             or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Provider evidence category is invalid.")
@@ -330,14 +347,19 @@ class _MutationResult(Protocol):
 class _ProviderTestToken:
     """Opaque, single-use capability for settling one current probe."""
 
-    __slots__ = ("_identity", "_sequence")
-
-    def __init__(self, identity: ProviderDraftIdentity, sequence: int) -> None:
-        self._identity = identity
-        self._sequence = sequence
+    __slots__ = ()
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
+
+
+class _ProviderEvidenceSaveLease:
+    """Opaque capability binding one save callback to a store revision."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<ProviderEvidenceSaveLease>"
 
 
 class ProviderTestEvidenceStore:
@@ -345,43 +367,62 @@ class ProviderTestEvidenceStore:
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._sequence = 0
+        self._operation_epoch = 0
         self._latest_generation = -1
         self._current_token: _ProviderTestToken | None = None
+        self._current_identity: ProviderDraftIdentity | None = None
+        self._save_leases: dict[
+            _ProviderEvidenceSaveLease, tuple[ProviderDraftIdentity, int]
+        ] = {}
         self._evidence: ProviderTestEvidence | None = None
 
     def begin(self, identity: ProviderDraftIdentity) -> object:
         """Start a probe for ``identity`` and return its opaque settlement token."""
 
-        if not isinstance(identity, ProviderDraftIdentity):
-            raise ValueError("Provider draft identity is invalid.")  # noqa: TRY004
+        if type(identity) is not ProviderDraftIdentity:
+            raise ValueError("Provider draft identity is invalid.")
         with self._lock:
             if identity.draft_generation < self._latest_generation:
                 raise ValueError("Draft generation is older than current evidence.")
             self._latest_generation = identity.draft_generation
-            self._sequence += 1
-            token = _ProviderTestToken(identity, self._sequence)
+            self._advance_operation()
+            token = _ProviderTestToken()
             self._current_token = token
+            self._current_identity = identity
             self._evidence = ProviderTestEvidence(identity, "testing", ())
             return token
 
     def settle(self, token: object, outcome: object) -> bool:
         """Attach a bounded result only when ``token`` still owns the draft."""
 
+        supported_outcome = type(outcome) in {
+            ProviderProbeResult,
+            ProviderTestEvidence,
+        }
         with self._lock:
-            if token is not self._current_token or not isinstance(
-                token, _ProviderTestToken
-            ):
+            if type(token) is not _ProviderTestToken or token is not self._current_token:
                 return False
+            identity = self._current_identity
             self._current_token = None
+            self._current_identity = None
             self._evidence = None
-            try:
-                evidence = _coerce_probe_evidence(token._identity, outcome)
-            except Exception:  # noqa: BLE001 - malformed probe objects fail closed.
+            self._advance_operation()
+            settlement_epoch = self._operation_epoch
+
+        if identity is None or not supported_outcome:
+            return False
+        try:
+            evidence = _evidence_from_exact_outcome(identity, outcome)
+        except ValueError:
+            return False
+
+        with self._lock:
+            if self._operation_epoch != settlement_epoch:
                 return False
-            if evidence.endpoint in {"not_tested", "testing"}:
+            if self._current_token is not None or self._evidence is not None:
                 return False
             self._evidence = evidence
+            self._advance_operation()
             return True
 
     def evidence_for(
@@ -389,7 +430,7 @@ class ProviderTestEvidenceStore:
     ) -> ProviderTestEvidence | None:
         """Return evidence only for the exact semantic identity supplied."""
 
-        if not isinstance(identity, ProviderDraftIdentity):
+        if type(identity) is not ProviderDraftIdentity:
             return None
         with self._lock:
             if self._evidence is None or self._evidence.identity != identity:
@@ -399,7 +440,7 @@ class ProviderTestEvidenceStore:
     def invalidate(self, identity: ProviderDraftIdentity | None = None) -> bool:
         """Remove exact or current evidence and cancel its active operation."""
 
-        if identity is not None and not isinstance(identity, ProviderDraftIdentity):
+        if identity is not None and type(identity) is not ProviderDraftIdentity:
             return False
         with self._lock:
             if self._evidence is None:
@@ -408,60 +449,103 @@ class ProviderTestEvidenceStore:
                 return False
             self._evidence = None
             self._current_token = None
+            self._current_identity = None
+            self._advance_operation()
             return True
+
+    def begin_save(self, identity: ProviderDraftIdentity) -> object:
+        """Capture a value-free lease for the store's current operation revision."""
+
+        if type(identity) is not ProviderDraftIdentity:
+            raise ValueError("Provider draft identity is invalid.")
+        with self._lock:
+            if identity.draft_generation < self._latest_generation:
+                raise ValueError("Draft generation is older than current evidence.")
+            lease = _ProviderEvidenceSaveLease()
+            self._save_leases[lease] = (identity, self._operation_epoch)
+            return lease
 
     def rebase_after_save(
         self,
         tested_identity: ProviderDraftIdentity,
         saved_identity: ProviderDraftIdentity,
         mutation_result: _MutationResult,
+        *,
+        lease: object,
     ) -> bool:
         """Rebind settled evidence after an equivalent, fully applied save."""
 
-        if not isinstance(tested_identity, ProviderDraftIdentity) or not isinstance(
-            saved_identity, ProviderDraftIdentity
-        ):
+        identities_are_valid = (
+            type(tested_identity) is ProviderDraftIdentity
+            and type(saved_identity) is ProviderDraftIdentity
+        )
+        mutation_flags = _mutation_flags(mutation_result)
+        if type(lease) is not _ProviderEvidenceSaveLease:
             return False
+
         with self._lock:
+            leased_operation = self._save_leases.pop(lease, None)
+            if leased_operation is None:
+                return False
+            if not identities_are_valid or mutation_flags is None:
+                return False
+            conflict, fully_applied = mutation_flags
+            leased_identity, leased_epoch = leased_operation
+            if (
+                leased_identity != tested_identity
+                or leased_epoch != self._operation_epoch
+            ):
+                return False
+
             evidence = self._evidence
-            if evidence is None or evidence.identity != tested_identity:
-                return False
-            if bool(getattr(mutation_result, "conflict", False)):
-                self._evidence = None
-                self._current_token = None
-                return False
-            if not bool(getattr(mutation_result, "fully_applied", False)):
-                self._evidence = None
-                self._current_token = None
-                return False
-            if evidence.endpoint == "testing" or not _same_saved_semantics(
-                tested_identity, saved_identity
-            ) or saved_identity.draft_generation < tested_identity.draft_generation:
-                self._evidence = None
-                self._current_token = None
-                return False
-            self._evidence = ProviderTestEvidence(
-                saved_identity,
-                evidence.endpoint,
-                evidence.model_ids,
-                evidence.category,
+            can_preserve = bool(
+                not conflict
+                and fully_applied
+                and evidence is not None
+                and evidence.identity == tested_identity
+                and evidence.endpoint != "testing"
+                and _same_saved_semantics(tested_identity, saved_identity)
+                and saved_identity.draft_generation
+                >= tested_identity.draft_generation
             )
+            if fully_applied and not conflict:
+                self._latest_generation = max(
+                    self._latest_generation,
+                    saved_identity.draft_generation,
+                )
+
+            self._clear_state_for_identity(tested_identity)
+            if can_preserve and evidence is not None:
+                self._evidence = ProviderTestEvidence(
+                    saved_identity,
+                    evidence.endpoint,
+                    evidence.model_ids,
+                    evidence.category,
+                )
+            self._advance_operation()
+            return can_preserve
+
+    def _clear_state_for_identity(self, identity: ProviderDraftIdentity) -> None:
+        if self._evidence is not None and self._evidence.identity == identity:
+            self._evidence = None
+        if self._current_identity == identity:
             self._current_token = None
-            self._latest_generation = max(
-                self._latest_generation, saved_identity.draft_generation
-            )
-            return True
+            self._current_identity = None
+
+    def _advance_operation(self) -> None:
+        self._operation_epoch += 1
+        self._save_leases.clear()
 
 
 def _validate_model_ids(model_ids: object) -> None:
-    if not isinstance(model_ids, tuple):
-        raise ValueError("Model IDs must be a tuple.")  # noqa: TRY004
+    if type(model_ids) is not tuple:
+        raise ValueError("Model IDs must be a tuple.")
     if len(model_ids) > _MAX_MODEL_IDS:
         raise ValueError("Too many model IDs.")
     seen: set[str] = set()
     for model_id in model_ids:
-        if not isinstance(model_id, str):
-            raise ValueError("Model ID is invalid.")  # noqa: TRY004
+        if type(model_id) is not str:
+            raise ValueError("Model ID is invalid.")
         if not model_id or len(model_id) > _MAX_MODEL_ID_CHARS:
             raise ValueError("Model ID length is invalid.")
         if (
@@ -478,17 +562,57 @@ def _validate_model_ids(model_ids: object) -> None:
         seen.add(model_id)
 
 
-def _coerce_probe_evidence(
-    identity: ProviderDraftIdentity, outcome: object
+def _validate_probe_result(
+    endpoint: object,
+    model_ids: object,
+    category: object,
+) -> None:
+    if type(endpoint) is not str or endpoint not in _PROBE_ENDPOINT_FACETS:
+        raise ValueError("Provider probe endpoint facet is invalid.")
+    _validate_model_ids(model_ids)
+    if category is not None and (
+        type(category) is not str or category not in _FAILURE_CATEGORIES
+    ):
+        raise ValueError("Provider probe category is invalid.")
+    if endpoint == "reachable":
+        if category is not None:
+            raise ValueError("Reachable probe result cannot include a category.")
+    elif endpoint == "unreachable":
+        if model_ids:
+            raise ValueError("Unreachable probe result cannot include model IDs.")
+    elif model_ids or category not in {None, "http_status"}:
+        raise ValueError("Model-listing probe result is inconsistent.")
+
+
+def _evidence_from_exact_outcome(
+    identity: ProviderDraftIdentity,
+    outcome: object,
 ) -> ProviderTestEvidence:
-    if isinstance(outcome, ProviderTestEvidence):
+    if type(outcome) is ProviderTestEvidence:
         if outcome.identity != identity:
             raise ValueError("Probe evidence identity does not match the token.")
+        if outcome.endpoint not in _PROBE_ENDPOINT_FACETS:
+            raise ValueError("Probe evidence is not a terminal result.")
         return outcome
-    endpoint = outcome.state  # type: ignore[attr-defined]
-    model_ids = getattr(outcome, "model_ids", ())
-    category = getattr(outcome, "category", None)
-    return ProviderTestEvidence(identity, endpoint, model_ids, category)
+    if type(outcome) is not ProviderProbeResult:
+        raise ValueError("Provider probe result type is invalid.")
+    return ProviderTestEvidence(
+        identity,
+        outcome.endpoint,
+        outcome.model_ids,
+        outcome.category,
+    )
+
+
+def _mutation_flags(mutation_result: object) -> tuple[bool, bool] | None:
+    try:
+        conflict = mutation_result.conflict  # type: ignore[attr-defined]
+        fully_applied = mutation_result.fully_applied  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - callback inputs fail closed before locking.
+        return None
+    if type(conflict) is not bool or type(fully_applied) is not bool:
+        return None
+    return conflict, fully_applied
 
 
 def _same_saved_semantics(

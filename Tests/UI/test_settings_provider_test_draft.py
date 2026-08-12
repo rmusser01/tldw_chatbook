@@ -73,6 +73,16 @@ def _settle_identity(
     return evidence
 
 
+def _rebase_after_save(
+    store: ProviderTestEvidenceStore,
+    tested: ProviderDraftIdentity,
+    saved: ProviderDraftIdentity,
+    mutation: ConfigMutationResult,
+) -> bool:
+    lease = store.begin_save(tested)
+    return store.rebase_after_save(tested, saved, mutation, lease=lease)
+
+
 def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
     tested = _semantic_identity(
         "https://example.test/proxy/v1/models", draft_generation=4
@@ -83,13 +93,13 @@ def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
     store = _settled_store(tested)
 
     partial = ConfigMutationResult(True, False, "cache_reload")
-    assert not store.rebase_after_save(tested, saved, partial)
+    assert not _rebase_after_save(store, tested, saved, partial)
     assert store.evidence_for(saved) is None
     assert store.evidence_for(tested) is None
 
     store = _settled_store(tested)
     applied = ConfigMutationResult(True, True, None)
-    assert store.rebase_after_save(tested, saved, applied)
+    assert _rebase_after_save(store, tested, saved, applied)
     rebound = store.evidence_for(saved)
     assert rebound is not None
     assert rebound.identity == saved
@@ -125,8 +135,8 @@ def test_successful_save_does_not_rebase_changed_semantics(changed):
     )
     store = _settled_store(tested)
 
-    assert not store.rebase_after_save(
-        tested, changed, ConfigMutationResult(True, True, None)
+    assert not _rebase_after_save(
+        store, tested, changed, ConfigMutationResult(True, True, None)
     )
     assert store.evidence_for(changed) is None
     assert store.evidence_for(tested) is None
@@ -153,7 +163,8 @@ def test_failed_save_does_not_rebase_evidence_to_saved_identity():
     )
     store = _settled_store(tested)
 
-    assert not store.rebase_after_save(
+    assert not _rebase_after_save(
+        store,
         tested,
         saved,
         ConfigMutationResult(False, False, "before_replace"),
@@ -171,7 +182,8 @@ def test_conflict_invalidates_even_when_mutation_claims_fully_applied():
     )
     store = _settled_store(tested)
 
-    assert not store.rebase_after_save(
+    assert not _rebase_after_save(
+        store,
         tested,
         saved,
         ConfigMutationResult(True, True, None, conflict=True),
@@ -189,11 +201,13 @@ def test_conflict_invalidates_active_test_token():
     )
     store = ProviderTestEvidenceStore()
     token = store.begin(tested)
+    lease = store.begin_save(tested)
 
     assert not store.rebase_after_save(
         tested,
         saved,
         ConfigMutationResult(True, True, None, conflict=True),
+        lease=lease,
     )
     assert store.evidence_for(tested) is None
     assert not store.settle(
@@ -211,12 +225,14 @@ def test_late_partial_save_does_not_clear_newer_settled_evidence():
     )
     store = ProviderTestEvidenceStore()
     _settle_identity(store, first)
+    first_lease = store.begin_save(first)
     newer_evidence = _settle_identity(store, second)
 
     assert not store.rebase_after_save(
         first,
         first,
         ConfigMutationResult(False, False, "before_replace"),
+        lease=first_lease,
     )
     assert store.evidence_for(second) == newer_evidence
 
@@ -238,9 +254,10 @@ def test_late_conflict_does_not_clear_newer_settled_evidence(mutation):
     )
     store = ProviderTestEvidenceStore()
     _settle_identity(store, first)
+    first_lease = store.begin_save(first)
     newer_evidence = _settle_identity(store, second)
 
-    assert not store.rebase_after_save(first, first, mutation)
+    assert not store.rebase_after_save(first, first, mutation, lease=first_lease)
     assert store.evidence_for(second) == newer_evidence
 
 
@@ -261,9 +278,10 @@ def test_stale_save_result_does_not_cancel_newer_active_test(mutation):
     )
     store = ProviderTestEvidenceStore()
     _settle_identity(store, first)
+    first_lease = store.begin_save(first)
     token = store.begin(second)
 
-    assert not store.rebase_after_save(first, first, mutation)
+    assert not store.rebase_after_save(first, first, mutation, lease=first_lease)
     testing = store.evidence_for(second)
     assert testing is not None
     assert testing.endpoint == "testing"
@@ -282,10 +300,184 @@ def test_successful_save_cannot_rebase_to_an_older_draft_generation():
     )
     store = _settled_store(tested)
 
-    assert not store.rebase_after_save(
-        tested, older, ConfigMutationResult(True, True, None)
+    assert not _rebase_after_save(
+        store, tested, older, ConfigMutationResult(True, True, None)
     )
     assert store.evidence_for(older) is None
+
+
+def test_save_lease_is_immutable_value_free_and_secret_free():
+    identity = _semantic_identity(
+        "https://secret-host.test/v1/chat/completions", draft_generation=1
+    )
+    store = _settled_store(identity)
+
+    lease = store.begin_save(identity)
+
+    assert repr(lease) == "<ProviderEvidenceSaveLease>"
+    assert not hasattr(lease, "__dict__")
+    assert "custom" not in repr(lease)
+    assert "secret-host" not in repr(lease)
+    assert "identity" not in dir(lease)
+    assert "epoch" not in dir(lease)
+    with pytest.raises(AttributeError):
+        lease.identity = identity
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+        ConfigMutationResult(True, True, None),
+    ],
+    ids=["partial", "conflict", "success"],
+)
+def test_same_identity_late_save_cannot_change_newer_settled_state(mutation):
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(identity)
+    stale_lease = store.begin_save(identity)
+    newer = _settle_identity(store, identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        mutation,
+        lease=stale_lease,
+    )
+    assert store.evidence_for(identity) == newer
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+        ConfigMutationResult(True, True, None),
+    ],
+    ids=["partial", "conflict", "success"],
+)
+def test_same_identity_late_save_cannot_cancel_newer_active_test(mutation):
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(identity)
+    stale_lease = store.begin_save(identity)
+    token = store.begin(identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        mutation,
+        lease=stale_lease,
+    )
+    settled = ProviderTestEvidence(identity, "reachable", ("model-new",))
+    assert store.settle(token, settled)
+    assert store.evidence_for(identity) == settled
+
+
+def test_save_lease_is_single_use_after_successful_rebase():
+    tested = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    store = _settled_store(tested)
+    lease = store.begin_save(tested)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert store.rebase_after_save(tested, saved, mutation, lease=lease)
+    rebound = store.evidence_for(saved)
+    assert not store.rebase_after_save(tested, saved, mutation, lease=lease)
+    assert store.evidence_for(saved) == rebound
+
+
+def test_rejected_save_callback_consumes_lease():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+
+    assert not store.rebase_after_save(identity, identity, object(), lease=lease)
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+
+
+def test_parallel_save_lease_becomes_stale_after_first_rebase():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    first = store.begin_save(identity)
+    second = store.begin_save(identity)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert store.rebase_after_save(identity, identity, mutation, lease=second)
+    assert not store.rebase_after_save(identity, identity, mutation, lease=first)
+
+
+def test_invalidated_save_lease_cannot_rebase_recreated_identical_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    assert store.invalidate(identity)
+    recreated = _settle_identity(store, identity)
+
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    assert store.evidence_for(identity) == recreated
+
+
+@pytest.mark.parametrize("state", ["changed-semantics", "testing", "no-evidence"])
+def test_current_fully_applied_save_advances_generation_without_preserved_evidence(
+    state,
+):
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=8
+    )
+    store = ProviderTestEvidenceStore()
+    token = None
+    if state == "changed-semantics":
+        _settle_identity(store, tested)
+        saved = _semantic_identity(
+            "https://other.test/v1/chat/completions", draft_generation=8
+        )
+    elif state == "testing":
+        token = store.begin(tested)
+
+    lease = store.begin_save(tested)
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    if token is not None:
+        assert not store.settle(
+            token,
+            ProviderTestEvidence(tested, "reachable", ("model-a",)),
+        )
+    with pytest.raises(ValueError):
+        store.begin(_semantic_identity(
+            "https://example.test/v1/chat/completions", draft_generation=7
+        ))
 
 
 def _base_config():

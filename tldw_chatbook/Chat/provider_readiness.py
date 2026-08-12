@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from unicodedata import category as unicode_category
 
 from .Chat_Deps import ChatConfigurationError
 
@@ -110,6 +112,62 @@ _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     "qwencloud": "DASHSCOPE_API_KEY",
 }
 _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
+_PROVIDER_KEY_PATTERN = re.compile(r"[a-z0-9_.]+")
+_ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_MAX_PROVIDER_CHARS = 256
+_MAX_PROVIDER_KEY_CHARS = 128
+_MAX_SOURCE_CHARS = 256
+_MAX_ENV_VAR_CHARS = 128
+_MAX_REASON_CHARS = 128
+_MAX_RECOVERY_CHARS = 1024
+_CONFIGURATION_STATE_BY_REASON: dict[
+    str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
+] = {
+    "Ready": ("configured", None),
+    "Select a provider": ("incomplete", "provider_missing"),
+    "Missing API key": ("incomplete", "credential_missing"),
+    "Invalid provider settings": ("incomplete", "invalid_settings"),
+    "Unknown provider": ("incomplete", "invalid_settings"),
+}
+
+
+def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > max_chars
+        or not value.isprintable()
+        or any(
+            unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
+            for character in value
+        )
+    ):
+        raise ValueError(f"{label} is invalid.")
+
+
+def _validate_provider_key(provider_key: object) -> None:
+    if type(provider_key) is not str:
+        raise ValueError("Provider key is invalid.")
+    if provider_key and (
+        len(provider_key) > _MAX_PROVIDER_KEY_CHARS
+        or _PROVIDER_KEY_PATTERN.fullmatch(provider_key) is None
+    ):
+        raise ValueError("Provider key is invalid.")
+
+
+def _validate_env_var(env_var: object) -> None:
+    if (
+        type(env_var) is not str
+        or len(env_var) > _MAX_ENV_VAR_CHARS
+        or _ENV_VAR_PATTERN.fullmatch(env_var) is None
+        or not env_var.isprintable()
+        or any(
+            unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
+            for character in env_var
+        )
+    ):
+        raise ValueError("Environment variable is invalid.")
 
 
 @dataclass(frozen=True)
@@ -120,21 +178,73 @@ class ProviderReadiness:
     provider_key: str
     requires_api_key: bool
     ready: bool
-    api_key: str | None
+    api_key: str | None = field(repr=False)
     api_key_source: str | None
     env_var: str | None
     reason: str
     recovery: str | None
+    _configuration_facet: ConfigurationFacet = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _configuration_issue: ConfigurationIssueCode | None = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Reject legacy boolean states that contradict their structured truth."""
         if type(self.ready) is not bool or type(self.requires_api_key) is not bool:
             raise ValueError("Provider readiness flags are invalid.")
-        if self.ready:
-            if self.reason != "Ready" or self.recovery is not None:
-                raise ValueError("Ready provider state is inconsistent.")
-        elif self.reason == "Ready":
-            raise ValueError("Blocked provider state is inconsistent.")
+        _validate_safe_text(
+            self.provider,
+            label="Provider",
+            max_chars=_MAX_PROVIDER_CHARS,
+        )
+        _validate_provider_key(self.provider_key)
+        _validate_safe_text(
+            self.reason,
+            label="Provider reason",
+            max_chars=_MAX_REASON_CHARS,
+        )
+        if self.recovery is not None:
+            _validate_safe_text(
+                self.recovery,
+                label="Provider recovery",
+                max_chars=_MAX_RECOVERY_CHARS,
+            )
+        if self.env_var is not None:
+            _validate_env_var(self.env_var)
+
+        structured_state = _CONFIGURATION_STATE_BY_REASON.get(self.reason)
+        if structured_state is None:
+            raise ValueError("Provider reason is not a supported readiness state.")
+        configuration_facet, configuration_issue = structured_state
+        if self.ready != (configuration_facet == "configured"):
+            raise ValueError("Provider readiness state is inconsistent.")
+        if self.ready and self.recovery is not None:
+            raise ValueError("Ready provider state is inconsistent.")
+        if not self.ready and self.recovery is None:
+            raise ValueError("Blocked provider recovery is missing.")
+        object.__setattr__(self, "_configuration_facet", configuration_facet)
+        object.__setattr__(self, "_configuration_issue", configuration_issue)
+
+        if self.reason == "Select a provider":
+            if (
+                self.provider != "No provider"
+                or self.provider_key
+                or self.requires_api_key
+                or self.env_var is not None
+            ):
+                raise ValueError("Provider selection state is inconsistent.")
+        elif not self.provider_key:
+            raise ValueError("Provider key is required for the selected provider.")
+        if self.reason == "Missing API key" and not self.requires_api_key:
+            raise ValueError("Keyless provider cannot report a missing API key.")
+        if self.reason == "Unknown provider" and not self.requires_api_key:
+            raise ValueError("Unknown provider credential state is inconsistent.")
 
         has_key = self.api_key is not None
         has_source = self.api_key_source is not None
@@ -147,43 +257,31 @@ class ProviderReadiness:
         if has_key:
             if not is_valid_provider_api_key(self.api_key):
                 raise ValueError("Provider credential state is invalid.")
-            source = self.api_key_source or ""
-            if (
-                not isinstance(source, str)
-                or not source
-                or len(source) > 256
-                or not source.isprintable()
-            ):
-                raise ValueError("Provider credential source is invalid.")
+            source = self.api_key_source
+            assert source is not None
+            _validate_safe_text(
+                source,
+                label="Provider credential source",
+                max_chars=_MAX_SOURCE_CHARS,
+            )
             if source.startswith("env:"):
                 if (
-                    not isinstance(self.env_var, str)
-                    or not self.env_var
-                    or len(self.env_var) > 128
-                    or not self.env_var.isprintable()
+                    self.env_var is None
                     or source != f"env:{self.env_var}"
                 ):
                     raise ValueError("Environment credential source is inconsistent.")
-            elif not source.startswith("config:") or source == "config:":
+            elif source != f"config:api_settings.{self.provider_key}.api_key":
                 raise ValueError("Provider credential source is invalid.")
 
     @property
     def configuration_facet(self) -> ConfigurationFacet:
         """Compatibility-safe structured view of configuration readiness."""
-        return "configured" if self.ready else "incomplete"
+        return self._configuration_facet
 
     @property
     def configuration_issue(self) -> ConfigurationIssueCode | None:
         """Return a bounded explanation for an incomplete legacy state."""
-        if self.ready:
-            return None
-        if self.reason == "Select a provider":
-            return "provider_missing"
-        if self.reason == "Missing API key":
-            return "credential_missing"
-        if self.reason in {"Invalid provider settings", "Unknown provider"}:
-            return "invalid_settings"
-        return None
+        return self._configuration_issue
 
     def snapshot(
         self,
