@@ -26,7 +26,6 @@ from tldw_chatbook.DB.private_sqlite import (
     backup_open_connections_to_private,
     close_profile_migration_destination,
     connect_private_sqlite,
-    copy_private_sqlite,
     discard_profile_migration_destination,
     migrate_profile_store_to_candidate,
     open_canonical_profile_migration_destination,
@@ -83,7 +82,6 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_utc_datetime,
     encode_uuid,
     open_profile_store,
-    peek_profile_store_schema_version,
     validate_profile_candidate,
     validate_profile_store_rows,
 )
@@ -1249,19 +1247,12 @@ class TTSProfileRepository:
         return ProfileStoreResult(generation=generation, value=None)
 
     def _worker_upgrade_if_shared_unsafe(self, active_path: Path) -> None:
-        """Recover first, then take exclusive ownership only for unsafe opens."""
+        """Recover and inspect only while holding exclusive ownership."""
 
-        recover_profile_migration_publication(active_path)
-        version = peek_profile_store_schema_version(active_path)
-        if version is None and not active_path.exists():
-            return
-        if version is not None and version >= CURRENT_PROFILE_SCHEMA_VERSION:
-            return
-        try:
-            self._worker_initialize_store(active_path)
-        except ProfileRepositoryError as error:
-            if error.code != "lock_timeout":
-                raise
+        self._worker_initialize_store(
+            active_path,
+            allow_create=not self._store_established,
+        )
 
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
@@ -1280,26 +1271,7 @@ class TTSProfileRepository:
                 "operation_failed",
             )
             self._worker_upgrade_if_shared_unsafe(active_path)
-            try:
-                lease, connection = self._worker_open_existing(active_path)
-            except ProfileRepositoryError as error:
-                if self._store_established or error.code not in {
-                    "missing",
-                    "schema_partial",
-                }:
-                    raise
-                try:
-                    self._worker_initialize_store(active_path)
-                except ProfileRepositoryError as initialization_error:
-                    if initialization_error.code != "lock_timeout":
-                        raise
-                    # Another fresh process may have won initialization and
-                    # downgraded to its long-lived shared lease before this
-                    # contender acquired exclusive ownership. Re-read under
-                    # shared ownership instead of failing a healthy first open.
-                    lease, connection = self._worker_open_existing(active_path)
-                else:
-                    lease, connection = self._worker_open_existing(active_path)
+            lease, connection = self._worker_open_existing(active_path)
             if connection is None:
                 raise _repository_error("operation_failed")
             validate_profile_store_rows(connection)
@@ -1379,7 +1351,12 @@ class TTSProfileRepository:
         _raise_with_cleanup_precedence(body_error, release_error)
         raise AssertionError("unreachable")
 
-    def _worker_initialize_store(self, active_path: Path) -> None:
+    def _worker_initialize_store(
+        self,
+        active_path: Path,
+        *,
+        allow_create: bool = True,
+    ) -> None:
         """Create or migrate one store only while holding exclusive ownership."""
 
         lease = ProfileStoreLease(
@@ -1396,6 +1373,8 @@ class TTSProfileRepository:
             recover_profile_migration_publication(active_path)
             source_version = self._worker_exact_schema_version(active_path)
             if source_version is None:
+                if not allow_create:
+                    raise _repository_error("missing")
                 connection = open_profile_store(active_path)
             elif source_version < CURRENT_PROFILE_SCHEMA_VERSION:
                 self._worker_publish_migrated_store(active_path, source_version)
@@ -1609,6 +1588,10 @@ class TTSProfileRepository:
                 source.close()
             except BaseException as error:
                 cleanup_errors.append(error)
+                if source_path is None:
+                    self._connection = source
+                    self._active_database_path = active_path
+                    source = None
         if body_error is not None and not publication_started:
             for owner, tombstone_key in reversed(owners):
                 try:
@@ -1667,240 +1650,6 @@ class TTSProfileRepository:
         if body_error is not None or close_error is not None or version is None:
             raise _repository_error("migration_failed")
         return version
-
-    def _worker_validate_v2_connection(
-        self,
-        connection: sqlite3.Connection,
-    ) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
-        """Require one exact, fully valid v2 store and return its domain."""
-
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(f"PRAGMA busy_timeout = {_profile_schema.BUSY_TIMEOUT_MS}")
-        version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version != 2:
-            raise _repository_error("migration_failed")
-        _profile_schema._validate_schema(connection, expected_version=2)
-        self._worker_require_full_integrity(connection)
-        validate_profile_store_rows(connection)
-        return _profile_schema._migration_domain_snapshot(connection)
-
-    def _worker_existing_v2_backup_matches(
-        self,
-        backup_path: Path,
-        source_domain: tuple[
-            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
-        ],
-    ) -> bool:
-        """Return whether an inert retained backup exactly matches the source."""
-
-        if not backup_path.exists():
-            return False
-        connection: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        close_error: BaseException | None = None
-        matched = False
-        try:
-            connection = connect_private_sqlite(
-                "tts.profile_migration_backup",
-                backup_path,
-                read_only=True,
-                immutable=True,
-                isolation_level=None,
-            )
-            matched = self._worker_validate_v2_connection(connection) == source_domain
-        except BaseException as error:
-            body_error = error
-        if connection is not None:
-            try:
-                connection.close()
-            except BaseException as error:
-                close_error = error
-                self._connection = connection
-        for pending_error in (body_error, close_error):
-            if pending_error is not None and not isinstance(pending_error, Exception):
-                raise pending_error
-        if close_error is not None:
-            raise _repository_error("migration_failed")
-        return matched if body_error is None else False
-
-    def _worker_publish_v2_migration_backup(
-        self,
-        source: sqlite3.Connection,
-        source_domain: tuple[
-            tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]
-        ],
-        backup_path: Path,
-    ) -> None:
-        """Atomically publish one validated current-source online backup."""
-
-        temporary_path: Path | None = None
-        rollback_path: Path | None = None
-        destination: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        cleanup_errors: list[BaseException] = []
-        published = False
-        replaced = False
-        try:
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".{backup_path.name}.",
-                suffix=".backup",
-                dir=backup_path.parent,
-            )
-            temporary_path = Path(temporary_name)
-            os.close(descriptor)
-            destination = connect_private_sqlite(
-                "tts.profile_migration_backup",
-                temporary_path,
-                must_exist=True,
-                isolation_level=None,
-            )
-            backup_open_connections_to_private(
-                "tts.profile_migration_backup",
-                source,
-                destination,
-            )
-            if self._worker_validate_v2_connection(destination) != source_domain:
-                raise _repository_error("migration_failed")
-            destination.close()
-            destination = None
-            temporary_state = temporary_path.stat()
-            if not stat.S_ISREG(temporary_state.st_mode) or (
-                os.name == "posix" and stat.S_IMODE(temporary_state.st_mode) != 0o600
-            ):
-                raise _repository_error("migration_failed")
-            _fsync_file(temporary_path)
-            try:
-                prior_state = backup_path.lstat()
-            except FileNotFoundError:
-                prior_state = None
-            if prior_state is not None:
-                if not stat.S_ISREG(prior_state.st_mode) or (
-                    os.name == "posix"
-                    and (
-                        stat.S_IMODE(prior_state.st_mode) != 0o600
-                        or prior_state.st_nlink != 1
-                    )
-                ):
-                    raise _repository_error("migration_failed")
-                rollback_descriptor, rollback_name = tempfile.mkstemp(
-                    prefix=f".{backup_path.name}.",
-                    suffix=".rollback",
-                    dir=backup_path.parent,
-                )
-                rollback_path = Path(rollback_name)
-                os.close(rollback_descriptor)
-                rollback_path.unlink()
-                os.link(backup_path, rollback_path, follow_symlinks=False)
-                rollback_state = rollback_path.lstat()
-                if (
-                    not stat.S_ISREG(rollback_state.st_mode)
-                    or rollback_state.st_dev != prior_state.st_dev
-                    or rollback_state.st_ino != prior_state.st_ino
-                ):
-                    raise _repository_error("migration_failed")
-                _fsync_directory(backup_path.parent)
-            os.replace(temporary_path, backup_path)
-            replaced = True
-            _fsync_directory(backup_path.parent)
-            published = True
-            if rollback_path is not None:
-                rollback_path.unlink()
-                rollback_path = None
-                _fsync_directory(backup_path.parent)
-        except BaseException as error:
-            body_error = error
-            if replaced and not published:
-                try:
-                    if rollback_path is None:
-                        _unlink_path_if_present(backup_path)
-                    else:
-                        os.replace(rollback_path, backup_path)
-                        rollback_path = None
-                    _fsync_directory(backup_path.parent)
-                except BaseException as restore_error:
-                    cleanup_errors.append(restore_error)
-
-        if destination is not None:
-            try:
-                destination.close()
-            except BaseException as error:
-                cleanup_errors.append(error)
-                self._connection = destination
-                if temporary_path is not None:
-                    self._residual_cleanup_paths = (
-                        temporary_path,
-                        *tuple(
-                            temporary_path.with_name(f"{temporary_path.name}{suffix}")
-                            for suffix in _STORE_SIDECAR_SUFFIXES
-                        ),
-                    )
-        if temporary_path is not None:
-            if not published:
-                try:
-                    _unlink_path_if_present(temporary_path)
-                except BaseException as error:
-                    cleanup_errors.append(error)
-            for suffix in _STORE_SIDECAR_SUFFIXES:
-                try:
-                    _unlink_path_if_present(
-                        temporary_path.with_name(f"{temporary_path.name}{suffix}")
-                    )
-                except BaseException as error:
-                    cleanup_errors.append(error)
-        if rollback_path is not None:
-            try:
-                _unlink_path_if_present(rollback_path)
-                _fsync_directory(backup_path.parent)
-            except BaseException as error:
-                cleanup_errors.append(error)
-
-        for pending_error in (body_error, *cleanup_errors):
-            if pending_error is not None and not isinstance(pending_error, Exception):
-                raise pending_error
-        if body_error is not None or cleanup_errors:
-            raise _repository_error("migration_failed")
-
-    def _worker_retain_v2_migration_backup(self, active_path: Path) -> None:
-        """Validate v2 and retain an equivalent backup before allowing v3."""
-
-        source: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        close_error: BaseException | None = None
-        try:
-            source = connect_private_sqlite(
-                "tts.profile_migration_backup",
-                active_path,
-                must_exist=True,
-                isolation_level=None,
-            )
-            source_domain = self._worker_validate_v2_connection(source)
-            backup_path = _v2_migration_backup_path(active_path)
-            if not self._worker_existing_v2_backup_matches(
-                backup_path,
-                source_domain,
-            ):
-                self._worker_publish_v2_migration_backup(
-                    source,
-                    source_domain,
-                    backup_path,
-                )
-        except BaseException as error:
-            body_error = error
-        if source is not None:
-            try:
-                source.close()
-            except BaseException as error:
-                close_error = error
-                self._connection = source
-                self._active_database_path = active_path
-        if self._connection is not None:
-            self._active_database_path = active_path
-        for pending_error in (body_error, close_error):
-            if pending_error is not None and not isinstance(pending_error, Exception):
-                raise pending_error
-        if body_error is not None or close_error is not None:
-            raise _repository_error("migration_failed")
 
     async def create_profile(
         self,
@@ -2993,49 +2742,6 @@ class TTSProfileRepository:
         lease.release()
         self._lease = None
         _require_restore_time(deadline)
-
-    def _worker_stage_candidate(
-        self,
-        candidate: _CandidateSnapshot,
-        deadline: float,
-    ) -> Path:
-        active_path = self._worker_active_path()
-        stage_path: Path | None = None
-        body_error: BaseException | None = None
-        cleanup_errors: list[BaseException] = []
-        try:
-            _require_restore_time(deadline)
-            descriptor, stage_name = tempfile.mkstemp(
-                prefix=f".{active_path.name}.",
-                suffix=".restore-stage.sqlite3",
-                dir=active_path.parent,
-            )
-            stage_path = Path(stage_name)
-            os.close(descriptor)
-            copy_private_sqlite(
-                "tts.profile_restore_stage",
-                candidate.path,
-                stage_path,
-                progress_guard=lambda: _require_restore_time(deadline),
-            )
-            if not _candidate_is_unchanged(candidate):
-                raise _repository_error("restore_failed")
-            _require_restore_time(deadline)
-            self._worker_validate_standalone_snapshot(
-                stage_path,
-                deadline=deadline,
-            )
-        except BaseException as error:
-            body_error = error
-
-        if isinstance(body_error, sqlite3.DatabaseError):
-            body_error = _repository_error("schema_corrupt")
-        if body_error is not None or cleanup_errors:
-            if stage_path is not None:
-                cleanup_errors.extend(self._worker_remove_temporary_store(stage_path))
-            _raise_with_cleanup_precedence(body_error, *cleanup_errors)
-        assert stage_path is not None
-        return stage_path
 
     def _worker_create_recovery_backup(
         self,

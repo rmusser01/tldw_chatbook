@@ -568,6 +568,7 @@ def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
             validate=lambda _connection: None,
         )
     source.close()
+    retained_before_discard = retained.read_bytes()
     with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
         private_sqlite.discard_profile_migration_destination(
             destination,
@@ -577,7 +578,8 @@ def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert target.read_bytes() == replacement
-    assert retained.read_bytes() == b""
+    assert retained_before_discard
+    assert retained.read_bytes() == retained_before_discard
     assert (
         object.__getattribute__(
             destination,
@@ -638,6 +640,46 @@ def test_canonical_migration_candidate_close_error_still_revokes_descriptors(
         )
         == -1
     )
+
+
+def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    alias = tmp_path / "late-alias.sqlite3"
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    connection.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO private_data VALUES ('preserve-me')")
+    connection.commit()
+
+    class LinkingClose:
+        def close(self) -> None:
+            os.link(target, alias)
+            connection.close()
+
+    object.__setattr__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+        LinkingClose(),
+    )
+    before = target.read_bytes()
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.discard_profile_migration_destination(
+            destination,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert before
+    assert target.read_bytes() == before
+    assert alias.read_bytes() == before
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)

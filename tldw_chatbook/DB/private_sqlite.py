@@ -1834,6 +1834,43 @@ def discard_profile_migration_destination(
         if (
             type(destination) is not ProfileMigrationBoundaryDestination
             or type(tombstone_key) is not MigrationTombstoneKey
+            or object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__thread_id",
+            )
+            != get_ident()
+        ):
+            raise ValueError
+        selected = cast(
+            Path,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__path",
+            ),
+        )
+        parent_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__parent_fd",
+            ),
+        )
+        file_fd = cast(
+            int,
+            object.__getattribute__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__file_fd",
+            ),
+        )
+        if (
+            parent_fd < 0
+            or file_fd < 0
+            or not _profile_destination_namespace_holds(
+                destination,
+                parent_fd,
+                file_fd,
+                selected.name,
+            )
         ):
             raise ValueError
         connection = object.__getattribute__(
@@ -1847,13 +1884,13 @@ def discard_profile_migration_destination(
                 "_ProfileMigrationBoundaryDestination__connection",
                 None,
             )
-        selected = cast(
-            Path,
-            object.__getattribute__(
-                destination,
-                "_ProfileMigrationBoundaryDestination__path",
-            ),
-        )
+        if not _profile_destination_namespace_holds(
+            destination,
+            parent_fd,
+            file_fd,
+            selected.name,
+        ):
+            raise ValueError
         identity = cast(
             os.stat_result,
             object.__getattribute__(
@@ -1866,13 +1903,6 @@ def discard_profile_migration_destination(
             object.__getattribute__(
                 destination,
                 "_ProfileMigrationBoundaryDestination__parent_identity",
-            ),
-        )
-        file_fd = cast(
-            int,
-            object.__getattribute__(
-                destination,
-                "_ProfileMigrationBoundaryDestination__file_fd",
             ),
         )
         if file_fd < 0 or not private_paths._same_identity(os.fstat(file_fd), identity):

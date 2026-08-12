@@ -371,8 +371,12 @@ _PUBLIC_PRIVATE_SQLITE_SEAMS = {
     "backup_connection_to_private",
     "backup_open_connections_to_private",
     "backup_profile_migration_boundary",
+    "close_profile_migration_destination",
     "connect_private_sqlite",
     "copy_private_sqlite",
+    "discard_profile_migration_destination",
+    "migrate_profile_store_to_candidate",
+    "open_canonical_profile_migration_destination",
     "restore_private_sqlite",
 }
 
@@ -489,7 +493,13 @@ def _private_sqlite_seam_violations(
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
-        if seam_name == "backup_profile_migration_boundary":
+        if seam_name in {
+            "backup_profile_migration_boundary",
+            "close_profile_migration_destination",
+            "discard_profile_migration_destination",
+            "migrate_profile_store_to_candidate",
+            "open_canonical_profile_migration_destination",
+        }:
             continue
         owner_arguments = [(0, "owner_id")]
         if seam_name == "restore_private_sqlite":
@@ -588,12 +598,14 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # candidates, rollback identities, active state, and backups. C45
         # is immutable validation of journal-classified startup recovery
         # authority before any profile-store open. C46/C47 are descriptor-bound
-        # publisher/recovery validation through the centralized SQLite seam.
+        # publisher/recovery validation through the centralized SQLite seam;
+        # C48 is the exact admitted restore source retained during canonical
+        # candidate preparation.
         f"C{number:02d}"
-        for number in range(1, 48)
+        for number in range(1, 49)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 19)
+        f"B{number:02d}" for number in range(1, 18)
     ]
 
 
@@ -994,9 +1006,10 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
             "backup_connection_to_private": 4,
-            "backup_open_connections_to_private": 2,
+            "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 9,
+            "copy_private_sqlite": 8,
+            "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
     )
@@ -1052,13 +1065,8 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_repository",
-                "TTSProfileRepository._worker_publish_v2_migration_backup",
-                "backup_open_connections_to_private",
-            ): 1,
-            (
-                "tldw_chatbook/TTS/profile_repository",
-                "TTSProfileRepository._worker_stage_candidate",
-                "copy_private_sqlite",
+                "TTSProfileRepository._worker_publish_migrated_store",
+                "migrate_profile_store_to_candidate",
             ): 1,
             (
                 "tldw_chatbook/TTS/profile_repository",
@@ -1101,6 +1109,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "backup_open_connections_to_private",
                 "backup_profile_migration_boundary",
                 "copy_private_sqlite",
+                "migrate_profile_store_to_candidate",
                 "restore_private_sqlite",
             }:
                 actual_calls[(module, symbol, seam_name)] += 1
