@@ -407,6 +407,7 @@ from .UI.Navigation.pending_handoff_store import (
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import (
     ScreenRoute,
+    registered_screen_aliases,
     registered_screen_routes,
     resolve_screen_target,
     screen_load_error,
@@ -9499,20 +9500,34 @@ class TldwCli(
         redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
         library/settings, the audit's three multi-thousand-line modules) go
         first; the rest of the registry follows in stable sorted order.
+
+        Route ids that are ALSO a key in the alias table are skipped: at real
+        navigation time, ``_lookup_route()`` resolves the alias to a
+        *different* canonical route before ever reaching this dict entry
+        (e.g. ``"customize"`` -> the ``settings`` route; ``_SCREEN_ROUTES
+        ["customize"]``, pointing at a ``customize_screen`` module that no
+        longer exists, is unreachable dead metadata kept for history). Task-
+        15472 review round 1: pre-importing it anyway logged a "Screen route
+        unavailable: customize: No module named ..." warning on every single
+        boot -- a route no click can ever reach should not be attempted.
         """
+        shadowed_route_ids = set(registered_screen_aliases())
         routes_by_id = {route.screen_name: route for route in registered_screen_routes()}
         ordered: list[ScreenRoute] = []
         seen_modules: set[str] = set()
-        for route_id in SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS:
-            route = routes_by_id.get(route_id)
-            if route is not None and route.module_path not in seen_modules:
-                ordered.append(route)
-                seen_modules.add(route.module_path)
-        for route in registered_screen_routes():
+
+        def _consider(route: ScreenRoute | None) -> None:
+            if route is None or route.screen_name in shadowed_route_ids:
+                return
             if route.module_path in seen_modules:
-                continue
+                return
             ordered.append(route)
             seen_modules.add(route.module_path)
+
+        for route_id in SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS:
+            _consider(routes_by_id.get(route_id))
+        for route in registered_screen_routes():
+            _consider(route)
         return tuple(ordered)
 
     def _preimport_screens(self, routes: Iterable[ScreenRoute]) -> None:
@@ -9567,6 +9582,8 @@ class TldwCli(
     def _schedule_screen_preimport(self) -> None:
         """Start the background screen-module pre-importer, at most once."""
         if not self._screen_preimport_enabled():
+            return
+        if self._shutting_down:
             return
         if self._screen_preimport_thread is not None:
             return

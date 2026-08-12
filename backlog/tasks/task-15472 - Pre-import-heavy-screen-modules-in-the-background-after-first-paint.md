@@ -221,3 +221,85 @@ by this task** (neither file is touched by this change's diff):
 `tldw_chatbook/UI/Navigation/screen_registry.py`,
 `Tests/Performance/test_app_startup_performance.py`.
 **Added**: `Tests/UI/test_screen_preimport.py`.
+
+## Fix round 1 (external review, not approved on first pass)
+
+Review found two real defects and three minors. All fixed; no scope creep
+beyond what was asked.
+
+**CRITICAL -- test file poisoned `sys.modules` for the rest of the pytest
+process.** Two tests popped real screen modules and re-imported them (to
+force a genuinely cold `import_module` call), and the end-to-end test ran
+the real `_preimport_heavy_screens()` against the FULL registry (22
+modules) -- both create/replace module objects in the process-global
+`sys.modules`, which 135+ test files bind screen classes against at import
+time. Reviewer's minimal repro: `Tests/UI/test_screen_preimport.py` run
+before `Tests/UI/test_settings_workspaces_category.py::test_create_rename_
+archive_unarchive_flow` failed the latter on a stale-class `isinstance`.
+Fix: added an autouse `_isolate_screen_modules` fixture to the test file
+that snapshots every `tldw_chatbook.UI.Screens.*` `sys.modules` entry before
+each test and restores it (or removes newly-added entries) after --
+`ScreenRoute.load_screen_class()` does a fresh `import_module()` +
+`getattr()` per call with no caching of its own, so dict restoration is
+sufficient (confirmed by the fix, not just asserted). Applied file-wide
+(autouse), not per-test, so a future test added here can't reintroduce the
+same leak by omission -- this also neutralizes the related coupling the
+reviewer flagged (the end-to-end test permanently arming `Tests/conftest.py`
+:879-881/:900-902's conditional autouse patches for every later test),
+since restoring `sys.modules` to its pre-test state undoes that too.
+**Proof**: `pytest Tests/UI/test_screen_preimport.py
+Tests/UI/test_settings_workspaces_category.py::test_create_rename_archive_
+unarchive_flow -q` -- 18 passed, run 3 consecutive times, all green.
+(Separately confirmed `test_settings_workspaces_category.py` has
+PRE-EXISTING, order-independent flakiness of its own -- different tests
+in that file fail across repeated standalone runs with no test-15472 file
+involved at all; out of scope, not caused by or fixed by this change.)
+
+**IMPORTANT -- every launch logged a `Screen route unavailable: customize`
+warning.** `_screen_preimport_route_order()` was iterating
+`registered_screen_routes()` raw, which includes `_SCREEN_ROUTES
+["customize"]` -- a dict entry whose module (`customize_screen`) no longer
+exists and which is genuinely unreachable at real navigation time (`_SCREEN_
+ALIASES["customize"] = "settings"` intercepts the target string before
+`_lookup_route()` ever reaches that dict entry). Fix: skip any route id that
+is ALSO a key in the alias table (`registered_screen_aliases()`) --
+generalized, not hardcoded to "customize", so it also incidentally drops
+"media" (a real, importable module, but likewise unreachable under its own
+id since `_SCREEN_ALIASES["media"] = "library"`), saving one wasted import.
+Added `test_screen_preimport_route_order_excludes_alias_shadowed_routes`
+and `test_full_preimport_pass_emits_zero_warnings_on_the_shipped_registry`
+(loguru sink capture at WARNING+, asserts zero records over a real full
+pass on the shipped registry).
+
+**Minors:**
+- (a) Dropped the "loose A/B" pytest check (`on <= off * 2 + 0.5`) --
+  correctly called vacuous (passes a 100%+500ms regression). AC #2's sole
+  automated evidence is now the deterministic
+  `test_screen_preimport_scheduled_only_after_ui_ready_flips` spy. A manual,
+  one-off timing probe (not part of the suite) is recorded below instead.
+- (b) Added a `self._shutting_down` guard to `_schedule_screen_preimport()`
+  (one line, ahead of the existing `_screen_preimport_thread` idempotency
+  check) so a timer firing during app teardown doesn't spin up a fresh
+  import thread with nothing left to serve.
+- (c) Reviewer's live GIL-contention measurement, recorded here as the
+  honest cost of this change (not independently re-derived): with the
+  pre-import thread running, event-loop responsiveness p95 moved
+  1.27ms -> 1.90ms, with one observed 43.2ms spike inside the ~0.5s import
+  window. Favorable trade against the ~163.8ms synchronous first-click cost
+  this change removes (also reviewer-reproduced independently).
+
+**Evidence re-run after the fix** (same `.venv`, worktree-pinned):
+- `Tests/UI/test_screen_preimport.py`: 17/17 passed, 3 consecutive runs.
+- `Tests/UI/test_screen_preimport.py` + `test_settings_workspaces_category.
+  py::test_create_rename_archive_unarchive_flow` in one process: 18/18
+  passed, 3 consecutive runs (the reviewer's exact repro, now green).
+- 7-suite targeted combination (`test_screen_preimport.py`,
+  `test_screen_navigation.py`, `test_workbench_route_inventory.py`,
+  `test_workbench_state.py`, `test_app_startup_performance.py`,
+  `test_app_import_weight.py`, `test_optional_import_deferral.py`): 190/190
+  passed.
+- `Tests/` full collect-only: 38,166 collected (+1 vs. round 1's 38,165,
+  matching the net one added test), 0 errors.
+
+**Modified (fix round 1)**: `tldw_chatbook/app.py`,
+`Tests/UI/test_screen_preimport.py`.

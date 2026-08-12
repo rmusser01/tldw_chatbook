@@ -46,6 +46,45 @@ from tldw_chatbook.UI.Navigation.screen_registry import (
 
 from Tests.UI.app_factory import _build_test_app
 
+_SCREEN_MODULE_PREFIX = "tldw_chatbook.UI.Screens."
+
+
+@pytest.fixture(autouse=True)
+def _isolate_screen_modules():
+    """Snapshot/restore every ``tldw_chatbook.UI.Screens.*`` sys.modules entry.
+
+    Several tests below deliberately pop and re-import real screen modules
+    (to force a genuinely cold ``import_module`` call) or run the real
+    pre-importer against the full registry -- both create/replace module
+    objects in the process-global ``sys.modules``, which is emphatically not
+    test-local: 135+ test files bind screen classes at import time
+    (``from ...chat_screen import ChatScreen``), so a later-collected test's
+    ``isinstance()`` check breaks if this file silently swapped in a
+    *different* class object for the same dotted name -- caught in review
+    round 1 against
+    ``test_settings_workspaces_category.py::test_create_rename_archive_
+    unarchive_flow`` when this file's end-to-end test ran first in the same
+    process. ``ScreenRoute.load_screen_class()`` does a fresh ``import_
+    module()`` + ``getattr()`` per call rather than caching anything of its
+    own, so restoring the exact original ``sys.modules`` entries (or their
+    absence) is sufficient -- nothing else needs to be undone. Autouse and
+    scoped to every test in this file (not opt-in per test) so a future test
+    added here can't reintroduce the same leak by omission.
+    """
+    before = {
+        name: module
+        for name, module in sys.modules.items()
+        if name.startswith(_SCREEN_MODULE_PREFIX)
+    }
+    yield
+    after_names = {
+        name for name in sys.modules if name.startswith(_SCREEN_MODULE_PREFIX)
+    }
+    for name in after_names - before.keys():
+        sys.modules.pop(name, None)
+    for name, module in before.items():
+        sys.modules[name] = module
+
 
 async def _wait_until(condition, *, pause, timeout_seconds: float = 5.0) -> None:
     """Poll `condition` via the pilot's own clock instead of sleeping blind."""
@@ -64,7 +103,16 @@ async def _wait_until(condition, *, pause, timeout_seconds: float = 5.0) -> None
 
 
 def test_screen_preimport_route_order_prioritizes_and_dedupes():
-    """chat/library/settings come first; every distinct module appears once."""
+    """chat/library/settings come first; every reachable module appears once.
+
+    "Reachable" excludes alias-shadowed route ids (see
+    `test_screen_preimport_route_order_excludes_alias_shadowed_routes` below)
+    -- their module is either dead entirely (``customize``) or real but
+    unreachable via that id at nav time (``media``), so neither belongs in
+    `all_module_paths` here.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import registered_screen_aliases
+
     app = _build_test_app()
 
     order = app._screen_preimport_route_order()
@@ -78,9 +126,14 @@ def test_screen_preimport_route_order_prioritizes_and_dedupes():
         "must be scheduled once, not once per canonical route id"
     )
 
-    all_module_paths = {route.module_path for route in registered_screen_routes()}
-    assert set(module_paths) == all_module_paths, (
-        "every registered module must still be covered exactly once"
+    shadowed_ids = set(registered_screen_aliases())
+    reachable_module_paths = {
+        route.module_path
+        for route in registered_screen_routes()
+        if route.screen_name not in shadowed_ids
+    }
+    assert set(module_paths) == reachable_module_paths, (
+        "every reachable registered module must still be covered exactly once"
     )
 
 
@@ -340,38 +393,61 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
         await pilot.pause(0.05)
 
 
-@pytest.mark.asyncio
-async def test_cold_start_time_to_ui_ready_is_not_regressed_by_preimport(monkeypatch):
-    """Loose A/B sanity check: forcing the pre-importer on vs off must not
-    move time-to-`_ui_ready` by more than a generous margin.
+# NOTE: an earlier version of this file also had a "loose A/B" pytest check
+# (preimport forced on vs. off, asserting `on <= off * 2 + 0.5`) as a second
+# piece of AC #2 evidence. Review round 1 correctly called it vacuous: that
+# bound passes a 100%-plus-500ms regression, so it could never fail for a
+# real problem. Removed rather than tightened -- CI wall-clock jitter makes a
+# tight bound on this kind of two-sample timing comparison genuinely flaky,
+# and the deterministic spy above is the actual guarantee. A manual,
+# non-pytest timing probe (run once, by hand, not part of this suite) is
+# recorded as a live number in the task's Implementation Notes instead.
 
-    This is a secondary, "honest numbers" check on top of the deterministic
-    ordering test above -- structurally the preimport cannot run before
-    `_ui_ready` (see that test), so this is not expected to catch anything
-    the ordering test wouldn't, but it's cheap insurance against a future
-    refactor that moves the trigger earlier.
+
+# --- IMPORTANT (review round 1): dead/shadowed routes are never attempted ----
+
+
+def test_screen_preimport_route_order_excludes_alias_shadowed_routes():
+    """A route id that is ALSO an alias-table key is unreachable under its
+    own id at real navigation time (`_lookup_route` resolves the alias to a
+    different canonical route first) and must never be scheduled.
+
+    Concretely: `_SCREEN_ROUTES["customize"]` points at a `customize_screen`
+    module that no longer exists (retired; `_SCREEN_ALIASES["customize"] =
+    "settings"` is the only way "customize" is ever actually reached).
+    Before this fix, pre-importing it anyway logged a "Screen route
+    unavailable: customize: No module named ..." warning on every boot.
     """
+    from tldw_chatbook.UI.Navigation.screen_registry import registered_screen_aliases
 
-    async def timed_ui_ready(enabled: bool) -> float:
-        monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "1" if enabled else "0")
-        app = _build_test_app()
-        start = time.perf_counter()
-        async with app.run_test(size=(120, 36)) as pilot:
-            await _wait_until(lambda: app._ui_ready, pause=pilot.pause)
-            elapsed = time.perf_counter() - start
-            thread = app._screen_preimport_thread
-            await pilot.pause(0.05)
-        if thread is not None:
-            thread.join(timeout=15)
-        return elapsed
+    app = _build_test_app()
+    ordered_ids = {route.screen_name for route in app._screen_preimport_route_order()}
 
-    off_duration = await timed_ui_ready(False)
-    on_duration = await timed_ui_ready(True)
-
-    # Generous absolute+relative slack: this asserts "not regressed", not
-    # "identical" -- CI hardware and scheduling jitter make tight bounds
-    # flaky, and the real guarantee is the structural ordering test above.
-    assert on_duration <= off_duration * 2 + 0.5, (
-        f"time-to-ui_ready grew suspiciously with pre-import enabled: "
-        f"off={off_duration * 1000:.1f}ms on={on_duration * 1000:.1f}ms"
+    shadowed_ids = set(registered_screen_aliases())
+    assert shadowed_ids, "sanity: the alias table must be non-empty for this test to mean anything"
+    assert not (ordered_ids & shadowed_ids), (
+        f"pre-import scheduled alias-shadowed (unreachable) route ids: "
+        f"{ordered_ids & shadowed_ids}"
     )
+    assert "customize" not in ordered_ids
+    assert "media" not in ordered_ids
+
+
+def test_full_preimport_pass_emits_zero_warnings_on_the_shipped_registry():
+    """A real, full pre-import pass over the app's actual registered routes
+    must not log a single WARNING (or above) -- any such log means the
+    pre-importer is attempting a route it cannot actually service (the
+    "customize" dead-route regression this fix addresses), which is exactly
+    the noise a background cache-warmer must never produce on every boot.
+    """
+    from loguru import logger as loguru_logger
+
+    app = _build_test_app()
+    records: list[str] = []
+    sink = loguru_logger.add(lambda m: records.append(str(m)), level="WARNING")
+    try:
+        app._preimport_heavy_screens()
+    finally:
+        loguru_logger.remove(sink)
+
+    assert records == [], f"pre-import logged unexpected warnings: {records}"
