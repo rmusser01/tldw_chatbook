@@ -166,14 +166,27 @@ class TestBuildServerIngestKwargs:
             },
         )
 
-        assert kwargs["pdf_engine"] == "docling"
-        assert kwargs["ocr"] is True
+        # task-3309: these used to assert the CLIENT's spelling, which the
+        # server never declares -- so the fields were dropped in silence and
+        # this test was pinning the bug as a requirement. The server calls
+        # them `pdf_parsing_engine` and `enable_ocr`.
+        assert kwargs["pdf_parsing_engine"] == "docling"
+        assert kwargs["enable_ocr"] is True
+        assert "pdf_engine" not in kwargs
+        assert "ocr" not in kwargs
         assert "transcription_model" not in kwargs
 
     def test_document_group_options_travel_for_docx(self) -> None:
         """(task-3303) .docx now groups as ``document``, so the document
-        panel's options ride a server submission (extras are ``allow``-ed by
-        ``MediaIngestJobSubmitRequest``); other groups' options still do not."""
+        panel's options ride a server submission; other groups' options do not.
+
+        (task-3309) ``extra="allow"`` on the request model was never the whole
+        story: it lets a field onto the wire, but the endpoint binds its form
+        fields explicitly and never reads the raw form, so an undeclared one is
+        discarded server-side. ``processing_method`` has no server equivalent
+        at all and is therefore no longer sent -- it is reported through
+        ``server_unsupported_options`` instead of being lost in transit.
+        """
         kwargs = build_server_ingest_kwargs(
             "/tmp/report.docx",
             options={
@@ -187,10 +200,11 @@ class TestBuildServerIngestKwargs:
         )
 
         assert kwargs["media_type"] == "document"
-        assert kwargs["processing_method"] == "docling"
-        assert kwargs["ocr"] is True
-        assert kwargs["ocr_language"] == "de"
+        assert "processing_method" not in kwargs
+        assert kwargs["enable_ocr"] is True
+        assert kwargs["ocr_lang"] == "de"
         assert "pdf_engine" not in kwargs
+        assert "pdf_parsing_engine" not in kwargs
 
     def test_empty_source_is_refused(self) -> None:
         with pytest.raises(ServerIngestUnsupported):

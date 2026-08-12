@@ -214,6 +214,79 @@ def server_ingest_refusal(source: str) -> str | None:
     return None
 
 
+#: Client option name -> the form field the server actually declares.
+#:
+#: task-3309, measured against a live server (its own ``/openapi.json`` plus
+#: ``get_add_media_form`` in the server source). The ingest-jobs endpoint binds
+#: every field explicitly with ``Form(...)`` and never reads ``request.form()``,
+#: so a multipart field it does not declare is discarded in silence -- no error,
+#: no warning, and a 200 back. Eighteen of the names this module used to forward
+#: verbatim were in exactly that position: the user set OCR language, speaker
+#: diarization or timestamps in server mode and nothing whatsoever happened.
+#:
+#: These seven are pure spelling differences with an identical meaning on both
+#: sides, so they are translated rather than dropped. Each client name maps to
+#: at most one server field across every type group, which is why this can be a
+#: flat table instead of a per-group one.
+SERVER_FIELD_ALIASES: dict[str, str] = {
+    "pdf_engine": "pdf_parsing_engine",
+    "ocr": "enable_ocr",
+    "ocr_language": "ocr_lang",
+    "diarization": "diarize",
+    "timestamps": "timestamp_option",
+    "vad_filter": "vad_use",
+    "language": "transcription_language",
+}
+
+#: Client options the server ingest-jobs endpoint has no equivalent for.
+#:
+#: task-3309. These are dropped from the request instead of being sent into the
+#: void, and :func:`server_unsupported_options` reports them so a caller can say
+#: so rather than implying the setting took effect. ``cookies_file`` is here for
+#: a different reason than the rest: the server DOES have cookie fields, but its
+#: ``cookies`` is a cookie *string* while the canvas collects a *path* to a
+#: cookies.txt, so forwarding the path under that name would send a filename
+#: where a cookie header belongs -- worse than dropping it.
+SERVER_UNSUPPORTED_OPTIONS: frozenset[str] = frozenset(
+    {
+        "cookies_file",
+        "encoding",
+        "extraction_method",
+        "include_toc",
+        "max_pages",
+        "processing_method",
+        "scrape_method",
+        "transcription_model_dir",
+        "transcription_precision",
+        "transcription_provider",
+        "translate_to_english",
+    }
+)
+
+
+def server_unsupported_options(source: str, options: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the options set for ``source`` that the server cannot honour.
+
+    Args:
+        source: The file path or URL being submitted.
+        options: The canvas's per-type option snapshot, keyed by type group.
+
+    Returns:
+        The option names, sorted, that the user has set to something other than
+        their falsy default and that this submission will not carry. Empty when
+        the submission loses nothing.
+    """
+    group = get_type_group(source)
+    group_options = options.get(group) or {}
+    return tuple(
+        sorted(
+            name
+            for name, value in group_options.items()
+            if name in SERVER_UNSUPPORTED_OPTIONS and value not in (None, "", False)
+        )
+    )
+
+
 def _coerce_int(value: Any, fallback: int) -> int:
     """Return ``value`` as an int, falling back rather than raising.
 
@@ -324,6 +397,15 @@ def build_server_ingest_kwargs(
             "chunk_overlap",
         }:
             continue
-        kwargs[name] = value
+        # task-3309: the endpoint binds its form fields explicitly and never
+        # reads the raw form, so anything it does not declare is dropped in
+        # silence and answered with a 200. Translate the names that differ only
+        # in spelling, and do not send the ones with no server equivalent at
+        # all -- `server_unsupported_options` is what reports those, so the
+        # loss is stated instead of inferred from a job that quietly ignored
+        # half its settings.
+        if name in SERVER_UNSUPPORTED_OPTIONS:
+            continue
+        kwargs[SERVER_FIELD_ALIASES.get(name, name)] = value
 
     return kwargs

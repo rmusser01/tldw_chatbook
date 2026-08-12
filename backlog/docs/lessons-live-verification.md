@@ -727,3 +727,37 @@ local byte size and raw patch geometry as diagnostics only, never as measured
 token savings. Remove redundant geometry in an evaluation-only renderer first,
 then run the same downstream quality gate before changing production; smaller
 text can reduce recall even when its patch count is lower.
+## `extra="allow"` on a request model says nothing about the server (task-3309)
+
+**Incident.** The Library forwarded per-type ingest options to the server by
+name, relying on `MediaIngestJobSubmitRequest`'s `extra="allow"`. That was read,
+for months, as "the server accepts these". It does not mean that — it only means
+the *client* will serialize them onto the wire. The receiving endpoint binds
+each form field with an explicit `Form(...)` and never reads `request.form()`,
+so FastAPI discarded every undeclared field silently and answered `200`.
+Nineteen fields were in that state: a user could set OCR language, speaker
+diarization, timestamps or VAD in server mode and nothing at all happened, with
+a successful-looking job to show for it.
+
+**Why nothing caught it.** Two of the repo's own tests asserted the broken
+names travelled verbatim (`assert kwargs["pdf_engine"] == "docling"`), which
+converted the silent drop into a requirement. Every one of them passed.
+
+**The check that works.** Ask the *running server* what it declares —
+`/openapi.json` enumerates the endpoint's form fields — and assert that every
+field the client puts on the wire is in that set. Capture the list as a fixture
+with its provenance so the assertion is against a real server of a known
+version, not against a hand-written list that drifts the same way the code did.
+
+**Widen it past the obvious loop.** The first version of the guard checked only
+the per-type options loop and passed. The nineteenth field,
+`force_regenerate_embeddings`, was named in the *service method's own signature*
+and sent on every submission. Check what reaches the request, not what one
+code path contributes to it.
+
+**A blocked live call is not a blocked verification.** Real submissions were
+impossible here (the instance rejected the configured API key, and its key is
+env-only on the server process). That did not weaken the finding: a field the
+endpoint never binds cannot take effect, whatever a submission would have
+shown. Reach for the server's own contract before concluding a live check is
+unavailable.
