@@ -1,4 +1,4 @@
-from dataclasses import fields
+from dataclasses import fields, replace
 from types import MappingProxyType
 
 import pytest
@@ -642,6 +642,11 @@ def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
         "credential_value",
         "credential_env_var",
     ]
+    assert [item.name for item in fields(ProviderSetupMutation)] == [
+        "section_values",
+        "delete_keys",
+        "semantic_identity",
+    ]
     assert not hasattr(draft, "__dict__")
     assert not hasattr(mutation, "__dict__")
     assert secret not in repr(draft)
@@ -653,17 +658,18 @@ def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
 def test_setup_mutation_requires_exact_immutable_mapping_shapes():
     valid = build_provider_setup_mutation(_draft(), {})
 
+    structurally_valid_but_unissued = ProviderSetupMutation(
+        section_values=MappingProxyType(
+            {
+                section: MappingProxyType(dict(values))
+                for section, values in valid.section_values.items()
+            }
+        ),
+        delete_keys=MappingProxyType(dict(valid.delete_keys)),
+        semantic_identity=valid.semantic_identity,
+    )
     with pytest.raises(ValueError, match="mutation"):
-        ProviderSetupMutation(
-            section_values=MappingProxyType(
-                {
-                    section: MappingProxyType(dict(values))
-                    for section, values in valid.section_values.items()
-                }
-            ),
-            delete_keys=MappingProxyType(dict(valid.delete_keys)),
-            semantic_identity=valid.semantic_identity,
-        )
+        persist_provider_setup(structurally_valid_but_unissued)
 
     with pytest.raises(ValueError, match="mutation"):
         ProviderSetupMutation(
@@ -759,10 +765,8 @@ def test_setup_mutation_rejects_unbounded_or_unsafe_section_shapes():
 
 
 def test_persist_revalidates_instances_that_bypass_construction(monkeypatch):
-    forged = object.__new__(ProviderSetupMutation)
+    forged = build_provider_setup_mutation(_draft(), {})
     object.__setattr__(forged, "section_values", {"bad": {"api_key": "secret-canary"}})
-    object.__setattr__(forged, "delete_keys", {})
-    object.__setattr__(forged, "semantic_identity", None)
     monkeypatch.setattr(
         persistence_module,
         "apply_settings_mutation_to_cli_config",
@@ -772,6 +776,92 @@ def test_persist_revalidates_instances_that_bypass_construction(monkeypatch):
     with pytest.raises(ValueError, match="mutation") as error:
         persist_provider_setup(forged)
     assert "secret-canary" not in str(error.value)
+
+
+def test_dataclass_replace_cannot_copy_issuance_or_persist_oversized_credential(
+    monkeypatch,
+):
+    valid = build_provider_setup_mutation(
+        _draft(
+            provider="openai",
+            credential_source="draft",
+            credential_value="original-test-secret",
+        ),
+        {},
+    )
+    provider_values = dict(valid.section_values["api_settings.openai"])
+    provider_values["api_key"] = "x" * 8193
+    forged = replace(
+        valid,
+        section_values=MappingProxyType(
+            {
+                **dict(valid.section_values),
+                "api_settings.openai": MappingProxyType(provider_values),
+            }
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="mutation"):
+        persist_provider_setup(forged)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("credential_key", "credential_value"),
+    [
+        ("api_key", "x" * 8193),
+        ("api_key_env_var", "INVALID ENV NAME"),
+    ],
+)
+def test_persist_revalidates_issued_credential_values(
+    monkeypatch, credential_key, credential_value
+):
+    if credential_key == "api_key":
+        valid = build_provider_setup_mutation(
+            _draft(
+                provider="openai",
+                credential_source="draft",
+                credential_value="original-test-secret",
+            ),
+            {},
+        )
+    else:
+        valid = build_provider_setup_mutation(
+            _draft(
+                provider="openai",
+                credential_source="environment",
+                credential_env_var="VALID_ENV_NAME",
+            ),
+            {},
+        )
+    provider_values = dict(valid.section_values["api_settings.openai"])
+    provider_values[credential_key] = credential_value
+    object.__setattr__(
+        valid,
+        "section_values",
+        MappingProxyType(
+            {
+                **dict(valid.section_values),
+                "api_settings.openai": MappingProxyType(provider_values),
+            }
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="mutation"):
+        persist_provider_setup(valid)
+    assert calls == []
 
 
 @pytest.mark.parametrize(

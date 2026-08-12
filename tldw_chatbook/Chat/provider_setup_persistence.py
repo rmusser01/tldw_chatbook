@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from threading import RLock
 from types import MappingProxyType
 from unicodedata import category as unicode_category
 from urllib.parse import urlsplit, urlunsplit
+from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
@@ -39,7 +41,8 @@ _ENDPOINT_KEY_PRECEDENCE = (
 )
 _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
-_MUTATION_CONSTRUCTION_TOKEN = object()
+_ISSUED_MUTATION_LOCK = RLock()
+_ISSUED_MUTATIONS: dict[int, ReferenceType[ProviderSetupMutation]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,17 +243,20 @@ class ProviderSetupDraft:
             raise ValueError("Credential setup is invalid.")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class ProviderSetupMutation:
     """One sparse atomic provider/default/provenance configuration mutation."""
 
     section_values: Mapping[str, Mapping[str, object]]
     delete_keys: Mapping[str, tuple[str, ...]]
     semantic_identity: ProviderDraftIdentity | None
-    _construction_token: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _validate_provider_setup_mutation(self)
+        _validate_provider_setup_mutation(
+            self,
+            require_issued=False,
+            validate_credentials=False,
+        )
 
     def __repr__(self) -> str:
         set_keys = {
@@ -399,12 +405,13 @@ def build_provider_setup_mutation(
             if keys
         }
     )
-    return ProviderSetupMutation(
+    mutation = ProviderSetupMutation(
         section_values=frozen_sections,
         delete_keys=frozen_deletes,
         semantic_identity=semantic_identity,
-        _construction_token=_MUTATION_CONSTRUCTION_TOKEN,
     )
+    _mark_provider_setup_mutation_issued(mutation)
+    return mutation
 
 
 def provider_setup_draft_identity(
@@ -431,7 +438,11 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
 
     if type(mutation) is not ProviderSetupMutation:
         raise ValueError("Provider setup mutation is invalid.")
-    _validate_provider_setup_mutation(mutation)
+    _validate_provider_setup_mutation(
+        mutation,
+        require_issued=True,
+        validate_credentials=True,
+    )
     return apply_settings_mutation_to_cli_config(
         mutation.section_values,
         delete_keys=mutation.delete_keys,
@@ -575,7 +586,31 @@ def _existing_environment_name(value: object) -> str | None:
     return candidate
 
 
-def _validate_provider_setup_mutation(mutation: object) -> None:
+def _mark_provider_setup_mutation_issued(mutation: ProviderSetupMutation) -> None:
+    mutation_id = id(mutation)
+
+    def discard(reference: ReferenceType[ProviderSetupMutation]) -> None:
+        with _ISSUED_MUTATION_LOCK:
+            if _ISSUED_MUTATIONS.get(mutation_id) is reference:
+                _ISSUED_MUTATIONS.pop(mutation_id, None)
+
+    reference = ref(mutation, discard)
+    with _ISSUED_MUTATION_LOCK:
+        _ISSUED_MUTATIONS[mutation_id] = reference
+
+
+def _provider_setup_mutation_is_issued(mutation: ProviderSetupMutation) -> bool:
+    with _ISSUED_MUTATION_LOCK:
+        reference = _ISSUED_MUTATIONS.get(id(mutation))
+        return reference is not None and reference() is mutation
+
+
+def _validate_provider_setup_mutation(
+    mutation: object,
+    *,
+    require_issued: bool,
+    validate_credentials: bool,
+) -> None:
     error = ValueError("Provider setup mutation is invalid.")
     if type(mutation) is not ProviderSetupMutation:
         raise error
@@ -583,10 +618,9 @@ def _validate_provider_setup_mutation(mutation: object) -> None:
         section_values = mutation.section_values
         delete_keys = mutation.delete_keys
         semantic_identity = mutation.semantic_identity
-        construction_token = mutation._construction_token
     except Exception as exc:
         raise error from exc
-    if construction_token is not _MUTATION_CONSTRUCTION_TOKEN:
+    if require_issued and not _provider_setup_mutation_is_issued(mutation):
         raise error
     if (
         type(section_values) is not _MAPPING_PROXY_TYPE
@@ -711,6 +745,25 @@ def _validate_provider_setup_mutation(mutation: object) -> None:
     environment_is_set = environment_key in provider_values
     stored_is_deleted = stored_key in provider_deletes
     environment_is_deleted = environment_key in provider_deletes
+    if validate_credentials and stored_is_set:
+        stored_value = provider_values.get(stored_key)
+        if (
+            type(stored_value) is not str
+            or not stored_value
+            or stored_value.strip() != stored_value
+        ):
+            raise error
+        try:
+            _validate_credential_value(stored_value)
+        except ValueError as exc:
+            raise error from exc
+    if validate_credentials and environment_is_set:
+        environment_name = provider_values.get(environment_key)
+        if (
+            type(environment_name) is not str
+            or _existing_environment_name(environment_name) != environment_name
+        ):
+            raise error
     if stored_is_set and environment_is_deleted and not environment_is_set:
         desired_source: CredentialSource = "stored"
     elif environment_is_set and stored_is_deleted and not stored_is_set:
