@@ -985,15 +985,19 @@ def test_initial_journal_failure_removes_exact_partial_generation(
     assert failed
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
     tombstone = tmp_path / ".profile-migration-journal.tombstone"
-    assert tombstone.read_bytes() == b""
     assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
     tombstone_identity = tombstone.stat()
-
-    identity = module._write_new_journal(journal_path, payload)
-
-    assert journal_path.read_bytes() == payload
-    assert identity.file.st_ino == tombstone_identity.st_ino
-    assert not tombstone.exists()
+    if boundary == "write":
+        assert tombstone.read_bytes() == b""
+        identity = module._write_new_journal(journal_path, payload)
+        assert journal_path.read_bytes() == payload
+        assert identity.file.st_ino == tombstone_identity.st_ino
+        assert not tombstone.exists()
+    else:
+        assert tombstone.read_bytes() == payload
+        with pytest.raises(Exception):
+            module._write_new_journal(journal_path, payload)
+        assert tombstone.stat().st_ino == tombstone_identity.st_ino
 
 
 def test_initial_journal_cleanup_preserves_foreign_holding_race(

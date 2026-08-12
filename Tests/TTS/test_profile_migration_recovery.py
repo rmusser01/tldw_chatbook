@@ -563,7 +563,7 @@ def test_fresh_backup_destination_recovers_without_inventing_prior(
         "file_fsync",
         "parent_fsync",
         "validation",
-        "journal_unlink",
+        "journal_quarantine",
     ],
 )
 def test_internal_control_flow_is_deferred_until_recovery_reconverges(
@@ -582,7 +582,6 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     _link_then_unlink(candidate, target, finish=True)
     cancellation = asyncio.CancelledError(f"PRIVATE {fault_site}")
     raised = False
-    settlement_fsync_after_fault = False
     namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
 
     if fault_site == "move_after_mutation":
@@ -625,24 +624,25 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
             recovery, "_validate_authoritative_targets", interrupt_validation
         )
     else:
-        real_ftruncate = namespace.os.ftruncate
-        real_fsync = recovery.os.fsync
+        real_remove = recovery.remove_exact_namespace
 
-        def interrupt_journal_wipe(file_fd: int, length: int) -> None:
+        def interrupt_journal_quarantine(*args: object, **kwargs: object) -> None:
             nonlocal raised
-            real_ftruncate(file_fd, length)
-            if not raised:
+            path = args[0]
+            real_remove(*args, **kwargs)
+            if (
+                isinstance(path, Path)
+                and path.name.endswith(".migration-publication.json")
+                and not raised
+            ):
                 raised = True
                 raise cancellation
 
-        def observe_settlement_fsync(file_fd: int) -> None:
-            nonlocal settlement_fsync_after_fault
-            real_fsync(file_fd)
-            if raised and stat.S_ISDIR(os.fstat(file_fd).st_mode):
-                settlement_fsync_after_fault = True
-
-        monkeypatch.setattr(namespace.os, "ftruncate", interrupt_journal_wipe)
-        monkeypatch.setattr(recovery.os, "fsync", observe_settlement_fsync)
+        monkeypatch.setattr(
+            recovery,
+            "remove_exact_namespace",
+            interrupt_journal_quarantine,
+        )
 
     with pytest.raises(asyncio.CancelledError) as caught:
         recovery.recover_profile_migration_publication(active)
@@ -653,7 +653,7 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     assert not rollback.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
     for tombstone in tmp_path.glob(".profile-migration-*.tombstone"):
-        assert tombstone.read_bytes() == b""
+        assert tombstone.read_bytes()
         assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
 
 

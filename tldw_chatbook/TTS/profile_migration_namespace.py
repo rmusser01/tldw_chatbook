@@ -246,7 +246,7 @@ def remove_exact(
     tombstone_key: MigrationTombstoneKey,
     allowed_links: frozenset[int] = frozenset({1}),
 ) -> None:
-    """Quarantine and wipe exact bytes, retaining one safe zero tombstone."""
+    """Atomically quarantine exact bytes in one bounded private tombstone."""
 
     holding = _holding_path(path, tombstone_key)
     deferred: BaseException | None = None
@@ -282,22 +282,11 @@ def remove_exact(
             or not _sidecars_absent(parent_fd, holding.name)
         ):
             raise ValueError
-        for operation in (lambda: os.ftruncate(file_fd, 0), lambda: os.fsync(file_fd)):
-            while True:
-                try:
-                    operation()
-                    break
-                except BaseException as error:
-                    if isinstance(error, Exception):
-                        raise
-                    if deferred is None:
-                        deferred = error
+        os.fsync(file_fd)
         settled = os.fstat(file_fd)
         current = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
         if (
-            settled.st_size != 0
-            or current.st_size != 0
-            or not private_paths._same_identity(settled, file_identity)
+            not private_paths._same_identity(settled, file_identity)
             or not private_paths._same_identity(current, file_identity)
             or not _valid_file(settled, links=allowed_links)
             or not _valid_file(current, links=allowed_links)
@@ -311,8 +300,7 @@ def remove_exact(
             except FileNotFoundError:
                 pass
             else:
-                # A substitution at the disposed logical leaf is foreign even
-                # after the exact quarantined bytes have been safely wiped.
+                # A substitution at the disposed logical leaf is foreign.
                 raise ValueError
         finally:
             os.close(reopened)
@@ -322,8 +310,8 @@ def remove_exact(
         os.close(parent_fd)
     if deferred is not None:
         raise deferred
-    # Exact holding evidence plus source absence proved the transition even
-    # when the syscall wrapper reported an error after mutating the namespace.
+    # The retained leaf is cleanup evidence only.  Nonzero content is never
+    # reused; keeping it bounds cleanup without risking a hardlink alias.
 
 
 def open_new_or_reused_private_file(

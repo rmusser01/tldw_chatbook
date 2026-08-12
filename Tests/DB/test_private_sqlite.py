@@ -15,6 +15,7 @@ from threading import Barrier
 import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
+import tldw_chatbook.TTS.profile_migration_namespace as migration_namespace
 from tldw_chatbook.DB.private_sqlite import (
     SQLITE_OWNER_REGISTRY,
     SQLiteRestoreIndeterminateError,
@@ -535,7 +536,7 @@ def test_canonical_migration_candidate_pins_exact_file_through_migration(
         )
 
 
-def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
+def test_canonical_migration_candidate_substitution_preserves_retained_exact_inode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -544,7 +545,7 @@ def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
     replacement = b"foreign replacement"
     source = sqlite3.connect(":memory:")
     source.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
-    source.execute("INSERT INTO private_data VALUES ('must-be-wiped')")
+    source.execute("INSERT INTO private_data VALUES ('must-be-preserved')")
     source.commit()
     destination = private_sqlite.open_canonical_profile_migration_destination(
         target,
@@ -596,7 +597,7 @@ def test_canonical_migration_candidate_substitution_wipes_retained_exact_inode(
     )
 
 
-def test_canonical_migration_candidate_close_error_still_revokes_descriptors(
+def test_canonical_migration_candidate_close_error_retains_live_connection(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / ".profile-migration-active.candidate.sqlite3"
@@ -612,8 +613,11 @@ def test_canonical_migration_candidate_close_error_still_revokes_descriptors(
     connection.close()
 
     class FailingClose:
+        fail_close = True
+
         def close(self) -> None:
-            raise RuntimeError("PRIVATE close detail")
+            if self.fail_close:
+                raise RuntimeError("PRIVATE close detail")
 
     object.__setattr__(
         destination,
@@ -629,14 +633,35 @@ def test_canonical_migration_candidate_close_error_still_revokes_descriptors(
     assert (
         object.__getattribute__(
             destination,
+            "_ProfileMigrationBoundaryDestination__connection",
+        )
+        is not None
+    )
+    assert (
+        object.__getattribute__(
+            destination,
             "_ProfileMigrationBoundaryDestination__file_fd",
         )
-        == -1
+        >= 0
     )
     assert (
         object.__getattribute__(
             destination,
             "_ProfileMigrationBoundaryDestination__parent_fd",
+        )
+        >= 0
+    )
+
+    retained = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    retained.fail_close = False
+    private_sqlite.close_profile_migration_destination(destination)
+    assert (
+        object.__getattribute__(
+            destination,
+            "_ProfileMigrationBoundaryDestination__file_fd",
         )
         == -1
     )
@@ -679,6 +704,47 @@ def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
 
     assert before
     assert target.read_bytes() == before
+    assert alias.read_bytes() == before
+
+
+def test_discard_never_truncates_after_atomic_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    tombstone = tmp_path / ".profile-migration-active-candidate.tombstone"
+    alias = tmp_path / "late-alias.sqlite3"
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        target,
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    connection.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO private_data VALUES ('preserve-me')")
+    connection.commit()
+    before = target.read_bytes()
+    real_move = migration_namespace.move_exact_noreplace
+
+    def link_after_quarantine(*args: object, **kwargs: object) -> os.stat_result:
+        result = real_move(*args, **kwargs)
+        os.link(tombstone, alias)
+        return result
+
+    monkeypatch.setattr(
+        migration_namespace, "move_exact_noreplace", link_after_quarantine
+    )
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.discard_profile_migration_destination(
+            destination,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert not target.exists()
+    assert tombstone.read_bytes() == before
     assert alias.read_bytes() == before
 
 

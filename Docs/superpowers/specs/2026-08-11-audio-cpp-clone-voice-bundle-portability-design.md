@@ -355,19 +355,21 @@ back an interrupted multi-file publication before opening any store.
 
 Final migration cleanup is descriptor-bound. Because macOS/Linux POSIX APIs do
 not expose an exact-inode unlink-by-descriptor, cleanup atomically quarantines
-each exact journal/candidate/rollback leaf without replacement, wipes and
-fsyncs the pinned regular-file descriptor, and retains that exact owner-only
-`0600` zero-byte inode under one stable tombstone name per finite logical leaf.
+each exact journal/candidate/rollback leaf without replacement and fsyncs the
+pinned regular-file descriptor and parent. Cleanup never truncates: a hardlink
+can race any preceding link-count check. The exact owner-only `0600` tombstone
+may therefore retain private bytes as bounded cleanup evidence.
 The tombstone set is bounded by the journal and the candidate/rollback leaves
 for the maximum three migration slots and does not grow on replay. Candidate
 and rollback authority is closed by slot to
 `.profile-migration-{active|pre-v3|pre-v4}.candidate.sqlite3` and the matching
 `.rollback.sqlite3` leaf. Preparation rejects any other leaf before hashing,
-and journal construction and parsing enforce the same mapping. Tombstones
-contain no profile or journal bytes, are never parsed as recovery authority,
-and are reusable only after exact parent/inode/type/uid/mode/link/zero-length
-and sidecar validation. A foreign, substituted, or nonzero occupant is never
-deleted or overwritten; cleanup fails closed with bounded unavailability.
+and journal construction and parsing enforce the same mapping. Tombstones are
+never parsed as recovery authority. An already-zero tombstone is reusable only
+after exact parent/inode/type/uid/mode/link/zero-length and sidecar validation.
+A nonzero tombstone is never overwritten or reused and may be retried only if
+safe disposal eligibility can later be proven. A foreign or substituted
+occupant is never deleted; cleanup fails closed with bounded unavailability.
 Race, cancellation, replay, foreign-holding, and initial-journal cleanup tests
 in `Tests/TTS/test_profile_migration_recovery.py` and
 `Tests/TTS/test_profile_migration_publication.py` enforce this protocol.

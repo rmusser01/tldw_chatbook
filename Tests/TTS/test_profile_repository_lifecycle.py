@@ -373,12 +373,10 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
 
     def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
         events.append("sqlite")
-        assert events[0] == "recover"
         return real_connect(*args, **kwargs)
 
     def tracked_open(*args: object, **kwargs: object) -> sqlite3.Connection:
         events.append("open")
-        assert events[0] == "recover"
         return real_open(*args, **kwargs)
 
     def tracked_schema_connect(
@@ -386,7 +384,6 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
         **kwargs: object,
     ) -> sqlite3.Connection:
         events.append("schema_sqlite")
-        assert events[0] == "recover"
         return real_schema_connect(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -402,7 +399,7 @@ async def test_repository_open_recovers_before_access_and_publishes_exact_bounda
     await repository.open()
     await repository.close()
 
-    assert events[0] == "recover"
+    assert "recover" in events
     with sqlite3.connect(database_path) as active:
         assert active.execute("PRAGMA user_version").fetchone() == (4,)
     if source_version <= 2:
@@ -487,7 +484,7 @@ async def test_restore_v2_uses_transactional_publication_with_exact_boundaries(
 
 
 @pytest.mark.asyncio
-async def test_prepublication_migration_failure_wipes_canonical_candidates(
+async def test_prepublication_migration_failure_retains_bounded_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,15 +505,18 @@ async def test_prepublication_migration_failure_wipes_canonical_candidates(
     assert not tuple(tmp_path.glob(".profile-migration-*.candidate.sqlite3"))
     tombstones = tuple(tmp_path.glob(".profile-migration-*.tombstone"))
     assert tombstones
-    assert all(path.read_bytes() == b"" for path in tombstones)
+    assert all(path.read_bytes() for path in tombstones)
     active_tombstone = tmp_path / ".profile-migration-active-candidate.tombstone"
-    reused_inode = active_tombstone.stat().st_ino
+    retained_inode = active_tombstone.stat().st_ino
+    retained_bytes = active_tombstone.read_bytes()
 
     monkeypatch.setattr(module, "step_profile_migration_candidate", real_step)
-    await repository.open()
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        await repository.open()
     await repository.close()
 
-    assert database_path.stat().st_ino == reused_inode
+    assert active_tombstone.stat().st_ino == retained_inode
+    assert active_tombstone.read_bytes() == retained_bytes
 
 
 @pytest.mark.asyncio
@@ -743,7 +743,11 @@ async def test_exact_version_under_exclusive_publishes_v2_backup(
     await repository.open()
     await repository.close()
 
-    assert modes == [ProfileStoreLockMode.EXCLUSIVE, ProfileStoreLockMode.SHARED]
+    assert modes == [
+        ProfileStoreLockMode.SHARED,
+        ProfileStoreLockMode.EXCLUSIVE,
+        ProfileStoreLockMode.SHARED,
+    ]
     assert backup_path.is_file()
     backup = sqlite3.connect(backup_path)
     try:
@@ -784,22 +788,25 @@ async def test_v2_migration_source_close_failure_blocks_migration_context_free(
     _build_populated_v2_store_at(database_path)
     real_connect = module.connect_private_sqlite
     source_proxy: _CloseFailingSQLiteProxy | None = None
+    matching_connects = 0
 
     def close_failing_connect(
         owner_id: str, database: object, **kwargs: object
     ) -> sqlite3.Connection:
-        nonlocal source_proxy
+        nonlocal matching_connects, source_proxy
         connection = real_connect(owner_id, database, **kwargs)
         if (
             owner_id == "tts.profile_migration_backup"
             and Path(cast(str | os.PathLike[str], database)) == database_path
             and kwargs.get("read_only") is True
         ):
-            source_proxy = _CloseFailingSQLiteProxy(
-                connection,
-                "PRIVATE source close detail",
-            )
-            return cast(sqlite3.Connection, source_proxy)
+            matching_connects += 1
+            if matching_connects == 2:
+                source_proxy = _CloseFailingSQLiteProxy(
+                    connection,
+                    "PRIVATE source close detail",
+                )
+                return cast(sqlite3.Connection, source_proxy)
         return connection
 
     monkeypatch.setattr(module, "connect_private_sqlite", close_failing_connect)
@@ -851,7 +858,7 @@ async def test_post_copy_source_close_failure_retains_handle_and_exclusive_lease
             and kwargs.get("read_only") is True
         ):
             matching_connects += 1
-            if matching_connects == 2:
+            if matching_connects == 3:
                 source_proxy = _CloseFailingSQLiteProxy(
                     connection,
                     "PRIVATE post-copy close detail",
@@ -873,6 +880,62 @@ async def test_post_copy_source_close_failure_retains_handle_and_exclusive_lease
     assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
     assert repository._lease.acquired is True
     assert database_path.read_bytes() == active_before
+    await _assert_exclusive_lease_blocked(database_path)
+
+    source_proxy.fail_close = False
+    await repository.close()
+    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restore_stage_open", (1, 2, 3))
+async def test_restore_stage_close_failure_retains_source_and_exclusive_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    restore_stage_open: int,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    real_connect = module.connect_private_sqlite
+    matching_connects = 0
+    source_proxy: _CloseFailingSQLiteProxy | None = None
+
+    def close_failing_restore_source(
+        owner_id: str,
+        database: object,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        nonlocal matching_connects, source_proxy
+        connection = real_connect(owner_id, database, **kwargs)
+        if (
+            owner_id == "tts.profile_restore_stage"
+            and Path(cast(str | os.PathLike[str], database)) == candidate
+            and kwargs.get("read_only") is True
+        ):
+            matching_connects += 1
+            if matching_connects == restore_stage_open:
+                source_proxy = _CloseFailingSQLiteProxy(
+                    connection,
+                    f"PRIVATE restore source {restore_stage_open}",
+                )
+                return cast(sqlite3.Connection, source_proxy)
+        return connection
+
+    monkeypatch.setattr(module, "connect_private_sqlite", close_failing_restore_source)
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await repository.restore_from(candidate)
+
+    _assert_safe_error(caught.value, "restore_failed", str(candidate))
+    assert source_proxy is not None
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository._connection is source_proxy
+    assert repository._lease is not None
+    assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+    assert repository._lease.acquired is True
     await _assert_exclusive_lease_blocked(database_path)
 
     source_proxy.fail_close = False
@@ -924,6 +987,7 @@ async def test_populated_v1_store_upgrades_under_exclusive_lease_through_reposit
         await repository.close()
 
     assert recorded_modes == [
+        ProfileStoreLockMode.SHARED,
         ProfileStoreLockMode.EXCLUSIVE,
         ProfileStoreLockMode.SHARED,
     ]
@@ -943,7 +1007,7 @@ async def test_populated_v1_store_upgrades_under_exclusive_lease_through_reposit
 
 
 @pytest.mark.asyncio
-async def test_current_store_open_recovers_and_validates_under_exclusive_lease(
+async def test_current_store_open_uses_continuous_shared_proof_and_live_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -974,10 +1038,90 @@ async def test_current_store_open_recovers_and_validates_under_exclusive_lease(
     finally:
         await repository.close()
 
-    assert recorded_modes == [
-        ProfileStoreLockMode.EXCLUSIVE,
-        ProfileStoreLockMode.SHARED,
-    ]
+    assert recorded_modes == [ProfileStoreLockMode.SHARED]
+
+
+@pytest.mark.asyncio
+async def test_two_current_store_readers_open_concurrently(tmp_path: Path) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    first = _repository_module().TTSProfileRepository(database_path)
+    second = _repository_module().TTSProfileRepository(database_path)
+
+    await first.open()
+    try:
+        await second.open()
+        assert first._lease is not None and second._lease is not None
+        assert first._lease.mode is ProfileStoreLockMode.SHARED
+        assert second._lease.mode is ProfileStoreLockMode.SHARED
+    finally:
+        await second.close()
+        await first.close()
+
+
+@pytest.mark.asyncio
+async def test_current_shared_proof_has_no_publisher_gap_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    real_open = module.open_profile_store
+    contender_errors: list[ProfileRepositoryError | None] = []
+
+    def observed_open(*args: object, **kwargs: object) -> sqlite3.Connection:
+        contender_errors.append(_try_exclusive_lease(database_path))
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(module, "open_profile_store", observed_open)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        assert len(contender_errors) == 1
+        assert contender_errors[0] is not None
+        assert contender_errors[0].code == "lock_timeout"
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("journal_suffix", ("", "-wal", "-shm", "-journal"))
+async def test_journal_present_under_shared_reader_never_runs_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    journal_suffix: str,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    journal = tmp_path / f".profiles.sqlite3.migration-publication.json{journal_suffix}"
+    journal.write_bytes(b"private journal evidence")
+    journal.chmod(0o600)
+    active_before = database_path.read_bytes()
+    journal_before = journal.read_bytes()
+    recovery_calls = 0
+
+    def forbidden_recovery(_path: Path) -> bool:
+        nonlocal recovery_calls
+        recovery_calls += 1
+        raise AssertionError("recovery ran without exclusive ownership")
+
+    blocker = ProfileStoreLease(database_path, ProfileStoreLockMode.SHARED)
+    blocker.acquire()
+    monkeypatch.setattr(
+        module, "recover_profile_migration_publication", forbidden_recovery
+    )
+    repository = module.TTSProfileRepository(database_path)
+    try:
+        with pytest.raises(ProfileRepositoryError, match="lock_timeout"):
+            await repository.open()
+        assert recovery_calls == 0
+        assert database_path.read_bytes() == active_before
+        assert journal.read_bytes() == journal_before
+    finally:
+        blocker.release()
+        await repository.close()
 
 
 @pytest.mark.asyncio
@@ -1135,6 +1279,11 @@ def _install_fake_store(
         "_worker_initialize_store",
         lambda _self, _path, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_open_if_proven_current",
+        lambda self, path: self._worker_open_existing(path),
+    )
     monkeypatch.setattr(module, "open_profile_store", opener)
     return recorded_leases
 
@@ -1149,6 +1298,11 @@ def _bypass_startup_ownership_for_open_cleanup_test(
         module.TTSProfileRepository,
         "_worker_initialize_store",
         lambda _self, _path, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_open_if_proven_current",
+        lambda self, path: self._worker_open_existing(path),
     )
 
 
@@ -1843,7 +1997,7 @@ async def test_failed_open_retains_real_shared_lease_until_connection_cleanup(
         _argument: Any,
     ) -> Any:
         if (
-            frame.f_code is module.TTSProfileRepository._worker_open.__code__
+            frame.f_code is module.TTSProfileRepository._worker_open_existing.__code__
             and event == "line"
             and frame.f_locals.get("connection") is first_connection
         ):
@@ -1864,7 +2018,7 @@ async def test_failed_open_retains_real_shared_lease_until_connection_cleanup(
             if sys.gettrace() is None:
                 sys.settrace(passthrough_worker_trace)
             previous_worker_trace = sys.gettrace()
-            worker_frame = sys._getframe(2)
+            worker_frame = sys._getframe(1)
             worker_frame.f_trace = fail_after_connection_assignment
             sys.settrace(fail_after_connection_assignment)
             return first_connection
@@ -1960,7 +2114,7 @@ async def test_failed_open_connection_cleanup_control_preserves_precedence(
         _argument: Any,
     ) -> Any:
         if (
-            frame.f_code is module.TTSProfileRepository._worker_open.__code__
+            frame.f_code is module.TTSProfileRepository._worker_open_existing.__code__
             and event == "line"
             and frame.f_locals.get("connection") is connection
         ):
@@ -1976,7 +2130,7 @@ async def test_failed_open_connection_cleanup_control_preserves_precedence(
         del must_exist
         nonlocal previous_worker_trace
         previous_worker_trace = sys.gettrace()
-        worker_frame = sys._getframe(2)
+        worker_frame = sys._getframe(1)
         worker_frame.f_trace = fail_after_connection_assignment
         sys.settrace(fail_after_connection_assignment)
         return connection
@@ -4284,7 +4438,7 @@ async def test_established_store_retry_does_not_recreate_missing_postreplace_dat
     ("boundary", "expected_mode"),
     [
         ("recovery_source", ProfileStoreLockMode.EXCLUSIVE),
-        ("post_rebind", ProfileStoreLockMode.EXCLUSIVE),
+        ("post_rebind", ProfileStoreLockMode.SHARED),
     ],
 )
 async def test_restore_live_connection_close_failure_retains_protecting_lease(

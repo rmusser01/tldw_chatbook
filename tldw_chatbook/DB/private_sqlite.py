@@ -1763,11 +1763,23 @@ def _close_profile_migration_destination(
         destination,
         "_ProfileMigrationBoundaryDestination__connection",
     )
-    object.__setattr__(
-        destination,
-        "_ProfileMigrationBoundaryDestination__connection",
-        None,
-    )
+    errors: list[BaseException] = []
+    if connection is not None:
+        try:
+            connection.close()
+        except BaseException as close_error:
+            errors.append(close_error)
+        else:
+            object.__setattr__(
+                destination,
+                "_ProfileMigrationBoundaryDestination__connection",
+                None,
+            )
+    if errors:
+        for pending_error in errors:
+            if not isinstance(pending_error, Exception):
+                raise pending_error
+        raise errors[0]
     if (
         object.__getattribute__(
             destination,
@@ -1780,12 +1792,6 @@ def _close_profile_migration_destination(
             "_ProfileMigrationBoundaryDestination__state",
             "closed",
         )
-    errors: list[BaseException] = []
-    if connection is not None:
-        try:
-            connection.close()
-        except BaseException as close_error:
-            errors.append(close_error)
     for attribute in ("__file_fd", "__parent_fd"):
         private_name = f"_ProfileMigrationBoundaryDestination{attribute}"
         descriptor = cast(int, object.__getattribute__(destination, private_name))
@@ -1821,7 +1827,7 @@ def discard_profile_migration_destination(
     *,
     tombstone_key: object,
 ) -> None:
-    """Descriptor-verify, quarantine, and wipe one unpublished candidate."""
+    """Descriptor-verify and quarantine one unpublished candidate."""
 
     body_error: BaseException | None = None
     try:
@@ -1907,8 +1913,6 @@ def discard_profile_migration_destination(
         )
         if file_fd < 0 or not private_paths._same_identity(os.fstat(file_fd), identity):
             raise ValueError
-        os.ftruncate(file_fd, 0)
-        os.fsync(file_fd)
         remove_exact(
             selected,
             parent_authority=ParentAuthority(parent),

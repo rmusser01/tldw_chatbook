@@ -104,6 +104,7 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfilePage,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils import private_paths
 
 
 _T = TypeVar("_T")
@@ -1246,14 +1247,6 @@ class TTSProfileRepository:
             raise _repository_error("stale")
         return ProfileStoreResult(generation=generation, value=None)
 
-    def _worker_upgrade_if_shared_unsafe(self, active_path: Path) -> None:
-        """Recover and inspect only while holding exclusive ownership."""
-
-        self._worker_initialize_store(
-            active_path,
-            allow_create=not self._store_established,
-        )
-
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
 
@@ -1270,8 +1263,15 @@ class TTSProfileRepository:
                 self._database_path,
                 "operation_failed",
             )
-            self._worker_upgrade_if_shared_unsafe(active_path)
-            lease, connection = self._worker_open_existing(active_path)
+            shared = self._worker_open_if_proven_current(active_path)
+            if shared is None:
+                self._worker_initialize_store(
+                    active_path,
+                    allow_create=not self._store_established,
+                )
+                lease, connection = self._worker_open_existing(active_path)
+            else:
+                lease, connection = shared
             if connection is None:
                 raise _repository_error("operation_failed")
             validate_profile_store_rows(connection)
@@ -1317,6 +1317,93 @@ class TTSProfileRepository:
             lease_error,
         )
 
+    def _worker_open_if_proven_current(
+        self,
+        active_path: Path,
+    ) -> tuple[ProfileStoreLease, sqlite3.Connection] | None:
+        """Open exact v4 while continuously holding one shared gate."""
+
+        lease = ProfileStoreLease(active_path, ProfileStoreLockMode.SHARED)
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        release_error: BaseException | None = None
+        try:
+            lease.acquire()
+            parent_fd, _leaf = private_paths._open_verified_parent(
+                active_path,
+                missing_leaf_allowed=True,
+            )
+            try:
+                journal_leaf = f".{active_path.name}.migration-publication.json"
+                for suffix in ("", *_STORE_SIDECAR_SUFFIXES):
+                    try:
+                        os.stat(
+                            f"{journal_leaf}{suffix}",
+                            dir_fd=parent_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        continue
+                    self._worker_release_unproven_shared(lease, active_path)
+                    return None
+            finally:
+                os.close(parent_fd)
+            if (
+                self._worker_exact_schema_version(active_path)
+                != CURRENT_PROFILE_SCHEMA_VERSION
+            ):
+                self._worker_release_unproven_shared(lease, active_path)
+                return None
+            connection = open_profile_store(active_path, must_exist=True)
+            return lease, connection
+        except BaseException as error:
+            body_error = error
+
+        if self._connection is not None:
+            self._lease = lease
+            self._active_database_path = active_path
+            _raise_with_cleanup_precedence(body_error)
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                self._worker_retain_failed_connection(connection, active_path)
+                self._lease = lease
+                _raise_with_cleanup_precedence(body_error, error)
+        try:
+            lease.release()
+        except BaseException as error:
+            release_error = error
+            self._lease = lease
+            self._active_database_path = active_path
+        _raise_with_cleanup_precedence(body_error, release_error)
+        raise AssertionError("unreachable")
+
+    def _worker_release_unproven_shared(
+        self,
+        lease: ProfileStoreLease,
+        active_path: Path,
+    ) -> None:
+        try:
+            lease.release()
+        except BaseException:
+            self._lease = lease
+            self._active_database_path = active_path
+            raise
+        return None
+
+    def _worker_retain_failed_connection(
+        self,
+        connection: sqlite3.Connection,
+        active_path: Path,
+    ) -> None:
+        """Retain a live connection whose close did not complete."""
+
+        if self._connection is not None and self._connection is not connection:
+            raise _repository_error("unavailable")
+        self._connection = connection
+        self._active_database_path = active_path
+
     def _worker_open_existing(
         self,
         active_path: Path,
@@ -1342,6 +1429,16 @@ class TTSProfileRepository:
             assert connection is not None
             return lease, connection
 
+        connection_error: BaseException | None = None
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                connection_error = error
+                self._worker_retain_failed_connection(connection, active_path)
+                self._lease = lease
+        if connection_error is not None:
+            _raise_with_cleanup_precedence(body_error, connection_error)
         try:
             lease.release()
         except BaseException as error:
@@ -1588,10 +1685,8 @@ class TTSProfileRepository:
                 source.close()
             except BaseException as error:
                 cleanup_errors.append(error)
-                if source_path is None:
-                    self._connection = source
-                    self._active_database_path = active_path
-                    source = None
+                self._worker_retain_failed_connection(source, active_path)
+                source = None
         if body_error is not None and not publication_started:
             for owner, tombstone_key in reversed(owners):
                 try:
@@ -1642,8 +1737,7 @@ class TTSProfileRepository:
                 connection.close()
             except BaseException as error:
                 close_error = error
-                self._connection = connection
-                self._active_database_path = active_path
+                self._worker_retain_failed_connection(connection, active_path)
         for pending_error in (body_error, close_error):
             if pending_error is not None and not isinstance(pending_error, Exception):
                 raise pending_error
@@ -2620,6 +2714,8 @@ class TTSProfileRepository:
         """Read one admitted restore candidate without authorizing migration."""
 
         connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        version: int | None = None
         try:
             connection = connect_private_sqlite(
                 "tts.profile_restore_stage",
@@ -2631,16 +2727,25 @@ class TTSProfileRepository:
             row = connection.execute("PRAGMA user_version").fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int:
                 raise ValueError
-            return cast(int, row[0])
-        except ProfileRepositoryError:
-            raise
+            version = cast(int, row[0])
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            raise _repository_error("schema_corrupt") from None
-        finally:
-            if connection is not None:
+            body_error = error
+        close_error: BaseException | None = None
+        if connection is not None:
+            try:
                 connection.close()
+            except BaseException as error:
+                close_error = error
+                self._worker_retain_failed_connection(
+                    connection,
+                    self._worker_active_path(),
+                )
+        for pending_error in (body_error, close_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        if body_error is not None or close_error is not None or version is None:
+            raise _repository_error("schema_corrupt")
+        return version
 
     def _worker_validate_restore_source(
         self,
@@ -2683,6 +2788,10 @@ class TTSProfileRepository:
                 connection.close()
             except BaseException as error:
                 close_error = error
+                self._worker_retain_failed_connection(
+                    connection,
+                    self._worker_active_path(),
+                )
         for pending_error in (body_error, close_error):
             if pending_error is not None and not isinstance(pending_error, Exception):
                 raise pending_error
@@ -2903,21 +3012,15 @@ class TTSProfileRepository:
         if cleanup_error is not None:
             raise cleanup_error
 
-        self._worker_upgrade_if_shared_unsafe(active_path)
-
-        lease = ProfileStoreLease(
-            active_path,
-            ProfileStoreLockMode.SHARED,
-            timeout_seconds=_RESTORE_REBIND_TIMEOUT_SECONDS,
-        )
-        connection: sqlite3.Connection | None = None
+        shared = self._worker_open_if_proven_current(active_path)
+        if shared is None:
+            self._worker_initialize_store(active_path, allow_create=False)
+            shared = self._worker_open_if_proven_current(active_path)
+        if shared is None:
+            raise _repository_error("restore_failed")
+        lease, connection = shared
         body_error: BaseException | None = None
         try:
-            lease.acquire()
-            connection = open_profile_store(
-                active_path,
-                must_exist=True,
-            )
             validate_profile_store_rows(connection)
             validate_reference_rows(connection)
             self._worker_store_counts(connection)
@@ -2939,7 +3042,6 @@ class TTSProfileRepository:
                 connection_error = error
                 self._connection = connection
                 self._lease = lease
-                connection = None
         if connection_error is None:
             try:
                 lease.release()
