@@ -1,6 +1,6 @@
 # New-User Voice and Roleplay UAT Remediation Design
 
-**Status:** Design approved; architecture review revisions pending confirmation
+**Status:** Approved
 
 **Date:** 2026-08-12
 
