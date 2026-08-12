@@ -3339,6 +3339,53 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
 
 
 @pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
+@pytest.mark.asyncio
+async def test_quick_track_progress_recovers_titles_after_live_resize(theme: str):
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)
+    app.theme = theme
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.2)
+        progress = wizard.query_one(".wizard-progress")
+
+        def assert_compact() -> None:
+            assert progress.has_class("-compact")
+            assert all(not title.display for title in progress.query(".step-title"))
+            assert all(
+                not connector.display for connector in progress.query(".step-connector")
+            )
+
+        assert_compact()
+
+        await pilot.resize_terminal(120, 40)
+        await pilot.pause(0.2)
+        assert not progress.has_class("-compact")
+        rows = list(progress.query(".setup-progress-item"))
+        assert len(rows) == 4
+        for row in rows:
+            title = row.query_one(".step-title")
+            assert title.display
+            assert title.region.x >= row.region.x
+            assert title.region.right <= row.region.right
+            assert title.region.y >= row.region.y
+            assert title.region.bottom <= row.region.bottom
+            connectors = list(row.query(".step-connector"))
+            for connector in connectors:
+                assert connector.display
+                assert connector.region.x >= row.region.x
+                assert connector.region.right <= row.region.right
+                assert connector.region.y >= row.region.y
+                assert connector.region.bottom <= row.region.bottom
+        for current, following in zip(rows, rows[1:]):
+            assert current.region.right <= following.region.x
+
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.2)
+        assert_compact()
+
+
+@pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
 @pytest.mark.parametrize("size", ((80, 24), (120, 40), (177, 45)))
 @pytest.mark.asyncio
 async def test_first_run_provider_layout_stays_ordered_across_sizes_and_themes(

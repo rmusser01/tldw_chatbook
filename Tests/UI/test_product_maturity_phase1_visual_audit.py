@@ -307,6 +307,27 @@ def test_first_run_css_defines_distinct_semantic_visual_states() -> None:
     assert ".setup-step-error" in css and "background: $error 15%" in css
     assert "border: solid $ds-focus-accent" in css
 
+    complete_number = re.search(
+        r"\.setup-progress-item\.-complete \.step-number\s*\{([^}]*)\}",
+        css,
+        re.DOTALL,
+    )
+    complete_title = re.search(
+        r"\.setup-progress-item\.-complete \.step-title\s*\{([^}]*)\}",
+        css,
+        re.DOTALL,
+    )
+    assert complete_number is not None and complete_title is not None
+    number_style = complete_number.group(1)
+    title_style = complete_title.group(1)
+    assert "background: $ds-surface-raised" in number_style
+    assert "color: $ds-text-primary" in number_style
+    assert "border: solid $success" in number_style
+    assert "background: $success" not in number_style
+    assert "color: $background" not in number_style
+    assert "color: $ds-text-primary" in title_style
+    assert "color: $success" not in title_style
+
 
 def test_first_run_css_stabilizes_provider_list_and_footer_dimensions() -> None:
     css = _text(Path("tldw_chatbook/css/features/_wizards.tcss"))

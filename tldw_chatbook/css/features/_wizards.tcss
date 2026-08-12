@@ -1236,13 +1236,13 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 }
 
 .setup-progress-item.-complete .step-number {
-    background: $success;
-    color: $background;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     border: solid $success;
 }
 
 .setup-progress-item.-complete .step-title {
-    color: $success;
+    color: $ds-text-primary;
     text-style: bold;
 }
 
