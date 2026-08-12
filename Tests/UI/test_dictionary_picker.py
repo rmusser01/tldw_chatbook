@@ -4,7 +4,10 @@ import pytest
 from textual.app import App
 from textual.widgets import Input, ListView
 
-from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import (
+    SEARCH_DEBOUNCE_SECONDS,
+    DictionaryPicker,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -45,7 +48,9 @@ async def test_picker_search_filters_by_name():
         await pilot.pause()
         picker = app.screen
         picker.query_one("#dict-pick-search", Input).value = "slang"
-        await pilot.pause()
+        # Debounced (task-15476): the list only rebuilds once the filter
+        # settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         assert len(picker.query_one("#dict-pick-list", ListView).children) == 1
         picker.query_one("#dict-pick-list", ListView).index = 0
         await pilot.pause()
