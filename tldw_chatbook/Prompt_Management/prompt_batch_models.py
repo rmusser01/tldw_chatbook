@@ -81,9 +81,11 @@ def validate_prompt_batch_targets(
     if any(type(target) is not PromptBatchTarget for target in targets):
         raise TypeError("targets must contain only exact PromptBatchTarget values.")
     for target in targets:
-        _require_positive_sqlite_integer(target.local_id, field_name="local_id")
+        local_id = getattr(target, "local_id", None)
+        expected_version = getattr(target, "expected_version", None)
+        _require_positive_sqlite_integer(local_id, field_name="local_id")
         _require_positive_sqlite_integer(
-            target.expected_version, field_name="expected_version"
+            expected_version, field_name="expected_version"
         )
     if len({target.local_id for target in targets}) != len(targets):
         raise ValueError("targets must use unique local IDs.")

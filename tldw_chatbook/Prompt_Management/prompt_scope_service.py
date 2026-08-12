@@ -673,7 +673,8 @@ class LocalPromptService:
         Returns:
             The exact committed database receipt.
         """
-        return self.prompt_db.soft_delete_prompts(targets)
+        validated_targets = validate_prompt_batch_targets(targets)
+        return self.prompt_db.soft_delete_prompts(validated_targets)
 
     def restore_deleted_prompt(
         self, prompt_identifier: str | int, *, expected_version: int
@@ -707,7 +708,8 @@ class LocalPromptService:
         Returns:
             The exact committed database restore result.
         """
-        return self.prompt_db.restore_deleted_prompts(targets)
+        validated_targets = validate_prompt_batch_targets(targets)
+        return self.prompt_db.restore_deleted_prompts(validated_targets)
 
     def record_prompt_usage(self, prompt_identifier: str | int) -> Any:
         if hasattr(self.prompt_db, "record_prompt_usage"):

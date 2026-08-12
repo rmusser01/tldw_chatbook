@@ -222,6 +222,29 @@ def test_prompt_batch_target_validator_revalidates_exact_target_fields(
 
 
 @pytest.mark.parametrize(
+    ("missing_field", "private_local_id", "private_version"),
+    [
+        ("local_id", 71_234_567, 81_234_567),
+        ("expected_version", 91_234_567, 101_234_567),
+    ],
+)
+def test_prompt_batch_target_validator_bounds_missing_slots_without_private_values(
+    missing_field, private_local_id, private_version
+):
+    target = PromptBatchTarget(private_local_id, private_version)
+    object.__delattr__(target, missing_field)
+
+    assert str(private_local_id) not in str(target)
+    assert str(private_version) not in repr(target)
+    with pytest.raises(ValueError, match=missing_field) as raised:
+        validate_prompt_batch_targets((target,))
+
+    error_text = f"{raised.value!s} {raised.value!r}"
+    assert str(private_local_id) not in error_text
+    assert str(private_version) not in error_text
+
+
+@pytest.mark.parametrize(
     ("model", "kwargs", "field"),
     [
         (PromptBatchTarget, {"local_id": 0, "expected_version": 1}, "local_id"),
