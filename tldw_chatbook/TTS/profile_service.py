@@ -47,6 +47,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileDraft,
     TTSProfilePage,
 )
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    validate_audio_cpp_guided_dependency_snapshot,
+)
 
 ProfileAvailabilityState: TypeAlias = Literal[
     "available",
@@ -54,6 +58,22 @@ ProfileAvailabilityState: TypeAlias = Literal[
     "unverified",
 ]
 ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
+ProfileDependencyReason: TypeAlias = Literal[
+    "none",
+    "recipe_missing",
+    "recipe_mismatch",
+    "recipe_pending_apply",
+]
+ProfileDependencyAction: TypeAlias = Literal[
+    "none",
+    "open_audio_cpp_settings",
+    "open_speech_lab_apply",
+]
+ProfilePortabilityAdvisory: TypeAlias = Literal[
+    "none",
+    "recipe_provenance_unavailable",
+]
+ProfilePortabilityAction: TypeAlias = Literal["none", "generate_new_profile"]
 PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
@@ -235,6 +255,11 @@ class _ProfileTTSServiceProtocol(Protocol):
         provider_id: str,
         expected_revision: int,
     ) -> None: ...
+
+    async def audio_cpp_guided_dependency_snapshot(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -844,11 +869,15 @@ def _availability(
     profile_id: UUID,
     state: ProfileAvailabilityState,
     provider_id: str,
+    dependency: TTSProfileDependencyProjection | None = None,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
         state=state,
         recovery_action=_recovery_action(provider_id, state),
+        dependency=(
+            TTSProfileDependencyProjection() if dependency is None else dependency
+        ),
     )
 
 
@@ -970,20 +999,77 @@ class LoadedCharacterTTSAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSProfileDependencyProjection:
+    """Bounded dependency blocker plus an independent portability advisory."""
+
+    reason: ProfileDependencyReason = "none"
+    display: str | None = None
+    action: ProfileDependencyAction = "none"
+    advisory: ProfilePortabilityAdvisory = "none"
+    advisory_display: str | None = None
+    advisory_action: ProfilePortabilityAction = "none"
+
+    def __post_init__(self) -> None:
+        blockers = {
+            "none": (None, "none"),
+            "recipe_missing": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_mismatch": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_pending_apply": (
+                "Compatible model saved; apply settings",
+                "open_speech_lab_apply",
+            ),
+        }
+        advisories = {
+            "none": (None, "none"),
+            "recipe_provenance_unavailable": (
+                "Recipe provenance unavailable",
+                "generate_new_profile",
+            ),
+        }
+        if (
+            type(self.reason) is not str
+            or self.reason not in blockers
+            or type(self.action) is not str
+            or (self.display, self.action) != blockers[self.reason]
+            or type(self.advisory) is not str
+            or self.advisory not in advisories
+            or type(self.advisory_action) is not str
+            or (self.advisory_display, self.advisory_action)
+            != advisories[self.advisory]
+        ):
+            raise ProfileValidationError("dependency")
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProfileAvailability:
     """The current bounded availability state for one exact profile UUID."""
 
     profile_id: UUID
     state: ProfileAvailabilityState
     recovery_action: ProfileRecoveryAction
+    dependency: TTSProfileDependencyProjection = field(
+        default_factory=TTSProfileDependencyProjection
+    )
 
     def __post_init__(self) -> None:
         if type(self.profile_id) is not UUID:
             raise ProfileValidationError("profile_id")
         state = _validate_availability_state(self.state)
         action = _validate_recovery_action(self.recovery_action, state)
+        dependency = self.dependency
+        if type(dependency) is not TTSProfileDependencyProjection:
+            raise ProfileValidationError("dependency")
+        dependency = TTSProfileDependencyProjection(
+            reason=dependency.reason,
+            display=dependency.display,
+            action=dependency.action,
+            advisory=dependency.advisory,
+            advisory_display=dependency.advisory_display,
+            advisory_action=dependency.advisory_action,
+        )
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "recovery_action", action)
+        object.__setattr__(self, "dependency", dependency)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1028,6 +1114,58 @@ class TTSProfileAvailabilitySnapshot:
         )
         object.__setattr__(self, "catalog_revision", catalog_revision)
         object.__setattr__(self, "profiles", profiles)
+
+
+def _provenance_projection(
+    profile: TTSGenerationProfile,
+) -> TTSProfileDependencyProjection:
+    reference = profile.reference
+    if reference is not None and reference.recipe_requirement is None:
+        return TTSProfileDependencyProjection(
+            advisory="recipe_provenance_unavailable",
+            advisory_display="Recipe provenance unavailable",
+            advisory_action="generate_new_profile",
+        )
+    return TTSProfileDependencyProjection()
+
+
+def _dependency_projection(
+    state: str,
+    *,
+    advisory: TTSProfileDependencyProjection,
+) -> TTSProfileDependencyProjection:
+    blockers: dict[
+        str, tuple[ProfileDependencyReason, str | None, ProfileDependencyAction]
+    ] = {
+        "exact": ("none", None, "none"),
+        "missing": (
+            "recipe_missing",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "mismatch": (
+            "recipe_mismatch",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "pending": (
+            "recipe_pending_apply",
+            "Compatible model saved; apply settings",
+            "open_speech_lab_apply",
+        ),
+    }
+    try:
+        reason, display, action = blockers[state]
+    except (KeyError, TypeError):
+        raise ProfileServiceError("operation_failed") from None
+    return TTSProfileDependencyProjection(
+        reason=reason,
+        display=display,
+        action=action,
+        advisory=advisory.advisory,
+        advisory_display=advisory.advisory_display,
+        advisory_action=advisory.advisory_action,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1451,6 +1589,7 @@ class TTSProfileService:
                         profile.profile_id,
                         "unavailable",
                         profile.provider_id,
+                        _provenance_projection(profile),
                     )
                     for profile in page.profiles
                 ),
@@ -1477,6 +1616,7 @@ class TTSProfileService:
                             else "unavailable"
                         ),
                         profile.provider_id,
+                        _provenance_projection(profile),
                     )
                     for profile in page.profiles
                 ),
@@ -1509,9 +1649,62 @@ class TTSProfileService:
             snapshot.configuration_revision,
         )
 
-        availability = tuple(
-            self._classify_profile(profile, snapshot) for profile in page.profiles
-        )
+        projected: list[TTSProfileAvailability] = []
+        for profile in page.profiles:
+            base = self._classify_profile(profile, snapshot)
+            advisory = _provenance_projection(profile)
+            requirement = (
+                None
+                if profile.reference is None
+                else profile.reference.recipe_requirement
+            )
+            if base.state != "available" or requirement is None:
+                projected.append(
+                    _availability(
+                        profile.profile_id,
+                        base.state,
+                        profile.provider_id,
+                        advisory,
+                    )
+                )
+                continue
+            dependency_failed = False
+            dependency: AudioCppGuidedDependencySnapshot | None = None
+            try:
+                dependency = (
+                    await self._tts_service.audio_cpp_guided_dependency_snapshot(
+                        requirement
+                    )
+                )
+            except Exception:  # noqa: BLE001 - collaborator detail stays private
+                dependency_failed = True
+            dependency = validate_audio_cpp_guided_dependency_snapshot(
+                dependency,
+                requirement,
+            )
+            if dependency_failed or dependency is None:
+                raise ProfileServiceError("operation_failed") from None
+            await self._require_configuration_revision(
+                _PROFILE_PROVIDER_ID,
+                dependency.provider_configuration_revision,
+            )
+            dependency_projection = _dependency_projection(
+                dependency.state,
+                advisory=advisory,
+            )
+            projected.append(
+                _availability(
+                    profile.profile_id,
+                    (
+                        "available"
+                        if dependency_projection.reason == "none"
+                        else "unavailable"
+                    ),
+                    profile.provider_id,
+                    dependency_projection,
+                )
+            )
+        availability = tuple(projected)
         self._require_repository_generation(page.repository_generation)
         if self._current_configuration_revision() != snapshot.configuration_revision:
             raise ProfileServiceError("stale_configuration")

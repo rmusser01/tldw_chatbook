@@ -65,6 +65,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 )
 from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
@@ -1553,6 +1554,52 @@ async def test_clone_source_preflight_requires_the_application_process_owner(
 
 
 @pytest.mark.asyncio
+async def test_clone_dependency_preflight_rejects_config_drift_without_readiness(
+    tmp_path: Path,
+) -> None:
+    settings = _guided_settings(
+        tmp_path,
+        filename="pocket-tts-english-q8_0.gguf",
+        package_variant="pocket_tts_english_q8_0",
+        public_model_id="clone-model",
+    )
+    accepted = settings.guided_packages[0]
+    supervisor = _PreparationSupervisor()
+    requests: list[httpx.Request] = []
+    adapter = AudioCppAdapter(
+        AudioCppConfig.from_mapping(settings.to_mapping()),
+        guided_settings=settings,
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request)  # type: ignore[arg-type,return-value]
+        ),
+        supervisor=supervisor,  # type: ignore[arg-type]
+    )
+    request = TTSRequest(
+        provider_id="audio_cpp",
+        model_id="clone-model",
+        text="Dependency preflight",
+        voice=None,
+        response_format="wav",
+    )
+    wrong = TTSCloneRecipeRequirement(
+        recipe_id=accepted.recipe_id,
+        recipe_revision=accepted.recipe_revision + 1,
+        model_id="clone-model",
+    )
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            adapter.preflight_clone_dependency(request, wrong)
+
+        assert caught.value.code == "dependency_changed"
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+        assert requests == []
+        assert adapter._managed_bundle is None
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1732,9 +1779,7 @@ async def test_guided_clone_admission_sends_only_typed_live_reference_fields(
 
         response = await adapter.synthesize_clone(admitted)
         await response.aclose()
-        assert supervisor.suppressed_clone_generations == [
-            admitted.process_generation
-        ]
+        assert supervisor.suppressed_clone_generations == [admitted.process_generation]
         assert "voice_ref" not in response.metadata
         assert "reference_text" not in response.metadata
 

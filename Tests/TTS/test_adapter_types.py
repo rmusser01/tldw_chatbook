@@ -353,6 +353,8 @@ def test_tts_operation_code_contains_only_stable_values() -> None:
         "process_exited",
         "runtime_unhealthy",
         "cleanup_failed",
+        "dependency_missing",
+        "dependency_changed",
     )
 
 

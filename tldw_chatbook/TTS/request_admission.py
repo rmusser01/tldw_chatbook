@@ -45,6 +45,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -372,13 +373,30 @@ class TTSRequestAdmissionCoordinator:
         reservation: _OperationCapacityReservation | None = None
         operation: _AdmittedTTSOperation | None = None
         try:
-            reservation = await self._service._reserve_operation_capacity()
+            self._service._require_operation_admission_open()
             if profile_preview is not None:
                 assert profile_reference_resolver is not None
                 preview_execution = await self._resolve_profile_preview_reference(
                     profile_preview,
                     profile_reference_resolver,
                 )
+            requirement = self._candidate_clone_requirement(
+                explicit=explicit,
+                character_profile=character_profile,
+                default_profile=default_profile,
+                profile_preview_execution=preview_execution,
+            )
+            if requirement is not None:
+                await self._service._require_audio_cpp_clone_dependency(requirement)
+                await self._service._preflight_audio_cpp_clone_dependency(
+                    requirement,
+                    voice=self._candidate_clone_voice(
+                        character_profile=character_profile,
+                        default_profile=default_profile,
+                        studio_draft=studio_draft,
+                    ),
+                )
+            reservation = await self._service._reserve_operation_capacity()
             while True:
                 projected_provider = self._effective_settings.project_provider(
                     global_preferences=self._preferences,
@@ -402,7 +420,11 @@ class TTSRequestAdmissionCoordinator:
                                 default_profile=default_profile,
                             )
                         )
-                        if projected_provider == "audio_cpp" and clone_candidate:
+                        if (
+                            projected_provider == "audio_cpp"
+                            and clone_candidate
+                            and requirement is None
+                        ):
                             await self._service._preflight_audio_cpp_clone_source()
                         preferences = self._preferences
                         if preferences is None and higher_scope_provider is None:
@@ -581,6 +603,39 @@ class TTSRequestAdmissionCoordinator:
         return default_profile is not None and default_profile.reference is not None
 
     @staticmethod
+    def _candidate_clone_requirement(
+        *,
+        explicit: TTSSelectionOverrides | None,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+        profile_preview_execution: _ResolvedTTSCloneExecution | None,
+    ) -> TTSCloneRecipeRequirement | None:
+        """Return persisted provenance before any provider authority is acquired."""
+
+        if profile_preview_execution is not None:
+            return profile_preview_execution.reference.recipe_requirement
+        if explicit is not None and (
+            explicit.provider_id is not None or explicit.model_id is not None
+        ):
+            return None
+        profile = character_profile or default_profile
+        if profile is None or profile.reference is None:
+            return None
+        return profile.reference.recipe_requirement
+
+    @staticmethod
+    def _candidate_clone_voice(
+        *,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+        studio_draft: TTSStudioDraftSelection | None,
+    ) -> str | None:
+        if studio_draft is not None:
+            return studio_draft.selection.voice_id
+        profile = character_profile or default_profile
+        return None if profile is None else profile.selection.voice_id
+
+    @staticmethod
     def _resolve_clone_execution(
         selection: TTSEffectiveSelectionSnapshot,
         *,
@@ -594,10 +649,8 @@ class TTSRequestAdmissionCoordinator:
             return None
         if clone_audition is not None:
             if (
-                selection.sources["provider_id"]
-                is not TTSSelectionSource.STUDIO_DRAFT
-                or selection.sources["model_id"]
-                is not TTSSelectionSource.STUDIO_DRAFT
+                selection.sources["provider_id"] is not TTSSelectionSource.STUDIO_DRAFT
+                or selection.sources["model_id"] is not TTSSelectionSource.STUDIO_DRAFT
             ):
                 raise TTSEffectiveResolutionError(
                     code="revision_incoherent",
@@ -612,8 +665,7 @@ class TTSRequestAdmissionCoordinator:
                 not selection.studio_preview
                 or selection.sources["provider_id"]
                 is not TTSSelectionSource.STUDIO_DRAFT
-                or selection.sources["model_id"]
-                is not TTSSelectionSource.STUDIO_DRAFT
+                or selection.sources["model_id"] is not TTSSelectionSource.STUDIO_DRAFT
             ):
                 raise TTSEffectiveResolutionError(
                     code="revision_incoherent",

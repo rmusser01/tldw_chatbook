@@ -76,6 +76,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneMaterializationError,
     TTSCloneReferenceMaterialization,
 )
+from tldw_chatbook.TTS.profile_reference_types import TTSCloneRecipeRequirement
 
 _PROVIDER_ID = "audio_cpp"
 _TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -235,6 +236,12 @@ _MANAGED_ARTIFACT_FAILURE = _OperationFailure(
     recovery_action="retry",
 )
 _MANAGED_CLEANUP_FAILURE_MESSAGE = "audio.cpp generation cleanup failed"
+_DEPENDENCY_CHANGED = _OperationFailure(
+    code="dependency_changed",
+    message="The clone voice dependency changed",
+    retryable=False,
+    recovery_action="open_settings",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,6 +466,33 @@ class AudioCppAdapter:
                 _MANAGED_CONFIGURATION_INVALID,
                 uuid4().hex,
             ) from None
+
+    def preflight_clone_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        """Compare exact Guided recipe/model configuration without readiness work."""
+
+        self.preflight_clone_source()
+        if (
+            type(request) is not TTSRequest
+            or type(requirement) is not TTSCloneRecipeRequirement
+            or request.model_id != requirement.model_id
+        ):
+            raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
+        recipe = self._guided_recipe_for_model(request.model_id)
+        if (
+            recipe is None
+            or recipe.recipe_id != requirement.recipe_id
+            or recipe.recipe_revision != requirement.recipe_revision
+            or "clone" not in recipe.capabilities
+            or not recipe.admits_voice_reference(
+                has_voice=request.voice is not None,
+                has_reference=True,
+            )
+        ):
+            raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
 
     def admit_clone_capability(
         self,
@@ -1023,6 +1057,7 @@ class AudioCppAdapter:
         ):
             return _REQUEST_INVALID
         assert isinstance(capability, AudioCppCloneCapabilityAdmission)
+        assert isinstance(materialization, TTSCloneReferenceMaterialization)
         capability_token = capability._capability_token
         if self._current_clone_process_generation() != process_generation:
             return _CONNECTION_UNAVAILABLE
