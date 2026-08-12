@@ -1820,8 +1820,8 @@ class TestIngestJobOptionsWiring:
 
         kwargs = build_server_ingest_kwargs("/tmp/speech.wav", options=options)
 
-        assert kwargs["transcription_provider"] == "parakeet-onnx"
-        assert kwargs["language"] == "en"
+        assert "transcription_provider" not in kwargs
+        assert kwargs["transcription_language"] == "en"
         assert "transcription_model_dir" not in kwargs
         assert "transcription_external_scope_id" not in kwargs
         assert private_path not in str(kwargs)
