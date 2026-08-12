@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, Optional
 
 from .Chat_Deps import ChatConfigurationError
 
@@ -31,9 +31,17 @@ from ..config import (
     is_valid_provider_api_key,
     normalize_provider_config_key,
     provider_settings_for_key,
+)
+from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
-
+from .provider_test_evidence import (
+    ConfigurationFacet,
+    ProviderReadinessSnapshot,
+    ProviderReadinessVerdict,
+    ProviderTestEvidence,
+    provider_readiness_verdict,
+)
 
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
@@ -110,11 +118,53 @@ class ProviderReadiness:
     provider_key: str
     requires_api_key: bool
     ready: bool
-    api_key: Optional[str]
-    api_key_source: Optional[str]
-    env_var: Optional[str]
+    api_key: str | None
+    api_key_source: str | None
+    env_var: str | None
     reason: str
-    recovery: Optional[str]
+    recovery: str | None
+
+    @property
+    def configuration_facet(self) -> ConfigurationFacet:
+        """Compatibility-safe structured view of configuration readiness."""
+        return "configured" if self.ready else "incomplete"
+
+    def snapshot(
+        self,
+        *,
+        selected_model: object = "",
+        evidence: ProviderTestEvidence | None = None,
+    ) -> ProviderReadinessSnapshot:
+        """Combine legacy configuration readiness with current test evidence."""
+        model_id = selected_model.strip() if isinstance(selected_model, str) else ""
+        endpoint = evidence.endpoint if evidence is not None else "not_tested"
+        if not model_id:
+            model = "missing"
+        elif (
+            evidence is not None
+            and evidence.endpoint == "reachable"
+            and model_id in evidence.model_ids
+        ):
+            model = "confirmed"
+        else:
+            model = "unconfirmed"
+        return ProviderReadinessSnapshot(
+            configuration=self.configuration_facet,
+            endpoint=endpoint,
+            model=model,
+            category=evidence.category if evidence is not None else None,
+        )
+
+    def verdict(
+        self,
+        *,
+        selected_model: object = "",
+        evidence: ProviderTestEvidence | None = None,
+    ) -> ProviderReadinessVerdict:
+        """Return one structured verdict while preserving legacy properties."""
+        return provider_readiness_verdict(
+            self.snapshot(selected_model=selected_model, evidence=evidence)
+        )
 
     @property
     def user_message(self) -> str:
@@ -130,7 +180,7 @@ class ProviderReadiness:
         return f"{self.provider} is not ready: {self.reason}."
 
 
-def provider_config_key(provider: Optional[str]) -> str:
+def provider_config_key(provider: str | None) -> str:
     """Return the normalized key used under ``api_settings``."""
     return normalize_provider_config_key(provider)
 
@@ -140,7 +190,7 @@ def _requires_api_key(provider_key: str) -> bool:
     return provider_key not in KEYLESS_PROVIDER_KEYS
 
 
-def default_api_key_env_var(provider_key: str) -> Optional[str]:
+def default_api_key_env_var(provider_key: str) -> str | None:
     """Return the conventional environment variable for known keyed providers.
 
     Single source of truth for the ``<PROVIDER>_API_KEY`` naming convention
@@ -209,10 +259,10 @@ def _invalid_settings_readiness(
 
 
 def get_provider_readiness(
-    provider: Optional[str],
+    provider: str | None,
     app_config: Mapping[str, object],
     *,
-    environ: Optional[Mapping[str, str]] = None,
+    environ: Mapping[str, str] | None = None,
 ) -> ProviderReadiness:
     """Resolve whether the selected provider has enough credentials to send.
 
@@ -391,7 +441,7 @@ def chat_api_key_field_state(
 def chat_api_key_value_to_persist(
     new_value: object,
     field_state: ChatApiKeyFieldState,
-) -> Optional[str]:
+) -> str | None:
     """Return the API-key value to persist, or None to skip the write.
 
     Skips when the field is non-persistable, blank, a placeholder, or unchanged

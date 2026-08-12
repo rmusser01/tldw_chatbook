@@ -3,6 +3,7 @@
 import os
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import fields
 
 import pytest
 
@@ -12,6 +13,408 @@ from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
 )
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderReadinessSnapshot,
+    ProviderTestEvidence,
+    ProviderTestEvidenceStore,
+    provider_readiness_verdict,
+)
+
+
+def _evidence_identity(
+    *,
+    provider: str = "custom",
+    endpoint: str = "http://127.0.0.1:8001/v1/chat/completions",
+    credential_source: str = "none",
+    credential_revision: int = 0,
+    draft_generation: int = 1,
+) -> ProviderDraftIdentity:
+    return ProviderDraftIdentity(
+        provider_key=provider,
+        connection_identity=(provider, endpoint),
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+        draft_generation=draft_generation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "code", "verified"),
+    [
+        (
+            ProviderReadinessSnapshot("incomplete", "not_tested", "missing"),
+            "incomplete",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "not_tested", "missing"),
+            "model_missing",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "not_tested", "unconfirmed"),
+            "not_tested",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "testing", "unconfirmed"),
+            "testing",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "unreachable", "unconfirmed"),
+            "connection_failed",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot(
+                "configured", "model_listing_unavailable", "unconfirmed"
+            ),
+            "model_listing_unavailable",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "reachable", "unconfirmed"),
+            "model_unconfirmed",
+            False,
+        ),
+        (
+            ProviderReadinessSnapshot("configured", "reachable", "confirmed"),
+            "verified",
+            True,
+        ),
+    ],
+)
+def test_structured_readiness_verdicts(snapshot, code, verified):
+    verdict = provider_readiness_verdict(snapshot)
+
+    assert verdict.code == code
+    assert verdict.verified is verified
+
+
+def test_models_404_never_becomes_verified_or_connection_failed():
+    verdict = provider_readiness_verdict(
+        ProviderReadinessSnapshot(
+            configuration="configured",
+            endpoint="model_listing_unavailable",
+            model="unconfirmed",
+        )
+    )
+
+    assert verdict.code == "model_listing_unavailable"
+    assert verdict.verified is False
+    assert "chat endpoint not tested" in verdict.detail.lower()
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [
+        ("timeout", "timed out"),
+        ("connection_refused", "refused"),
+        ("unauthorized", "unauthorized"),
+        ("forbidden", "forbidden"),
+        ("http_status", "http status"),
+        ("invalid_payload", "invalid response"),
+        ("connection_error", "connection error"),
+    ],
+)
+def test_connection_failed_verdict_names_bounded_probe_category(category, expected):
+    snapshot = ProviderReadinessSnapshot(
+        "configured", "unreachable", "unconfirmed", category=category
+    )
+
+    verdict = provider_readiness_verdict(snapshot)
+
+    assert verdict.code == "connection_failed"
+    assert expected in verdict.detail.lower()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"configuration": "ready", "endpoint": "not_tested", "model": "missing"},
+        {"configuration": "configured", "endpoint": "failed", "model": "missing"},
+        {
+            "configuration": "configured",
+            "endpoint": "not_tested",
+            "model": "selected",
+        },
+    ],
+)
+def test_readiness_snapshot_rejects_unknown_facets(kwargs):
+    with pytest.raises(ValueError):
+        ProviderReadinessSnapshot(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"configuration": []},
+        {"endpoint": []},
+        {"model": []},
+        {"category": []},
+        {"category": "server-secret"},
+    ],
+)
+def test_readiness_snapshot_rejects_unhashable_facets_with_bounded_error(kwargs):
+    values = {
+        "configuration": "configured",
+        "endpoint": "not_tested",
+        "model": "missing",
+        "category": None,
+    }
+    values.update(kwargs)
+    with pytest.raises(ValueError):
+        ProviderReadinessSnapshot(**values)
+
+
+def test_late_test_result_cannot_attach_to_newer_draft():
+    store = ProviderTestEvidenceStore()
+    first_identity = _evidence_identity(draft_generation=1)
+    first = store.begin(first_identity)
+    second_identity = _evidence_identity(
+        endpoint="http://127.0.0.1:8002/v1/chat/completions",
+        draft_generation=2,
+    )
+    store.begin(second_identity)
+
+    assert not store.settle(
+        first,
+        ProviderTestEvidence(
+            identity=first_identity,
+            endpoint="reachable",
+            model_ids=("model-a",),
+        ),
+    )
+    assert store.evidence_for(second_identity).endpoint == "testing"
+
+
+def test_evidence_token_cannot_be_replayed_and_invalidate_clears_current_state():
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+    evidence = ProviderTestEvidence(identity, "reachable", ("model-a",))
+
+    assert store.settle(token, evidence)
+    assert not store.settle(token, evidence)
+    assert store.evidence_for(identity) == evidence
+    assert store.invalidate(identity)
+    assert store.evidence_for(identity) is None
+    assert not store.invalidate(identity)
+
+
+def test_older_generation_cannot_replace_current_testing_evidence():
+    store = ProviderTestEvidenceStore()
+    current = _evidence_identity(draft_generation=3)
+    store.begin(current)
+
+    with pytest.raises(ValueError):
+        store.begin(_evidence_identity(draft_generation=2))
+    assert store.evidence_for(current).endpoint == "testing"
+
+
+def test_evidence_for_requires_exact_semantic_identity():
+    store = ProviderTestEvidenceStore()
+    tested = _evidence_identity(draft_generation=4)
+    token = store.begin(tested)
+    assert store.settle(
+        token, ProviderTestEvidence(tested, "reachable", ("model-a",))
+    )
+
+    assert store.evidence_for(tested) is not None
+    assert store.evidence_for(_evidence_identity(draft_generation=5)) is None
+    assert (
+        store.evidence_for(
+            _evidence_identity(credential_source="draft", draft_generation=4)
+        )
+        is None
+    )
+    assert (
+        store.evidence_for(
+            _evidence_identity(credential_revision=1, draft_generation=4)
+        )
+        is None
+    )
+
+
+def test_probe_outcome_can_settle_without_retaining_summary_or_body():
+    from types import SimpleNamespace
+
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+    probe = SimpleNamespace(
+        state="reachable",
+        model_ids=("model-a", "model-b"),
+        category=None,
+        summary="secret-bearing server response must not be retained",
+        body="server-body-secret",
+    )
+
+    assert store.settle(token, probe)
+    evidence = store.evidence_for(identity)
+    assert evidence == ProviderTestEvidence(
+        identity, "reachable", ("model-a", "model-b")
+    )
+    assert "summary" not in repr(evidence)
+    assert "server-body-secret" not in repr(evidence)
+
+
+def test_probe_outcome_rejects_string_in_place_of_model_id_tuple():
+    from types import SimpleNamespace
+
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+
+    assert not store.settle(
+        token,
+        SimpleNamespace(state="reachable", model_ids="model-a", category=None),
+    )
+    assert store.evidence_for(identity).endpoint == "testing"
+
+
+def test_evidence_records_are_frozen_slotted_and_secret_free():
+    identity = _evidence_identity(credential_source="draft", credential_revision=9)
+    evidence = ProviderTestEvidence(identity, "reachable", ("model-a",))
+
+    assert [item.name for item in fields(ProviderDraftIdentity)] == [
+        "provider_key",
+        "connection_identity",
+        "credential_source",
+        "credential_revision",
+        "draft_generation",
+    ]
+    assert [item.name for item in fields(ProviderTestEvidence)] == [
+        "identity",
+        "endpoint",
+        "model_ids",
+        "category",
+    ]
+    assert not hasattr(identity, "__dict__")
+    assert not hasattr(evidence, "__dict__")
+    field_names = " ".join(item.name for item in fields(ProviderDraftIdentity))
+    assert "secret" not in field_names
+    assert "hash" not in field_names
+    assert "digest" not in field_names
+    assert "token" not in field_names
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"code": "anything", "detail": "bounded", "verified": False},
+        {"code": "verified", "detail": "bounded", "verified": False},
+        {"code": "not_tested", "detail": "bounded", "verified": True},
+        {"code": "not_tested", "detail": "x" * 257, "verified": False},
+        {"code": "not_tested", "detail": "unsafe\ncopy", "verified": False},
+        {"code": [], "detail": "bounded", "verified": False},
+    ],
+)
+def test_provider_readiness_verdict_rejects_invalid_construction(kwargs):
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderReadinessVerdict
+
+    with pytest.raises(ValueError):
+        ProviderReadinessVerdict(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"provider_key": "Custom"},
+        {"provider_key": "custom", "connection_identity": ("custom", "https://user:secret@example.test/v1/chat/completions")},
+        {"provider_key": "custom", "connection_identity": ("custom", "https://example.test/v1/chat/completions?token=secret")},
+        {"provider_key": "custom", "connection_identity": ("custom", "https://example.test/v1/chat/completions#secret")},
+        {"provider_key": "custom", "connection_identity": ("openai", "https://example.test/v1/chat/completions")},
+        {"credential_source": "vault"},
+        {"credential_source": []},
+        {"credential_revision": -1},
+        {"credential_revision": True},
+        {"draft_generation": -1},
+        {"draft_generation": True},
+    ],
+)
+def test_provider_draft_identity_rejects_noncanonical_or_secret_bearing_values(kwargs):
+    values = {
+        "provider_key": "custom",
+        "connection_identity": (
+            "custom",
+            "https://example.test/v1/chat/completions",
+        ),
+        "credential_source": "none",
+        "credential_revision": 0,
+        "draft_generation": 0,
+    }
+    values.update(kwargs)
+
+    with pytest.raises(ValueError):
+        ProviderDraftIdentity(**values)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("reachable", ("bad\nmodel",), None),
+        ("reachable", (" model-a",), None),
+        ("reachable", ("model-a", "model-a"), None),
+        ("reachable", tuple(f"model-{i}" for i in range(101)), None),
+        ("reachable", ("x" * 121,), None),
+        ("reachable", (), "timeout"),
+        ("unreachable", ("model-a",), "timeout"),
+        ("unreachable", (), "not-bounded"),
+        ("model_listing_unavailable", ("model-a",), "http_status"),
+        ("model_listing_unavailable", (), "timeout"),
+        ("testing", (), "timeout"),
+        ([], (), None),
+        ("unreachable", (), []),
+    ],
+)
+def test_provider_test_evidence_rejects_incoherent_or_unsafe_values(args):
+    endpoint, model_ids, category = args
+    with pytest.raises(ValueError):
+        ProviderTestEvidence(_evidence_identity(), endpoint, model_ids, category)
+
+
+def test_provider_readiness_snapshot_confirms_only_returned_model_choice():
+    readiness = get_provider_readiness(
+        "custom",
+        {"api_settings": {"custom": {}}},
+        environ={},
+    )
+    identity = _evidence_identity()
+    evidence = ProviderTestEvidence(
+        identity, "reachable", ("model-a", "model-b")
+    )
+
+    assert readiness.snapshot(selected_model="model-b", evidence=evidence) == (
+        ProviderReadinessSnapshot("configured", "reachable", "confirmed")
+    )
+    assert readiness.snapshot(selected_model="model-c", evidence=evidence).model == (
+        "unconfirmed"
+    )
+    assert readiness.snapshot(selected_model="", evidence=evidence).model == "missing"
+
+    failure = ProviderTestEvidence(identity, "unreachable", (), "timeout")
+    assert readiness.snapshot(
+        selected_model="model-b", evidence=failure
+    ).category == "timeout"
+
+
+def test_environment_rotation_is_resolved_on_each_readiness_call(monkeypatch):
+    app_config = {
+        "api_settings": {"openai": {"api_key_env_var": "ROTATING_OPENAI_KEY"}}
+    }
+    monkeypatch.setenv("ROTATING_OPENAI_KEY", "first-secret")
+    first = get_provider_readiness("openai", app_config)
+    monkeypatch.setenv("ROTATING_OPENAI_KEY", "second-secret")
+    second = get_provider_readiness("openai", app_config)
+    monkeypatch.delenv("ROTATING_OPENAI_KEY")
+    missing = get_provider_readiness("openai", app_config)
+
+    assert first.api_key == "first-secret"
+    assert second.api_key == "second-secret"
+    assert missing.ready is False
 
 
 def test_key_required_provider_reports_missing_key_without_value_leakage():

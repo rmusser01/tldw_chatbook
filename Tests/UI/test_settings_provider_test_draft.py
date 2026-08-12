@@ -1,26 +1,168 @@
 import os
-from unittest.mock import patch
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _static_text,
 )
-from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
     StyledSettingsDestinationHarness,
     _click_scrolled_settings_button,
     _open_settings_category,
     _wait_for_settings_text,
 )
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderTestEvidence,
+    ProviderTestEvidenceStore,
+)
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
     overlay_provider_draft_config,
 )
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+
+def _semantic_identity(
+    endpoint: str,
+    *,
+    provider_key: str = "custom",
+    credential_source: str = "none",
+    credential_revision: int = 0,
+    draft_generation: int = 1,
+) -> ProviderDraftIdentity:
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    connection_identity = canonical_connection_identity(provider_key, endpoint)
+    assert connection_identity is not None
+    return ProviderDraftIdentity(
+        provider_key=provider_key,
+        connection_identity=connection_identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+        draft_generation=draft_generation,
+    )
+
+
+def _settled_store(identity: ProviderDraftIdentity) -> ProviderTestEvidenceStore:
+    store = ProviderTestEvidenceStore()
+    token = store.begin(identity)
+    assert store.settle(
+        token,
+        ProviderTestEvidence(identity, "reachable", ("model-a", "model-b")),
+    )
+    return store
+
+
+def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
+    tested = _semantic_identity(
+        "https://example.test/proxy/v1/models", draft_generation=4
+    )
+    saved = _semantic_identity(
+        "https://example.test/proxy/v1/chat/completions", draft_generation=5
+    )
+    store = _settled_store(tested)
+
+    partial = ConfigMutationResult(True, False, "cache_reload")
+    assert not store.rebase_after_save(tested, saved, partial)
+    assert store.evidence_for(saved) is None
+
+    store = _settled_store(tested)
+    applied = ConfigMutationResult(True, True, None)
+    assert store.rebase_after_save(tested, saved, applied)
+    rebound = store.evidence_for(saved)
+    assert rebound is not None
+    assert rebound.identity == saved
+    assert rebound.model_ids == ("model-a", "model-b")
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        _semantic_identity(
+            "https://other.test/v1/chat/completions", draft_generation=2
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            provider_key="openai",
+            draft_generation=2,
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            credential_source="draft",
+            draft_generation=2,
+        ),
+        _semantic_identity(
+            "https://example.test/v1/chat/completions",
+            credential_revision=1,
+            draft_generation=2,
+        ),
+    ],
+)
+def test_successful_save_does_not_rebase_changed_semantics(changed):
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    store = _settled_store(tested)
+
+    assert not store.rebase_after_save(
+        tested, changed, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(changed) is None
+    assert store.evidence_for(tested) is None
+
+
+def test_model_choice_from_returned_ids_does_not_invalidate_endpoint_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=7
+    )
+    store = _settled_store(identity)
+
+    for selected_model in ("model-a", "model-b"):
+        evidence = store.evidence_for(identity)
+        assert evidence is not None
+        assert selected_model in evidence.model_ids
+
+
+def test_failed_save_does_not_rebase_evidence_to_saved_identity():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(False, False, "before_replace"),
+    )
+    assert store.evidence_for(saved) is None
+    assert store.evidence_for(tested) is not None
+
+
+def test_successful_save_cannot_rebase_to_an_older_draft_generation():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=3
+    )
+    older = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not store.rebase_after_save(
+        tested, older, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(older) is None
 
 
 def _base_config():
@@ -125,7 +267,7 @@ def test_findings_relabel_draft_api_key_source_and_hide_value():
     app_config = {"api_settings": {"openai": {"api_key": "fake-draft-key-not-real"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
-    detail, summary, passed = screen._build_provider_readiness_findings(
+    detail, summary, _passed = screen._build_provider_readiness_findings(
         "OpenAI", "gpt-4o", readiness,
         draft_endpoint="", dirty={"api_key"},
     )
@@ -202,7 +344,7 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     assert readiness.ready is True  # config-level readiness is fine...
 
-    detail, summary, passed = screen._build_provider_readiness_findings(
+    detail, _summary, passed = screen._build_provider_readiness_findings(
         "OpenAI", "", readiness,
         draft_endpoint="", dirty=set(),
     )
@@ -393,8 +535,19 @@ async def test_test_provider_button_click_runs_the_check():
         # Sanity: the test has not run yet (mount-time default copy only).
         assert _provider_test_result_text(screen) == "Provider test has not run."
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        probe = AsyncMock(
+            return_value=SimpleNamespace(
+                summary="reachable (1 model)", reachable=True
+            )
+        )
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "Provider test")
 
         result_text = _provider_test_result_text(screen)
         assert "Provider test" in result_text
@@ -433,8 +586,19 @@ async def test_test_provider_button_runs_with_provider_input_focused():
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.
         assert screen._settings_text_entry_has_focus() is True
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        probe = AsyncMock(
+            return_value=SimpleNamespace(
+                summary="reachable (1 model)", reachable=True
+            )
+        )
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+            probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "Provider test")
 
         assert "Provider test" in _provider_test_result_text(screen)
 
