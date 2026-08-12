@@ -87,15 +87,36 @@ LAB_SERVER_POLL_SECONDS = 2.0
 _SERVER_PROCESS_ATTRS = LAB_SERVER_SOURCES
 
 
-def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
-    """Cheap TCP probe for an externally-started Ollama server."""
-    import socket
+async def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
+    """Cheap TCP probe for an externally-started Ollama server.
 
+    task-15473: this used to be a blocking `socket.create_connection(...,
+    timeout=0.25)`, called directly from the Models screen's periodic
+    status timer -- instant on ECONNREFUSED, but a genuinely blackholed
+    port (firewalled/container setups) froze the WHOLE event loop for up
+    to the full 250ms, once per tick, since a synchronous socket call on
+    the loop thread blocks every other task in the process, not just this
+    one. `asyncio.open_connection` under the same 0.25s `wait_for` cap
+    keeps the exact semantics (up = connectable, down = refused or
+    timeout, same interval) but the wait yields the loop instead of
+    freezing it -- verified live (mutation-tested against the old
+    blocking implementation): a concurrent heartbeat task ticks dozens
+    of times during the wait against a real unresponsive address, versus
+    zero for the old blocking call in the same window (see
+    ``Tests/UI/test_llm_screen_ollama_probe_nonblocking.py``).
+    """
     try:
-        with socket.create_connection((host, port), timeout=0.25):
-            return True
-    except OSError:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=0.25
+        )
+    except (OSError, asyncio.TimeoutError):
         return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    return True
 
 
 class LLMScreen(LabScreen):

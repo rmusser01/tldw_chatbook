@@ -335,6 +335,14 @@ class MainNavigationBar(Container):
         # consumed as that automatic landing, never recorded as deliberate.
         self._settle_after_next_focus = False
         self._deliberate_focus_id: str | None = None
+        # task-15473: cheap fingerprint of everything `_update_overflow_hints`'
+        # downstream work (hint toggles, `_recenter_strip` scheduling, the
+        # ghost-check it chains into) depends on -- when the periodic 0.5s
+        # tick recomputes the same signature it stored last pass, nothing
+        # has moved and the whole pipeline is skipped. `None` never equals a
+        # real signature tuple, so the very first pass after mount always
+        # runs in full.
+        self._overflow_signature: tuple[object, ...] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
@@ -443,7 +451,25 @@ class MainNavigationBar(Container):
         self._mount_settled = True
 
     def _update_overflow_hints(self) -> None:
-        """Toggle the ‹ indicator from real scroll state."""
+        """Toggle the ‹ indicator from real scroll state.
+
+        task-15473: gated behind a cheap signature of everything the
+        downstream work actually depends on -- scroll position, the
+        strip's rendered and virtual (content) widths, and the set of
+        button ids currently in the strip. This is the callback for the
+        periodic 0.5s interval (`on_mount`), the first post-mount pass,
+        and `on_resize`'s deferred call; before this it ran the full
+        measure/toggle/recenter/ghost pipeline unconditionally on every
+        one of those triggers, forever, on every screen (verified: a
+        no-op tick used to still call `_refresh_overflow_hint_visibility`
+        and schedule `_recenter_strip` every 0.5s with nothing having
+        moved). When the signature is unchanged since the last full pass,
+        every one of those is skipped -- geometry that has not moved
+        cannot need a different hint state or scroll position, so this
+        is behavior-neutral, not merely "probably fine": any scroll, any
+        resize, and any button being added or removed changes the
+        signature and forces a full pass on the very next tick.
+        """
         # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
         if not self.is_attached or not self.screen.is_active:
             return
@@ -456,6 +482,15 @@ class MainNavigationBar(Container):
             scroll_x = strip.scroll_x
         except Exception:
             return
+        signature = (
+            scroll_x,
+            strip.region.width,
+            strip.virtual_size.width,
+            tuple(child.id for child in strip.children),
+        )
+        if signature == self._overflow_signature:
+            return
+        self._overflow_signature = signature
         # Left hint tracks position (more destinations hidden on the left);
         # the right affordance's visibility is width-driven, re-evaluated by
         # `_refresh_overflow_hint_visibility` (NV-01 reclaimable-space math).
@@ -464,9 +499,10 @@ class MainNavigationBar(Container):
         # Layout settles asynchronously (hint toggles change the strip's
         # width, fonts finish, etc.), so keep the active destination (or,
         # while it differs, the keyboard-focused button -- see
-        # `_recenter_strip`, review rounds 2-3) pinned every tick instead
-        # of only when a hint changed state — the call is idempotent and
-        # cheap.
+        # `_recenter_strip`, review rounds 2-3) pinned every time the
+        # signature above moves — the call is idempotent and cheap, and
+        # the signature already changing here is what used to be covered
+        # by calling it unconditionally every tick.
         self.call_after_refresh(self._recenter_strip)
 
     def on_resize(self) -> None:

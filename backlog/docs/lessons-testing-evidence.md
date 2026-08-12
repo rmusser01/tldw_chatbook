@@ -9,6 +9,38 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A "slow-accept listener" does not delay TCP connect() — it delays accept()
+
+**TASK-15473, 2026-08-11.** Writing an evidence test that the event loop stays
+responsive during a non-blocking socket probe, the task's own brief suggested "a
+slow-accept listener" as the portable way to simulate an unresponsive server. Timed
+directly before writing the test: a real `socket.listen()`ing server that never calls
+`accept()` still let a client's `socket.create_connection()` complete in ~7ms. TCP's
+three-way handshake completes at the OS kernel level as soon as a connection is
+queued in the listen backlog — independent of whether the application ever calls
+`accept()`. A "slow-accept" listener therefore cannot be used to create connect-side
+delay; it only delays whatever happens *after* the client tries to read/write, which
+this probe (connect-then-immediately-close, no data exchange) never does.
+
+What actually produced a real, mutation-verified delay: connecting to a private,
+non-routed address (`10.255.255.1`) that neither answers the SYN nor sends back an
+ICMP unreachable — a genuine kernel-level "black hole" — measured to hang for the
+full requested timeout in this sandbox (no immediate "network unreachable"). The
+resulting test caught a real regression: reverting the probe to a blocking
+`socket.create_connection` call inside the coroutine dropped a 5ms-period heartbeat
+task from ~44 ticks to 0 during the same ~0.25s window.
+
+**What to do.** Before trusting "slow accept" (or similar accept-side framing) to
+simulate a connect-side timeout in a test, time it directly — a bound-and-listening
+socket with a deliberately delayed `accept()` will not slow down a bare `connect()`
+on any common OS. For a genuine connect-timeout test, either use a real black-hole
+address (accepting the environment-dependence, verify empirically first) or
+mutation-test whatever mechanism you do use against the blocking equivalent it's
+supposed to replace — the ~44-vs-0 heartbeat contrast is what proved this test was
+not vacuous.
+
+---
+
 ## Style probes are not render evidence — capture the frame
 
 **TASK-15421 AC3, 2026-08-11.** The Studio exact-ID input's typed text
