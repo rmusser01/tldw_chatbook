@@ -640,13 +640,17 @@ class PromptsDatabase:
         except Exception as e:
             if not in_outer:
                 logging.error(
-                    f"Transaction failed, rolling back: {type(e).__name__} - {e}"
+                    "PromptsDatabase.transaction: rolling back category={}",
+                    type(e).__name__,
                 )
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")
                 except sqlite3.Error as rb_err:
-                    logging.opt(exception=True).error(f"Rollback FAILED: {rb_err}")
+                    logging.error(
+                        "PromptsDatabase.transaction: rollback failed category={}",
+                        type(rb_err).__name__,
+                    )
             raise e
 
     # --- Schema Initialization and Migration ---
@@ -1716,8 +1720,9 @@ class PromptsDatabase:
                 },
             )
 
-            logger.opt(exception=True).error(
-                f"Error adding/updating prompt '{name}': {e}"
+            logger.error(
+                "PromptsDatabase.add_prompt: operation failed category={}",
+                error_type,
             )
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
