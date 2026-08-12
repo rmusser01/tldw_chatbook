@@ -17556,7 +17556,12 @@ class ChatScreen(BaseAppScreen):
             meta = getattr(message, "video_metadata", None)
             if meta is None:
                 continue
-            path = store.resolve(self._video_storage_message_id(message), meta.name)
+            extension = canonical_video_extension(meta.container)
+            path = store.resolve(
+                self._video_storage_message_id(message),
+                meta.name,
+                extension=extension,
+            )
             specs[message.id] = ConsoleVideoCardSpec(
                 message_id=message.id,
                 meta=meta,
@@ -18635,8 +18640,11 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
+        extension = canonical_video_extension(meta.container)
         path = self._ensure_console_video_store().resolve(
-            self._video_storage_message_id(message), meta.name
+            self._video_storage_message_id(message),
+            meta.name,
+            extension=extension,
         )
         if path is None:
             await self._sync_native_console_chat_ui()
@@ -18693,8 +18701,11 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
+        extension = canonical_video_extension(meta.container)
         path = self._ensure_console_video_store().resolve(
-            self._video_storage_message_id(message), meta.name
+            self._video_storage_message_id(message),
+            meta.name,
+            extension=extension,
         )
         if path is None:
             await self._sync_native_console_chat_ui()
@@ -18713,10 +18724,10 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             save_location.mkdir(parents=True, exist_ok=True)
-            target = save_location / f"{meta.name}.mp4"
+            target = save_location / f"{meta.name}.{extension}"
             counter = 1
             while target.exists():
-                target = save_location / f"{meta.name}_{counter}.mp4"
+                target = save_location / f"{meta.name}_{counter}.{extension}"
                 counter += 1
             shutil.copy2(path, target)
             return target
