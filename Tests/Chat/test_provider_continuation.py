@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+import tldw_chatbook.Chat.provider_continuation as continuation_module
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationConflictError,
@@ -172,6 +173,54 @@ def test_schema_preserves_call_order_and_allows_repeated_function_names() -> Non
         "calculator",
         "calculator",
     ]
+
+
+@pytest.mark.parametrize("prior_state", ["pending", "executing"])
+def test_invalid_nonfinal_round_cannot_retain_nonterminal_calls(
+    prior_state: str,
+) -> None:
+    value = _checkpoint(
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["prior"],
+                "calls": [_call("prior", state=prior_state)],
+            },
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["current"],
+                "calls": [_call("current")],
+            },
+        ]
+    )
+
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
+
+
+def test_schema_allows_later_round_after_prior_calls_are_terminal() -> None:
+    value = _checkpoint(
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["prior"],
+                "calls": [
+                    _call("completed", state="completed", result="ok"),
+                    _call("failed", state="failed", result="denied"),
+                ],
+            },
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["current"],
+                "calls": [_call("current")],
+            },
+        ]
+    )
+
+    parsed = parse_provider_continuation_json(value)
+
+    assert [call.state for call in parsed.rounds[0].calls] == ["completed", "failed"]
+    assert parsed.rounds[1].calls[0].state == "pending"
 
 
 @pytest.mark.parametrize(
@@ -397,6 +446,130 @@ def test_invalid_empty_call_rounds_are_rejected_outside_final_k3_exception(
         parse_provider_continuation_json(value)
 
 
+def test_schema_accepts_complete_k3_tool_round_followed_by_final_reasoning_round() -> (
+    None
+):
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["tool reasoning"],
+                "calls": [_call("tool", state="completed", result="ok")],
+            },
+            {
+                "assistant_content": "Visible final answer",
+                "reasoning_blocks": ["final reasoning"],
+                "calls": [],
+            },
+        ],
+    )
+
+    parsed = parse_provider_continuation_json(value)
+
+    assert parsed.rounds[0].calls[0].state == "completed"
+    assert parsed.rounds[-1].calls == ()
+    assert parsed.rounds[-1].reasoning_blocks == ("final reasoning",)
+
+
+def test_schema_accepts_active_k3_tool_round_without_final_reasoning_round() -> None:
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="active",
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["tool reasoning"],
+                "calls": [_call("tool")],
+            }
+        ],
+    )
+
+    assert parse_provider_continuation_json(value).rounds[0].calls[0].state == "pending"
+
+
+def test_invalid_complete_k3_tool_only_checkpoint_requires_final_reasoning_round() -> (
+    None
+):
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["tool reasoning"],
+                "calls": [_call("tool", state="completed", result="ok")],
+            }
+        ],
+    )
+
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "not-kimi-k3-fake",
+        "kimi-k3-fake",
+        "not-kimi-k3",
+        "moonshot/kimi-k3",
+        "KIMI-K3",
+        "kimi_k3",
+        "kimi-k30",
+    ],
+)
+def test_invalid_k3_reasoning_only_exception_requires_exact_model_id(
+    model: str,
+) -> None:
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model=model,
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "Visible final answer",
+                "reasoning_blocks": ["final reasoning"],
+                "calls": [],
+            }
+        ],
+    )
+
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
+
+
+def test_schema_k3_reasoning_only_exception_accepts_exact_model_id() -> None:
+    value = _checkpoint(
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=[
+            {
+                "assistant_content": "Visible final answer",
+                "reasoning_blocks": ["final reasoning"],
+                "calls": [],
+            }
+        ],
+    )
+
+    assert parse_provider_continuation_json(value).model == "kimi-k3"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -484,6 +657,19 @@ def test_bounds_reject_excessive_nodes_across_the_whole_payload() -> None:
 
     with pytest.raises(ContinuationValidationError):
         parse_provider_continuation_json(value)
+
+
+@pytest.mark.parametrize(
+    "decoded",
+    [
+        [None] * 100_001,
+        {str(index): None for index in range(50_001)},
+    ],
+    ids=["list", "dict"],
+)
+def test_bounds_reject_normal_decoded_immediate_children(decoded: object) -> None:
+    with pytest.raises(continuation_module._InvalidContinuation):
+        continuation_module._json_shape(decoded)
 
 
 def test_bounds_reject_payloads_over_eight_mib_before_json_decode() -> None:

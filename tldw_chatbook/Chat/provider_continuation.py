@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
@@ -33,7 +32,7 @@ _MAX_JSON_DEPTH = 32
 _MAX_JSON_NODES = 100_000
 _INVALID_MESSAGE = "Invalid continuation data."
 _DISCARDED_WARNING = "Exact tool continuation was discarded."
-_KIMI_K3_MODEL = re.compile(r"(?:^|[/_-])kimi[/_-]?k3(?:$|[./_-])", re.IGNORECASE)
+_KIMI_K3_MODEL = "kimi-k3"
 
 _TOP_LEVEL_KEYS = frozenset(
     {
@@ -205,7 +204,7 @@ def _strict_json_loads(value: str) -> object:
 
 
 def _exact_mapping(value: object, keys: frozenset[str]) -> Mapping[str, object]:
-    if not isinstance(value, Mapping) or set(value) != keys:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != keys:
         _fail()
     return cast(Mapping[str, object], value)
 
@@ -257,11 +256,20 @@ def _json_shape(value: object) -> tuple[int, int]:
         if nodes > _MAX_JSON_NODES or depth > _MAX_JSON_DEPTH:
             _fail()
         maximum_depth = max(maximum_depth, depth)
-        if isinstance(item, Mapping):
-            pending.extend((key, depth + 1) for key in item)
-            pending.extend((nested, depth + 1) for nested in item.values())
-        elif isinstance(item, list):
-            pending.extend((nested, depth + 1) for nested in item)
+        if type(item) is dict:
+            mapping = cast(dict[object, object], item)
+            child_count = len(mapping) * 2
+            if nodes + len(pending) + child_count > _MAX_JSON_NODES:
+                _fail()
+            for key, nested in mapping.items():
+                pending.append((key, depth + 1))
+                pending.append((nested, depth + 1))
+        elif type(item) is list:
+            sequence = cast(list[object], item)
+            if nodes + len(pending) + len(sequence) > _MAX_JSON_NODES:
+                _fail()
+            for nested in sequence:
+                pending.append((nested, depth + 1))
         elif type(item) is float:
             if not math.isfinite(item):
                 _fail()
@@ -281,7 +289,7 @@ def _parse_arguments(value: object) -> tuple[str, int, int]:
 
 
 def _parse_call(value: object) -> tuple[ContinuationCall, int, int]:
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         _fail()
     item = cast(Mapping[str, object], value)
     keys = set(item)
@@ -479,6 +487,10 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
 
     for index, round_ in enumerate(rounds):
         if round_.calls:
+            if index != len(rounds) - 1 and any(
+                call.state not in _TERMINAL_CALL_STATES for call in round_.calls
+            ):
+                _fail()
             if state == "complete" and any(
                 call.state not in _TERMINAL_CALL_STATES for call in round_.calls
             ):
@@ -488,10 +500,17 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
             provider != "moonshot"
             or state != "complete"
             or index != len(rounds) - 1
-            or _KIMI_K3_MODEL.search(model) is None
+            or model != _KIMI_K3_MODEL
             or not any(block.strip() for block in round_.reasoning_blocks)
         ):
             _fail()
+    if (
+        provider == "moonshot"
+        and state == "complete"
+        and model == _KIMI_K3_MODEL
+        and rounds[-1].calls
+    ):
+        _fail()
 
     checkpoint = ProviderContinuationCheckpoint(
         schema_version=1,
