@@ -469,28 +469,36 @@ class AudioCppAdapter:
 
     def preflight_clone_dependency(
         self,
-        request: TTSRequest,
         requirement: TTSCloneRecipeRequirement,
     ) -> None:
         """Compare exact Guided recipe/model configuration without readiness work."""
 
         self.preflight_clone_source()
-        if (
-            type(request) is not TTSRequest
-            or type(requirement) is not TTSCloneRecipeRequirement
-            or request.model_id != requirement.model_id
-        ):
+        if type(requirement) is not TTSCloneRecipeRequirement:
             raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
-        recipe = self._guided_recipe_for_model(request.model_id)
+        recipe = self._guided_recipe_for_model(requirement.model_id)
         if (
             recipe is None
             or recipe.recipe_id != requirement.recipe_id
             or recipe.recipe_revision != requirement.recipe_revision
             or "clone" not in recipe.capabilities
-            or not recipe.admits_voice_reference(
-                has_voice=request.voice is not None,
-                has_reference=True,
-            )
+        ):
+            raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        """Apply clone voice/reference policy to one exact resolved request."""
+
+        self.preflight_clone_dependency(requirement)
+        if type(request) is not TTSRequest or request.model_id != requirement.model_id:
+            raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
+        recipe = self._guided_recipe_for_model(request.model_id)
+        if recipe is None or not recipe.admits_voice_reference(
+            has_voice=request.voice is not None,
+            has_reference=True,
         ):
             raise self._operation_error(_DEPENDENCY_CHANGED, uuid4().hex) from None
 

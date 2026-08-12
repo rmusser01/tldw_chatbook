@@ -405,10 +405,30 @@ def validate_audio_cpp_guided_dependency_snapshot(
     if not pending_configuration and saved_requirement != applied_requirement:
         return None
     if applied_requirement == exact_requirement:
-        return value if state == "exact" else None
-    if pending_configuration and saved_requirement == exact_requirement:
-        return value if state == "pending" else None
-    return value if state in {"missing", "mismatch"} else None
+        valid = state == "exact"
+    elif pending_configuration and saved_requirement == exact_requirement:
+        valid = state == "pending"
+    else:
+        valid = state in {"missing", "mismatch"}
+    if not valid:
+        return None
+    if state == "exact":
+        canonical_state: AudioCppGuidedDependencyState = "exact"
+    elif state == "missing":
+        canonical_state = "missing"
+    elif state == "mismatch":
+        canonical_state = "mismatch"
+    else:
+        canonical_state = "pending"
+    return AudioCppGuidedDependencySnapshot(
+        state=canonical_state,
+        provider_configuration_revision=provider_revision,
+        saved_generation=saved_generation,
+        applied_generation=applied_generation,
+        pending_configuration=pending_configuration,
+        saved_requirement=saved_requirement,
+        applied_requirement=applied_requirement,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1238,8 +1258,6 @@ class TTSService:
     async def _preflight_audio_cpp_clone_dependency(
         self,
         requirement: TTSCloneRecipeRequirement,
-        *,
-        voice: str | None,
     ) -> None:
         """Repeat exact applied adapter configuration checks before readiness."""
 
@@ -1255,16 +1273,7 @@ class TTSService:
                     operation_id=uuid4().hex,
                     recovery_action="refresh",
                 ) from None
-            adapter.preflight_clone_dependency(
-                TTSRequest(
-                    provider_id="audio_cpp",
-                    model_id=requirement.model_id,
-                    text="preflight",
-                    voice=voice,
-                    response_format="wav",
-                ),
-                requirement,
-            )
+            adapter.preflight_clone_dependency(requirement)
         except BaseException as error:
             await _cleanup_preserving_primary(lease.release, error)
             raise
@@ -1319,7 +1328,10 @@ class TTSService:
                             operation_id=uuid4().hex,
                             recovery_action="refresh",
                         ) from None
-                    adapter.preflight_clone_dependency(request, clone_requirement)
+                    adapter.preflight_clone_request_dependency(
+                        request,
+                        clone_requirement,
+                    )
             except BaseException as error:
                 await _cleanup_preserving_primary(lease.release, error)
                 reservation.release_if_untransferred()
@@ -2522,13 +2534,13 @@ class TTSService:
             state = "mismatch"
         elif applied_observation.state == "exact":
             state = "exact"
+        elif pending and saved_observation.state == "exact":
+            state = "pending"
         elif (
             applied_observation.state == "mismatch"
             or saved_observation.state == "mismatch"
         ):
             state = "mismatch"
-        elif pending and saved_observation.state == "exact":
-            state = "pending"
         else:
             state = "missing"
         return AudioCppGuidedDependencySnapshot(

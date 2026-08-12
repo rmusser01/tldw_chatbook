@@ -801,6 +801,12 @@ class TTSNativeCloneDependencyAdapter(Protocol):
 
     def preflight_clone_dependency(
         self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        raise NotImplementedError
+
+    def preflight_clone_request_dependency(
+        self,
         request: TTSRequest,
         requirement: TTSCloneRecipeRequirement,
     ) -> None:

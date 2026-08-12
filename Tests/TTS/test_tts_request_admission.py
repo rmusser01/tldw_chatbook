@@ -65,7 +65,10 @@ from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
-from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
+from tldw_chatbook.TTS.studio_preferences import (
+    StudioTTSPreferencesSnapshot,
+    StudioTTSSelectionOverrides,
+)
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
@@ -421,10 +424,17 @@ class _CloneCapturingAdapter(_CapturingAdapter):
 
     def preflight_clone_dependency(
         self,
-        request: TTSRequest,
         requirement: TTSCloneRecipeRequirement,
     ) -> None:
         self.events.append("dependency_preflight")
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        self.preflight_clone_dependency(requirement)
+        self.events.append("request_dependency_preflight")
         if request.model_id != requirement.model_id:
             raise RuntimeError("dependency drift")
 
@@ -1396,15 +1406,15 @@ async def test_post_ready_recipe_drift_blocks_before_private_materialization(
             applied_requirement=current,
         )
 
+    async def resolver(*_args: object) -> TTSCloneReference:
+        return _clone_reference(requirement)
+
     service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
     preview = STTSPlaygroundProfilePreview(
         profile_id=UUID("77777777-7777-4777-8777-777777777777"),
         repository_generation=7,
         profile_revision=4,
     )
-
-    async def resolver(*_args: object) -> TTSCloneReference:
-        return _clone_reference(requirement)
 
     draft = TTSStudioDraftSelection(
         selection=TTSSelectionOverrides(
@@ -1435,6 +1445,7 @@ async def test_post_ready_recipe_drift_blocks_before_private_materialization(
             "dependency_preflight",
             "preflight",
             "dependency_preflight",
+            "request_dependency_preflight",
             "capability",
             "capability_released",
         ]
@@ -1453,7 +1464,6 @@ async def test_exact_pure_dependency_still_requires_adapter_config_preflight(
     class _DriftedAdapter(_CloneCapturingAdapter):
         def preflight_clone_dependency(
             self,
-            request: TTSRequest,
             requirement: TTSCloneRecipeRequirement,
         ) -> None:
             self.events.append("dependency_preflight_rejected")
@@ -1530,6 +1540,245 @@ async def test_exact_pure_dependency_still_requires_adapter_config_preflight(
         assert adapter.catalog_calls == 0
         assert registry._total_leases() == 0
         assert not runtime_root.exists()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+class _PolicyCloneAdapter(_CloneCapturingAdapter):
+    def __init__(self, *, voice_required: bool) -> None:
+        super().__init__()
+        self.voice_required = voice_required
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        super().preflight_clone_request_dependency(request, requirement)
+        if (request.voice is not None) is self.voice_required:
+            return
+        raise TTSOperationError(
+            code="dependency_changed",
+            message="The clone voice dependency changed",
+            retryable=False,
+            operation_id="bounded",
+            recovery_action="open_settings",
+        )
+
+
+@pytest.mark.asyncio
+async def test_clone_reference_only_policy_uses_explicit_voice_override(
+    tmp_path: Any,
+) -> None:
+    adapter = _PolicyCloneAdapter(voice_required=False)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+    )
+    runtime_root = tmp_path / "clone-runtime"
+    service._clone_materializer = TTSCloneReferenceMaterializer(runtime_root)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=7,
+        profile_revision=4,
+        profile_id=UUID("77777777-7777-4777-8777-777777777777"),
+        reference=_clone_reference(requirement),
+    )
+
+    async def exact(current: TTSCloneRecipeRequirement):
+        return generation_module.AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=1,
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            await service.synthesize_effective(
+                text="Character response.",
+                explicit=TTSSelectionOverrides(
+                    voice_mode="exact",
+                    voice_id="explicit-voice",
+                ),
+                character_profile=character,
+            )
+
+        assert caught.value.code == "dependency_changed"
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert adapter.clone_requests == []
+        assert not runtime_root.exists()
+        assert registry._total_leases() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("voice_source", ("studio_saved", "global"))
+async def test_clone_reference_only_policy_uses_inherited_studio_voice(
+    tmp_path: Any,
+    voice_source: str,
+) -> None:
+    adapter = _PolicyCloneAdapter(voice_required=False)
+    global_preferences = _snapshot(
+        model_id="clone-model",
+        voice_mode="exact",
+        voice_id="global-voice",
+    )
+    saved = StudioTTSPreferencesSnapshot(
+        revision=2,
+        selection=(
+            StudioTTSSelectionOverrides(
+                voice_mode="exact",
+                voice_id="saved-voice",
+            )
+            if voice_source == "studio_saved"
+            else StudioTTSSelectionOverrides()
+        ),
+    )
+    service, registry = _native_service(
+        adapter,
+        global_preferences,
+        studio_preferences_loader=lambda: saved,
+    )
+    runtime_root = tmp_path / "clone-runtime"
+    service._clone_materializer = TTSCloneReferenceMaterializer(runtime_root)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+    preview = STTSPlaygroundProfilePreview(
+        profile_id=UUID("88888888-8888-4888-8888-888888888888"),
+        repository_generation=7,
+        profile_revision=4,
+    )
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=saved.revision,
+        preview=True,
+    )
+
+    async def exact(current: TTSCloneRecipeRequirement):
+        return generation_module.AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=1,
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    async def resolver(*_args: object) -> TTSCloneReference:
+        return _clone_reference(requirement)
+
+    service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            await service.synthesize_effective(
+                text="Profile preview.",
+                studio_draft=draft,
+                studio_preferences=saved,
+                profile_preview=preview,
+                profile_reference_resolver=resolver,
+            )
+
+        assert caught.value.code == "dependency_changed"
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert adapter.clone_requests == []
+        assert not runtime_root.exists()
+        assert registry._total_leases() == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_clone_both_required_policy_rejects_missing_effective_voice(
+    tmp_path: Any,
+) -> None:
+    adapter = _PolicyCloneAdapter(voice_required=True)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+    )
+    runtime_root = tmp_path / "clone-runtime"
+    service._clone_materializer = TTSCloneReferenceMaterializer(runtime_root)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=7,
+        profile_revision=4,
+        profile_id=UUID("77777777-7777-4777-8777-777777777777"),
+        reference=_clone_reference(requirement),
+    )
+
+    async def exact(current: TTSCloneRecipeRequirement):
+        return generation_module.AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=1,
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            await service.synthesize_effective(
+                text="Character response.",
+                character_profile=character,
+            )
+
+        assert caught.value.code == "dependency_changed"
+        assert adapter.ensure_ready_calls == 0
+        assert adapter.catalog_calls == 0
+        assert adapter.clone_requests == []
+        assert not runtime_root.exists()
+        assert registry._total_leases() == 0
     finally:
         await service.close()
         await service.wait_closed()

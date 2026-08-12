@@ -388,14 +388,7 @@ class TTSRequestAdmissionCoordinator:
             )
             if requirement is not None:
                 await self._service._require_audio_cpp_clone_dependency(requirement)
-                await self._service._preflight_audio_cpp_clone_dependency(
-                    requirement,
-                    voice=self._candidate_clone_voice(
-                        character_profile=character_profile,
-                        default_profile=default_profile,
-                        studio_draft=studio_draft,
-                    ),
-                )
+                await self._service._preflight_audio_cpp_clone_dependency(requirement)
             reservation = await self._service._reserve_operation_capacity()
             while True:
                 projected_provider = self._effective_settings.project_provider(
@@ -622,18 +615,6 @@ class TTSRequestAdmissionCoordinator:
         if profile is None or profile.reference is None:
             return None
         return profile.reference.recipe_requirement
-
-    @staticmethod
-    def _candidate_clone_voice(
-        *,
-        character_profile: TTSCharacterProfileSelection | None,
-        default_profile: TTSDefaultProfileSelection | None,
-        studio_draft: TTSStudioDraftSelection | None,
-    ) -> str | None:
-        if studio_draft is not None:
-            return studio_draft.selection.voice_id
-        profile = character_profile or default_profile
-        return None if profile is None else profile.selection.voice_id
 
     @staticmethod
     def _resolve_clone_execution(

@@ -2624,7 +2624,39 @@ def test_guided_dependency_snapshot_validator_enforces_full_producer_matrix(
         requirement,
     )
 
-    assert (validated is snapshot) is expected
+    assert (validated is not None) is expected
+    if expected:
+        assert validated == snapshot
+        assert validated is not snapshot
+        if snapshot.saved_requirement is not None:
+            assert validated.saved_requirement is not snapshot.saved_requirement
+        if snapshot.applied_requirement is not None:
+            assert validated.applied_requirement is not snapshot.applied_requirement
+
+
+def test_guided_dependency_snapshot_validation_owns_canonical_evidence() -> None:
+    source_requirement = _guided_requirement()
+    source = tts_generation.AudioCppGuidedDependencySnapshot(
+        state="exact",
+        provider_configuration_revision=4,
+        saved_generation=1,
+        applied_generation=1,
+        pending_configuration=False,
+        saved_requirement=source_requirement,
+        applied_requirement=source_requirement,
+    )
+
+    validated = tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+        source,
+        source_requirement,
+    )
+    assert validated is not None
+    object.__setattr__(source_requirement, "model_id", "hostile-model")
+    object.__setattr__(source, "state", "mismatch")
+
+    assert validated.state == "exact"
+    assert validated.saved_requirement == _guided_requirement()
+    assert validated.applied_requirement == _guided_requirement()
 
 
 @pytest.mark.parametrize(
@@ -2901,6 +2933,7 @@ async def test_guided_dependency_snapshot_reports_pending_saved_configuration() 
         ("applied_absent_saved_exact", "pending"),
         ("applied_absent_saved_absent", "missing"),
         ("applied_absent_saved_drift", "mismatch"),
+        ("applied_drift_saved_exact", "pending"),
         ("applied_exact_saved_drift", "exact"),
     ),
 )
@@ -2911,7 +2944,12 @@ async def test_guided_dependency_snapshot_applied_saved_precedence_matrix(
     exact_config = _guided_clone_config()
     drift_config = _guided_clone_config()
     drift_config["guided_packages"][0]["projection"]["family"] = "drifted_family"
-    applied_config = exact_config if case.startswith("applied_exact") else {}
+    if case.startswith("applied_exact"):
+        applied_config = exact_config
+    elif case.startswith("applied_drift"):
+        applied_config = drift_config
+    else:
+        applied_config = {}
     if case.endswith("saved_exact"):
         saved_config = exact_config
     elif case.endswith("saved_drift"):
