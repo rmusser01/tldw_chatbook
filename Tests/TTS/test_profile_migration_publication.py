@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict, fields, is_dataclass
 import errno
 from hashlib import sha256
 import importlib
+import inspect
 import json
 import os
 import sqlite3
@@ -399,6 +401,72 @@ def test_initial_journal_authority_detects_substitutions_and_redacts_evidence(
     assert all(value not in repr(row) for value in private_values)
 
 
+def test_parsed_authority_is_not_dataclass_flattenable_or_introspectable(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    journal_module = importlib.import_module(
+        "tldw_chatbook.TTS.profile_migration_journal"
+    )
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    parsed = module.parse_profile_migration_journal(
+        _encoded_journal(module, tmp_path, rows)
+    )
+    row = parsed.recovery_rows[0]
+    identity = tmp_path.stat()
+    evidence = journal_module._ArtifactEvidence(
+        identity.st_dev,
+        identity.st_ino + 9,
+        37,
+        b"\xab" * 32,
+        4,
+    )
+    private_attribute_names = {
+        "dev",
+        "ino",
+        "byte_length",
+        "sha256_digest",
+        "schema_version",
+        "_candidate_evidence",
+        "_prior_evidence",
+        "_parent_dev",
+        "_parent_ino",
+        "_authority_checksum",
+    }
+    private_values = {
+        str(identity.st_dev),
+        str(identity.st_ino),
+        str(identity.st_ino + 9),
+        (b"\xab" * 32).hex(),
+    }
+
+    for value in (parsed, row, evidence):
+        assert not is_dataclass(value)
+        with pytest.raises(TypeError):
+            asdict(value)
+        with pytest.raises(TypeError):
+            fields(value)
+        with pytest.raises(TypeError):
+            vars(value)
+        assert private_attribute_names.isdisjoint(dir(value))
+
+        structured = {
+            name: repr(member)
+            for name, member in inspect.getmembers(value)
+            if not callable(member)
+        }
+        rendered = json.dumps(structured, sort_keys=True)
+        assert all(private not in rendered for private in private_values)
+
+
 def test_later_journal_frames_bind_without_repeating_authority(tmp_path: Path) -> None:
     module = _publication_module()
     slot = module.ProfileMigrationPublicationSlot
@@ -565,14 +633,14 @@ def test_classification_rejects_ambiguous_authority_match(tmp_path: Path) -> Non
         b"\x01" * 32,
         4,
     )
-    row = module.ProfileMigrationJournalSlot(
+    row = module.ProfileMigrationJournalSlot._with_authority(
         slot=module.ProfileMigrationPublicationSlot.ACTIVE,
         candidate=".candidate",
         target="profiles.sqlite3",
         rollback=".profiles.sqlite3.active.rollback",
         had_prior=True,
-        _candidate_evidence=evidence,
-        _prior_evidence=evidence,
+        candidate_evidence=evidence,
+        prior_evidence=evidence,
     )
 
     assert (
@@ -818,9 +886,9 @@ def test_parser_rejects_canonical_but_illegal_complete_transition() -> None:
         ),
     )
     prepared = _encoded_journal(module, Path.cwd(), rows)
-    authority = module.parse_profile_migration_journal(prepared)
+    authority_checksum = bytes.fromhex(json.loads(prepared)["checksum"])
     complete = module._encode_later_journal(
-        authority._authority_checksum,
+        authority_checksum,
         phase="complete",
     )
 

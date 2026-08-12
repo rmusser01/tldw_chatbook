@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
@@ -38,26 +37,246 @@ class ProfileMigrationPublicationStage(StrEnum):
     FINAL_JOURNAL_DURABLE = "final_journal_durable"
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+class _ArtifactAuthorityCapsule:
+    """Non-serializable exact artifact authority."""
+
+    __slots__ = ("__values",)
+    __values: tuple[int, int, int, bytes, int]
+
+    def __init__(
+        self,
+        dev: int,
+        ino: int,
+        byte_length: int,
+        sha256_digest: bytes,
+        schema_version: int,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_ArtifactAuthorityCapsule__values",
+            (dev, ino, byte_length, sha256_digest, schema_version),
+        )
+
+    def __repr__(self) -> str:
+        return "_ArtifactAuthorityCapsule(<private>)"
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
+
+    def identity(self) -> tuple[int, int]:
+        dev, ino, _, _, _ = self.__values
+        return dev, ino
+
+    def schema_is(self, schema_version: int) -> bool:
+        return self.__values[4] == schema_version
+
+    def payload(self) -> dict[str, object]:
+        dev, ino, byte_length, digest, schema_version = self.__values
+        return {
+            "byte_length": byte_length,
+            "dev": dev,
+            "ino": ino,
+            "schema_version": schema_version,
+            "sha256": digest.hex(),
+        }
+
+    def matches(
+        self,
+        identity: os.stat_result,
+        *,
+        byte_length: int,
+        sha256_digest: bytes,
+        schema_version: int,
+    ) -> bool:
+        dev, ino, expected_length, expected_digest, expected_schema = self.__values
+        return (
+            identity.st_dev == dev
+            and identity.st_ino == ino
+            and byte_length == expected_length
+            and sha256_digest == expected_digest
+            and schema_version == expected_schema
+        )
+
+
+class _ArtifactEvidence:
+    """Opaque exact artifact evidence used only through bounded methods."""
+
+    __slots__ = ("__authority",)
+    __authority: _ArtifactAuthorityCapsule
+
+    def __init__(
+        self,
+        dev: int,
+        ino: int,
+        byte_length: int,
+        sha256_digest: bytes,
+        schema_version: int,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_ArtifactEvidence__authority",
+            _ArtifactAuthorityCapsule(
+                dev,
+                ino,
+                byte_length,
+                sha256_digest,
+                schema_version,
+            ),
+        )
+
+    def __repr__(self) -> str:
+        return "_ArtifactEvidence(<private>)"
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
+
+    def _identity(self) -> tuple[int, int]:
+        return self.__authority.identity()
+
+    def _schema_is(self, schema_version: int) -> bool:
+        return self.__authority.schema_is(schema_version)
+
+    def _payload(self) -> dict[str, object]:
+        return self.__authority.payload()
+
+    def matches(
+        self,
+        identity: os.stat_result,
+        *,
+        byte_length: int,
+        sha256_digest: bytes,
+        schema_version: int,
+    ) -> bool:
+        return self.__authority.matches(
+            identity,
+            byte_length=byte_length,
+            sha256_digest=sha256_digest,
+            schema_version=schema_version,
+        )
+
+
 class ProfileMigrationJournalSlot:
     """One recognized relative namespace row in a journal."""
 
-    slot: ProfileMigrationPublicationSlot
-    candidate: str
-    target: str
-    rollback: str
-    had_prior: bool
-    _candidate_evidence: _ArtifactEvidence | None = field(
-        default=None,
-        compare=False,
+    __slots__ = (
+        "__authority",
+        "__candidate",
+        "__had_prior",
+        "__rollback",
+        "__slot",
+        "__target",
     )
-    _prior_evidence: _ArtifactEvidence | None = field(
-        default=None,
-        compare=False,
-    )
+    __authority: tuple[_ArtifactEvidence | None, _ArtifactEvidence | None]
+    __candidate: str
+    __had_prior: bool
+    __rollback: str
+    __slot: ProfileMigrationPublicationSlot
+    __target: str
+
+    def __init__(
+        self,
+        *,
+        slot: ProfileMigrationPublicationSlot,
+        candidate: str,
+        target: str,
+        rollback: str,
+        had_prior: bool,
+    ) -> None:
+        self._initialize(slot, candidate, target, rollback, had_prior, None, None)
+
+    @classmethod
+    def _with_authority(
+        cls,
+        *,
+        slot: ProfileMigrationPublicationSlot,
+        candidate: str,
+        target: str,
+        rollback: str,
+        had_prior: bool,
+        candidate_evidence: _ArtifactEvidence,
+        prior_evidence: _ArtifactEvidence | None,
+    ) -> ProfileMigrationJournalSlot:
+        result = object.__new__(cls)
+        result._initialize(
+            slot,
+            candidate,
+            target,
+            rollback,
+            had_prior,
+            candidate_evidence,
+            prior_evidence,
+        )
+        return result
+
+    def _initialize(
+        self,
+        slot: ProfileMigrationPublicationSlot,
+        candidate: str,
+        target: str,
+        rollback: str,
+        had_prior: bool,
+        candidate_evidence: _ArtifactEvidence | None,
+        prior_evidence: _ArtifactEvidence | None,
+    ) -> None:
+        object.__setattr__(self, "_ProfileMigrationJournalSlot__slot", slot)
+        object.__setattr__(self, "_ProfileMigrationJournalSlot__candidate", candidate)
+        object.__setattr__(self, "_ProfileMigrationJournalSlot__target", target)
+        object.__setattr__(self, "_ProfileMigrationJournalSlot__rollback", rollback)
+        object.__setattr__(self, "_ProfileMigrationJournalSlot__had_prior", had_prior)
+        object.__setattr__(
+            self,
+            "_ProfileMigrationJournalSlot__authority",
+            (candidate_evidence, prior_evidence),
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
 
     def __repr__(self) -> str:
         return "ProfileMigrationJournalSlot(<private>)"
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is ProfileMigrationJournalSlot and (
+            self.slot,
+            self.candidate,
+            self.target,
+            self.rollback,
+            self.had_prior,
+        ) == (
+            other.slot,
+            other.candidate,
+            other.target,
+            other.rollback,
+            other.had_prior,
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            (self.slot, self.candidate, self.target, self.rollback, self.had_prior)
+        )
+
+    @property
+    def slot(self) -> ProfileMigrationPublicationSlot:
+        return self.__slot
+
+    @property
+    def candidate(self) -> str:
+        return self.__candidate
+
+    @property
+    def target(self) -> str:
+        return self.__target
+
+    @property
+    def rollback(self) -> str:
+        return self.__rollback
+
+    @property
+    def had_prior(self) -> bool:
+        return self.__had_prior
+
+    def _evidence(self) -> tuple[_ArtifactEvidence | None, _ArtifactEvidence | None]:
+        return self.__authority
 
     def matches_candidate(
         self,
@@ -69,14 +288,12 @@ class ProfileMigrationJournalSlot:
     ) -> bool:
         """Classify one verified object against the prepared authority."""
 
-        return (
-            self._candidate_evidence is not None
-            and self._candidate_evidence.matches(
-                identity,
-                byte_length=byte_length,
-                sha256_digest=sha256_digest,
-                schema_version=schema_version,
-            )
+        candidate, _ = self.__authority
+        return candidate is not None and candidate.matches(
+            identity,
+            byte_length=byte_length,
+            sha256_digest=sha256_digest,
+            schema_version=schema_version,
         )
 
     def matches_prior(
@@ -89,7 +306,8 @@ class ProfileMigrationJournalSlot:
     ) -> bool:
         """Classify one verified object against retained prior authority."""
 
-        return self._prior_evidence is not None and self._prior_evidence.matches(
+        _, prior = self.__authority
+        return prior is not None and prior.matches(
             identity,
             byte_length=byte_length,
             sha256_digest=sha256_digest,
@@ -127,54 +345,99 @@ class ProfileMigrationJournalSlot:
         return None
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class _ArtifactEvidence:
-    dev: int
-    ino: int
-    byte_length: int
-    sha256_digest: bytes
-    schema_version: int
+class _ParentAuthorityCapsule:
+    __slots__ = ("__identity",)
+    __identity: tuple[int, int]
+
+    def __init__(self, dev: int, ino: int) -> None:
+        object.__setattr__(self, "_ParentAuthorityCapsule__identity", (dev, ino))
 
     def __repr__(self) -> str:
-        return "_ArtifactEvidence(<private>)"
+        return "_ParentAuthorityCapsule(<private>)"
 
-    def matches(
-        self,
-        identity: os.stat_result,
-        *,
-        byte_length: int,
-        sha256_digest: bytes,
-        schema_version: int,
-    ) -> bool:
-        return (
-            identity.st_dev == self.dev
-            and identity.st_ino == self.ino
-            and byte_length == self.byte_length
-            and sha256_digest == self.sha256_digest
-            and schema_version == self.schema_version
-        )
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
+
+    def identity(self) -> tuple[int, int]:
+        return self.__identity
+
+    def matches(self, identity: os.stat_result) -> bool:
+        return (identity.st_dev, identity.st_ino) == self.__identity
 
 
-@dataclass(frozen=True, slots=True, repr=False)
 class _JournalAuthority:
-    parent_dev: int
-    parent_ino: int
-    rows: tuple[ProfileMigrationJournalSlot, ...]
+    __slots__ = ("__parent", "__rows")
+    __parent: _ParentAuthorityCapsule
+    __rows: tuple[ProfileMigrationJournalSlot, ...]
+
+    def __init__(
+        self,
+        parent_dev: int,
+        parent_ino: int,
+        rows: tuple[ProfileMigrationJournalSlot, ...],
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_JournalAuthority__parent",
+            _ParentAuthorityCapsule(parent_dev, parent_ino),
+        )
+        object.__setattr__(self, "_JournalAuthority__rows", rows)
 
     def __repr__(self) -> str:
         return "_JournalAuthority(<private>)"
 
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
 
-@dataclass(frozen=True, slots=True, repr=False)
+    def _parent_identity(self) -> tuple[int, int]:
+        return self.__parent.identity()
+
+    def _recovery_rows(self) -> tuple[ProfileMigrationJournalSlot, ...]:
+        return self.__rows
+
+
 class ParsedProfileMigrationJournal:
     """Path-free facts from one exact recognized publication journal."""
 
-    version: int
-    phase: str
-    recovery_rows: tuple[ProfileMigrationJournalSlot, ...]
-    _parent_dev: int
-    _parent_ino: int
-    _authority_checksum: bytes
+    __slots__ = ("__parent", "__phase", "__recovery_rows", "__version")
+    __parent: _ParentAuthorityCapsule
+    __phase: str
+    __recovery_rows: tuple[ProfileMigrationJournalSlot, ...]
+    __version: int
+
+    def __init__(
+        self,
+        version: int,
+        phase: str,
+        recovery_rows: tuple[ProfileMigrationJournalSlot, ...],
+        parent_dev: int,
+        parent_ino: int,
+    ) -> None:
+        object.__setattr__(self, "_ParsedProfileMigrationJournal__version", version)
+        object.__setattr__(self, "_ParsedProfileMigrationJournal__phase", phase)
+        object.__setattr__(
+            self, "_ParsedProfileMigrationJournal__recovery_rows", recovery_rows
+        )
+        object.__setattr__(
+            self,
+            "_ParsedProfileMigrationJournal__parent",
+            _ParentAuthorityCapsule(parent_dev, parent_ino),
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(name)
+
+    @property
+    def version(self) -> int:
+        return self.__version
+
+    @property
+    def phase(self) -> str:
+        return self.__phase
+
+    @property
+    def recovery_rows(self) -> tuple[ProfileMigrationJournalSlot, ...]:
+        return self.__recovery_rows
 
     @property
     def slots(self) -> tuple[str, ...]:
@@ -191,9 +454,7 @@ class ParsedProfileMigrationJournal:
     def matches_parent(self, identity: os.stat_result) -> bool:
         """Classify an already verified directory against journal authority."""
 
-        return (
-            identity.st_dev == self._parent_dev and identity.st_ino == self._parent_ino
-        )
+        return self.__parent.matches(identity)
 
 
 MAX_PROFILE_MIGRATION_JOURNAL_BYTES: Final = 4096
@@ -261,35 +522,29 @@ def _validate_authority_evidence(
     identities: set[tuple[int, int]] = set()
     for row in rows:
         expected_schema = _CANDIDATE_SCHEMA_BY_SLOT[row.slot]
+        candidate, prior = row._evidence()
         if (
-            row._candidate_evidence is None
-            or row._candidate_evidence.schema_version != expected_schema
-            or (row._prior_evidence is None) != (not row.had_prior)
+            candidate is None
+            or not candidate._schema_is(expected_schema)
+            or (prior is None) != (not row.had_prior)
             or (
-                row._prior_evidence is not None
+                prior is not None
                 and row.slot is not ProfileMigrationPublicationSlot.ACTIVE
-                and row._prior_evidence.schema_version != expected_schema
+                and not prior._schema_is(expected_schema)
             )
         ):
             raise ValueError
-        evidence = (row._candidate_evidence, row._prior_evidence)
-        for item in evidence:
+        for item in (candidate, prior):
             if item is None:
                 continue
-            identity = (item.dev, item.ino)
-            if item.dev != parent_dev or identity in identities:
+            identity = item._identity()
+            if identity[0] != parent_dev or identity in identities:
                 raise ValueError
             identities.add(identity)
 
 
 def _evidence_payload(evidence: _ArtifactEvidence) -> dict[str, object]:
-    return {
-        "byte_length": evidence.byte_length,
-        "dev": evidence.dev,
-        "ino": evidence.ino,
-        "schema_version": evidence.schema_version,
-        "sha256": evidence.sha256_digest.hex(),
-    }
+    return evidence._payload()
 
 
 def _frame(recovery: dict[str, object]) -> tuple[bytes, bytes]:
@@ -365,14 +620,14 @@ def _new_profile_migration_journal_authority(
         elif prior is not None or prior_content is not None or prior_schema is not None:
             raise ValueError
         authority_rows.append(
-            ProfileMigrationJournalSlot(
+            ProfileMigrationJournalSlot._with_authority(
                 slot=row.slot,
                 candidate=row.candidate,
                 target=row.target,
                 rollback=row.rollback,
                 had_prior=row.had_prior,
-                _candidate_evidence=candidate_evidence,
-                _prior_evidence=prior_evidence,
+                candidate_evidence=candidate_evidence,
+                prior_evidence=prior_evidence,
             )
         )
     result = _JournalAuthority(
@@ -380,25 +635,30 @@ def _new_profile_migration_journal_authority(
         parent_identity.st_ino,
         tuple(authority_rows),
     )
-    _validate_recovery_rows(result.rows)
-    _validate_authority_evidence(result.rows, parent_dev=result.parent_dev)
+    result_rows = result._recovery_rows()
+    _validate_recovery_rows(result_rows)
+    _validate_authority_evidence(
+        result_rows,
+        parent_dev=result._parent_identity()[0],
+    )
     return result
 
 
 def _encode_initial_journal(authority: _JournalAuthority) -> tuple[bytes, bytes]:
     rows = []
-    for row in authority.rows:
-        if row._candidate_evidence is None:
+    for row in authority._recovery_rows():
+        candidate_evidence, prior_evidence = row._evidence()
+        if candidate_evidence is None:
             raise ValueError
         rows.append(
             {
                 "candidate": row.candidate,
-                "candidate_evidence": _evidence_payload(row._candidate_evidence),
+                "candidate_evidence": _evidence_payload(candidate_evidence),
                 "had_prior": row.had_prior,
                 "prior_evidence": (
                     None
-                    if row._prior_evidence is None
-                    else _evidence_payload(row._prior_evidence)
+                    if prior_evidence is None
+                    else _evidence_payload(prior_evidence)
                 ),
                 "rollback": row.rollback,
                 "slot": row.slot.value,
@@ -408,7 +668,9 @@ def _encode_initial_journal(authority: _JournalAuthority) -> tuple[bytes, bytes]
     return _frame(
         {
             "authority": {
-                "parent": {"dev": authority.parent_dev, "ino": authority.parent_ino},
+                "parent": dict(
+                    zip(("dev", "ino"), authority._parent_identity(), strict=True)
+                ),
                 "slots": rows,
             },
             "phase": "prepared",
@@ -547,14 +809,14 @@ def _decode_journal_frame(
         if (row["prior_evidence"] is None) != (not had_prior):
             raise ValueError
         recovery_rows.append(
-            ProfileMigrationJournalSlot(
+            ProfileMigrationJournalSlot._with_authority(
                 slot=ProfileMigrationPublicationSlot(row["slot"]),
                 candidate=row["candidate"],
                 target=row["target"],
                 rollback=row["rollback"],
                 had_prior=had_prior,
-                _candidate_evidence=_parse_evidence(row["candidate_evidence"]),
-                _prior_evidence=prior_evidence,
+                candidate_evidence=_parse_evidence(row["candidate_evidence"]),
+                prior_evidence=prior_evidence,
             )
         )
     result = tuple(recovery_rows)
@@ -611,7 +873,6 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
             expected_rows,
             parent_identity[0],
             parent_identity[1],
-            authority_checksum,
         )
     except BaseException as error:
         parse_error = error
