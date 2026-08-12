@@ -160,6 +160,18 @@ def test_workflow_records_install_failure_and_always_uploads_json() -> None:
     assert "task-598-platform-${{ matrix.evidence_name }}" in workflow
 
 
+def test_workflow_uses_runner_temp_only_after_runner_assignment() -> None:
+    workflow = _workflow_text()
+    job_preamble = workflow[
+        workflow.index("platform-evidence:") : workflow.index("steps:")
+    ]
+
+    assert "runner.temp" not in job_preamble
+    assert "EVIDENCE_PATH" not in workflow
+    assert workflow.count("$RUNNER_TEMP/task-598-platform-evidence.json") == 4
+    assert "path: ${{ runner.temp }}/task-598-platform-evidence.json" in workflow
+
+
 def test_supervisor_records_a_path_private_timeout(tmp_path: Path) -> None:
     evidence = _load_probe()
     output = tmp_path / "result.json"

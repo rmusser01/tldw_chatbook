@@ -26,8 +26,6 @@ jobs:
           - evidence_name: macos-x86_64
             os: macos-15-intel
     runs-on: ${{ matrix.os }}
-    env:
-      EVIDENCE_PATH: ${{ runner.temp }}/task-598-platform-evidence.json
     steps:
       - name: Check out the exact tested commit
         uses: actions/checkout@v4
@@ -42,7 +40,7 @@ jobs:
 
       - name: Initialize failure evidence
         shell: bash
-        run: python .github/scripts/task598_external_parakeet_evidence.py --initialize --output "$EVIDENCE_PATH"
+        run: python .github/scripts/task598_external_parakeet_evidence.py --initialize --output "$RUNNER_TEMP/task-598-platform-evidence.json"
 
       - name: Install the declared native transcription extra
         id: dependencies
@@ -54,23 +52,23 @@ jobs:
 
       - name: Record dependency installation failure
         shell: bash
-        run: python .github/scripts/task598_external_parakeet_evidence.py --record-failure dependency_install --output "$EVIDENCE_PATH"
+        run: python .github/scripts/task598_external_parakeet_evidence.py --record-failure dependency_install --output "$RUNNER_TEMP/task-598-platform-evidence.json"
         if: steps.dependencies.outcome != 'success'
 
       - name: Run bounded native evidence
         shell: bash
-        run: python .github/scripts/task598_external_parakeet_evidence.py --output "$EVIDENCE_PATH" --timeout-seconds 4800
+        run: python .github/scripts/task598_external_parakeet_evidence.py --output "$RUNNER_TEMP/task-598-platform-evidence.json" --timeout-seconds 4800
         if: steps.dependencies.outcome == 'success'
 
       - name: Validate evidence
         if: always()
         shell: bash
-        run: python .github/scripts/task598_external_parakeet_evidence.py --validate "$EVIDENCE_PATH"
+        run: python .github/scripts/task598_external_parakeet_evidence.py --validate "$RUNNER_TEMP/task-598-platform-evidence.json"
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: task-598-platform-${{ matrix.evidence_name }}
-          path: ${{ env.EVIDENCE_PATH }}
+          path: ${{ runner.temp }}/task-598-platform-evidence.json
           if-no-files-found: error
