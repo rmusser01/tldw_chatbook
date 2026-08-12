@@ -492,6 +492,13 @@ def _validate_bundle_import_command(value: object) -> TTSBundleImportCommand:
     if command.choice not in {"create", "reuse", "copy"}:
         raise _repository_error("operation_failed")
     source_draft = _validate_draft(command.source_draft)
+    if (
+        source_draft.provider_id != "audio_cpp"
+        or source_draft.response_format != "wav"
+        or source_draft.speed != 1.0
+        or bool(source_draft.options)
+    ):
+        raise _repository_error("operation_failed")
     source_profile_id = _validate_exact_profile_id(command.source_profile_id)
     requirement = _validate_recipe_requirement(
         command.recipe_requirement,
@@ -504,11 +511,11 @@ def _validate_bundle_import_command(value: object) -> TTSBundleImportCommand:
         raise _repository_error("operation_failed")
     if type(command.inactive_consent) is not bool:
         raise _repository_error("operation_failed")
-    if (
-        command.dependency_state == "missing"
-        and command.choice != "reuse"
-        and not command.inactive_consent
-    ):
+    consent_required = command.dependency_state == "missing" and command.choice in {
+        "create",
+        "copy",
+    }
+    if command.inactive_consent is not consent_required:
         raise _repository_error("operation_failed")
     copy_profile_id = _validate_optional_profile_id(command.copy_profile_id)
     copy_display_name = command.copy_display_name

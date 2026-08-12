@@ -90,6 +90,16 @@ def _audio_cpp_draft(name: str, *, model_id: str = "clone-model") -> TTSProfileD
     )
 
 
+def _hostile_audio_cpp_draft(
+    name: str, field_name: str, value: object
+) -> TTSProfileDraft:
+    """Bypass the frozen value object's constructor to probe command validation."""
+
+    draft = _audio_cpp_draft(name)
+    object.__setattr__(draft, field_name, value)
+    return draft
+
+
 def _requirement(*, model_id: str = "clone-model") -> TTSCloneRecipeRequirement:
     return TTSCloneRecipeRequirement(
         recipe_id="audio-cpp-0.5.1.pocket_tts.pocket_tts",
@@ -386,6 +396,141 @@ async def test_bundle_import_create_commits_profile_recipe_reference_atomically(
         assert result.value.profile.reference is not None
         assert result.value.profile.reference.recipe_requirement == _requirement()
         assert (await repository.assignment_count(PROFILE_A)).value == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_draft",
+    (
+        TTSProfileDraft(
+            display_name="Wrong provider",
+            provider_id="openai",
+            model_id="clone-model",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.0,
+            options={},
+        ),
+        _hostile_audio_cpp_draft(
+            "Wrong format",
+            "response_format",
+            "mp3",
+        ),
+        _hostile_audio_cpp_draft(
+            "Wrong speed",
+            "speed",
+            0.9,
+        ),
+        _hostile_audio_cpp_draft(
+            "Wrong options",
+            "options",
+            {"language": "en"},
+        ),
+    ),
+    ids=("provider", "format", "speed", "options"),
+)
+async def test_bundle_import_rejects_non_clone_profile_contract_before_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_draft: TTSProfileDraft,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        queued = False
+
+        async def forbidden_queue(*_args: object, **_kwargs: object) -> object:
+            nonlocal queued
+            queued = True
+            raise AssertionError("repository work was queued")
+
+        monkeypatch.setattr(repository, "_submit_operation", forbidden_queue)
+        command = profile_repository.TTSBundleImportCommand(
+            choice="create",
+            source_profile_id=PROFILE_A,
+            source_draft=source_draft,
+            recipe_requirement=_requirement(),
+            canonical_reference=_canonical(),
+            expected_generation=repository.generation,
+            reviewed_source_collisions=profile_repository.TTSProfileCollisionSnapshot(
+                None,
+                None,
+            ),
+            copy_profile_id=None,
+            copy_display_name=None,
+            dependency_state="exact",
+            inactive_consent=False,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.commit_bundle_import(command)
+
+        _assert_error(caught.value, "operation_failed")
+        assert queued is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("choice", "dependency_state", "inactive_consent", "allowed"),
+    (
+        ("create", "exact", False, True),
+        ("create", "exact", True, False),
+        ("create", "missing", False, False),
+        ("create", "missing", True, True),
+        ("reuse", "exact", False, True),
+        ("reuse", "exact", True, False),
+        ("reuse", "missing", False, True),
+        ("reuse", "missing", True, False),
+        ("copy", "exact", False, True),
+        ("copy", "exact", True, False),
+        ("copy", "missing", False, False),
+        ("copy", "missing", True, True),
+    ),
+)
+async def test_bundle_import_enforces_exact_inactive_consent_matrix_before_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    choice: str,
+    dependency_state: str,
+    inactive_consent: bool,
+    allowed: bool,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        queued = False
+        marker = object()
+
+        async def observe_queue(*_args: object, **_kwargs: object) -> object:
+            nonlocal queued
+            queued = True
+            return marker
+
+        monkeypatch.setattr(repository, "_submit_operation", observe_queue)
+        is_copy = choice == "copy"
+        command = profile_repository.TTSBundleImportCommand(
+            choice=cast(Any, choice),
+            source_profile_id=PROFILE_A,
+            source_draft=_audio_cpp_draft("Consent matrix"),
+            recipe_requirement=_requirement(),
+            canonical_reference=_canonical(),
+            expected_generation=repository.generation,
+            reviewed_source_collisions=profile_repository.TTSProfileCollisionSnapshot(
+                None,
+                None,
+            ),
+            copy_profile_id=PROFILE_B if is_copy else None,
+            copy_display_name="Consent matrix copy" if is_copy else None,
+            dependency_state=cast(Any, dependency_state),
+            inactive_consent=inactive_consent,
+        )
+
+        if allowed:
+            assert await repository.commit_bundle_import(command) is marker
+            assert queued is True
+        else:
+            with pytest.raises(ProfileRepositoryError) as caught:
+                await repository.commit_bundle_import(command)
+            _assert_error(caught.value, "operation_failed")
+            assert queued is False
 
 
 @pytest.mark.asyncio
