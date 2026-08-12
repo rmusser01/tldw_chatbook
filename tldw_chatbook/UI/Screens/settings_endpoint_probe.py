@@ -96,7 +96,21 @@ class SettingsEndpointProbeOutcome:
         model_count: int | None = None,
     ) -> None:
         """Build a structured outcome while accepting the legacy keywords."""
+        if state is None and reachable is None:
+            raise ValueError("Provide endpoint probe state or reachable.")
+        if reachable is not None and not isinstance(reachable, bool):
+            raise ValueError("Reachable must be a boolean.")
+        if not isinstance(summary, str):
+            # Public compatibility contract requires bounded ValueError messages.
+            raise ValueError(  # noqa: TRY004
+                "Endpoint probe summary must be text."
+            )
+        if state is not None and not isinstance(state, str):
+            raise ValueError("Endpoint probe state is invalid.")
+
         model_ids_provided = model_ids is not _MODEL_IDS_UNSET
+        if model_ids_provided and isinstance(model_ids, (str, bytes)):
+            raise ValueError("Model IDs are invalid.")
         try:
             resolved_model_ids = (
                 tuple(model_ids) if model_ids_provided else ()
@@ -175,7 +189,7 @@ class SettingsEndpointProbeOutcome:
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:
     try:
         payload = json.loads(body)
-    except (UnicodeDecodeError, ValueError):
+    except (RecursionError, UnicodeDecodeError, ValueError):
         return SettingsEndpointProbeOutcome(
             state="unreachable",
             category="invalid_payload",

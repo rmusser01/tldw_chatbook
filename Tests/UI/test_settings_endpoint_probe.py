@@ -7,6 +7,7 @@ import errno
 import httpx
 import pytest
 
+import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_probe_module
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     probe_settings_endpoint,
@@ -160,6 +161,58 @@ def test_outcome_accepts_consistent_structured_and_legacy_data() -> None:
     assert unavailable.category == "http_status"
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "expected_message"),
+    (
+        ({}, "Provide endpoint probe state or reachable."),
+        (
+            {"reachable": "yes", "summary": "bounded"},
+            "Reachable must be a boolean.",
+        ),
+        (
+            {"reachable": 1, "summary": "bounded"},
+            "Reachable must be a boolean.",
+        ),
+        (
+            {"state": "reachable", "summary": 123},
+            "Endpoint probe summary must be text.",
+        ),
+        (
+            {
+                "state": "reachable",
+                "summary": "bounded",
+                "model_ids": "model-a",
+            },
+            "Model IDs are invalid.",
+        ),
+        (
+            {
+                "state": "reachable",
+                "summary": "bounded",
+                "model_ids": b"model-a",
+            },
+            "Model IDs are invalid.",
+        ),
+        (
+            {
+                "state": "reachable",
+                "summary": "bounded",
+                "model_ids": ("model-a", 1),
+            },
+            "Model IDs are invalid.",
+        ),
+    ),
+)
+def test_outcome_rejects_invalid_constructor_types(
+    kwargs: dict[str, object],
+    expected_message: str,
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        SettingsEndpointProbeOutcome(**kwargs)
+
+    assert str(exc_info.value) == expected_message
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("entered", "expected"),
@@ -241,6 +294,20 @@ async def test_probe_accepts_valid_empty_model_listing() -> None:
     assert outcome.model_ids == ()
     assert outcome.model_count == 0
     assert outcome.summary == "reachable (0 models)"
+
+
+@pytest.mark.asyncio
+async def test_probe_accepts_bare_list_string_model_entry() -> None:
+    async with _client(
+        lambda request: httpx.Response(200, json=["model-a"])
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+
+    assert outcome.state == "reachable"
+    assert outcome.model_ids == ("model-a",)
 
 
 @pytest.mark.asyncio
@@ -410,6 +477,10 @@ async def test_probe_classifies_only_errno_refused_connect_errors_as_refused() -
     (
         "not json",
         {"status": "ok", "body": "secret body"},
+        {"data": [{"foo": "bar"}]},
+        [[]],
+        [123],
+        {"models": [{"foo": "bar"}]},
     ),
 )
 async def test_probe_rejects_malformed_or_unrecognized_payload(payload: object) -> None:
@@ -428,6 +499,27 @@ async def test_probe_rejects_malformed_or_unrecognized_payload(payload: object) 
     assert outcome.category == "invalid_payload"
     assert outcome.summary == "unreachable: invalid models response"
     assert "secret" not in outcome.summary
+
+
+@pytest.mark.asyncio
+async def test_probe_classifies_recursive_json_as_invalid_payload(monkeypatch) -> None:
+    def recursive_loads(body: bytes) -> object:
+        raise RecursionError("secret recursive decoder detail")
+
+    monkeypatch.setattr(settings_probe_module.json, "loads", recursive_loads)
+
+    async with _client(
+        lambda request: httpx.Response(200, content=b'{"data": []}')
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "https://example.test/v1",
+            http_client=client,
+        )
+
+    assert outcome.state == "unreachable"
+    assert outcome.category == "invalid_payload"
+    assert outcome.summary == "unreachable: invalid models response"
+    assert "secret" not in repr(outcome)
 
 
 @pytest.mark.asyncio

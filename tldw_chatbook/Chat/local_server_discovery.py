@@ -337,30 +337,35 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         entries = data if isinstance(data, list) else payload.get("models")
     if not isinstance(entries, list):
         return None
+    if not entries:
+        return ()
+
     model_ids: list[str] = []
-    saw_non_chat_entry = False
-    chat_candidate_count = 0
+    recognized_entry_count = 0
     for entry in entries:
         if _entry_declares_non_chat_task(entry):
-            saw_non_chat_entry = True
             continue
-        chat_candidate_count += 1
         model_id: object = entry
         if isinstance(entry, Mapping):
-            model_id = entry.get("id") or entry.get("name") or entry.get("model")
+            model_id = next(
+                (
+                    entry.get(field)
+                    for field in ("id", "name", "model")
+                    if isinstance(entry.get(field), str)
+                ),
+                None,
+            )
         if not isinstance(model_id, str):
             continue
+        recognized_entry_count += 1
         sanitized = _sanitize_model_id(model_id)
         if sanitized and sanitized not in model_ids:
             model_ids.append(sanitized)
         if len(model_ids) >= MODEL_IDS_MAX_COUNT:
             break
-    if not model_ids and saw_non_chat_entry and chat_candidate_count == 0:
-        # EVERY entry was explicitly non-chat: this endpoint is a real API,
-        # just not a chat API. A listing that merely failed to yield ids (odd
-        # shapes, non-string ids) alongside a non-chat entry is NOT rejected --
-        # that would turn an unrecognized-but-plausible server into "no models
-        # endpoint" and hide a chat-capable host from discovery.
+    if recognized_entry_count == 0:
+        # A non-empty listing is only evidence of a model API when at least one
+        # chat-capable entry has a recognized string identifier field.
         return None
     return tuple(model_ids)
 
@@ -414,7 +419,7 @@ async def _get_models_payload(
         return None, "Models response is too large."
     try:
         payload = json.loads(body)
-    except (UnicodeDecodeError, ValueError):
+    except (RecursionError, UnicodeDecodeError, ValueError):
         return None, f"No models endpoint at {display} (not a JSON API)."
     model_ids = _model_ids_from_payload(payload)
     if model_ids is None:

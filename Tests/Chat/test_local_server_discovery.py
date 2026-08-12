@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -303,6 +304,69 @@ async def test_probe_success_with_empty_model_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_accepts_bare_list_string_model_entry() -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json=["model-a"])
+        ),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == ("model-a",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"data": [{"foo": "bar"}]},
+        [[]],
+        [123],
+        {"models": [{"foo": "bar"}]},
+    ),
+)
+async def test_probe_rejects_nonempty_listing_without_recognized_entries(
+    payload: object,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json=payload)
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> None:
+    def recursive_loads(body: bytes) -> object:
+        raise RecursionError("secret recursive decoder detail")
+
+    monkeypatch.setattr(local_discovery_module.json, "loads", recursive_loads)
+
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, content=b'{"data": []}')
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 (not a JSON API)."
+    )
+    assert "secret" not in repr(result)
+
+
+@pytest.mark.asyncio
 async def test_local_probe_accepts_json_body_at_exact_byte_limit() -> None:
     prefix = b'{"data":[]}'
     body = prefix + b" " * (
@@ -590,15 +654,8 @@ async def test_probe_keeps_only_chat_capable_models_from_mixed_server() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized() -> None:
-    """A non-chat entry beside odd-shaped entries must not condemn the server.
-
-    Review finding: the reject condition was "no ids AND saw a non-chat entry",
-    which also rejected listings whose remaining entries simply failed to yield
-    an id (non-string ids, unexpected shapes). That turned an
-    unrecognized-but-plausible server into "no models endpoint" and hid a
-    possibly chat-capable host. Only an ALL-non-chat listing is a rejection.
-    """
+async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
+    """Filtering non-chat entries must leave one recognized model entry."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -617,5 +674,9 @@ async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized(
             "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
         )
 
-    assert result.ok is True
+    assert result.ok is False
     assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )
