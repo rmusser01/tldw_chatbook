@@ -2,6 +2,7 @@
 
 import os
 from contextlib import contextmanager
+from copy import deepcopy
 
 import pytest
 
@@ -195,6 +196,81 @@ def test_qwencloud_readiness_uses_alias_fields_missing_from_canonical(
     assert readiness.ready is True
     assert readiness.api_key == "environment-secret"
     assert readiness.api_key_source == "env:QWEN_ALIAS_API_KEY"
+
+
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_qwencloud_malformed_canonical_table_fails_closed_without_alias_leakage(
+    canonical_first,
+):
+    alias = {"api_key": "alias-secret-canary", "api_mode": "responses"}
+    entries = (
+        [("qwencloud", []), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", [])]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_mod.provider_settings_for_key(source["api_settings"], "qwencloud")
+
+    readiness = get_provider_readiness("QwenCloud", source, environ={})
+
+    assert source == original
+    assert "alias-secret-canary" not in str(exc_info.value)
+    assert readiness.ready is False
+    assert readiness.api_key is None
+    assert readiness.api_key_source is None
+    assert readiness.reason == "Invalid provider settings"
+    assert "api_settings.qwencloud" in readiness.user_message
+    assert "alias-secret-canary" not in readiness.user_message
+
+
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_qwencloud_valid_canonical_table_ignores_malformed_alias(
+    canonical_first,
+):
+    canonical = {"api_key": "canonical-secret", "api_mode": "responses"}
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", [])]
+        if canonical_first
+        else [("QwenCloud", []), ("qwencloud", canonical)]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+
+    settings = config_mod.provider_settings_for_key(source["api_settings"], "qwencloud")
+    readiness = get_provider_readiness("QwenCloud", source, environ={})
+
+    assert source == original
+    assert settings == canonical
+    assert readiness.ready is True
+    assert readiness.api_key == "canonical-secret"
+    assert readiness.api_key_source == "config:api_settings.qwencloud.api_key"
+
+
+def test_qwencloud_alias_only_malformed_table_fails_closed():
+    source = {
+        "api_settings": {
+            "QwenCloud": ["secret-canary"],
+            " QWENCLOUD ": {"api_key": "later-alias-secret-canary"},
+        }
+    }
+    original = deepcopy(source)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_mod.provider_settings_for_key(source["api_settings"], "qwencloud")
+
+    readiness = get_provider_readiness("QwenCloud", source, environ={})
+
+    assert source == original
+    assert "secret-canary" not in str(exc_info.value)
+    assert "later-alias-secret-canary" not in str(exc_info.value)
+    assert readiness.ready is False
+    assert readiness.api_key is None
+    assert readiness.reason == "Invalid provider settings"
+    assert "api_settings.qwencloud" in readiness.user_message
+    assert "later-alias-secret-canary" not in readiness.user_message
 
 
 def test_qwencloud_multiple_aliases_keep_first_match_as_fallback():

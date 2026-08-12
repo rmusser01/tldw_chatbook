@@ -869,6 +869,10 @@ def normalize_provider_config_key(provider: object) -> str:
     return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
 
 
+class ProviderSettingsError(ValueError):
+    """Raised when a selected provider's config table is not a mapping."""
+
+
 def provider_settings_for_key(
     api_settings: object,
     provider_key: str,
@@ -879,31 +883,45 @@ def provider_settings_for_key(
     exact canonical table is also present, alias fields remain fallbacks while
     exact ``api_settings.qwencloud`` fields win regardless of insertion order.
     Other providers retain the existing first-normalized-match behavior.
+
+    Raises:
+        ProviderSettingsError: If QwenCloud's authoritative table is present
+            but malformed, or its first normalized alias is malformed when no
+            canonical table exists.
     """
     if not isinstance(api_settings, Mapping):
         return {}
 
     if provider_key == "qwencloud":
-        alias_settings: Mapping[str, object] = {}
-        alias_found = False
-        canonical_settings: Mapping[str, object] = {}
-        for configured_provider, configured_value in api_settings.items():
-            configured_key = str(configured_provider)
-            if normalize_provider_config_key(configured_key) != provider_key:
-                continue
-            if configured_key == provider_key:
-                if isinstance(configured_value, Mapping):
-                    canonical_settings = configured_value
-                continue
-            if not alias_found:
-                alias_found = True
+        if provider_key in api_settings:
+            canonical_settings = api_settings[provider_key]
+            if not isinstance(canonical_settings, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            alias_settings: Mapping[str, object] = {}
+            for configured_provider, configured_value in api_settings.items():
+                configured_key = str(configured_provider)
+                if configured_key == provider_key:
+                    continue
+                if normalize_provider_config_key(configured_key) != provider_key:
+                    continue
                 if isinstance(configured_value, Mapping):
                     alias_settings = configured_value
-        if canonical_settings:
+                break
             merged = dict(alias_settings)
             merged.update(canonical_settings)
             return merged
-        return alias_settings
+
+        for configured_provider, configured_value in api_settings.items():
+            if normalize_provider_config_key(configured_provider) != provider_key:
+                continue
+            if not isinstance(configured_value, Mapping):
+                raise ProviderSettingsError(
+                    "api_settings.qwencloud must be a configuration table."
+                )
+            return configured_value
+        return {}
 
     for configured_provider, configured_value in api_settings.items():
         if normalize_provider_config_key(configured_provider) != provider_key:

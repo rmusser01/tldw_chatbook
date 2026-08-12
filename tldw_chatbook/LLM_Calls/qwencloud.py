@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.config import (
+    ProviderSettingsError,
     get_runtime_config_snapshot,
     provider_settings_for_key,
     resolve_provider_api_key,
@@ -299,7 +300,7 @@ def _reject_non_finite_json_constant(value: str) -> None:
 
 
 def normalize_qwencloud_api_mode(
-    api_mode: str | None,
+    api_mode: object | None,
     *,
     provider_settings: Mapping[str, Any] | None = None,
 ) -> QwenCloudAPIMode:
@@ -1157,13 +1158,14 @@ def chat_with_qwencloud(
     api_settings = config_values.get("api_settings", {})
     if not isinstance(api_settings, Mapping):
         raise _configuration_error("QwenCloud API settings must be an object.")
-    if "qwencloud" in api_settings and not isinstance(
-        api_settings.get("qwencloud"), Mapping
-    ):
-        raise _configuration_error("QwenCloud provider settings must be an object.")
-    provider_settings = cast(
-        Mapping[str, Any], provider_settings_for_key(api_settings, "qwencloud")
-    )
+    try:
+        provider_settings = cast(
+            Mapping[str, Any], provider_settings_for_key(api_settings, "qwencloud")
+        )
+    except ProviderSettingsError as exc:
+        raise _configuration_error(
+            "QwenCloud provider settings must be a configuration table."
+        ) from exc
 
     final_mode = normalize_qwencloud_api_mode(
         api_mode, provider_settings=provider_settings

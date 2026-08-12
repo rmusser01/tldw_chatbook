@@ -2261,6 +2261,143 @@ def test_direct_adapter_canonical_qwencloud_config_overrides_alias_in_any_order(
     assert "canonical-key-canary" not in "".join(logs)
 
 
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_direct_adapter_rejects_malformed_canonical_table_without_alias_leakage(
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_first: bool,
+) -> None:
+    alias = {
+        "api_key": "ALIAS-SECRET-CANARY",
+        "api_mode": "responses",
+        "model": "ALIAS-MODEL-CANARY",
+    }
+    entries = (
+        [("qwencloud", []), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", [])]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values=source),
+    )
+    monkeypatch.setattr(
+        qwencloud.requests,
+        "Session",
+        lambda: pytest.fail("malformed Qwen config must fail before network"),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        with pytest.raises(ChatConfigurationError):
+            chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "hello"}],
+                model=None,
+                api_key=None,
+                streaming=False,
+                api_base_url=None,
+                api_mode=None,
+            )
+
+    assert source == original
+    assert "ALIAS-SECRET-CANARY" not in "".join(logs)
+    assert "ALIAS-MODEL-CANARY" not in "".join(logs)
+
+
+def test_direct_adapter_rejects_alias_only_malformed_table_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"api_settings": {"QwenCloud": ["SECRET-CANARY"]}}
+    original = deepcopy(source)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values=source),
+    )
+    monkeypatch.setattr(
+        qwencloud.requests,
+        "Session",
+        lambda: pytest.fail("malformed Qwen config must fail before network"),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        with pytest.raises(ChatConfigurationError):
+            chat_with_qwencloud(
+                input_data=[{"role": "user", "content": "hello"}],
+                model="explicit-model",
+                api_key="explicit-key",
+                streaming=False,
+                api_base_url="https://explicit.example.test/v1",
+                api_mode="responses",
+            )
+
+    assert source == original
+    assert "SECRET-CANARY" not in "".join(logs)
+
+
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_direct_adapter_ignores_malformed_alias_when_canonical_is_valid(
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_first: bool,
+) -> None:
+    response = _TransportResponse(
+        {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    session = _RecordingSession(response)
+    monkeypatch.setattr(
+        qwencloud,
+        "requests",
+        SimpleNamespace(Session=lambda: session),
+    )
+    canonical = {
+        "api_key": "canonical-key",
+        "api_mode": "chat_completions",
+        "api_base_url": "https://canonical.example.test/v1",
+        "model": "canonical-model",
+        "timeout": 17,
+        "retries": 0,
+    }
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", ["SECRET-CANARY"])]
+        if canonical_first
+        else [("QwenCloud", ["SECRET-CANARY"]), ("qwencloud", canonical)]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+    monkeypatch.setattr(
+        qwencloud,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values=source),
+    )
+
+    with _captured_qwencloud_logs() as logs:
+        chat_with_qwencloud(
+            input_data=[{"role": "user", "content": "hello"}],
+            model=None,
+            api_key=None,
+            streaming=False,
+            api_base_url=None,
+            api_mode=None,
+        )
+
+    assert source == original
+    assert session.posts[0]["url"] == (
+        "https://canonical.example.test/v1/chat/completions"
+    )
+    assert session.posts[0]["headers"]["Authorization"] == "Bearer canonical-key"
+    assert session.posts[0]["json"]["model"] == "canonical-model"
+    assert session.posts[0]["timeout"] == 17.0
+    assert "SECRET-CANARY" not in "".join(logs)
+
+
 @pytest.mark.parametrize(
     "api_settings",
     (

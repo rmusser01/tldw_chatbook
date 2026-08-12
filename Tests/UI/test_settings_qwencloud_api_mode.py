@@ -12,7 +12,10 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
-from Tests.UI.test_settings_configuration_hub import _open_settings_category
+from Tests.UI.test_settings_configuration_hub import (
+    _open_settings_category,
+    _settle_settings_mount_storm,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -75,6 +78,30 @@ async def test_qwencloud_api_mode_selector_visibility_options_and_default():
 
         assert selector.disabled is True
         assert row.has_class("settings-gated-profile-hidden") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    ("API mode", "api_settings.<provider>.api_mode", "mode"),
+)
+async def test_qwencloud_api_mode_field_search_enter_focuses_selector(query):
+    app = _qwencloud_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        await pilot.click("#settings-category-search")
+        await pilot.press(*tuple(query))
+        await pilot.press("enter")
+        for _ in range(8):
+            await pilot.pause()
+
+        screen = _active_destination_screen(host)
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert host.focused is not None
+        assert host.focused.id == "settings-provider-api-mode"
+        assert screen.query_one("#settings-provider-api-mode", Select).disabled is False
 
 
 @pytest.mark.asyncio
@@ -218,6 +245,129 @@ async def test_qwencloud_save_failure_preserves_mode_input_and_draft(monkeypatch
         assert "Failed to save" in str(
             screen.query_one("#settings-provider-save-result", Static).content
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_key", ["api_base_url", "api_mode"])
+async def test_qwencloud_canonical_multifield_save_failure_is_atomic(
+    monkeypatch,
+    failing_key,
+):
+    app = _qwencloud_app(api_mode="responses")
+    original_api_settings = deepcopy(app.app_config["api_settings"])
+    disk_api_settings = deepcopy(original_api_settings)
+    legacy_calls: list[tuple[str, str, object]] = []
+    atomic_calls: list[dict] = []
+
+    def legacy_save(section, key, value):
+        legacy_calls.append((section, key, value))
+        if section != "api_settings.qwencloud":
+            return True
+        if key == failing_key:
+            return False
+        disk_api_settings["qwencloud"][key] = value
+        return True
+
+    def atomic_save(section_values, *, delete_keys=None):
+        atomic_calls.append(deepcopy(dict(section_values)))
+        values = section_values["api_settings.qwencloud"]
+        if failing_key in values:
+            return False
+        disk_api_settings["qwencloud"].update(values)
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        legacy_save,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        atomic_save,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        endpoint.value = "https://new.example.test/compatible-mode/v1"
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+        await pilot.pause()
+
+        await pilot.click("#settings-save-category")
+
+        assert atomic_calls == [
+            {
+                "api_settings.qwencloud": {
+                    "api_base_url": "https://new.example.test/compatible-mode/v1",
+                    "api_mode": "chat_completions",
+                }
+            }
+        ]
+        assert legacy_calls == []
+        assert disk_api_settings == original_api_settings
+        assert app.app_config["api_settings"] == original_api_settings
+        assert endpoint.value == "https://new.example.test/compatible-mode/v1"
+        assert mode.value == "chat_completions"
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["endpoint"] == endpoint.value
+        assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
+        assert "Failed to save" in str(
+            screen.query_one("#settings-provider-save-result", Static).content
+        )
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    atomic_calls: list[dict] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda *_args: pytest.fail("canonical Qwen batch must not save per key"),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: (
+            atomic_calls.append(deepcopy(dict(section_values))) or True
+        ),
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        endpoint.value = "https://new.example.test/compatible-mode/v1"
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+        await pilot.pause()
+
+        await pilot.click("#settings-save-category")
+
+        assert atomic_calls == [
+            {
+                "api_settings.qwencloud": {
+                    "api_base_url": "https://new.example.test/compatible-mode/v1",
+                    "api_mode": "chat_completions",
+                }
+            }
+        ]
+        assert app.app_config["api_settings"]["qwencloud"]["api_base_url"] == (
+            "https://new.example.test/compatible-mode/v1"
+        )
+        assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == (
+            "chat_completions"
+        )
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
 
 
 @pytest.mark.asyncio
@@ -538,6 +688,120 @@ async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
     )
     assert resolution.ready is True
     assert resolution.api_mode == "chat_completions"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_first", [False, True])
+async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_without_alias_credentials(
+    canonical_first,
+):
+    app = _qwencloud_app()
+    alias = {
+        "api_mode": "chat_completions",
+        "api_key": "ALIAS-SECRET-CANARY",
+        "api_key_env_var": "ALIAS_ENV_CANARY",
+        "model": "alias-model",
+    }
+    entries = (
+        [("qwencloud", []), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", [])]
+    )
+    app.app_config["api_settings"] = dict(entries)
+    original_api_settings = deepcopy(app.app_config["api_settings"])
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        selector = screen.query_one("#settings-provider-api-mode", Select)
+        guidance = screen.query_one("#settings-provider-api-mode-guidance", Static)
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+
+        assert screen._provider_config_entry("QwenCloud")[0] == "qwencloud"
+        assert selector.value is Select.NULL
+        assert "choose Responses or Chat Completions" in str(guidance.content)
+        assert env_var.value == ""
+        assert "ALIAS-SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
+        assert "ALIAS_ENV_CANARY" not in screen._provider_key_status("QwenCloud")
+        assert app.app_config["api_settings"] == original_api_settings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_first", [False, True])
+async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical_is_valid(
+    canonical_first,
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    canonical = {
+        "api_mode": "responses",
+        "api_key_env_var": "CANONICAL_ENV",
+        "model": "qwen3.8-max",
+    }
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", [])]
+        if canonical_first
+        else [("QwenCloud", []), ("qwencloud", canonical)]
+    )
+    app.app_config["api_settings"] = dict(entries)
+    writes: list[tuple[str, str, object]] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: writes.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen._provider_config_entry("QwenCloud")[0] == "qwencloud"
+        assert screen.query_one("#settings-provider-api-mode", Select).value == (
+            "responses"
+        )
+        assert (
+            screen.query_one("#settings-provider-credential-env-var", Input).value
+            == "CANONICAL_ENV"
+        )
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "https://new.example.test/compatible-mode/v1"
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+
+        assert writes == [
+            (
+                "api_settings.qwencloud",
+                "api_base_url",
+                "https://new.example.test/compatible-mode/v1",
+            )
+        ]
+        assert app.app_config["api_settings"]["QwenCloud"] == []
+        assert app.app_config["api_settings"]["qwencloud"]["api_base_url"] == (
+            "https://new.example.test/compatible-mode/v1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_alias_only_malformed_table_uses_canonical_recovery_owner():
+    app = _qwencloud_app()
+    app.app_config["api_settings"] = {"QwenCloud": ["SECRET-CANARY"]}
+    original_api_settings = deepcopy(app.app_config["api_settings"])
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen._provider_config_entry("QwenCloud")[0] == "qwencloud"
+        assert screen.query_one("#settings-provider-api-mode", Select).value is (
+            Select.NULL
+        )
+        assert (
+            screen.query_one("#settings-provider-credential-env-var", Input).value == ""
+        )
+        assert "SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
+        assert app.app_config["api_settings"] == original_api_settings
 
 
 @pytest.mark.asyncio

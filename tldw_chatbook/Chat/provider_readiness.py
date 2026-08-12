@@ -25,6 +25,7 @@ from typing import Mapping, Optional
 # already takes, and cannot cycle back: `config.py`'s own top-level
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
 from ..config import (
+    ProviderSettingsError,
     is_valid_provider_api_key,
     normalize_provider_config_key,
     provider_settings_for_key,
@@ -196,7 +197,23 @@ def get_provider_readiness(
         )
 
     api_settings = app_config.get("api_settings", {})
-    provider_settings = provider_settings_for_key(api_settings, provider_key)
+    try:
+        provider_settings = provider_settings_for_key(api_settings, provider_key)
+    except ProviderSettingsError:
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=_requires_api_key(provider_key),
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Invalid provider settings",
+            recovery=(
+                "Replace api_settings.qwencloud with a configuration table "
+                "in Settings or config.toml."
+            ),
+        )
 
     requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))

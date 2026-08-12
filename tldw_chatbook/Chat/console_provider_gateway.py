@@ -51,7 +51,7 @@ from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
     normalize_qwencloud_base_url,
 )
-from tldw_chatbook.config import provider_settings_for_key
+from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -1356,7 +1356,19 @@ class ConsoleProviderGateway:
             )
 
         app_config = self._config_provider() or {}
-        provider_settings = _provider_settings(app_config, identity.readiness_key)
+        try:
+            provider_settings = _provider_settings(app_config, identity.readiness_key)
+        except ProviderSettingsError:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "QwenCloud blocked: provider settings must be a configuration "
+                    "table under api_settings.qwencloud."
+                ),
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
         model = _first_string(
             selection.explicit_model,
             selection.configured_model,

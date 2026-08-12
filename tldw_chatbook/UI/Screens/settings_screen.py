@@ -106,6 +106,7 @@ from ...config import (
     MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    ProviderSettingsError,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     coerce_bool_setting,
@@ -583,6 +584,7 @@ QWENCLOUD_API_MODE_INVALID_COPY = (
     "QwenCloud API mode is invalid. Open API mode and choose Responses or Chat "
     "Completions, then Save."
 )
+_INVALID_QWENCLOUD_PROVIDER_SETTINGS = object()
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -1008,6 +1010,11 @@ def _build_field_search_index() -> None:
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
                 ("settings-provider-value", "Provider"),
+                ("settings-provider-api-mode", "API mode"),
+                (
+                    "settings-provider-api-mode",
+                    "api_settings.<provider>.api_mode",
+                ),
                 ("settings-model-value", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
@@ -8161,14 +8168,24 @@ class SettingsScreen(BaseAppScreen):
         target_key = provider_config_key(provider)
         if not target_key:
             return None, {}
-        section_key = None
-        for configured_provider, configured_settings in api_settings.items():
-            if provider_config_key(str(configured_provider)) == target_key:
-                section_key = str(configured_provider)
-                break
+        section_key = (
+            "qwencloud"
+            if target_key == "qwencloud" and "qwencloud" in api_settings
+            else None
+        )
+        if section_key is None:
+            for configured_provider in api_settings:
+                if provider_config_key(str(configured_provider)) == target_key:
+                    section_key = str(configured_provider)
+                    break
         if section_key is None:
             return None, {}
-        return section_key, provider_settings_for_key(api_settings, target_key)
+        try:
+            return section_key, provider_settings_for_key(api_settings, target_key)
+        except ProviderSettingsError:
+            return "qwencloud", {
+                "api_mode": _INVALID_QWENCLOUD_PROVIDER_SETTINGS,
+            }
 
     def _provider_config(self, provider: str) -> Mapping[str, object]:
         _section_key, provider_config = self._provider_config_entry(provider)
@@ -17651,10 +17668,21 @@ class SettingsScreen(BaseAppScreen):
                 provider_settings_values.pop("api_mode", None)
             if provider_settings_values and provider_key:
                 provider_save_key = provider_section_key or provider_key
-                provider_settings_saved = SettingsConfigAdapter().save_values(
-                    f"api_settings.{provider_save_key}",
-                    provider_settings_values,
-                )
+                provider_section = f"api_settings.{provider_save_key}"
+                adapter = SettingsConfigAdapter()
+                if (
+                    provider_save_key == "qwencloud"
+                    and "api_mode" in provider_settings_values
+                    and len(provider_settings_values) > 1
+                ):
+                    provider_settings_saved = adapter.save_sections(
+                        {provider_section: provider_settings_values}
+                    )
+                else:
+                    provider_settings_saved = adapter.save_values(
+                        provider_section,
+                        provider_settings_values,
+                    )
                 saved = saved and provider_settings_saved
             next_model_defaults = None
             if model_profile_dirty and provider_key and model:

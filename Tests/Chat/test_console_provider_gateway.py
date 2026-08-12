@@ -1,6 +1,7 @@
 import asyncio
 import builtins
 import dataclasses
+from copy import deepcopy
 import http.server
 import json
 import threading
@@ -935,6 +936,84 @@ async def test_qwencloud_resolution_prefers_canonical_fields_and_alias_fallbacks
     assert resolved.api_mode == "chat_completions"
     assert resolved.model == "qwen-alias-model"
     assert resolved.base_url == "https://alias.example.test/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_first", [False, True])
+async def test_qwencloud_resolution_blocks_malformed_canonical_table_without_alias_leakage(
+    canonical_first: bool,
+) -> None:
+    alias = {
+        "api_key": "ALIAS-SECRET-CANARY",
+        "model": "ALIAS-MODEL-CANARY",
+    }
+    entries = (
+        [("qwencloud", []), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", [])]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+    gateway = ConsoleProviderGateway(config_provider=lambda: source, environ={})
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+
+    assert source == original
+    assert resolved.ready is False
+    assert "provider settings" in resolved.visible_copy.lower()
+    assert "api_settings.qwencloud" in resolved.visible_copy
+    assert "ALIAS-SECRET-CANARY" not in resolved.visible_copy
+    assert "ALIAS-MODEL-CANARY" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_first", [False, True])
+async def test_qwencloud_resolution_ignores_malformed_alias_when_canonical_is_valid(
+    canonical_first: bool,
+) -> None:
+    canonical = {
+        "api_key": "canonical-key",
+        "api_mode": "responses",
+        "api_base_url": "https://canonical.example.test/compatible-mode/v1",
+        "model": "canonical-model",
+    }
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", [])]
+        if canonical_first
+        else [("QwenCloud", []), ("qwencloud", canonical)]
+    )
+    source = {"api_settings": dict(entries)}
+    original = deepcopy(source)
+    gateway = ConsoleProviderGateway(config_provider=lambda: source, environ={})
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+
+    assert source == original
+    assert resolved.ready is True
+    assert resolved.api_key == "canonical-key"
+    assert resolved.model == "canonical-model"
+    assert resolved.base_url == "https://canonical.example.test/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_resolution_blocks_alias_only_malformed_table():
+    source = {"api_settings": {"QwenCloud": ["SECRET-CANARY"]}}
+    original = deepcopy(source)
+    gateway = ConsoleProviderGateway(config_provider=lambda: source, environ={})
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+
+    assert source == original
+    assert resolved.ready is False
+    assert "provider settings" in resolved.visible_copy.lower()
+    assert "api_settings.qwencloud" in resolved.visible_copy
+    assert "SECRET-CANARY" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
