@@ -4,7 +4,7 @@ title: Engine keyword-leg MATCH construction starves natural-language queries
 status: In Progress
 assignee: []
 created_date: '2026-08-11'
-updated_date: '2026-08-12 04:00'
+updated_date: '2026-08-12 04:22'
 labels:
   - rag
   - retrieval
@@ -132,5 +132,7 @@ Arc plan: Docs/superpowers/plans/2026-08-11-rag-keyword-leg-match-construction.m
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Task-3 sweep run (gated, 2026-08-11): census and 20 / and_trim 21 / or 28 / and_or 29; control self-check reproduced the shipped 20/53. Hard constraint (a) DISQUALIFIES both or AND and_then_or — the vector-blind fixture kw-plant-maintenance-record loses its hybrid rescue under both (mech absent), and (b) is violated too (scoped/recall 1.000 -> 0.429, keyword/recall -0.062, vocab+paraphrase MRR -0.13/-0.115). The spec's by-construction argument was true of the SUB-LEG and false of the LEG: _keyword_search merges sub-legs round-robin (interleave_rankings), so other sub-legs falling back demotes the untouched AND row from leg rank 1 to 2, and fusion consumes leg rank (0.0500 -> 0.0429, below the vector row at rank 11). Computed WINNER under the pre-registered rule = and_stopword_trim (census 21, +pm-vendor-chaser; prompt gated pin flips 0.000 -> 0.200; zero regressions in any mode; 0 extra FTS queries). Escaping suite 37 green; plain/semantic cells byte-identical across all four constructions. Full table: .superpowers/sdd/2026-08-11-rag-keyword-leg-match-construction/task-3-report.md
+Task-3 sweep run (gated, 2026-08-11): census and 20 / and_trim 21 / or 28 / and_or 29; control self-check reproduced the shipped 20/53. Hard constraint (a) DISQUALIFIES both or AND and_then_or — the vector-blind fixture kw-plant-maintenance-record loses its hybrid rescue under both (mech absent), and (b) is violated too (scoped/recall 1.000 -> 0.429, keyword/recall -0.062, vocab+paraphrase MRR -0.13/-0.115). The spec's by-construction argument was true of the SUB-LEG and false of the LEG: _keyword_search merges sub-legs round-robin (interleave_rankings), so other sub-legs falling back demotes the untouched AND row from leg rank 1 to 2, and fusion consumes leg rank (0.05 -> 0.0429, below the vector row at rank 11). The scoped collapse decomposes exactly the same way: the 4 note-targeted scoped queries drop behind a media fallback row, the 3 media-targeted ones survive — 3/7 = 0.429, the measured cell. Computed WINNER under the pre-registered rule = and_stopword_trim (census 21, +pm-vendor-chaser; prompt gated pin flips 0.000 -> 0.200; zero regressions in any mode; 0 extra FTS queries). Escaping suite 37 green; plain/semantic cells byte-identical across all four constructions; 105 gated metrics all +0.000 (informational on this machine — environment mismatch).
+
+READ THE WIN AS WHAT IT IS: the arc was raised on "the keyword leg returns zero rows for 40 of 60 golden queries" and the winner moves that to 39/60 — closer in substance to a null result plus a re-scoped merge-level finding than to a fix. The candidates that DO move the census (28-29, prompt 5/5) are exactly the ones the constraints reject, and they are rejected by the MERGE, not by the MATCH form. Re-fusing the and_or pass with the fixture restored to leg rank 1 and nothing else changed puts it back at slot 10 of 10 — a merge-ordering fix rescues it with ZERO headroom, so "fix interleave_rankings" is not sufficient on its own either. Full table: .superpowers/sdd/2026-08-11-rag-keyword-leg-match-construction/task-3-report.md
 <!-- SECTION:NOTES:END -->
