@@ -16,6 +16,7 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
     ParsedProfileMigrationJournal,
     ProfileMigrationJournalSlot,
     ProfileMigrationPublicationSlot,
@@ -107,6 +108,12 @@ class _PublicationSlotState:
     rollback_path: Path
     prior_retained: bool = False
     candidate_published: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _JournalIdentity:
+    file: os.stat_result
+    parent: os.stat_result
 
 
 def _safe_failure(code: str = "migration_failed") -> ProfileRepositoryError:
@@ -497,9 +504,9 @@ def _fsync_exact(identity: _OpaqueIdentity) -> None:
         os.close(parent_fd)
 
 
-def _rewrite_journal(
+def _append_journal(
     path: Path,
-    identity: os.stat_result,
+    identity: _JournalIdentity,
     payload: bytes,
 ) -> None:
     parent_fd, leaf = private_paths._open_verified_parent(
@@ -510,29 +517,33 @@ def _rewrite_journal(
     try:
         file_fd = os.open(
             leaf,
-            os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            os.O_WRONLY
+            | os.O_APPEND
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
             dir_fd=parent_fd,
         )
         opened = os.fstat(file_fd)
         entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
         if (
-            not private_paths._same_identity(opened, identity)
-            or not private_paths._same_identity(entry, identity)
+            not private_paths._same_identity(os.fstat(parent_fd), identity.parent)
+            or not private_paths._same_identity(opened, identity.file)
+            or not private_paths._same_identity(entry, identity.file)
             or not _valid_private_stat(opened)
             or not _valid_private_stat(entry)
+            or opened.st_size + len(payload) > MAX_PROFILE_MIGRATION_JOURNAL_BYTES
         ):
             raise ValueError
-        os.ftruncate(file_fd, 0)
         offset = 0
         while offset < len(payload):
             offset += os.write(file_fd, payload[offset:])
         os.fsync(file_fd)
-        os.fsync(parent_fd)
         opened = os.fstat(file_fd)
         entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
         if (
-            not private_paths._same_identity(opened, identity)
-            or not private_paths._same_identity(entry, identity)
+            not private_paths._same_identity(os.fstat(parent_fd), identity.parent)
+            or not private_paths._same_identity(opened, identity.file)
+            or not private_paths._same_identity(entry, identity.file)
             or not _valid_private_stat(opened)
             or not _valid_private_stat(entry)
         ):
@@ -720,19 +731,23 @@ def _claim(
     return parent / f".{destinations[0]._path.name}.migration-publication.json", key
 
 
-def _write_new_journal(path: Path, payload: bytes) -> os.stat_result:
+def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
     parent_fd, leaf = private_paths._open_verified_parent(
         path,
         missing_leaf_allowed=True,
     )
     file_fd = -1
+    identity: os.stat_result | None = None
+    body_error: BaseException | None = None
     try:
+        parent_identity = os.fstat(parent_fd)
         file_fd = os.open(
             leaf,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             0o600,
             dir_fd=parent_fd,
         )
+        identity = os.fstat(file_fd)
         offset = 0
         while offset < len(payload):
             offset += os.write(file_fd, payload[offset:])
@@ -746,11 +761,29 @@ def _write_new_journal(path: Path, payload: bytes) -> os.stat_result:
         ):
             raise ValueError
         os.fsync(parent_fd)
-        return identity
+        return _JournalIdentity(identity, parent_identity)
+    except BaseException as error:
+        body_error = error
     finally:
         if file_fd >= 0:
             os.close(file_fd)
+        if body_error is not None and identity is not None:
+            try:
+                current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+                if (
+                    private_paths._same_identity(current, identity)
+                    and private_paths._same_identity(
+                        os.fstat(parent_fd), parent_identity
+                    )
+                    and _valid_private_stat(current)
+                ):
+                    os.unlink(leaf, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
+            except BaseException:
+                pass
         os.close(parent_fd)
+    assert body_error is not None
+    raise body_error
 
 
 def _unlink_exact(path: Path, identity: os.stat_result | None) -> bool:
@@ -788,6 +821,11 @@ def _finish_claim(
             _ACTIVE_PUBLICATIONS.discard(key)
 
 
+def _cleanup_exact(path: Path, identity: os.stat_result | None) -> None:
+    if not _unlink_exact(path, identity):
+        raise OSError
+
+
 def publish_profile_migration(
     *,
     active_candidate: PreparedProfileMigrationArtifact,
@@ -801,7 +839,7 @@ def publish_profile_migration(
     artifacts = (active_candidate, *tuple(backup_candidates))
     destinations = (active_destination, *tuple(backup_destinations))
     journal_path: Path | None = None
-    journal_identity: os.stat_result | None = None
+    journal_identity: _JournalIdentity | None = None
     key: tuple[int, int, str] | None = None
     body_error: BaseException | None = None
     deferred: list[BaseException] = []
@@ -831,7 +869,7 @@ def publish_profile_migration(
             )
             for artifact, destination in zip(artifacts, destinations, strict=True)
         )
-        _rewrite_journal(
+        _append_journal(
             journal_path,
             journal_identity,
             _journal_payload(artifacts, destinations, phase="publishing"),
@@ -844,7 +882,7 @@ def publish_profile_migration(
         )
         for state in states:
             _publish_slot(state, stage_hook=stage_hook, deferred=deferred)
-        _rewrite_journal(
+        _append_journal(
             journal_path,
             journal_identity,
             _journal_payload(artifacts, destinations, phase="complete"),
@@ -863,28 +901,32 @@ def publish_profile_migration(
         for state in states:
             if state.prior_retained:
                 try:
-                    _unlink_exact(
+                    _cleanup_exact(
                         state.rollback_path,
                         state.destination._file_identity,
                     )
                 except BaseException as caught:
                     complete_cleanup_errors.append(caught)
-        if journal_path is not None:
+        if (
+            not complete_cleanup_errors
+            and journal_path is not None
+            and journal_identity is not None
+        ):
             try:
-                _unlink_exact(journal_path, journal_identity)
+                _cleanup_exact(journal_path, journal_identity.file)
             except BaseException as caught:
                 complete_cleanup_errors.append(caught)
         _finish_claim(artifacts, destinations, key)
-        for pending in (*deferred, *complete_cleanup_errors):
-            if pending is not None and not isinstance(pending, Exception):
-                raise pending
+        _redeliver_control_flow(*deferred, *complete_cleanup_errors)
+        if complete_cleanup_errors:
+            raise _safe_failure() from None
         return
 
     if ponr:
         journal_update_errors: list[BaseException] = []
         if journal_path is not None and journal_identity is not None:
             try:
-                _rewrite_journal(
+                _append_journal(
                     journal_path,
                     journal_identity,
                     _journal_payload(artifacts, destinations, phase="restoring"),
@@ -895,7 +937,7 @@ def publish_profile_migration(
         if restore_errors:
             if journal_path is not None and journal_identity is not None:
                 try:
-                    _rewrite_journal(
+                    _append_journal(
                         journal_path,
                         journal_identity,
                         _journal_payload(
@@ -914,12 +956,16 @@ def publish_profile_migration(
         restore_cleanup_errors: list[BaseException] = []
         for artifact in artifacts:
             try:
-                _unlink_exact(artifact._path, artifact._file_identity)
+                _cleanup_exact(artifact._path, artifact._file_identity)
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
-        if journal_path is not None:
+        if (
+            not restore_cleanup_errors
+            and journal_path is not None
+            and journal_identity is not None
+        ):
             try:
-                _unlink_exact(journal_path, journal_identity)
+                _cleanup_exact(journal_path, journal_identity.file)
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
         _finish_claim(artifacts, destinations, key)
@@ -937,12 +983,15 @@ def publish_profile_migration(
     prepublication_cleanup_errors: list[BaseException] = []
     for artifact in artifacts:
         try:
-            _unlink_exact(artifact._path, artifact._file_identity)
+            _cleanup_exact(artifact._path, artifact._file_identity)
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
-    if journal_path is not None:
+    if not prepublication_cleanup_errors and journal_path is not None:
         try:
-            _unlink_exact(journal_path, journal_identity)
+            _cleanup_exact(
+                journal_path,
+                None if journal_identity is None else journal_identity.file,
+            )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
     _finish_claim(artifacts, destinations, key)

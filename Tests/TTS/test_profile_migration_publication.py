@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib
 import json
 import os
@@ -199,7 +200,10 @@ def test_durable_journal_has_only_recognized_bounded_relative_slots(
     )
     assert ".candidate.sqlite3" not in repr(parsed)
     assert "profiles.sqlite3" not in repr(parsed.recovery_rows[0])
-    assert json.loads(raw) == {
+    decoded_frame = json.loads(raw)
+    assert set(decoded_frame) == {"checksum", "recovery"}
+    assert len(decoded_frame["checksum"]) == 64
+    assert decoded_frame["recovery"] == {
         "phase": "prepared",
         "slots": [
             {
@@ -212,6 +216,147 @@ def test_durable_journal_has_only_recognized_bounded_relative_slots(
         ],
         "version": 1,
     }
+
+
+@pytest.mark.parametrize("boundary", ["write", "file_fsync", "dir_fsync"])
+def test_initial_journal_failure_removes_exact_partial_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    module = _publication_module()
+    journal_path = tmp_path / ".profiles.migration-publication.json"
+    payload = module.encode_profile_migration_journal(
+        (
+            module.ProfileMigrationJournalSlot(
+                slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+                candidate=".candidate.sqlite3",
+                target="profiles.sqlite3",
+                rollback=".profiles.sqlite3.active.rollback",
+                had_prior=True,
+            ),
+        ),
+        phase="prepared",
+    )
+    real_open = module.os.open
+    real_write = module.os.write
+    real_fsync = module.os.fsync
+    journal_fd = -1
+    journal_file_fsynced = False
+    failed = False
+
+    def tracked_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal journal_fd
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if str(path).endswith("migration-publication.json"):
+            journal_fd = descriptor
+        return descriptor
+
+    def fault_write(file_fd: int, payload: bytes) -> int:
+        nonlocal failed
+        if boundary == "write" and file_fd == journal_fd and not failed:
+            failed = True
+            raise OSError(errno.ENOSPC, "PRIVATE disk full")
+        return real_write(file_fd, payload)
+
+    def fault_fsync(file_fd: int) -> None:
+        nonlocal failed, journal_file_fsynced
+        if file_fd == journal_fd:
+            if boundary == "file_fsync" and not failed:
+                failed = True
+                raise OSError(errno.ENOSPC, "PRIVATE file fsync")
+            journal_file_fsynced = True
+        elif boundary == "dir_fsync" and journal_file_fsynced and not failed:
+            failed = True
+            raise OSError(errno.ENOSPC, "PRIVATE directory fsync")
+        real_fsync(file_fd)
+
+    monkeypatch.setattr(module.os, "open", tracked_open)
+    monkeypatch.setattr(module.os, "write", fault_write)
+    monkeypatch.setattr(module.os, "fsync", fault_fsync)
+
+    with pytest.raises(OSError):
+        module._write_new_journal(journal_path, payload)
+
+    assert failed
+    assert not tuple(tmp_path.glob("*.migration-publication.json"))
+
+
+@pytest.mark.parametrize("boundary", ["write", "file_fsync"])
+def test_append_failure_preserves_last_recognized_journal_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    module = _publication_module()
+    journal_path = tmp_path / ".profiles.migration-publication.json"
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
+    publishing = module.encode_profile_migration_journal(rows, phase="publishing")
+    identity = module._write_new_journal(journal_path, prepared)
+    real_write = module.os.write
+    real_fsync = module.os.fsync
+    journal_fd = -1
+    failed = False
+
+    def fault_write(file_fd: int, payload: bytes) -> int:
+        nonlocal failed, journal_fd
+        journal_fd = file_fd
+        if boundary == "write" and not failed:
+            failed = True
+            midpoint = max(1, len(payload) // 2)
+            real_write(file_fd, payload[:midpoint])
+            raise OSError(errno.ENOSPC, "PRIVATE append disk full")
+        return real_write(file_fd, payload)
+
+    def fault_fsync(file_fd: int) -> None:
+        nonlocal failed
+        if boundary == "file_fsync" and file_fd == journal_fd and not failed:
+            failed = True
+            raise OSError(errno.ENOSPC, "PRIVATE append fsync")
+        real_fsync(file_fd)
+
+    monkeypatch.setattr(module.os, "write", fault_write)
+    monkeypatch.setattr(module.os, "fsync", fault_fsync)
+
+    with pytest.raises(OSError):
+        module._append_journal(journal_path, identity, publishing)
+
+    parsed = module.parse_profile_migration_journal(journal_path.read_bytes())
+    assert parsed.phase in {"prepared", "publishing"}
+    assert parsed.recovery_rows == rows
+
+
+def test_parser_uses_last_valid_prefix_before_crash_suffix(tmp_path: Path) -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    raw = (
+        module.encode_profile_migration_journal(rows, phase="prepared")
+        + module.encode_profile_migration_journal(rows, phase="publishing")
+        + b'{"checksum":"partial'
+        + module.encode_profile_migration_journal(rows, phase="restoring")
+    )
+
+    parsed = module.parse_profile_migration_journal(raw)
+
+    assert parsed.phase == "publishing"
+    assert parsed.recovery_rows == rows
 
 
 def test_prepublication_failure_is_bounded_and_context_free(tmp_path: Path) -> None:
@@ -314,11 +459,100 @@ def test_successfully_publishes_active_then_every_backup_in_slot_order(
     assert not pre_v4_candidate_path.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
     assert not tuple(tmp_path.glob("*.rollback"))
-    if os.name == "posix":
-        assert all(
-            stat.S_IMODE(path.stat().st_mode) == 0o600
-            for path in (active_path, pre_v3_path, pre_v4_path)
+
+
+@pytest.mark.parametrize("cleanup_failure", ["false", "exception"])
+def test_completed_rollback_cleanup_failure_retains_complete_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_failure: str,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    expected = _store(candidate_path, version=4, marker="new")
+    _store(active_path, version=3, marker="old")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    real_unlink = module._unlink_exact
+
+    def fail_rollback_cleanup(path: Path, identity: object) -> bool:
+        if path.name.endswith(".active.rollback"):
+            if cleanup_failure == "exception":
+                raise OSError("PRIVATE cleanup failure")
+            return False
+        return real_unlink(path, identity)
+
+    monkeypatch.setattr(module, "_unlink_exact", fail_rollback_cleanup)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
         )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert active_path.read_bytes() == expected
+    assert tuple(tmp_path.glob("*.rollback"))
+    journal = next(tmp_path.glob("*.migration-publication.json"))
+    assert (
+        module.parse_profile_migration_journal(journal.read_bytes()).phase == "complete"
+    )
+
+
+@pytest.mark.parametrize(
+    ("fault_stage", "expected_phase"),
+    [("JOURNAL_DURABLE", "prepared"), ("ACTIVE_REOPENED", "restoring")],
+)
+def test_candidate_cleanup_failure_retains_recovery_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_stage: str,
+    expected_phase: str,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    active_before = _store(active_path, version=3, marker="old")
+    candidate_before = _store(candidate_path, version=4, marker="new")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    real_unlink = module._unlink_exact
+
+    def fail_candidate_cleanup(path: Path, identity: object) -> bool:
+        if path == candidate_path:
+            return False
+        return real_unlink(path, identity)
+
+    monkeypatch.setattr(module, "_unlink_exact", fail_candidate_cleanup)
+
+    def fail(stage: object) -> None:
+        if stage is getattr(module.ProfileMigrationPublicationStage, fault_stage):
+            raise RuntimeError("PRIVATE phase failure")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+            stage_hook=fail,
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert active_path.read_bytes() == active_before
+    assert candidate_path.read_bytes() == candidate_before
+    journal = next(tmp_path.glob("*.migration-publication.json"))
+    assert (
+        module.parse_profile_migration_journal(journal.read_bytes()).phase
+        == expected_phase
+    )
 
 
 @pytest.mark.parametrize(

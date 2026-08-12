@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import Final
 
@@ -143,9 +144,18 @@ def encode_profile_migration_journal(
         }
         for slot in slots
     ]
+    recovery_payload = json.dumps(
+        {"phase": phase, "slots": rows, "version": 1},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
     payload = (
         json.dumps(
-            {"phase": phase, "slots": rows, "version": 1},
+            {
+                "checksum": sha256(recovery_payload).hexdigest(),
+                "recovery": json.loads(recovery_payload),
+            },
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
@@ -155,6 +165,65 @@ def encode_profile_migration_journal(
     if len(payload) > MAX_PROFILE_MIGRATION_JOURNAL_BYTES:
         raise ValueError
     return payload
+
+
+def _decode_journal_frame(
+    frame: bytes,
+    *,
+    previous_phase: str | None,
+    expected_rows: tuple[ProfileMigrationJournalSlot, ...] | None,
+) -> tuple[str, tuple[ProfileMigrationJournalSlot, ...]]:
+    transitions = {
+        None: {"prepared"},
+        "prepared": {"publishing"},
+        "publishing": {"complete", "restoring"},
+        "restoring": {"unavailable"},
+        "complete": set(),
+        "unavailable": set(),
+    }
+    decoded = json.loads(frame)
+    if type(decoded) is not dict or set(decoded) != {"checksum", "recovery"}:
+        raise ValueError
+    recovery = decoded["recovery"]
+    if type(recovery) is not dict or set(recovery) != {"phase", "slots", "version"}:
+        raise ValueError
+    canonical_recovery = json.dumps(
+        recovery,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    phase = recovery["phase"]
+    if (
+        type(decoded["checksum"]) is not str
+        or decoded["checksum"] != sha256(canonical_recovery).hexdigest()
+        or recovery["version"] != 1
+        or phase not in transitions[previous_phase]
+    ):
+        raise ValueError
+    rows = recovery["slots"]
+    if type(rows) is not list or not 1 <= len(rows) <= 3:
+        raise ValueError
+    recovery_rows = tuple(
+        ProfileMigrationJournalSlot(
+            slot=ProfileMigrationPublicationSlot(row["slot"]),
+            candidate=row["candidate"],
+            target=row["target"],
+            rollback=row["rollback"],
+            had_prior=row["had_prior"],
+        )
+        for row in rows
+        if type(row) is dict
+        and set(row) == {"candidate", "had_prior", "rollback", "slot", "target"}
+    )
+    if len(recovery_rows) != len(rows):
+        raise ValueError
+    _validate_recovery_rows(recovery_rows)
+    if expected_rows is not None and recovery_rows != expected_rows:
+        raise ValueError
+    if encode_profile_migration_journal(recovery_rows, phase=phase) != frame:
+        raise ValueError
+    return phase, recovery_rows
 
 
 def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal:
@@ -169,62 +238,27 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
             or len(raw) > MAX_PROFILE_MIGRATION_JOURNAL_BYTES
         ):
             raise ValueError
-        decoded = json.loads(raw)
-        if set(decoded) != {"phase", "slots", "version"}:
+        complete_frames = raw.splitlines(keepends=True)
+        if complete_frames and not complete_frames[-1].endswith(b"\n"):
+            complete_frames.pop()
+        if not complete_frames:
             raise ValueError
-        if decoded["version"] != 1 or decoded["phase"] not in _PHASES:
-            raise ValueError
-        rows = decoded["slots"]
-        if type(rows) is not list or not 1 <= len(rows) <= 3:
-            raise ValueError
-        slot_names: list[str] = []
-        recovery_rows: list[ProfileMigrationJournalSlot] = []
-        for row in rows:
-            if type(row) is not dict or set(row) != {
-                "candidate",
-                "had_prior",
-                "rollback",
-                "slot",
-                "target",
-            }:
-                raise ValueError
-            slot = ProfileMigrationPublicationSlot(row["slot"])
-            if slot.value in slot_names or type(row["had_prior"]) is not bool:
-                raise ValueError
-            for key in ("candidate", "rollback", "target"):
-                value = row[key]
-                if (
-                    type(value) is not str
-                    or not value
-                    or len(value.encode("utf-8")) > 255
-                    or Path(value).name != value
-                    or value in {".", ".."}
-                    or "\x00" in value
-                ):
-                    raise ValueError
-            slot_names.append(slot.value)
-            recovery_rows.append(
-                ProfileMigrationJournalSlot(
-                    slot=slot,
-                    candidate=row["candidate"],
-                    target=row["target"],
-                    rollback=row["rollback"],
-                    had_prior=row["had_prior"],
+        expected_rows: tuple[ProfileMigrationJournalSlot, ...] | None = None
+        previous_phase: str | None = None
+        for frame in complete_frames:
+            try:
+                previous_phase, recovery_rows = _decode_journal_frame(
+                    frame,
+                    previous_phase=previous_phase,
+                    expected_rows=expected_rows,
                 )
-            )
-        if (
-            encode_profile_migration_journal(
-                tuple(recovery_rows),
-                phase=decoded["phase"],
-            )
-            != raw
-        ):
-            raise ValueError
-        result = ParsedProfileMigrationJournal(
-            1,
-            decoded["phase"],
-            tuple(recovery_rows),
-        )
+            except Exception:
+                if previous_phase is None:
+                    raise
+                break
+            expected_rows = recovery_rows
+        assert expected_rows is not None and previous_phase is not None
+        result = ParsedProfileMigrationJournal(1, previous_phase, expected_rows)
     except BaseException as error:
         parse_error = error
     if parse_error is not None:
