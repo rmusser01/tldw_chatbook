@@ -552,6 +552,28 @@ def test_normalized_failure_code_never_coerces_a_string_subclass() -> None:
     assert evidence._normalized_failure_code(error) == "probe_failed"
 
 
+@pytest.mark.parametrize(
+    "code_value",
+    (
+        "unsupported_descriptor",
+        "missing_file",
+        "irregular_file",
+        "changed_file",
+        "corrupt_file",
+        "cancelled",
+    ),
+)
+def test_normalized_failure_code_reports_only_bounded_external_verifier_codes(
+    code_value: str,
+) -> None:
+    evidence = _load_probe()
+    external = importlib.import_module("tldw_chatbook.STT.parakeet_external")
+    code = external.ExternalParakeetErrorCode(code_value)
+    error = external.ExternalParakeetVerificationError(code)
+
+    assert evidence._normalized_failure_code(error) == f"external_{code_value}"
+
+
 def test_facade_cleanup_failure_still_closes_native_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

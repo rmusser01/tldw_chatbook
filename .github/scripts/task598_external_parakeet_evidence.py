@@ -62,6 +62,16 @@ _TRANSCRIPTION_FAILURE_CODES = frozenset(
         "cancelled",
     }
 )
+_EXTERNAL_VERIFICATION_FAILURE_CODES = frozenset(
+    {
+        "unsupported_descriptor",
+        "missing_file",
+        "irregular_file",
+        "changed_file",
+        "corrupt_file",
+        "cancelled",
+    }
+)
 _WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
 _EMBEDDED_POSIX_ABSOLUTE = re.compile(r"(?:^|[\s=:'\"])/(?!/)[^\s'\"<>]+")
 
@@ -159,6 +169,17 @@ def failure_result(
 def _normalized_failure_code(error: BaseException) -> str:
     """Return only a stable transcription code, never exception text."""
 
+    external_module = sys.modules.get("tldw_chatbook.STT.parakeet_external")
+    external_error_type = getattr(
+        external_module, "ExternalParakeetVerificationError", None
+    )
+    if external_error_type is not None and type(error) is external_error_type:
+        code_value = error.code.value
+        if (
+            type(code_value) is str
+            and code_value in _EXTERNAL_VERIFICATION_FAILURE_CODES
+        ):
+            return f"external_{code_value}"
     if (
         isinstance(error, RuntimeError)
         and len(error.args) == 1
