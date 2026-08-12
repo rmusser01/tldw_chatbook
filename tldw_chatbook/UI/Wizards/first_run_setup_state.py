@@ -318,6 +318,25 @@ def _canonical_setup_draft_size(payload: Mapping[str, object]) -> int | None:
     return len(serialized.encode("utf-8"))
 
 
+def _mapping_contains_secret_key(value: object, seen: set[int] | None = None) -> bool:
+    """Inspect nested mapping keys before applying the scalar allowlist."""
+
+    if not isinstance(value, Mapping):
+        return False
+    if seen is None:
+        seen = set()
+    identity = id(value)
+    if identity in seen:
+        return False
+    seen.add(identity)
+    for key, nested_value in value.items():
+        if _contains_secret_field_name(key):
+            return True
+        if _mapping_contains_secret_key(nested_value, seen):
+            return True
+    return False
+
+
 def _validated_setup_draft(
     *,
     version: object,
@@ -354,6 +373,8 @@ def _validated_setup_draft(
             if _contains_secret_field_name(field_name):
                 return None
             if not isinstance(field_name, str) or field_name not in allowed_fields:
+                return None
+            if _mapping_contains_secret_key(value):
                 return None
             expected_type = allowed_fields[field_name]
             if expected_type is bool:

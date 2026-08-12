@@ -44,7 +44,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Input, OptionList, RadioButton, Static
+from textual.widgets import Button, Input, OptionList, RadioButton, Static, Switch
 
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -64,7 +64,10 @@ from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
     SETUP_DRAFT_KEYS,
+    STEP_APPEARANCE,
     STEP_MODEL,
+    STEP_NOTES,
+    STEP_PROTECT,
     STEP_PROVIDER,
     STEP_SUMMARY,
     STEP_WELCOME,
@@ -240,7 +243,7 @@ async def test_escape_finish_later_dismisses_and_next_boot_offers_recovery(
 
 
 @pytest.mark.asyncio
-async def test_recovery_dialog_returns_only_bounded_actions_and_names_credential_reentry():
+async def test_recovery_dialog_has_exact_labels_initial_focus_and_credential_reentry():
     from textual.app import App
     from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import SetupRecoveryDialog
 
@@ -251,16 +254,48 @@ async def test_recovery_dialog_returns_only_bounded_actions_and_names_credential
     app = RecoveryHost()
     async with app.run_test(size=(60, 20)):
         dialog = app.screen
-        actions = {
-            button.id.removeprefix("setup-recovery-")
+        buttons = {
+            button.id.removeprefix("setup-recovery-"): button
             for button in dialog.query(Button)
         }
 
-        assert actions == {"resume", "start_over", "later"}
+        assert {action: str(button.label) for action, button in buttons.items()} == {
+            "resume": "Resume",
+            "start_over": "Start over",
+            "later": "Later",
+        }
+        assert app.focused is buttons["resume"]
         assert "credentials" in dialog.message.lower()
         assert "not retained" in dialog.message.lower()
         assert "re-enter" in dialog.message.lower()
         assert dialog.query_one("Container").region.width <= app.size.width
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("interaction", "expected"),
+    [("enter", "resume"), ("escape", "later"), ("start_over", "start_over")],
+)
+async def test_recovery_dialog_keyboard_and_button_actions(interaction, expected):
+    from textual.app import App
+    from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import SetupRecoveryDialog
+
+    results = []
+
+    class RecoveryHost(App):
+        def on_mount(self):
+            self.push_screen(SetupRecoveryDialog(), results.append)
+
+    app = RecoveryHost()
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        if interaction == "start_over":
+            app.screen.query_one("#setup-recovery-start_over", Button).press()
+        else:
+            await pilot.press(interaction)
+        await _wait_until(pilot, lambda: bool(results))
+
+    assert results == [expected]
 
 
 @pytest.mark.asyncio
@@ -347,6 +382,64 @@ async def test_completion_marks_complete_and_clears_draft_atomically():
         {"first_run": SETUP_DRAFT_KEYS},
     )
     assert calls[1][0] == "dismiss"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["finish", "skip"])
+async def test_completion_write_failure_keeps_wizard_open_and_retains_draft(operation):
+    events = []
+    retained_draft = object()
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    container._finalized = False
+    container.resume_draft = retained_draft
+    container.current_step = 0
+    container.steps[0].show_step_error = lambda message: events.append(
+        ("error", message)
+    )
+    container._dismiss_screen = lambda result: events.append(("dismiss", result))
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        events.append(("commit", settings, delete_keys))
+        return False
+
+    container.commit_config = commit_config
+
+    if operation == "finish":
+        await container._finalize("chat")
+    else:
+        await container._skip_entirely()
+
+    assert [event[0] for event in events] == ["commit", "error"]
+    assert "could not be saved" in events[1][1].lower()
+    assert container._finalized is False
+    assert container.resume_draft is retained_draft
+
+
+@pytest.mark.parametrize("save_result", [False, RuntimeError("private-value")])
+def test_started_flag_mirrors_only_after_success_and_logs_bounded_failure(
+    monkeypatch, save_result
+):
+    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+
+    app_instance = SimpleNamespace(app_config={"first_run": {"unrelated": "keep"}})
+    screen = SimpleNamespace(app_instance=app_instance)
+    warning = MagicMock()
+
+    def save(*args, **kwargs):
+        if isinstance(save_result, Exception):
+            raise save_result
+        return save_result
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+    monkeypatch.setattr(wizard_module.logger, "warning", warning)
+
+    FirstRunSetupWizard._persist_started_flag.__wrapped__(screen)
+
+    assert app_instance.app_config["first_run"] == {"unrelated": "keep"}
+    warning.assert_called_once()
+    rendered_log = repr(warning.call_args)
+    assert "category=persistence" in rendered_log
+    assert "private-value" not in rendered_log
 
 
 @pytest.mark.asyncio
@@ -468,14 +561,14 @@ def _attempted_model_resume_config():
     }
 
 
-def _attempted_full_rag_resume_config():
+def _attempted_full_appearance_resume_config():
     return {
         "first_run": {
             "setup_started": True,
             "setup_completed": False,
             "draft_version": 1,
             "draft_track": "full",
-            "active_step_id": "rag",
+            "active_step_id": "appearance",
             "draft_values": {
                 "welcome": {"track": "full"},
                 "provider": {
@@ -483,6 +576,12 @@ def _attempted_full_rag_resume_config():
                     "provider_value": "openai",
                 },
                 "model": {"model_id": "gpt-resume-test"},
+                "notes": {"auto_sync_enabled": True},
+                "appearance": {
+                    "theme": "textual-light",
+                    "splash_card": "",
+                },
+                "protect-keys": {"encryption_enabled": True},
             },
             "resume_attempted": True,
         }
@@ -497,7 +596,7 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
 
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
-    app.app_config = _attempted_full_rag_resume_config()
+    app.app_config = _attempted_full_appearance_resume_config()
     app._initial_tab_value = "chat"
     draft = read_setup_draft(app.app_config)
     assert draft is not None
@@ -514,7 +613,7 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
                 and app.screen.query_one(SetupWizardContainer)
                 .steps[app.screen.query_one(SetupWizardContainer).current_step]
                 .config.id
-                == "rag",
+                == "appearance",
             )
             container = app.screen.query_one(SetupWizardContainer)
             assert container.track == "full"
@@ -535,10 +634,114 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
                 model_step.query_one("#setup-model-custom", Input).value
                 == "gpt-resume-test"
             )
+            notes_step = container.steps[container._step_index_for_id(STEP_NOTES)]
+            assert notes_step.get_step_data() == {"auto_sync_enabled": True}
+            assert notes_step.query_one("#setup-notes-enable", Switch).value is True
+
+            appearance_step = container.steps[
+                container._step_index_for_id(STEP_APPEARANCE)
+            ]
+            assert appearance_step.get_step_data() == {
+                "theme": "textual-light",
+                "splash_card": "",
+            }
+            selected_themes = [
+                getattr(button, "_theme_name", "")
+                for button in appearance_step.query("#setup-theme-choice RadioButton")
+                if button.value
+            ]
+            assert selected_themes == ["textual-light"]
+            selected_splash = [
+                str(button.label)
+                for button in appearance_step.query("#setup-splash-choice RadioButton")
+                if button.value
+            ]
+            assert selected_splash == ["Surprise me (random)"]
+
+            protect_step = container.steps[
+                container._step_index_for_id(STEP_PROTECT)
+            ]
+            assert protect_step.get_step_data() == {"encryption_enabled": True}
+            assert "Encryption enabled" in str(
+                protect_step.query_one("#setup-protect-status", Static).renderable
+            )
             await _wait_until(
                 pilot,
                 lambda: app.app_config["first_run"]["resume_attempted"] is False,
             )
+
+
+@pytest.mark.asyncio
+async def test_resume_control_restore_failure_keeps_attempt_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    def fail_restore(*args, **kwargs):
+        raise RuntimeError("control-value-must-not-log")
+
+    monkeypatch.setattr(SetupWizardContainer, "_restore_radio_selection", fail_restore)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await pilot.pause(0.3)
+
+            assert app.app_config["first_run"]["resume_attempted"] is True
+
+
+@pytest.mark.asyncio
+async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+    callbacks = []
+    wizard = FirstRunSetupWizard(app, resume_draft=draft)
+    original_call_after_refresh = wizard.call_after_refresh
+
+    def capture_resume_callback(callback, *args):
+        if callback.__name__ == "_clear_resume_attempt_after_target_mount":
+            callbacks.append((callback, args))
+            return True
+        return original_call_after_refresh(callback, *args)
+
+    wizard.call_after_refresh = capture_resume_callback
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(wizard)
+            await _wait_until(pilot, lambda: bool(callbacks))
+            container = wizard.query_one(SetupWizardContainer)
+            container.show_step(container._step_index_for_id(STEP_WELCOME))
+            scheduled = []
+            wizard.run_worker = lambda awaitable, **kwargs: scheduled.append(awaitable)
+
+            callback, args = callbacks.pop()
+            assert callback.__name__ == "_clear_resume_attempt_after_target_mount"
+            callback(*args)
+            if scheduled:
+                await scheduled.pop()
+            await pilot.pause(0.2)
+
+            assert app.app_config["first_run"]["resume_attempted"] is True
 
 
 @pytest.mark.asyncio

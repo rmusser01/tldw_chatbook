@@ -3693,7 +3693,8 @@ class SetupWizardContainer(WizardContainer):
         draft = self.resume_draft
         if draft is None or draft.active_step_id not in self.active_ids:
             return
-        self._restore_resume_controls(draft)
+        if not self._restore_resume_controls(draft):
+            return
         target_index = self._step_index_for_id(draft.active_step_id)
         if target_index is None:
             return
@@ -3716,9 +3717,14 @@ class SetupWizardContainer(WizardContainer):
             return
         screen = self.screen
         if isinstance(screen, FirstRunSetupWizard):
-            screen.call_after_refresh(screen._clear_resume_attempt_after_target_mount)
+            screen.call_after_refresh(
+                screen._clear_resume_attempt_after_target_mount,
+                self,
+                target,
+                draft.active_step_id,
+            )
 
-    def _restore_resume_controls(self, draft: wizard_state.SetupDraft) -> None:
+    def _restore_resume_controls(self, draft: wizard_state.SetupDraft) -> bool:
         """Apply allowlisted checkpoint values to mounted step controls/state."""
 
         try:
@@ -3813,6 +3819,8 @@ class SetupWizardContainer(WizardContainer):
                     )
         except Exception:
             logger.warning("Setup resume control restore failed (category=runtime)")
+            return False
+        return True
 
     @staticmethod
     def _restore_radio_selection(
@@ -4247,11 +4255,24 @@ class SetupWizardContainer(WizardContainer):
 
     async def _skip_entirely(self) -> None:
         _, delete_keys = wizard_state.build_setup_draft_mutation(None)
-        await self.commit_config(
+        saved = await self.commit_config(
             wizard_state.build_wizard_state_commit(completed=True),
             delete_keys=delete_keys,
         )
+        if not saved:
+            self._show_completion_save_error()
+            return
         self._dismiss_screen({"completed": True, "exit_route": None})
+
+    def _show_completion_save_error(self) -> None:
+        """Keep completion failures visible without exposing config values."""
+
+        try:
+            self.steps[self.current_step].show_step_error(
+                "Setup completion could not be saved. Retry before closing."
+            )
+        except (IndexError, AttributeError):
+            logger.warning("Setup completion error could not render (category=ui)")
 
     async def persist_setup_checkpoint(self, active_step_id: str) -> bool:
         """Persist one allowlisted checkpoint after a successful step commit."""
@@ -4405,10 +4426,13 @@ class SetupWizardContainer(WizardContainer):
         if self._finalized:
             return
         _, delete_keys = wizard_state.build_setup_draft_mutation(None)
-        await self.commit_config(
+        saved = await self.commit_config(
             wizard_state.build_wizard_state_commit(completed=True),
             delete_keys=delete_keys,
         )
+        if not saved:
+            self._show_completion_save_error()
+            return
         self._dismiss_screen({"completed": True, "exit_route": exit_route})
 
     def _dismiss_screen(self, result: Optional[dict]) -> None:
@@ -4530,11 +4554,22 @@ class FirstRunSetupWizard(WizardScreen):
         from tldw_chatbook.config import save_settings_to_cli_config
 
         try:
-            save_settings_to_cli_config(
+            saved = save_settings_to_cli_config(
                 wizard_state.build_wizard_state_commit(started=True)
             )
         except Exception as exc:
-            logger.warning("Failed to persist wizard started flag: {}", exc)
+            logger.warning(
+                "Failed to persist wizard started flag "
+                "(category=persistence, error_type={})",
+                type(exc).__name__,
+            )
+            return
+        if not saved:
+            logger.warning(
+                "Failed to persist wizard started flag "
+                "(category=persistence, error_type=save_returned_false)"
+            )
+            return
         app_config = getattr(self.app_instance, "app_config", None)
         if isinstance(app_config, dict):
             app_config.setdefault(wizard_state.WIZARD_STATE_SECTION, {})[
@@ -4587,7 +4622,35 @@ class FirstRunSetupWizard(WizardScreen):
             return
         self.dismiss(None)
 
-    def _clear_resume_attempt_after_target_mount(self) -> None:
+    def _clear_resume_attempt_after_target_mount(
+        self,
+        container: SetupWizardContainer,
+        target: WizardStep,
+        target_step_id: str,
+    ) -> None:
+        """Fence marker clearing against navigation or screen replacement."""
+
+        try:
+            current = container.steps[container.current_step]
+            same_screen = self.app.screen is self and container.screen is self
+            same_container = self.query_one(SetupWizardContainer) is container
+        except (IndexError, NoMatches):
+            return
+        if (
+            not same_screen
+            or not same_container
+            or self.resume_draft is None
+            or container.resume_draft is None
+            or self.resume_draft.active_step_id != target_step_id
+            or container.resume_draft.active_step_id != target_step_id
+            or current is not target
+            or current.config is None
+            or current.config.id != target_step_id
+            or not current.is_mounted
+            or not current.display
+            or not current.visible
+        ):
+            return
         self.run_worker(
             self._clear_resume_attempt(),
             exclusive=True,

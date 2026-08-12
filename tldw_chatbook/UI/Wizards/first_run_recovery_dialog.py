@@ -72,7 +72,7 @@ class SetupRecoveryDialog(ModalScreen[SetupRecoveryResult]):
             yield Static(self.message, classes="setup-recovery-message")
             with Vertical(classes="setup-recovery-actions"):
                 yield Button(
-                    "Resume setup",
+                    "Resume",
                     id="setup-recovery-resume",
                     variant="primary",
                 )

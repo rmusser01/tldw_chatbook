@@ -1,5 +1,6 @@
 """Unit tests for the pure first-run setup wizard state module."""
 
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 
 import pytest
@@ -174,9 +175,60 @@ class TestSetupResumeDraft:
     def test_resume_draft_rejects_more_than_64_fields(self):
         from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
+        class RepeatedRecognizedFields(Mapping[str, object]):
+            def __getitem__(self, key: str) -> object:
+                if key != "model_id":
+                    raise KeyError(key)
+                return "model"
+
+            def __iter__(self) -> Iterator[str]:
+                return iter(("model_id",))
+
+            def __len__(self) -> int:
+                return 65
+
+            def items(self):
+                return iter(("model_id", f"model-{index}") for index in range(65))
+
         config = _resume_draft_config(
-            draft_values={"appearance": {f"field_{index}": index for index in range(65)}}
+            draft_values={"model": RepeatedRecognizedFields()}
         )
+        assert read_setup_draft(config) is None
+
+    def test_resume_draft_scans_nested_secret_keys_before_rejecting_mapping_value(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        class TrackedNestedSecrets(Mapping[str, object]):
+            scanned = False
+
+            def __getitem__(self, key: str) -> object:
+                if key == "profile":
+                    return {"client_secret": "must-not-survive"}
+                raise KeyError(key)
+
+            def __iter__(self) -> Iterator[str]:
+                return iter(("profile",))
+
+            def __len__(self) -> int:
+                return 1
+
+            def items(self):
+                self.scanned = True
+                return iter((("profile", {"client_secret": "must-not-survive"}),))
+
+        nested = TrackedNestedSecrets()
+        config = _resume_draft_config(draft_values={"model": {"model_id": nested}})
+
+        assert read_setup_draft(config) is None
+        assert nested.scanned is True
+
+    def test_resume_draft_rejects_non_json_value_under_recognized_field(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        config = _resume_draft_config(
+            draft_values={"model": {"model_id": object()}}
+        )
+
         assert read_setup_draft(config) is None
 
     def test_isolated_draft_mutation_owns_only_first_run(self):
