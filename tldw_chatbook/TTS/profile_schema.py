@@ -10,7 +10,6 @@ immutable read-only handle used for the rest of validation.
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import sqlite3
 import stat
@@ -176,9 +175,6 @@ class _ExactCurrentProfileConnection:
     def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
         return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
 
-    def serialize(self) -> bytes:
-        return self._connection.serialize()
-
     @property
     def in_transaction(self) -> bool:
         return self._connection.in_transaction
@@ -238,8 +234,6 @@ class ExactProfileStoreAuthorityError(ProfileRepositoryError):
 def _exact_store_namespace_safe(
     parent_fd: int,
     leaf: str,
-    *,
-    before_path_open: bool,
 ) -> bool:
     publication = f".{leaf}.migration-publication.json"
     for suffix in ("", "-wal", "-shm", "-journal"):
@@ -353,7 +347,13 @@ def revalidate_exact_current_profile_store(
         or connection.parent_fd < 0
     ):
         raise ExactProfileStoreAuthorityError()
+    reopened_parent_fd = -1
     try:
+        reopened_parent_fd, reopened_leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        reopened_parent = os.fstat(reopened_parent_fd)
         opened_parent = os.fstat(connection.parent_fd)
         opened_file = os.fstat(connection.file_fd)
         named = os.stat(
@@ -361,8 +361,11 @@ def revalidate_exact_current_profile_store(
             dir_fd=connection.parent_fd,
             follow_symlinks=False,
         )
-    except OSError:
+    except Exception:
         raise ExactProfileStoreAuthorityError() from None
+    finally:
+        if reopened_parent_fd >= 0:
+            os.close(reopened_parent_fd)
     sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
     if sidecars_match:
         for suffix, descriptor in connection.sidecar_fds.items():
@@ -390,7 +393,9 @@ def revalidate_exact_current_profile_store(
                 sidecars_match = False
                 break
     if (
-        not private_paths._same_identity(opened_parent, connection.parent_identity)
+        reopened_leaf != path.name
+        or not _same_parent_authority(reopened_parent, connection.parent_identity)
+        or not _same_parent_authority(opened_parent, connection.parent_identity)
         or not private_paths._same_identity(opened_file, connection.file_identity)
         or not private_paths._same_identity(named, connection.file_identity)
         or private_paths._classify_private_file_stat(
@@ -403,10 +408,69 @@ def revalidate_exact_current_profile_store(
         or not _exact_store_namespace_safe(
             connection.parent_fd,
             path.name,
-            before_path_open=False,
         )
     ):
         raise ExactProfileStoreAuthorityError()
+
+
+def _same_parent_authority(
+    observed: os.stat_result,
+    expected: os.stat_result,
+) -> bool:
+    """Compare stable identity and security metadata for one store parent."""
+
+    return (
+        observed.st_nlink > 0
+        and expected.st_nlink > 0
+        and (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_mode,
+            observed.st_uid,
+            observed.st_gid,
+        )
+        == (
+            expected.st_dev,
+            expected.st_ino,
+            expected.st_mode,
+            expected.st_uid,
+            expected.st_gid,
+        )
+    )
+
+
+def _exact_store_metadata_snapshot(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[tuple[object, ...], ...], ...]:
+    """Capture exact ordered persisted metadata without loading private blobs."""
+
+    statements = (
+        """
+        SELECT profile_id, display_name, normalized_name, provider_id,
+               model_id, voice_id, response_format, speed, options_json,
+               revision, created_at, updated_at
+        FROM tts_generation_profiles
+        ORDER BY profile_id
+        """,
+        """
+        SELECT source, authority_id, character_id, profile_id,
+               created_at, updated_at
+        FROM character_tts_assignments
+        ORDER BY source, authority_id, character_id
+        """,
+        f"""
+        SELECT profile_id, reference_id, sha256, byte_length,
+               length(wav_bytes), length(CAST(reference_text AS BLOB)),
+               duration_ms, sample_rate_hz, channels, sample_encoding,
+               created_at, updated_at, recipe_id, recipe_revision
+        FROM {_REFERENCE_TABLE}
+        ORDER BY profile_id
+        """,
+    )
+    return tuple(
+        tuple(tuple(row) for row in connection.execute(statement))
+        for statement in statements
+    )
 
 
 def encode_uuid(value: UUID) -> str:
@@ -1349,11 +1413,7 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
             missing_leaf_allowed=False,
         )
         parent_identity = os.fstat(parent_fd)
-        if not _exact_store_namespace_safe(
-            parent_fd,
-            leaf,
-            before_path_open=True,
-        ):
+        if not _exact_store_namespace_safe(parent_fd, leaf):
             raise ExactProfileStoreNotCurrentError()
         file_fd = os.open(
             leaf,
@@ -1392,7 +1452,7 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
             raise ExactProfileStoreNotCurrentError()
         _validate_schema(descriptor)
         validate_profile_store_rows(descriptor)
-        descriptor_digest = hashlib.sha256(descriptor.serialize()).digest()
+        _exact_store_metadata_snapshot(descriptor)
 
         live = connect_private_sqlite(
             "tts.profile_store",
@@ -1437,19 +1497,26 @@ def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
             raise _repository_error("schema_partial")
         _validate_schema(cast(sqlite3.Connection, owned))
         validate_profile_store_rows(cast(sqlite3.Connection, owned))
-        live_digest = hashlib.sha256(owned.serialize()).digest()
-        if live_digest != descriptor_digest:
-            # A coexisting current-v4 writer may have committed into the WAL
-            # after the immutable main-file image was pinned.  Accept only a
-            # stable SQLite-owned image of that same still-canonical inode;
-            # without live WAL state, any mismatch is a substitution.
-            revalidate_exact_current_profile_store(
-                cast(sqlite3.Connection, owned),
-                path,
-            )
-            repeated_digest = hashlib.sha256(owned.serialize()).digest()
-            if repeated_digest != live_digest:
-                raise _repository_error("operation_failed")
+        owned.execute("BEGIN")
+        live_data_version = owned.execute("PRAGMA data_version").fetchone()[0]
+        live_snapshot = _exact_store_metadata_snapshot(cast(sqlite3.Connection, owned))
+        # A coexisting current-v4 writer may have committed into the WAL after
+        # the immutable main-file image was pinned. Accept only a stable,
+        # metadata-only SQLite snapshot of the exact pinned canonical cohort.
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        repeated_snapshot = _exact_store_metadata_snapshot(
+            cast(sqlite3.Connection, owned)
+        )
+        repeated_data_version = owned.execute("PRAGMA data_version").fetchone()[0]
+        if (
+            repeated_snapshot != live_snapshot
+            or repeated_data_version != live_data_version
+        ):
+            raise _repository_error("operation_failed")
+        owned.rollback()
         revalidate_exact_current_profile_store(
             cast(sqlite3.Connection, owned),
             path,

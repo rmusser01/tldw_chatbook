@@ -28,6 +28,8 @@ class MigrationTombstoneKey(Enum):
     PRE_V3_ROLLBACK = "pre-v3-rollback"
     PRE_V4_CANDIDATE = "pre-v4-candidate"
     PRE_V4_ROLLBACK = "pre-v4-rollback"
+    LIVE_WAL = "live-wal"
+    LIVE_SHM = "live-shm"
 
 
 @dataclass(frozen=True, slots=True, repr=False)

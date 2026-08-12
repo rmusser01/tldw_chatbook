@@ -44,7 +44,11 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     ProfileMigrationPublicationSlot,
     ProfileMigrationPublicationStage,
 )
-from tldw_chatbook.TTS.profile_migration_namespace import MigrationTombstoneKey
+from tldw_chatbook.TTS.profile_migration_namespace import (
+    MigrationTombstoneKey,
+    ParentAuthority,
+    remove_exact,
+)
 from tldw_chatbook.TTS.profile_migration_publication import (
     prepare_profile_migration_artifact,
     publish_profile_migration,
@@ -1038,6 +1042,8 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._exact_authority_quarantined = False
+        self._restore_sidecar_identities: dict[str, os.stat_result] = {}
+        self._restore_parent_authority: ParentAuthority | None = None
         self._active_database_path: Path | None = None
         self._residual_cleanup_paths: tuple[Path, ...] = ()
         self._damaged_reference_profile_ids: set[UUID] = set()
@@ -1278,7 +1284,10 @@ class TTSProfileRepository:
                     active_path,
                     allow_create=not self._store_established,
                 )
-                lease, connection = self._worker_open_existing(active_path)
+                shared = self._worker_open_if_proven_current(active_path)
+                if shared is None:
+                    raise _repository_error("operation_failed")
+                lease, connection = shared
             else:
                 lease, connection = shared
             if connection is None:
@@ -1414,50 +1423,6 @@ class TTSProfileRepository:
             raise _repository_error("unavailable")
         self._connection = connection
         self._active_database_path = active_path
-
-    def _worker_open_existing(
-        self,
-        active_path: Path,
-    ) -> tuple[ProfileStoreLease, sqlite3.Connection]:
-        """Open an established store while holding cooperative shared ownership."""
-
-        lease = ProfileStoreLease(
-            active_path,
-            ProfileStoreLockMode.SHARED,
-        )
-        connection: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        release_error: BaseException | None = None
-        try:
-            lease.acquire()
-            connection = open_profile_store(active_path, must_exist=True)
-            if connection is None:
-                raise _repository_error("operation_failed")
-        except BaseException as error:
-            body_error = error
-
-        if body_error is None:
-            assert connection is not None
-            return lease, connection
-
-        connection_error: BaseException | None = None
-        if connection is not None:
-            try:
-                connection.close()
-            except BaseException as error:
-                connection_error = error
-                self._worker_retain_failed_connection(connection, active_path)
-                self._lease = lease
-        if connection_error is not None:
-            _raise_with_cleanup_precedence(body_error, connection_error)
-        try:
-            lease.release()
-        except BaseException as error:
-            release_error = error
-            self._lease = lease
-            self._active_database_path = active_path
-        _raise_with_cleanup_precedence(body_error, release_error)
-        raise AssertionError("unreachable")
 
     def _worker_initialize_store(
         self,
@@ -2819,6 +2784,15 @@ class TTSProfileRepository:
         if connection is None or lease is None:
             raise _repository_error("invalid_state")
         self._worker_revalidate_exact_authority(connection)
+        exact_connection = cast(object, connection)
+        sidecar_fds = getattr(exact_connection, "sidecar_fds", {})
+        parent_fd = getattr(exact_connection, "parent_fd", -1)
+        if isinstance(sidecar_fds, dict) and type(parent_fd) is int and parent_fd >= 0:
+            self._restore_sidecar_identities = {
+                suffix: os.fstat(descriptor)
+                for suffix, descriptor in sidecar_fds.items()
+            }
+            self._restore_parent_authority = ParentAuthority(os.fstat(parent_fd))
         _require_restore_time(deadline)
         timeout_row = connection.execute("PRAGMA busy_timeout").fetchone()
         if (
@@ -2946,6 +2920,12 @@ class TTSProfileRepository:
         else:
             raise _repository_error("restore_failed")
         _require_restore_time(deadline)
+        tombstones = {
+            "-wal": MigrationTombstoneKey.LIVE_WAL,
+            "-shm": MigrationTombstoneKey.LIVE_SHM,
+        }
+        parent_authority = self._restore_parent_authority
+        expected_sidecars = self._restore_sidecar_identities
         for suffix in ("-wal", "-shm"):
             sidecar = database_path.with_name(f"{database_path.name}{suffix}")
             _require_restore_time(deadline)
@@ -2955,11 +2935,34 @@ class TTSProfileRepository:
                 _require_restore_time(deadline)
                 continue
             _require_restore_time(deadline)
-            if not stat.S_ISREG(state.st_mode):
+            expected = expected_sidecars.get(suffix)
+            if (
+                parent_authority is None
+                or expected is None
+                or not private_paths._same_identity(state, expected)
+                or private_paths._classify_private_file_stat(
+                    state,
+                    expected_uid=os.geteuid(),
+                )
+                is not None
+                or stat.S_IMODE(state.st_mode) != 0o600
+            ):
                 raise _repository_error("restore_failed")
             _require_restore_time(deadline)
-            sidecar.unlink()
+            try:
+                remove_exact(
+                    sidecar,
+                    parent_authority=parent_authority,
+                    file_identity=expected,
+                    tombstone_key=tombstones[suffix],
+                )
+            except BaseException as error:
+                if not isinstance(error, Exception):
+                    raise
+                raise _repository_error("restore_failed") from None
             _require_restore_time(deadline)
+        self._restore_sidecar_identities = {}
+        self._restore_parent_authority = None
 
     def _worker_remove_temporary_store(self, path: Path) -> list[BaseException]:
         errors: list[BaseException] = []
@@ -4595,12 +4598,17 @@ class TTSProfileRepository:
         residual_error: BaseException | None = None
         lease_error: BaseException | None = None
 
-        if self._exact_authority_quarantined:
-            if connection is None:
-                raise _repository_error("operation_failed")
-            self._worker_revalidate_exact_authority(connection)
+        if connection is not None:
+            try:
+                self._worker_revalidate_exact_authority(connection)
+            except ExactProfileStoreAuthorityError:
+                with self._state_lock:
+                    self._exact_authority_quarantined = True
+                raise
             with self._state_lock:
                 self._exact_authority_quarantined = False
+        elif self._exact_authority_quarantined:
+            raise _repository_error("operation_failed")
 
         if connection is not None:
             try:

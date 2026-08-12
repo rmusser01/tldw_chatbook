@@ -7,7 +7,6 @@ import gc
 import importlib
 import os
 import sqlite3
-import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -953,7 +952,7 @@ async def test_populated_v1_store_upgrades_under_exclusive_lease_through_reposit
 
     ``open_profile_store`` transparently upgrades a populated v1 store in
     place, but that write must never happen while only the repository's
-    ordinary shared lease is held (:meth:`_worker_open_existing`'s
+    ordinary shared lease is held (:meth:`_worker_open_if_proven_current`'s
     contract). Opening through the real lease-guarded repository layer --
     not the schema module's unit-test seam -- must route the upgrade
     through :meth:`_worker_initialize_store`'s exclusive lease first, and
@@ -1057,6 +1056,110 @@ async def test_two_current_store_readers_open_concurrently(tmp_path: Path) -> No
     finally:
         await second.close()
         await first.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_version", (None, 3))
+async def test_initialized_store_reopens_with_exact_live_authority(
+    tmp_path: Path,
+    initial_version: int | None,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    if initial_version == 3:
+        _build_populated_v3_store_at(database_path)
+    repository = _repository(database_path)
+
+    await repository.open()
+    try:
+        authority = cast(Any, repository._connection)
+        assert authority.selected == database_path.resolve(strict=False)
+        assert authority.file_fd >= 0
+        assert set(authority.sidecar_fds) == {"-wal", "-shm"}
+        assert repository._lease is not None
+        assert repository._lease.mode is ProfileStoreLockMode.SHARED
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_normal_exact_open_never_serializes_or_selects_reference_blob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO tts_profile_clone_references (
+                profile_id, reference_id, wav_bytes, reference_text, sha256,
+                byte_length, duration_ms, sample_rate_hz, channels,
+                sample_encoding, created_at, updated_at, recipe_id,
+                recipe_revision
+            ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000099",
+                8 * 1024 * 1024,
+                "large private reference",
+                "0" * 64,
+                8 * 1024 * 1024,
+                1000,
+                24000,
+                1,
+                "pcm_s16le",
+                "2026-01-01T00:00:00.000000+00:00",
+                "2026-01-01T00:00:00.000000+00:00",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    real_connect = module._profile_schema.connect_private_sqlite
+
+    class NoSerializeOrBlobProxy:
+        def __init__(self, owned: sqlite3.Connection) -> None:
+            self.connection = owned
+
+        def __getattr__(self, name: str) -> Any:
+            if name == "serialize":
+                raise AssertionError("normal exact open must not serialize")
+            return getattr(self.connection, name)
+
+        @property
+        def row_factory(self) -> object:
+            return self.connection.row_factory
+
+        @row_factory.setter
+        def row_factory(self, value: object) -> None:
+            self.connection.row_factory = cast(Any, value)
+
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            normalized = " ".join(sql.lower().split())
+            if "select" in normalized and "wav_bytes" in normalized:
+                assert "length(wav_bytes)" in normalized
+            return self.connection.execute(sql, *args)
+
+    def proxied_connect(
+        owner_id: str,
+        database: object,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        opened = real_connect(owner_id, database, **kwargs)
+        if owner_id == "tts.profile_store":
+            return cast(sqlite3.Connection, NoSerializeOrBlobProxy(opened))
+        return opened
+
+    monkeypatch.setattr(
+        module._profile_schema, "connect_private_sqlite", proxied_connect
+    )
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    await repository.close()
 
 
 @pytest.mark.asyncio
@@ -1195,7 +1298,7 @@ async def test_current_shared_proof_rejects_publication_artifact_inserted_during
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("gap", ("after_open", "after_serialize", "before_open"))
+@pytest.mark.parametrize("gap", ("after_open", "after_snapshot", "before_open"))
 async def test_current_shared_proof_rechecks_publication_namespace_at_late_gaps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1237,11 +1340,7 @@ async def test_current_shared_proof_rechecks_publication_namespace_at_late_gaps(
             result = self.connection.execute(sql, *args)
             if gap == "after_open" and sql == "PRAGMA query_only = ON":
                 insert_once()
-            return result
-
-        def serialize(self) -> bytes:
-            result = self.connection.serialize()
-            if gap == "after_serialize":
+            if gap == "after_snapshot" and "ORDER BY profile_id" in sql:
                 insert_once()
             return result
 
@@ -1322,6 +1421,7 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
         UUID("00000000-0000-4000-8000-000000000088"),
     )
     sidecar = Path(f"{database_path}{sidecar_suffix}")
+    retained_sidecar = tmp_path / f"retained{sidecar_suffix}"
     real_connect = module._profile_schema.connect_private_sqlite
     substituted = False
 
@@ -1336,6 +1436,7 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
             replacement = tmp_path / f"foreign{sidecar_suffix}"
             replacement.write_bytes(sidecar.read_bytes())
             replacement.chmod(0o600)
+            os.replace(sidecar, retained_sidecar)
             os.replace(replacement, sidecar)
             substituted = True
         return connection
@@ -1353,6 +1454,9 @@ async def test_current_shared_proof_retains_exact_sqlite_sidecar_identity(
         assert second.state is ProfileRepositoryState.UNAVAILABLE
     finally:
         await second.close()
+        foreign = tmp_path / f"quarantined-foreign{sidecar_suffix}"
+        os.replace(sidecar, foreign)
+        os.replace(retained_sidecar, sidecar)
         await first.close()
 
 
@@ -1402,6 +1506,9 @@ async def test_current_shared_proof_rejects_main_swap_with_live_wal_pair(
         assert second.state is ProfileRepositoryState.UNAVAILABLE
     finally:
         await second.close()
+        foreign = tmp_path / "quarantined-foreign.sqlite3"
+        os.replace(database_path, foreign)
+        os.replace(retained, database_path)
         await first.close()
 
 
@@ -1497,6 +1604,84 @@ async def test_sidecar_authority_loss_quarantines_without_sqlite_cleanup(
     assert repository._lease is None
     assert quarantined_foreign.read_bytes() == foreign_bytes
     assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_suffix", ("", "-wal", "-shm"))
+async def test_direct_close_quarantines_substituted_exact_store_before_sqlite_cleanup(
+    tmp_path: Path,
+    target_suffix: str,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    repository = _repository(database_path)
+    await repository.open()
+    authority = repository._connection
+    target = Path(f"{database_path}{target_suffix}")
+    detached = tmp_path / f"detached{target_suffix or '-main'}"
+    foreign = tmp_path / f"foreign{target_suffix or '-main'}"
+    foreign_bytes = b"foreign exact-store bytes must remain unchanged"
+    foreign.write_bytes(foreign_bytes)
+    foreign.chmod(0o600)
+    os.replace(target, detached)
+    os.replace(foreign, target)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    assert target.read_bytes() == foreign_bytes
+    await _assert_exclusive_lease_blocked(database_path)
+
+    quarantined_foreign = tmp_path / f"quarantined{target_suffix or '-main'}"
+    os.replace(target, quarantined_foreign)
+    os.replace(detached, target)
+    await repository.close()
+    assert quarantined_foreign.read_bytes() == foreign_bytes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ("replace", "chmod"))
+async def test_live_authority_revalidates_configured_parent_before_sql_or_close(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store_parent = tmp_path / "store"
+    store_parent.mkdir(mode=0o700)
+    database_path = store_parent / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    repository = _repository(database_path)
+    await repository.open()
+    authority = repository._connection
+    detached_parent = tmp_path / "detached-store"
+    foreign_parent = tmp_path / "foreign-store"
+
+    if mutation == "replace":
+        os.replace(store_parent, detached_parent)
+        store_parent.mkdir(mode=0o700)
+        (store_parent / "profiles.sqlite3").write_bytes(b"foreign parent bytes")
+    else:
+        store_parent.chmod(0o777)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.list_profiles()
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+    assert repository._connection is authority
+
+    if mutation == "replace":
+        os.replace(store_parent, foreign_parent)
+        os.replace(detached_parent, store_parent)
+        assert (
+            foreign_parent / "profiles.sqlite3"
+        ).read_bytes() == b"foreign parent bytes"
+    else:
+        store_parent.chmod(0o700)
+    await repository.close()
 
 
 @pytest.mark.asyncio
@@ -1952,6 +2137,34 @@ def _install_fake_store(
         events.append(("store.open", threading.get_ident()))
         return connection
 
+    def fake_proven_current(self: Any, path: Path) -> tuple[Any, Any]:
+        lease = module.ProfileStoreLease(path, ProfileStoreLockMode.SHARED)
+        opened: Any = None
+        try:
+            lease.acquire()
+            opened = module.open_profile_store(path, must_exist=True)
+            return lease, opened
+        except BaseException as primary:
+            cleanup: BaseException | None = None
+            if opened is not None:
+                try:
+                    opened.close()
+                except BaseException as error:
+                    cleanup = error
+                    self._connection = opened
+                    self._lease = lease
+                    self._active_database_path = path
+            if cleanup is None:
+                try:
+                    lease.release()
+                except BaseException as error:
+                    cleanup = error
+                    self._lease = lease
+                    self._active_database_path = path
+            if cleanup is not None and not isinstance(cleanup, Exception):
+                raise cleanup
+            raise primary
+
     monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
     monkeypatch.setattr(
         module.TTSProfileRepository,
@@ -1961,7 +2174,7 @@ def _install_fake_store(
     monkeypatch.setattr(
         module.TTSProfileRepository,
         "_worker_open_if_proven_current",
-        lambda self, path: self._worker_open_existing(path),
+        fake_proven_current,
     )
     monkeypatch.setattr(module, "open_profile_store", opener)
     return recorded_leases
@@ -1973,6 +2186,34 @@ def _bypass_startup_ownership_for_open_cleanup_test(
 ) -> None:
     """Keep legacy cleanup tests focused on the shared-handle phase."""
 
+    def fake_proven_current(self: Any, path: Path) -> tuple[Any, Any]:
+        lease = module.ProfileStoreLease(path, ProfileStoreLockMode.SHARED)
+        opened: Any = None
+        try:
+            lease.acquire()
+            opened = module.open_profile_store(path, must_exist=True)
+            return lease, opened
+        except BaseException as primary:
+            cleanup: BaseException | None = None
+            if opened is not None:
+                try:
+                    opened.close()
+                except BaseException as error:
+                    cleanup = error
+                    self._connection = opened
+                    self._lease = lease
+                    self._active_database_path = path
+            if cleanup is None:
+                try:
+                    lease.release()
+                except BaseException as error:
+                    cleanup = error
+                    self._lease = lease
+                    self._active_database_path = path
+            if cleanup is not None and not isinstance(cleanup, Exception):
+                raise cleanup
+            raise primary
+
     monkeypatch.setattr(
         module.TTSProfileRepository,
         "_worker_initialize_store",
@@ -1981,7 +2222,7 @@ def _bypass_startup_ownership_for_open_cleanup_test(
     monkeypatch.setattr(
         module.TTSProfileRepository,
         "_worker_open_if_proven_current",
-        lambda self, path: self._worker_open_existing(path),
+        fake_proven_current,
     )
 
 
@@ -2620,226 +2861,6 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
 
 
 @pytest.mark.asyncio
-async def test_failed_open_retains_real_shared_lease_until_connection_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _repository_module()
-    _bypass_startup_ownership_for_open_cleanup_test(monkeypatch, module)
-    database_path = tmp_path / "profiles.sqlite3"
-    secret = str(tmp_path / "partial-connection-close-failure")
-    events: list[tuple[str, int]] = []
-    previous_worker_trace: Any = None
-
-    def restore_worker_trace() -> None:
-        sys.settrace(previous_worker_trace)
-
-    first_connection = _SequencedCloseConnection(
-        events,
-        "connection-1",
-        [RuntimeError(secret), None],
-        before_close=restore_worker_trace,
-    )
-    second_connection = _RecordingConnection(events)
-    leases: list[_ObservedProfileStoreLease] = []
-    open_calls = 0
-    injected_failure = threading.Event()
-    worker_trace_checked = threading.Event()
-    opening_error = RuntimeError("injected-open-transition-failure")
-
-    def passthrough_worker_trace(
-        _frame: Any,
-        _event: str,
-        _argument: Any,
-    ) -> Any:
-        return passthrough_worker_trace
-
-    def lease_factory(
-        path: Path,
-        mode: ProfileStoreLockMode,
-        **_kwargs: object,
-    ) -> _ObservedProfileStoreLease:
-        lease = _ObservedProfileStoreLease(
-            path,
-            mode,
-            events,
-            f"lease-{len(leases) + 1}",
-        )
-        leases.append(lease)
-        return lease
-
-    def fail_after_connection_assignment(
-        frame: Any,
-        event: str,
-        _argument: Any,
-    ) -> Any:
-        if (
-            frame.f_code is module.TTSProfileRepository._worker_open_existing.__code__
-            and event == "line"
-            and frame.f_locals.get("connection") is first_connection
-        ):
-            injected_failure.set()
-            frame.f_trace = None
-            raise opening_error
-        return fail_after_connection_assignment
-
-    def controlled_open(
-        _database_path: Path,
-        *,
-        must_exist: bool = False,
-    ) -> Any:
-        del must_exist
-        nonlocal open_calls, previous_worker_trace
-        open_calls += 1
-        if open_calls == 1:
-            if sys.gettrace() is None:
-                sys.settrace(passthrough_worker_trace)
-            previous_worker_trace = sys.gettrace()
-            worker_frame = sys._getframe(1)
-            worker_frame.f_trace = fail_after_connection_assignment
-            sys.settrace(fail_after_connection_assignment)
-            return first_connection
-        assert sys.gettrace() is previous_worker_trace
-        worker_trace_checked.set()
-        return second_connection
-
-    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
-    monkeypatch.setattr(module, "open_profile_store", controlled_open)
-    repository = module.TTSProfileRepository(database_path)
-
-    try:
-        with pytest.raises(ProfileRepositoryError) as caught:
-            await repository.open()
-
-        _assert_safe_error(caught.value, "operation_failed", secret)
-        assert injected_failure.is_set()
-        assert repository._connection is first_connection
-        assert repository._lease is leases[0]
-        assert first_connection.closed is False
-        assert first_connection.close_calls == 1
-        assert leases[0].acquired is True
-        assert not _phase_threads(events, "lease-1.release")
-        await _assert_exclusive_lease_blocked(database_path)
-
-        retried = await repository.open()
-
-        assert retried == ProfileStoreResult(generation=2, value=None)
-        assert first_connection.closed is True
-        assert first_connection.close_calls == 2
-        assert leases[0].acquired is False
-        assert repository._connection is second_connection
-        assert repository._lease is leases[1]
-        assert leases[1].acquired is True
-        assert worker_trace_checked.is_set()
-        phases = [phase for phase, _thread_id in events]
-        assert max(
-            index for index, phase in enumerate(phases) if phase == "connection-1.close"
-        ) < phases.index("lease-1.release")
-        assert phases.index("lease-1.release") < phases.index("lease-2.acquire")
-        await _assert_exclusive_lease_blocked(database_path)
-    finally:
-        if not repository.terminal:
-            await repository.close()
-
-    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("primary_is_control", [True, False])
-async def test_failed_open_connection_cleanup_control_preserves_precedence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    primary_is_control: bool,
-) -> None:
-    module = _repository_module()
-    _bypass_startup_ownership_for_open_cleanup_test(monkeypatch, module)
-    events: list[tuple[str, int]] = []
-    primary_signal = _ControlFlow()
-    cleanup_signal = _ControlFlow()
-    primary_error: BaseException
-    expected_signal: _ControlFlow
-    if primary_is_control:
-        primary_error = primary_signal
-        expected_signal = primary_signal
-    else:
-        primary_error = RuntimeError("ordinary-open-transition-failure")
-        expected_signal = cleanup_signal
-    previous_worker_trace: Any = None
-
-    def restore_worker_trace() -> None:
-        sys.settrace(previous_worker_trace)
-
-    connection = _SequencedCloseConnection(
-        events,
-        "connection",
-        [cleanup_signal, None],
-        before_close=restore_worker_trace,
-    )
-    lease = _SequencedReleaseLease(events, "lease", [])
-
-    def lease_factory(
-        _database_path: Path,
-        mode: ProfileStoreLockMode,
-        **_kwargs: object,
-    ) -> _SequencedReleaseLease:
-        assert mode is ProfileStoreLockMode.SHARED
-        return lease
-
-    def fail_after_connection_assignment(
-        frame: Any,
-        event: str,
-        _argument: Any,
-    ) -> Any:
-        if (
-            frame.f_code is module.TTSProfileRepository._worker_open_existing.__code__
-            and event == "line"
-            and frame.f_locals.get("connection") is connection
-        ):
-            frame.f_trace = None
-            raise primary_error
-        return fail_after_connection_assignment
-
-    def partial_open(
-        _database_path: Path,
-        *,
-        must_exist: bool = False,
-    ) -> Any:
-        del must_exist
-        nonlocal previous_worker_trace
-        previous_worker_trace = sys.gettrace()
-        worker_frame = sys._getframe(1)
-        worker_frame.f_trace = fail_after_connection_assignment
-        sys.settrace(fail_after_connection_assignment)
-        return connection
-
-    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
-    monkeypatch.setattr(module, "open_profile_store", partial_open)
-    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
-
-    try:
-        with pytest.raises(_ControlFlow) as caught:
-            await repository.open()
-
-        assert caught.value is expected_signal
-        assert repository._connection is connection
-        assert repository._lease is lease
-        assert connection.closed is False
-        assert lease.acquired is True
-        assert lease.release_calls == 0
-
-        assert await repository.close() == ProfileStoreResult(
-            generation=2,
-            value=None,
-        )
-        assert connection.closed is True
-        assert lease.acquired is False
-        assert lease.release_calls == 1
-    finally:
-        if not repository.terminal:
-            await repository.close()
-
-
-@pytest.mark.asyncio
 async def test_failed_open_retains_lease_until_retry_cleanup_succeeds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2920,72 +2941,6 @@ async def test_failed_open_retains_lease_until_retry_cleanup_succeeds(
         ) < phases.index("lease-2.acquire")
     finally:
         await repository.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("primary_is_control", [True, False])
-async def test_failed_open_close_retries_retained_lease_with_error_precedence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    primary_is_control: bool,
-) -> None:
-    module = _repository_module()
-    _bypass_startup_ownership_for_open_cleanup_test(monkeypatch, module)
-    events: list[tuple[str, int]] = []
-    primary_signal = _ControlFlow()
-    cleanup_signal = _ControlFlow()
-    primary_error: BaseException
-    expected_signal: _ControlFlow
-    if primary_is_control:
-        primary_error = primary_signal
-        expected_signal = primary_signal
-    else:
-        primary_error = RuntimeError("ordinary-open-failure")
-        expected_signal = cleanup_signal
-    lease = _SequencedReleaseLease(
-        events,
-        "residual-lease",
-        [cleanup_signal, None],
-    )
-
-    def lease_factory(
-        _database_path: Path,
-        mode: ProfileStoreLockMode,
-        **_kwargs: object,
-    ) -> _SequencedReleaseLease:
-        assert mode is ProfileStoreLockMode.SHARED
-        return lease
-
-    def failing_open(
-        _database_path: Path,
-        *,
-        must_exist: bool = False,
-    ) -> Any:
-        del must_exist
-        raise primary_error
-
-    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
-    monkeypatch.setattr(module, "open_profile_store", failing_open)
-    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
-
-    with pytest.raises(_ControlFlow) as caught:
-        await repository.open()
-
-    try:
-        assert caught.value is expected_signal
-        assert repository._lease is lease
-        assert lease.acquired is True
-        assert lease.release_calls == 1
-
-        closed = await repository.close()
-
-        assert closed == ProfileStoreResult(generation=2, value=None)
-        assert lease.release_calls == 2
-        assert lease.acquired is False
-        assert repository._lease is None
-    finally:
-        if not repository.terminal:
-            await repository.close()
 
 
 @pytest.mark.asyncio
@@ -4074,6 +4029,46 @@ def test_restore_sidecar_checks_deadline_between_filesystem_calls(
     assert wal_path.read_bytes() == b"must remain"
 
 
+def test_restore_sidecar_swap_after_admission_preserves_foreign_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    wal_path = Path(f"{database_path}-wal")
+    detached = tmp_path / "detached-wal"
+    foreign = tmp_path / "foreign-wal"
+    wal_path.write_bytes(b"admitted wal bytes")
+    wal_path.chmod(0o600)
+    expected = wal_path.stat()
+    foreign_bytes = b"foreign wal bytes must remain"
+    foreign.write_bytes(foreign_bytes)
+    foreign.chmod(0o600)
+    repository = module.TTSProfileRepository(database_path)
+    repository._active_database_path = database_path
+    repository._restore_sidecar_identities = {"-wal": expected}
+    repository._restore_parent_authority = module.ParentAuthority(tmp_path.stat())
+    real_lstat = Path.lstat
+    swapped = False
+
+    def swap_after_lstat(path: Path) -> os.stat_result:
+        nonlocal swapped
+        observed = real_lstat(path)
+        if path == wal_path and not swapped:
+            os.replace(wal_path, detached)
+            os.replace(foreign, wal_path)
+            swapped = True
+        return observed
+
+    monkeypatch.setattr(Path, "lstat", swap_after_lstat)
+    with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+        repository._worker_remove_live_sidecars(deadline=module._read_monotonic() + 1.0)
+
+    assert swapped is True
+    assert wal_path.read_bytes() == foreign_bytes
+    assert detached.read_bytes() == b"admitted wal bytes"
+
+
 @pytest.mark.asyncio
 async def test_online_backup_rejects_live_lock_and_sidecar_targets(
     tmp_path: Path,
@@ -4121,12 +4116,11 @@ async def test_online_backup_rejects_symlink_and_hardlink_aliases_to_live_store(
     migration_backup = _repository_module()._v2_migration_backup_path(database_path)
     migration_backup.write_bytes(b"retained-v2-downgrade-snapshot")
     symlink_path.symlink_to(database_path)
-    os.link(database_path, hardlink_path)
     os.link(migration_backup, retained_alias)
 
     try:
         live_bytes = database_path.read_bytes()
-        for destination in (symlink_path, hardlink_path, retained_alias):
+        for destination in (symlink_path, retained_alias):
             with pytest.raises(ProfileRepositoryError) as caught:
                 await repository.backup_to(destination)
             _assert_safe_error(
@@ -4137,10 +4131,15 @@ async def test_online_backup_rejects_symlink_and_hardlink_aliases_to_live_store(
             )
         assert database_path.read_bytes() == live_bytes
         assert symlink_path.is_symlink()
-        assert hardlink_path.stat().st_ino == database_path.stat().st_ino
         assert retained_alias.stat().st_ino == migration_backup.stat().st_ino
         assert migration_backup.read_bytes() == b"retained-v2-downgrade-snapshot"
+        os.link(database_path, hardlink_path)
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.backup_to(hardlink_path)
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert hardlink_path.stat().st_ino == database_path.stat().st_ino
     finally:
+        hardlink_path.unlink(missing_ok=True)
         await repository.close()
 
 
@@ -4413,7 +4412,6 @@ async def test_restore_rejects_live_reserved_and_alias_candidates_on_worker(
     await repository.open()
     hardlink = tmp_path / "hardlink-candidate.sqlite3"
     symlink = tmp_path / "symlink-candidate.sqlite3"
-    os.link(database_path, hardlink)
     symlink.symlink_to(database_path)
     candidates = (
         database_path,
@@ -4426,7 +4424,6 @@ async def test_restore_rejects_live_reserved_and_alias_candidates_on_worker(
                 "-journal",
             )
         ),
-        hardlink,
         symlink,
     )
 
@@ -4444,7 +4441,12 @@ async def test_restore_rejects_live_reserved_and_alias_candidates_on_worker(
         assert repository.generation == 1 + len(candidates)
         assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        os.link(database_path, hardlink)
+        with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+            await repository.restore_from(hardlink)
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
     finally:
+        hardlink.unlink(missing_ok=True)
         await repository.close()
 
 
