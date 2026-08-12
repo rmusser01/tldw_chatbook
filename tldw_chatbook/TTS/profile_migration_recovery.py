@@ -17,13 +17,13 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
     ParsedProfileMigrationJournal,
     ProfileMigrationJournalSlot,
     ProfileMigrationPublicationSlot,
     parse_profile_migration_journal,
 )
-from tldw_chatbook.TTS.profile_reference_types import MAX_REFERENCE_TOTAL_BYTES
 from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathStatus,
@@ -34,12 +34,6 @@ from tldw_chatbook.Utils.private_paths import (
 
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _RECOVERY_LOCK = Lock()
-# A valid store may contain the full 512 MiB aggregate reference quota. Reserve
-# another 64 MiB for SQLite pages, profile/assignment rows, indexes, and bounded
-# free-list overhead; larger crash artifacts require operator recovery.
-MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES: Final = (
-    MAX_REFERENCE_TOTAL_BYTES + 64 * 1024 * 1024
-)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -134,7 +128,7 @@ def _require_configured_parent(
 def _artifact_size_allowed(byte_length: int) -> bool:
     return (
         type(byte_length) is int
-        and 0 <= byte_length <= MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES
+        and 0 <= byte_length <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
     )
 
 
@@ -675,7 +669,7 @@ def recover_profile_migration_publication(
                 or not parsed.recovery_rows[0].had_prior
                 or parsed.recovery_rows[0].target != selected.name
                 or not all(
-                    row.evidence_fits(MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES)
+                    row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES)
                     for row in parsed.recovery_rows
                 )
             ):
@@ -732,7 +726,7 @@ def recover_profile_migration_publication(
                         current_snapshot.raw
                     )
                     if not current_parsed.matches_parent(parent_identity) or not all(
-                        row.evidence_fits(MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES)
+                        row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES)
                         for row in current_parsed.recovery_rows
                     ):
                         raise ValueError
@@ -795,6 +789,6 @@ def recover_profile_migration_publication(
 
 
 __all__ = [
-    "MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES",
+    "MAX_PROFILE_MIGRATION_ARTIFACT_BYTES",
     "recover_profile_migration_publication",
 ]

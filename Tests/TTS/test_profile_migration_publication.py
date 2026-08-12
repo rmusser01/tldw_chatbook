@@ -130,6 +130,118 @@ def _encoded_journal(
     )
 
 
+def test_journal_artifact_size_boundary_is_symmetric(tmp_path: Path) -> None:
+    module = _publication_module()
+    maximum = module.MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+    row = module.ProfileMigrationJournalSlot(
+        slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+        candidate=".candidate.sqlite3",
+        target="profiles.sqlite3",
+        rollback=".profiles.sqlite3.active.rollback",
+        had_prior=False,
+    )
+    parent = tmp_path.stat()
+    candidate = os.stat_result(
+        (
+            stat.S_IFREG | 0o600,
+            parent.st_ino + 1,
+            parent.st_dev,
+            1,
+            os.geteuid(),
+            parent.st_gid,
+            maximum,
+            parent.st_atime,
+            parent.st_mtime,
+            parent.st_ctime,
+        )
+    )
+    authority = module._new_profile_migration_journal_authority(
+        parent_identity=parent,
+        rows=((row, candidate, (maximum, b"\x01" * 32), 4, None, None, None),),
+    )
+    encoded, _checksum = module._encode_initial_journal(authority)
+
+    assert (
+        module.parse_profile_migration_journal(encoded)
+        .recovery_rows[0]
+        .evidence_fits(maximum)
+    )
+
+    with pytest.raises(ValueError):
+        module._new_profile_migration_journal_authority(
+            parent_identity=parent,
+            rows=(
+                (
+                    row,
+                    candidate,
+                    (maximum + 1, b"\x01" * 32),
+                    4,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+        )
+
+    decoded = json.loads(encoded)
+    decoded["recovery"]["authority"]["slots"][0]["candidate_evidence"][
+        "byte_length"
+    ] = maximum + 1
+    recovery_payload = json.dumps(
+        decoded["recovery"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    decoded["checksum"] = sha256(recovery_payload).hexdigest()
+    forged = (
+        json.dumps(
+            decoded,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        + b"\n"
+    )
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.parse_profile_migration_journal(forged)
+
+
+def test_oversize_sparse_candidate_is_rejected_before_hash_or_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    active = tmp_path / "profiles.sqlite3"
+    prior = tmp_path / "profiles.pre-v4.sqlite3"
+    candidate = tmp_path / ".candidate.sqlite3"
+    active_before = _store(active, version=3, marker="old-active")
+    prior_before = _store(prior, version=3, marker="old-prior")
+    _store(candidate, version=4, marker="new")
+    with candidate.open("r+b") as stream:
+        stream.truncate(module.MAX_PROFILE_MIGRATION_ARTIFACT_BYTES + 1)
+    reads = 0
+    real_pread = module.os.pread
+
+    def observe_pread(file_fd: int, count: int, offset: int) -> bytes:
+        nonlocal reads
+        reads += 1
+        return real_pread(file_fd, count, offset)
+
+    monkeypatch.setattr(module.os, "pread", observe_pread)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.prepare_profile_migration_artifact(
+            candidate,
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+        )
+
+    assert reads == 0
+    assert active.read_bytes() == active_before
+    assert prior.read_bytes() == prior_before
+    assert not tuple(tmp_path.glob("*.migration-publication.json"))
+
+
 @pytest.mark.parametrize("cancel_stage_name", ["PREFLIGHT", "JOURNAL_DURABLE"])
 def test_prepublication_cancellation_preserves_authority_and_cleans_candidates(
     tmp_path: Path,

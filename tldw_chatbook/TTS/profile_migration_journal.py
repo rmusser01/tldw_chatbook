@@ -10,6 +10,16 @@ from pathlib import Path
 from typing import Final, NoReturn, SupportsIndex
 
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_reference_types import MAX_REFERENCE_TOTAL_BYTES
+
+
+# Total operational cap for one migration artifact: the existing 512 MiB
+# aggregate reference quota plus 64 MiB of SQLite/storage headroom. The cap,
+# rather than any assumption about intrinsically bounded free-list growth,
+# supplies the bound enforced by publication, journaling, and recovery.
+MAX_PROFILE_MIGRATION_ARTIFACT_BYTES: Final = (
+    MAX_REFERENCE_TOTAL_BYTES + 64 * 1024 * 1024
+)
 
 
 class ProfileMigrationPublicationSlot(StrEnum):
@@ -78,6 +88,11 @@ class _ArtifactAuthorityCapsule(_OpaqueAuthority):
         sha256_digest: bytes,
         schema_version: int,
     ) -> None:
+        if (
+            type(byte_length) is not int
+            or not 0 <= byte_length <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+        ):
+            raise ValueError
         object.__setattr__(
             self,
             "_ArtifactAuthorityCapsule__values",
@@ -692,6 +707,8 @@ def _new_profile_migration_journal_authority(
 def _encode_initial_journal(authority: _JournalAuthority) -> tuple[bytes, bytes]:
     rows = []
     for row in authority._recovery_rows():
+        if not row.evidence_fits(MAX_PROFILE_MIGRATION_ARTIFACT_BYTES):
+            raise ValueError
         candidate_evidence, prior_evidence = row._evidence()
         if candidate_evidence is None:
             raise ValueError
@@ -755,6 +772,7 @@ def _parse_evidence(value: object) -> _ArtifactEvidence:
         or value["dev"] < 0
         or value["ino"] <= 0
         or value["byte_length"] < 0
+        or value["byte_length"] > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
     ):
         raise ValueError
     digest = bytes.fromhex(value["sha256"])
@@ -930,6 +948,7 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
 
 
 __all__ = [
+    "MAX_PROFILE_MIGRATION_ARTIFACT_BYTES",
     "PROFILE_MIGRATION_SLOT_SEQUENCES",
     "ParsedProfileMigrationJournal",
     "ProfileMigrationJournalSlot",

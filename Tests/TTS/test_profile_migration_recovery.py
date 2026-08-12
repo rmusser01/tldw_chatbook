@@ -759,7 +759,7 @@ def test_same_inode_journal_mutation_after_admission_is_preserved(
 
 def test_recovery_artifact_size_limit_has_exact_boundary() -> None:
     _, recovery = _modules()
-    maximum = recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES
+    maximum = recovery.MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
 
     assert recovery._artifact_size_allowed(maximum)
     assert not recovery._artifact_size_allowed(maximum + 1)
@@ -772,7 +772,7 @@ def test_observed_artifact_over_limit_is_rejected_before_read(
     _, recovery = _modules()
     artifact = tmp_path / "oversize.sqlite3"
     with artifact.open("wb") as stream:
-        stream.truncate(recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES + 1)
+        stream.truncate(recovery.MAX_PROFILE_MIGRATION_ARTIFACT_BYTES + 1)
     descriptor = os.open(artifact, os.O_RDONLY)
 
     def should_not_read(*_args: object, **_kwargs: object) -> bytes:
@@ -798,7 +798,7 @@ def test_oversize_journal_evidence_is_rejected_before_artifact_hash(
     raw, _checksum = publication._encode_initial_journal(authority)
     decoded = json.loads(raw)
     evidence = decoded["recovery"]["authority"]["slots"][0]["candidate_evidence"]
-    evidence["byte_length"] = recovery.MAX_PROFILE_MIGRATION_RECOVERY_ARTIFACT_BYTES + 1
+    evidence["byte_length"] = recovery.MAX_PROFILE_MIGRATION_ARTIFACT_BYTES + 1
     recovery_payload = json.dumps(
         decoded["recovery"],
         ensure_ascii=True,

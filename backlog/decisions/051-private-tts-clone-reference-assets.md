@@ -155,7 +155,9 @@ opening the store.
 
 Startup recovery accepts each journal-recorded profile-store artifact only up
 to 576 MiB: the 512 MiB aggregate canonical-reference quota plus 64 MiB of
-bounded SQLite page, schema, index, and free-list overhead. It rejects both
+operational headroom for SQLite pages, schema, indexes, and free-list growth.
+The total-file cap supplies the bound; those structures are not assumed to be
+intrinsically bounded. Publication, journaling, and recovery reject both
 recorded evidence and observed files above that limit before hashing, while
 hashing accepted artifacts incrementally rather than buffering a store in
 memory.

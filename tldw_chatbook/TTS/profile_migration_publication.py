@@ -16,6 +16,7 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
     PROFILE_MIGRATION_SLOT_SEQUENCES,
     ParsedProfileMigrationJournal,
@@ -152,6 +153,8 @@ def _sidecars_absent(parent_fd: int, leaf: str) -> bool:
 
 def _content_evidence(file_fd: int) -> tuple[int, bytes]:
     before = os.fstat(file_fd)
+    if not 0 <= before.st_size <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES:
+        raise ValueError
     digest = sha256()
     offset = 0
     while offset < before.st_size:
@@ -1072,6 +1075,7 @@ def publish_profile_migration(
 
 
 __all__ = [
+    "MAX_PROFILE_MIGRATION_ARTIFACT_BYTES",
     "ParsedProfileMigrationJournal",
     "PreparedProfileMigrationArtifact",
     "ProfileMigrationPublicationSlot",
