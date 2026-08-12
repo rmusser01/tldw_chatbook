@@ -74,20 +74,23 @@ provider on the next Console agent run. This separates discoverability from
 authorization: users can see and select the tools by default without granting
 silent filesystem access, writes, or network egress.
 
-**Addendum (TASK-1354 closeout, 2026-08-10): web-tool egress remains
-public-only.** `web_search` and `web_fetch` are ordinary `local:<name>` tools,
-not privileged built-ins. Fresh and missing permission state therefore remains
-`ask` for both tools; catalog availability never implies network authorization.
-`web_fetch` accepts only HTTP(S) targets whose complete DNS answer is public,
-and it repeats that check for every redirect hop. Private, loopback,
-link-local, reserved, multicast, unspecified, cloud-metadata, and unresolvable
-targets fail before transport. There is no per-domain approval bypass in the
-local-tool contract. This intentionally supersedes TASK-1354's earlier draft
-proposal for a default-Allow search tool and configurable localhost/LAN
-fetching. Optional external exposure is governed separately by ADR-053:
-`[mcp] expose_local_tools` must be enabled, and an external client cannot
-satisfy an `ask` verdict, so it fails closed until the operator records a
-persistent tool-level Allow through the Console.
+**Addendum (TASK-1354 closeout, 2026-08-10): both web tools are permission-gated;
+`web_fetch` alone enforces public-target egress.** `web_search` and `web_fetch`
+are ordinary `local:<name>` tools, not privileged built-ins. Fresh and missing
+permission state therefore remains `ask` for both tools; catalog availability
+never implies network authorization. `web_search` sends queries through the
+operator-configured search backend. That backend may be a local Searx endpoint,
+and `web_search` does not validate it as public-only. `web_fetch` accepts only
+HTTP(S) targets whose complete DNS answer is public and repeats that check for
+every redirect hop. Private, loopback, link-local, reserved, multicast,
+unspecified, cloud-metadata, and unresolvable fetch targets fail before
+transport. There is no per-domain approval bypass in the local-tool contract.
+This intentionally supersedes TASK-1354's earlier draft proposal for a
+default-Allow search tool and configurable localhost/LAN fetching. Optional
+external exposure is governed separately by ADR-053: `[mcp]
+expose_local_tools` must be enabled, and an external client cannot satisfy an
+`ask` verdict, so it fails closed until the operator records a persistent
+tool-level Allow through the Console.
 
 **Addendum (PR-T3 review, Fix Round H, 2026-08-06):** a fourth pinned
 constant, `LOCAL_GATE_ERROR_REFUSAL`, distinguishes a permission-resolver
