@@ -478,18 +478,42 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
     conn.close()
 
 
-def test_the_fallback_path_runs_a_hostile_query_without_raising(tmp_path):
-    """End to end through the sub-leg: a hostile query whose AND finds
-    nothing must reach the fallback and still degrade gracefully."""
+def test_the_fallback_path_runs_a_hostile_query_without_raising(tmp_path, monkeypatch):
+    """End to end through the media sub-leg: a hostile query whose AND finds
+    nothing must reach the fallback, and the fallback must actually EXECUTE
+    against SQLite.
+
+    Asserting only "returns a list" would be vacuous -- every sub-leg
+    swallows its own errors, so a fallback that raised would still produce
+    `[]`. The spy records the expressions that reached the pooled FTS5
+    execution, and the row it returns is the proof the hostile OR form both
+    parsed and matched.
+    """
     service = _make_service(tmp_path)
     service.config.search.fts_match_construction = "and_then_or"
 
+    executed = []
+    original = RAGService._perform_fts5_search
+
+    def spy(self, pool, query, limit, allowed_ids=None):
+        rows = original(self, pool, query, limit, allowed_ids)
+        executed.append(self._fts5_match_expressions(query))
+        return rows
+
+    monkeypatch.setattr(RAGService, "_perform_fts5_search", spy)
+
     # No document contains "quokka", so the AND is empty and the OR form
     # runs -- carrying the column-filter attempt and the embedded quote.
-    results = asyncio.run(
-        service._keyword_search('quokka content:wombat confirmed" lathe', top_k=5)
-    )
-    assert isinstance(results, list)
+    query = 'quokka content:wombat confirmed" lathe'
+    results = asyncio.run(service._keyword_search(query, top_k=5))
+
+    assert executed, "the media sub-leg never reached FTS5"
+    primary, fallback = executed[0]
+    assert " OR " not in primary
+    assert fallback == '"quokka" OR "content:wombat" OR "confirmed""" OR "lathe"'
+    # The seeded doc contains "lathe" but not "quokka": only the fallback
+    # can return it, so a row here means the hostile OR form executed.
+    assert [row.metadata["fts_match"] for row in results] == ["or"], results
 
 
 def test_an_all_stopword_query_never_emits_an_empty_match_expression(tmp_path):

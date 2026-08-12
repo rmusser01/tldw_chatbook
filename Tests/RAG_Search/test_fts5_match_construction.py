@@ -23,12 +23,14 @@ Four properties, each with a mutation that reds it:
   reds the count assertions; dropping the fallback loop entirely reds the
   rescue assertions.
 * **Provenance.** Every keyword row carries `metadata["fts_match"]`, naming
-  the FORM that matched it: `"and"` for an implicit-AND expression (full or
-  stopword-trimmed), `"or_fallback"` for the content-token OR form --
-  whether that form was reached as `and_then_or`'s fallback or run as the
-  `or` construction's primary. Task 2's negative-composition counter and
-  Task 5's mechanism prose both read this key, so it must name the form,
-  not the position.
+  the FORM that matched it and nothing else: `"and"` for an implicit-AND
+  expression (full or stopword-trimmed), `"or"` for the content-token OR
+  form -- whether that form was reached as `and_then_or`'s fallback or run
+  as the `or` construction's primary. Task 2's negative-composition counter
+  and Task 5's mechanism prose both read this key, so it must name the form,
+  not the position: under the `or` construction NO row is a fallback row,
+  and fallback-ness is derivable from (construction, form) whenever it is
+  wanted.
 * **The construction is in the cache key.** A per-service cache plus a
   runtime-mutable construction is exactly the shape that made TASK-4110's
   fusion sweep report "k doesn't matter". `"and"` renders the key
@@ -56,7 +58,7 @@ from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_AND,
     FTS_MATCH_CONSTRUCTIONS,
-    FTS_MATCH_OR_FALLBACK,
+    FTS_MATCH_OR,
     _FTS5_STOPWORDS,
     RAGService,
 )
@@ -139,6 +141,25 @@ def _seed_notes(tmp_path, rows, name="chachanotes.db"):
     finally:
         db.close_connection()
     return db_path
+
+
+def _seed_conversation(tmp_path, title, messages, name="chachanotes.db"):
+    """A real conversation with real messages (`messages_fts` is the index).
+
+    Same shape as `test_keyword_leg_chacha._add_conversation`.
+    """
+    db_path = tmp_path / name
+    db = CharactersRAGDB(db_path, client_id=CLIENT_ID)
+    try:
+        conv_id = db.add_conversation({"title": title})
+        assert conv_id, "conversation seed failed"
+        for sender, content in messages:
+            assert db.add_message(
+                {"conversation_id": conv_id, "sender": sender, "content": content}
+            ), "message seed failed"
+    finally:
+        db.close_connection()
+    return db_path, conv_id
 
 
 @contextmanager
@@ -259,6 +280,32 @@ def test_and_then_or_has_no_redundant_fallback_when_the_forms_are_identical():
     )
 
 
+def test_a_repeated_token_is_still_one_term_and_suppresses_the_fallback():
+    """Suppression is decided on FTS5 TERMS, not on expression strings.
+
+    `"wombat" "wombat"` and `"wombat" OR "wombat"` are the same single-term
+    query to FTS5, so widening is impossible -- but the two expression
+    STRINGS differ, and a string comparison would spend one extra FTS query
+    per zero-row sub-leg on it (and inflate the sweep's extra-query
+    tie-break). Case and trailing punctuation fold the same way.
+    """
+    service = _make_service(construction="and_then_or")
+
+    assert service._fts5_match_expressions("wombat wombat") == (
+        '"wombat" "wombat"',
+        None,
+    )
+    assert service._fts5_match_expressions("Wombat wombat,") == (
+        '"Wombat" "wombat,"',
+        None,
+    )
+    # Two DISTINCT content terms still widen -- suppression is not a
+    # blanket "single OR term" rule.
+    assert service._fts5_match_expressions("wombat burrow")[1] == (
+        '"wombat" OR "burrow"'
+    )
+
+
 def test_stopword_trimming_is_case_and_punctuation_insensitive():
     """FTS5 reads `About,` as the term `about`; so must the trimmer."""
     service = _make_service(construction="or")
@@ -272,7 +319,9 @@ def test_stopword_list_is_lowercase_and_covers_the_measured_blocker():
     assert "about" in _FTS5_STOPWORDS
     assert all(word == word.lower() for word in _FTS5_STOPWORDS)
     # A small fixed list of function words -- not a content-word vocabulary.
-    assert 20 <= len(_FTS5_STOPWORDS) <= 80
+    # The EXACT size is pinned, not a range: Task 5's prose quotes this
+    # number, and a range let an off-by-one claim ("66") survive a review.
+    assert len(_FTS5_STOPWORDS) == 67
 
 
 def test_every_token_stays_individually_quoted_in_every_construction():
@@ -368,7 +417,7 @@ def test_a_zero_row_and_falls_back_to_the_or_form_exactly_once(
     assert len(calls) == 2, f"expected primary + ONE fallback, got {calls}"
     assert " OR " not in calls[0]
     assert calls[1] == '"wombat" OR "template" OR "work"'
-    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR_FALLBACK]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
 def test_the_shipped_and_construction_never_runs_a_second_query(
@@ -403,7 +452,7 @@ def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path):
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
-    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR_FALLBACK]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
 def test_notes_sub_leg_falls_back_independently(tmp_path, monkeypatch):
@@ -431,7 +480,50 @@ def test_notes_sub_leg_falls_back_independently(tmp_path, monkeypatch):
 
     assert [r.metadata["doc_title"] for r in results] == ["Saltmarsh hide"]
     assert len(calls) == 2, calls
-    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR_FALLBACK]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
+
+
+def test_conversations_sub_leg_falls_back_independently(tmp_path, monkeypatch):
+    """The conversations helper is the one that issues TWO MATCH statements
+    off a single expression (the conversation ranking, then the matched
+    message lines). Both must run on whichever expression actually matched,
+    or the row comes back with an empty document.
+    """
+    db_path, conv_id = _seed_conversation(
+        tmp_path,
+        "Burrow handover",
+        [
+            ("user", "Where did we leave the wombat burrow inspection?"),
+            ("assistant", "The dusk pass is still outstanding."),
+        ],
+    )
+    service = _make_service(construction="and_then_or", chachanotes_db_path=db_path)
+
+    calls = []
+    original = RAGService._chacha_conversations_fts
+
+    def spy(conn, escaped_query, limit, allowed_ids=None):
+        calls.append(escaped_query)
+        return original(conn, escaped_query, limit, allowed_ids)
+
+    monkeypatch.setattr(
+        RAGService, "_chacha_conversations_fts", staticmethod(spy)
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            OR_ONLY_QUERY, top_k=5, keyword_source_types={"conversation"}
+        )
+    )
+
+    assert [r.metadata["source_id"] for r in results] == [str(conv_id)]
+    assert len(calls) == 2, calls
+    assert " OR " not in calls[0]
+    assert calls[1] == '"wombat" OR "template" OR "work"'
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
+    # The second statement ran on the FALLBACK expression too: without that,
+    # the conversation ranks but carries no message text at all.
+    assert "wombat burrow" in results[0].document.lower(), results[0].document
 
 
 def test_media_sub_leg_falls_back_independently(tmp_path, monkeypatch):
@@ -461,7 +553,7 @@ def test_media_sub_leg_falls_back_independently(tmp_path, monkeypatch):
     # ONE call into the pooled helper; the fallback happens inside it, so
     # the retry wrapper cannot multiply it.
     assert len(calls) == 1, calls
-    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR_FALLBACK]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
 def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(tmp_path):
@@ -491,7 +583,7 @@ def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(tmp_path):
     stamps = {
         r.metadata["source_type"]: r.metadata["fts_match"] for r in results
     }
-    assert stamps == {"media": FTS_MATCH_AND, "prompt": FTS_MATCH_OR_FALLBACK}
+    assert stamps == {"media": FTS_MATCH_AND, "prompt": FTS_MATCH_OR}
 
 
 def test_a_query_with_no_searchable_tokens_still_touches_no_database(

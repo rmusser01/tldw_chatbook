@@ -168,27 +168,32 @@ FTS_MATCH_CONSTRUCTIONS = (
 )
 
 # The two values `metadata["fts_match"]` can take. They name the FORM that
-# matched a row, not the position it was run in: `and` is an implicit-AND
-# expression (full or stopword-trimmed), `or_fallback` is the content-token
-# OR form -- whether it ran as `and_then_or`'s fallback or as the `or`
-# construction's primary. The sweep's negative-composition counter reads
-# this key to count rows an OR form admitted, so a positional naming would
-# make the widest candidate report zero.
+# matched a row and NOTHING else: `and` is an implicit-AND expression (full
+# or stopword-trimmed), `or` is the content-token OR form -- whether that
+# form ran as `and_then_or`'s fallback or as the `or` construction's own
+# primary. Deliberately NOT `or_fallback`: under the `or` construction every
+# row comes from the primary query, so a name carrying "fallback" would weld
+# a false position claim onto a true form fact, and Task 5's mechanism prose
+# reads this key verbatim. Fallback-ness is derivable whenever it is wanted
+# (construction + form), so it gets no second field. The naming also extends
+# to the spec's probe axis (`near`, prefix) as `or_fallback` could not.
 FTS_MATCH_AND = "and"
-FTS_MATCH_OR_FALLBACK = "or_fallback"
+FTS_MATCH_OR = "or"
 
-# A small fixed English function-word list, used ONLY by the OR-form
-# constructions (`or`, `and_stopword_trim`, and `and_then_or`'s fallback).
-# The AND form never consults it -- an implicit AND over function words is
-# harmless, and TASK-15400's census measured that trimming them rescues just
-# 1 of the 40 zero-row golden queries (`pm-vendor-chaser`, blocked solely by
-# "about"). What the list is actually load-bearing for is the OR form: a raw
-# OR of every token matches every document containing "the", and bm25's IDF
-# discounts a ubiquitous term in the RANKING but not in the row COUNT, so
-# the junk rows still enter fusion. Fixed and small on purpose -- a large
-# list starts deleting content words (the census's real blockers were
-# `template`, `building`, `rough`, `turns`, `pulls`, `builds`, which no
-# stopword list removes).
+# A small fixed English function-word list, consulted by every construction
+# EXCEPT the shipped `and` -- the two content-token forms (`and_stopword_
+# trim`'s trimmed AND and the OR form used by `or`/`and_then_or`'s
+# fallback). The shipped AND never consults it: an implicit AND over
+# function words is harmless, and TASK-15400's census measured that trimming
+# them rescues just 1 of the 40 zero-row golden queries (`pm-vendor-chaser`,
+# blocked solely by "about"). Where the list is actually load-bearing is the
+# OR form: a raw OR of every token matches every document containing "the",
+# and bm25's IDF discounts a ubiquitous term in the RANKING but not in the
+# row COUNT, so the junk rows still enter fusion. Fixed and small on purpose
+# -- a large list starts deleting content words (the census's real blockers
+# were `template`, `building`, `rough`, `turns`, `pulls`, `builds`, which no
+# stopword list removes). The exact size is pinned by
+# `test_stopword_list_is_lowercase_and_covers_the_measured_blocker`.
 _FTS5_STOPWORDS: FrozenSet[str] = frozenset(
     {
         "a", "about", "all", "also", "am", "an", "and", "any", "are", "as",
@@ -2913,11 +2918,13 @@ class RAGService:
             "source_type": source_type,
             "source": source_type,
             # Which MATCH form actually returned this row (TASK-15400):
-            # `and` for an implicit-AND expression, `or_fallback` for the
+            # `and` for an implicit-AND expression, `or` for the
             # content-token OR form. One query can carry both -- the
             # fallback is decided per sub-leg -- so this is a per-ROW fact,
             # not a per-search one, and the sweep's negative-composition
             # count plus the arc's mechanism prose are both read off it.
+            # Whether an `or` row was a FALLBACK is derived from this plus
+            # the construction, never stamped as a second fact.
             "fts_match": item.get("fts_match", FTS_MATCH_AND),
         }
 
@@ -3271,7 +3278,11 @@ class RAGService:
 
     @staticmethod
     def _is_fts5_stopword(token: str) -> bool:
-        """Whether a raw query token is a function word (OR forms only).
+        """Whether a raw query token is a function word.
+
+        Consulted by every construction except the shipped ``and`` -- both
+        the content-token AND (``and_stopword_trim``) and the content-token
+        OR (``or`` / ``and_then_or``'s fallback).
 
         Compared on the token's alphanumeric runs, because that is how FTS5
         reads a quoted token: ``About,`` indexes and matches exactly as
@@ -3287,6 +3298,25 @@ class RAGService:
         """
         runs = re.findall(r"[^\W_]+", token, re.UNICODE)
         return len(runs) == 1 and runs[0].lower() in _FTS5_STOPWORDS
+
+    @staticmethod
+    def _fts5_term_key(token: str) -> str:
+        """What FTS5 actually matches for a quoted token, as a comparable key.
+
+        A quoted token is a phrase over its alphanumeric runs, and the
+        default tokenizer folds case -- so ``Wombat``, ``wombat`` and
+        ``wombat,`` are all the same query term. Comparing raw token
+        STRINGS would miss that, which is how a duplicate-token query
+        ("wombat wombat") burns an FTS query on a fallback that cannot
+        return a row the primary did not.
+
+        Args:
+            token: One raw token from ``_fts5_query_tokens``.
+
+        Returns:
+            The token's runs, space-joined and case-folded.
+        """
+        return " ".join(re.findall(r"[^\W_]+", token, re.UNICODE)).lower()
 
     def _resolved_fts_match_construction(self) -> str:
         """The active MATCH construction, or ``"and"`` for anything unknown.
@@ -3345,9 +3375,10 @@ class RAGService:
           zero rows. A non-empty AND is therefore never widened, which is
           what preserves every hit the shipped construction finds today.
 
-        The fallback is suppressed when it would be the same expression as
-        the primary (a single content token), since re-running it costs a
-        query and can only return the same zero rows.
+        The fallback is suppressed when it cannot widen anything -- when
+        both forms reduce to the same single FTS5 term -- since re-running
+        it costs one query per zero-row sub-leg and can only return the same
+        zero rows.
 
         Args:
             query: Raw search query.
@@ -3363,10 +3394,9 @@ class RAGService:
         if construction == FTS_MATCH_CONSTRUCTION_AND:
             return and_expression, None
 
+        tokens = self._fts5_query_tokens(query)
         content_tokens = [
-            token
-            for token in self._fts5_query_tokens(query)
-            if not self._is_fts5_stopword(token)
+            token for token in tokens if not self._is_fts5_stopword(token)
         ]
         quoted = [self._quote_fts5_token(token) for token in content_tokens]
 
@@ -3379,8 +3409,16 @@ class RAGService:
         if construction == FTS_MATCH_CONSTRUCTION_OR:
             return or_expression, None
 
-        # and_then_or
-        if not or_expression or or_expression == and_expression:
+        # and_then_or. The fallback is suppressed when it cannot possibly
+        # widen: that is when both forms reduce to ONE identical FTS5 term
+        # (`OR` over a single term is that term, and an implicit AND over
+        # repetitions of it is too). Compared on TERM keys, not on the
+        # expression strings, so "wombat wombat" and "wombat, Wombat" are
+        # recognized as the single-term queries FTS5 reads them as instead
+        # of burning a redundant query per zero-row sub-leg.
+        and_terms = {self._fts5_term_key(token) for token in tokens}
+        or_terms = {self._fts5_term_key(token) for token in content_tokens}
+        if not or_expression or (len(or_terms) == 1 and or_terms == and_terms):
             return and_expression, None
         return and_expression, or_expression
 
@@ -3393,9 +3431,9 @@ class RAGService:
 
         Wraps a sub-leg's SQL-executing helper (never the tokenizer), so
         each sub-leg decides independently whether to widen: one query can
-        legitimately carry AND rows from one sub-leg and OR-fallback rows
-        from another (the spec's deliberate mixed-mode interleave), which is
-        why every row is stamped with the form that matched it.
+        legitimately carry AND rows from one sub-leg and OR rows from
+        another (the spec's deliberate mixed-mode interleave), which is why
+        every row is stamped with the form that matched it.
 
         Args:
             run_expression: Executes ONE MATCH expression and returns its
@@ -3407,7 +3445,7 @@ class RAGService:
 
         Returns:
             The rows, each carrying an ``fts_match`` key
-            (``FTS_MATCH_AND`` / ``FTS_MATCH_OR_FALLBACK``) that
+            (``FTS_MATCH_AND`` / ``FTS_MATCH_OR``) that
             ``_keyword_row_metadata`` promotes into the row's metadata.
         """
         primary, fallback = expressions
@@ -3415,14 +3453,14 @@ class RAGService:
         # The primary is an OR form only under the `or` construction; the
         # stamp names the form, not the position (see FTS_MATCH_AND).
         form = (
-            FTS_MATCH_OR_FALLBACK
+            FTS_MATCH_OR
             if self._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_OR
             else FTS_MATCH_AND
         )
 
         if not rows and fallback:
             rows = run_expression(fallback)
-            form = FTS_MATCH_OR_FALLBACK
+            form = FTS_MATCH_OR
 
         for row in rows:
             row["fts_match"] = form

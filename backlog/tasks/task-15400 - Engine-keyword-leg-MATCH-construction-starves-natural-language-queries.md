@@ -88,28 +88,28 @@ already fails the first:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 #1 The engine keyword leg's MATCH construction is decided on measured
+- [ ] #1 The engine keyword leg's MATCH construction is decided on measured
       evidence, with the alternatives (AND-of-all-tokens, stopword-trimmed
       AND, OR-with-rank, `build_fts_match_query` reuse, and any hybrid of
       them) compared on the RAG_Eval golden set in all three modes — the
       table in this description is the starting point, not the answer
-- [ ] #2 #2 The chosen construction is applied at one seam shared by every FTS
+- [ ] #2 The chosen construction is applied at one seam shared by every FTS
       sub-leg (media, notes, conversations, prompts), not per sub-leg
-- [ ] #3 #3 The number of golden queries for which the keyword leg returns
+- [ ] #3 The number of golden queries for which the keyword leg returns
       zero rows is reported before and after, per category, alongside the
       number for which it returns the TARGET (the two are far apart: OR
       rescues 34/40 to non-empty but only 10/40 to a hit)
-- [ ] #4 #4 `kw-plant-maintenance-record` keeps its plain and hybrid cells, or
+- [ ] #4 `kw-plant-maintenance-record` keeps its plain and hybrid cells, or
       the fixture is deliberately re-authored with the reason recorded in
       both golden.toml and corpus.toml
-- [ ] #5 #5 `Tests/RAG_Search/test_fts5_query_escaping.py` stays green — each
+- [ ] #5 `Tests/RAG_Search/test_fts5_query_escaping.py` stays green — each
       token remains individually quoted
-- [ ] #6 #6 Any movement in the committed baselines is a deliberate, disclosed
+- [ ] #6 Any movement in the committed baselines is a deliberate, disclosed
       re-stamp naming this task, produced by a full gated matrix re-run
-- [ ] #7 #7 The `prompt` category's cells are re-read afterwards: whether the
+- [ ] #7 The `prompt` category's cells are re-read afterwards: whether the
       shipped prompt queries become answerable is the decision point for
       whether those fixtures also need re-authoring
-- [ ] #8 #8 The two keyword paths (this engine leg vs the Library's four-seam
+- [ ] #8 The two keyword paths (this engine leg vs the Library's four-seam
       path) either share a construction or the divergence is documented
       with its reason. **TASK-3997 is the four-seam half of the same
       question** (it found `build_fts_match_query`'s AND-join zeroing
