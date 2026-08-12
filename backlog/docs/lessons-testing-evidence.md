@@ -42,6 +42,24 @@ side being read at the style level and the other at the pixel level.
 
 ---
 
+## Preserve the visible set across a reorder, not its former first row
+
+**TASK-15455, 2026-08-11.** Console transcript windowing initially preserved a
+lazy window across refreshes by finding the first previously visible message id
+that still existed in the new ordered list. That was correct for append-only
+streaming and session-local deletes, but wrong for branch/path reorder: moving a
+later visible message ahead of that chosen id put it into the newly computed
+hidden prefix. The focused windowing tests were all green. The pre-existing
+signature-cache reorder contract caught the missing mounted row.
+
+**What to do.** When a windowed projection accepts a reordered full list,
+preserve the minimum new index of every surviving previously visible item (plus
+any explicit selection handoff), not the new index of one former boundary item.
+Include an order-sensitive DOM assertion in the reachable regression set; cache
+counts alone prove reuse, not that every reused row stayed visible.
+
+---
+
 ## A fix proven at one layer can be unreachable through the product path
 
 **TASK-15420, 2026-08-11.** TASK-2260 (2026-08-04) shipped custom-endpoint
