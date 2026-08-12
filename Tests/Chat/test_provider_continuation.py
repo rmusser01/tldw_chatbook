@@ -176,6 +176,44 @@ def test_schema_preserves_call_order_and_allows_repeated_function_names() -> Non
     ]
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "a",
+        "ab",
+        "bad name",
+        "bad/name",
+        "café",
+        "1abc",
+        "-abc",
+        "bad.name",
+        "$abc",
+    ],
+)
+def test_invalid_function_name_grammar_is_rejected(name: str) -> None:
+    value = _checkpoint()
+    value["rounds"][0]["calls"][0]["name"] = name
+
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_ab",
+        "a-b",
+        "A_0",
+        "a" + "b" * 63,
+    ],
+)
+def test_schema_accepts_provider_safe_function_name_boundaries(name: str) -> None:
+    value = _checkpoint()
+    value["rounds"][0]["calls"][0]["name"] = name
+
+    assert parse_provider_continuation_json(value).rounds[0].calls[0].name == name
+
+
 @pytest.mark.parametrize("prior_state", ["pending", "executing"])
 def test_invalid_nonfinal_round_cannot_retain_nonterminal_calls(
     prior_state: str,
@@ -679,6 +717,76 @@ def test_bounds_reject_normal_decoded_immediate_children(decoded: object) -> Non
         tracemalloc.stop()
 
     assert after_peak - before_peak < 8_192
+
+
+@pytest.mark.parametrize("field", ["assistant_content", "reasoning_blocks"])
+def test_bounds_reject_oversized_decoded_strings_without_copying(
+    field: str,
+) -> None:
+    value = _checkpoint()
+    oversized = "x" * (8 * 1_048_576 + 1)
+    value["rounds"][0][field] = (
+        [oversized] if field == "reasoning_blocks" else oversized
+    )
+
+    tracemalloc.start()
+    try:
+        _, before_peak = tracemalloc.get_traced_memory()
+        with pytest.raises(ContinuationValidationError):
+            parse_provider_continuation_json(value)
+        _, after_peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert after_peak - before_peak < 65_536
+
+
+def test_bounds_reject_aggregate_decoded_payload_without_materializing_dump() -> None:
+    arguments = '{"value":"' + "a" * 920_000 + '"}'
+    value = _checkpoint(
+        rounds=[
+            {
+                "assistant_content": "",
+                "reasoning_blocks": [],
+                "calls": [
+                    _call(str(index), arguments=arguments) for index in range(10)
+                ],
+            }
+        ]
+    )
+
+    tracemalloc.start()
+    try:
+        _, before_peak = tracemalloc.get_traced_memory()
+        with pytest.raises(ContinuationValidationError):
+            parse_provider_continuation_json(value)
+        _, after_peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert after_peak - before_peak < 3 * 1_048_576
+
+
+def test_bounds_accept_exact_canonical_payload_limit_and_reject_one_more() -> None:
+    value = _checkpoint()
+    empty_dump = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    content_length = 8 * 1_048_576 - len(empty_dump.encode("utf-8"))
+    value["rounds"][0]["assistant_content"] = "x" * content_length
+
+    checkpoint = parse_provider_continuation_json(value)
+    dumped = dump_provider_continuation_json(checkpoint)
+
+    assert dumped is not None
+    assert len(dumped.encode("utf-8")) == 8 * 1_048_576
+
+    value["rounds"][0]["assistant_content"] += "x"
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(value)
 
 
 def test_bounds_reject_payloads_over_eight_mib_before_json_decode() -> None:

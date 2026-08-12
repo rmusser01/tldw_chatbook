@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
@@ -24,7 +25,6 @@ _MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 _MAX_ROUNDS = 128
 _MAX_CALLS = 128
 _MAX_IDENTITY_BYTES = 4 * 1024
-_MAX_FUNCTION_NAME_CHARS = 64
 _MAX_ARGUMENT_BYTES = 1024 * 1024
 _MAX_REASONING_BYTES = 4 * 1024 * 1024
 _MAX_RESULT_CHARS = 16_000
@@ -33,6 +33,7 @@ _MAX_JSON_NODES = 100_000
 _INVALID_MESSAGE = "Invalid continuation data."
 _DISCARDED_WARNING = "Exact tool continuation was discarded."
 _KIMI_K3_MODEL = "kimi-k3"
+_FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
 
 _TOP_LEVEL_KEYS = frozenset(
     {
@@ -59,6 +60,11 @@ _PAIRINGS = frozenset(
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})
 _TERMINAL_CALL_STATES = frozenset({"completed", "failed"})
+_CANONICAL_ENCODER = json.JSONEncoder(
+    ensure_ascii=False,
+    separators=(",", ":"),
+    allow_nan=False,
+)
 
 
 class ContinuationValidationError(ValueError):
@@ -224,9 +230,13 @@ def _exact_string(value: object, *, nonblank: bool = False) -> str:
     return text
 
 
-def _bounded_utf8(value: str, maximum: int) -> None:
-    if len(value) > maximum or len(value.encode("utf-8")) > maximum:
+def _bounded_utf8(value: str, maximum: int) -> int:
+    if len(value) > maximum:
         _fail()
+    byte_count = len(value.encode("utf-8"))
+    if byte_count > maximum:
+        _fail()
+    return byte_count
 
 
 def _validate_base_url(value: str) -> None:
@@ -299,9 +309,9 @@ def _parse_call(value: object) -> tuple[ContinuationCall, int, int]:
         _fail()
 
     call_id = _exact_string(item["call_id"], nonblank=True)
-    name = _exact_string(item["name"], nonblank=True)
+    name = _exact_string(item["name"])
     _bounded_utf8(call_id, _MAX_IDENTITY_BYTES)
-    if len(name) > _MAX_FUNCTION_NAME_CHARS:
+    if _FUNCTION_NAME.fullmatch(name) is None:
         _fail()
     arguments, argument_nodes, argument_depth = _parse_arguments(item["arguments"])
 
@@ -333,8 +343,7 @@ def _parse_round(
 ) -> tuple[ContinuationRound, int, int, int, int]:
     item = _exact_mapping(value, _ROUND_KEYS)
     assistant_content = _exact_string(item["assistant_content"])
-    if len(assistant_content.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-        _fail()
+    _bounded_utf8(assistant_content, _MAX_PAYLOAD_BYTES)
 
     raw_reasoning = _exact_list(item["reasoning_blocks"])
     if len(raw_reasoning) > _MAX_JSON_NODES:
@@ -343,9 +352,10 @@ def _parse_round(
     reasoning_bytes = 0
     for block_value in raw_reasoning:
         block = _exact_string(block_value)
-        reasoning_bytes += len(block.encode("utf-8"))
-        if reasoning_bytes > _MAX_REASONING_BYTES:
-            _fail()
+        reasoning_bytes += _bounded_utf8(
+            block,
+            _MAX_REASONING_BYTES - reasoning_bytes,
+        )
         reasoning.append(block)
 
     raw_calls = _exact_list(item["calls"])
@@ -412,12 +422,13 @@ def _checkpoint_value(checkpoint: ProviderContinuationCheckpoint) -> dict[str, o
 
 
 def _canonical_dump(checkpoint: ProviderContinuationCheckpoint) -> str:
-    return json.dumps(
-        _checkpoint_value(checkpoint),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
+    return _CANONICAL_ENCODER.encode(_checkpoint_value(checkpoint))
+
+
+def _validate_canonical_size(checkpoint: ProviderContinuationCheckpoint) -> None:
+    total_bytes = 0
+    for chunk in _CANONICAL_ENCODER.iterencode(_checkpoint_value(checkpoint)):
+        total_bytes += _bounded_utf8(chunk, _MAX_PAYLOAD_BYTES - total_bytes)
 
 
 def _parse_checkpoint(
@@ -522,8 +533,7 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
         state=cast(ContinuationState, state),
         rounds=tuple(rounds),
     )
-    if len(_canonical_dump(checkpoint).encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-        _fail()
+    _validate_canonical_size(checkpoint)
     return checkpoint
 
 
