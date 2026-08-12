@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     build_local_server_candidates,
     discover_local_servers,
     is_localhost_url,
+    model_ids_from_payload,
     normalize_probe_base_url,
     probe_models_endpoint,
 )
@@ -45,6 +46,31 @@ class _TrackingAsyncStream(httpx.AsyncByteStream):
 
 def _openai_models_payload(*model_ids: str) -> dict:
     return {"object": "list", "data": [{"id": model_id} for model_id in model_ids]}
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    (
+        ({"data": [{"id": ""}]}, None),
+        ({"data": [{"id": " \t "}]}, None),
+        ({"data": [{"id": "\x00\x1f"}]}, None),
+        ([" \t\x00"], None),
+        ({"data": [{"id": "", "name": "fallback-name"}]}, ("fallback-name",)),
+        (
+            {
+                "data": [
+                    {"id": "", "name": "\t", "model": "fallback-model"}
+                ]
+            },
+            ("fallback-model",),
+        ),
+    ),
+)
+def test_model_ids_require_a_usable_sanitized_identifier(
+    payload: object,
+    expected: tuple[str, ...] | None,
+) -> None:
+    assert model_ids_from_payload(payload) == expected
 
 
 # --- candidate building -----------------------------------------------------
@@ -314,6 +340,58 @@ async def test_probe_accepts_bare_list_string_model_entry() -> None:
 
     assert result.ok is True
     assert result.model_ids == ("model-a",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_id",
+    ("", " \t ", "\x00\x1f"),
+)
+async def test_local_probe_rejects_listing_with_only_unusable_identifiers(
+    model_id: str,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(
+                200,
+                json={"data": [{"id": model_id}]},
+            )
+        ),
+    )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+    assert result.detail == (
+        "No models endpoint at http://127.0.0.1:9099 "
+        "(unrecognized API payload)."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    (
+        ({"id": "", "name": "fallback-name"}, "fallback-name"),
+        (
+            {"id": "", "name": "\t", "model": "fallback-model"},
+            "fallback-model",
+        ),
+    ),
+)
+async def test_local_probe_falls_back_to_next_usable_identifier_field(
+    entry: dict[str, str],
+    expected: str,
+) -> None:
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:9099",
+        http_client=_client(
+            lambda request: httpx.Response(200, json={"data": [entry]})
+        ),
+    )
+
+    assert result.ok is True
+    assert result.model_ids == (expected,)
 
 
 @pytest.mark.asyncio

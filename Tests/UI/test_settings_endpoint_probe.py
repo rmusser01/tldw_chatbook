@@ -311,6 +311,58 @@ async def test_probe_accepts_bare_list_string_model_entry() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_id",
+    ("", " \t ", "\x00\x1f"),
+)
+async def test_settings_probe_rejects_listing_with_only_unusable_identifiers(
+    model_id: str,
+) -> None:
+    async with _client(
+        lambda request: httpx.Response(
+            200,
+            json={"data": [{"id": model_id}]},
+        )
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+
+    assert outcome.state == "unreachable"
+    assert outcome.category == "invalid_payload"
+    assert outcome.model_ids == ()
+    assert outcome.summary == "unreachable: invalid models response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    (
+        ({"id": "", "name": "fallback-name"}, "fallback-name"),
+        (
+            {"id": "", "name": "\t", "model": "fallback-model"},
+            "fallback-model",
+        ),
+    ),
+)
+async def test_settings_probe_falls_back_to_next_usable_identifier_field(
+    entry: dict[str, str],
+    expected: str,
+) -> None:
+    async with _client(
+        lambda request: httpx.Response(200, json={"data": [entry]})
+    ) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+
+    assert outcome.state == "reachable"
+    assert outcome.model_ids == (expected,)
+
+
+@pytest.mark.asyncio
 async def test_settings_probe_accepts_json_body_at_exact_byte_limit() -> None:
     prefix = b'{"data":[]}'
     body = prefix + b" " * (

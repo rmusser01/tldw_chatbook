@@ -325,11 +325,12 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         payload: Decoded JSON payload of any shape.
 
     Returns:
-        Ordered unique sanitized chat-capable model ids (possibly empty) when
-        the payload carries a recognizable models container, or ``None`` when
-        it does not look like a models endpoint at all — a JSON page from some
-        unrelated local service must not count as a detected LLM server
-        (PR #608 review) — or when every listed model is explicitly non-chat.
+        Ordered unique sanitized chat-capable model ids (empty only for an
+        actually empty listing) when the payload carries a recognizable models
+        container, or ``None`` when it does not look like a models endpoint at
+        all — a JSON page from some unrelated local service must not count as a
+        detected LLM server (PR #608 review) — or when every listed model is
+        explicitly non-chat.
     """
     entries: object = payload
     if isinstance(payload, Mapping):
@@ -341,31 +342,28 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         return ()
 
     model_ids: list[str] = []
-    recognized_entry_count = 0
     for entry in entries:
         if _entry_declares_non_chat_task(entry):
             continue
-        model_id: object = entry
+        sanitized = ""
         if isinstance(entry, Mapping):
-            model_id = next(
-                (
-                    entry.get(field)
-                    for field in ("id", "name", "model")
-                    if isinstance(entry.get(field), str)
-                ),
-                None,
-            )
-        if not isinstance(model_id, str):
+            for field in ("id", "name", "model"):
+                model_id = entry.get(field)
+                if isinstance(model_id, str):
+                    sanitized = _sanitize_model_id(model_id)
+                    if sanitized:
+                        break
+        elif isinstance(entry, str):
+            sanitized = _sanitize_model_id(entry)
+        if not sanitized:
             continue
-        recognized_entry_count += 1
-        sanitized = _sanitize_model_id(model_id)
-        if sanitized and sanitized not in model_ids:
+        if sanitized not in model_ids:
             model_ids.append(sanitized)
         if len(model_ids) >= MODEL_IDS_MAX_COUNT:
             break
-    if recognized_entry_count == 0:
+    if not model_ids:
         # A non-empty listing is only evidence of a model API when at least one
-        # chat-capable entry has a recognized string identifier field.
+        # chat-capable entry has a usable sanitized identifier.
         return None
     return tuple(model_ids)
 
