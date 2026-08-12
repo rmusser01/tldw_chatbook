@@ -755,9 +755,31 @@ the per-type options loop and passed. The nineteenth field,
 and sent on every submission. Check what reaches the request, not what one
 code path contributes to it.
 
+**"No server equivalent" is a claim about the whole server, and it needs the
+whole server to back it.** The first version of this fix labelled eleven fields
+"no server equivalent" on the strength of one endpoint's schema. The owner
+pushed back -- "the server should have full support" -- and was right. Checked
+against the server *source*, two of them (`transcription_provider`,
+`translate_to_english`) are real capabilities of the transcription core that its
+HTTP API simply does not expose; two more are server-side config rather than
+request fields; one is accepted on a different endpoint; and two were not
+missing at all -- they are accepted by the web endpoint that the client already
+routes to correctly. Only four were genuine absences. The behaviour (do not send
+them here) was right either way, but the *reason* attached to each one is what a
+reader acts on later, and four of the seven wrong reasons pointed at the wrong
+repo to fix. Compare endpoint surfaces before concluding a capability is
+missing: `/media/add` turned out to be a strict subset of
+`/media/ingest/jobs`, so "the client is on the wrong endpoint" was also wrong.
+
 **A blocked live call is not a blocked verification.** Real submissions were
 impossible here (the instance rejected the configured API key, and its key is
 env-only on the server process). That did not weaken the finding: a field the
 endpoint never binds cannot take effect, whatever a submission would have
 shown. Reach for the server's own contract before concluding a live check is
 unavailable.
+
+**Postscript: the key existed.** The live check was called impossible because
+`~/.config/tldw_cli/config.toml` held a stale key the server rejected. The real
+one was in the server repo's own `Config_Files/.env` all along. Before
+recording a live check as blocked on credentials, look in the server repo -- the
+running process was started from it.

@@ -238,49 +238,88 @@ SERVER_FIELD_ALIASES: dict[str, str] = {
     "language": "transcription_language",
 }
 
-#: Client options the server ingest-jobs endpoint has no equivalent for.
+#: Client options the ingest-jobs endpoint will not accept, and why.
 #:
-#: task-3309. These are dropped from the request instead of being sent into the
-#: void, and :func:`server_unsupported_options` reports them so a caller can say
-#: so rather than implying the setting took effect. ``cookies_file`` is here for
-#: a different reason than the rest: the server DOES have cookie fields, but its
-#: ``cookies`` is a cookie *string* while the canvas collects a *path* to a
-#: cookies.txt, so forwarding the path under that name would send a filename
-#: where a cookie header belongs -- worse than dropping it.
-SERVER_UNSUPPORTED_OPTIONS: frozenset[str] = frozenset(
-    {
-        "cookies_file",
-        "encoding",
-        "extraction_method",
-        "include_toc",
-        "max_pages",
-        "processing_method",
-        "scrape_method",
-        "transcription_model_dir",
-        "transcription_precision",
-        "transcription_provider",
-        "translate_to_english",
-    }
-)
+#: task-3309. The first pass through this called these "no server equivalent",
+#: which was wrong and in a way that matters: for several of them the server
+#: CAN do the thing, it just does not take the instruction on this endpoint.
+#: Checked against the server source, not only its OpenAPI:
+#:
+#: * ``transcription_provider`` and ``translate_to_english`` are real
+#:   capabilities of the server's transcription core
+#:   (``transcribe_audio(transcription_provider=...)``, and ``task="translate"``
+#:   in ``stt_provider_adapter``) that no media endpoint surfaces. Those are
+#:   gaps in the server's HTTP API, worth raising there rather than writing off
+#:   here.
+#: * ``transcription_precision`` and ``transcription_model_dir`` map to
+#:   server-side *configuration* (faster-whisper ``compute_type``, the model
+#:   directory), not to anything a request may set per-import.
+#: * ``extraction_method`` exists on ``/media/process-ebooks`` but not on
+#:   ingest-jobs, so it is reachable on the server -- just not down this route.
+#: * ``cookies_file`` is a genuine shape mismatch: the server's ``cookies`` is a
+#:   cookie STRING, the canvas collects a PATH to a cookies.txt, so forwarding
+#:   the path under that name would put a filename where a cookie header
+#:   belongs.
+#: * ``encoding``, ``include_toc`` and ``processing_method`` have no counterpart
+#:   in the server's media path at all.
+#:
+#: Note what is deliberately NOT here: ``scrape_method`` and ``max_pages``. They
+#: ARE accepted -- by ``/media/ingest-web-content`` -- and the web group never
+#: reaches this builder anyway (it raises ``ServerIngestUnsupported`` and routes
+#: through ``build_web_clip_kwargs``, which already sends both).
+SERVER_UNSUPPORTED_OPTIONS: dict[str, str] = {
+    "cookies_file": (
+        "the server takes a cookie string, not a path to a cookies.txt"
+    ),
+    "encoding": "the server has no text-encoding override for ingestion",
+    "extraction_method": (
+        "the server accepts this on its process-ebooks endpoint, but not on "
+        "the ingest-jobs API this import uses"
+    ),
+    "include_toc": "the server has no table-of-contents option for ingestion",
+    "processing_method": (
+        "the server has no document processing-method option for ingestion"
+    ),
+    "transcription_model_dir": (
+        "the server resolves its own model directory from its configuration"
+    ),
+    "transcription_precision": (
+        "the server sets transcription precision in its own configuration"
+    ),
+    "transcription_provider": (
+        "the server's transcription core supports this but its API does not "
+        "expose it"
+    ),
+    "translate_to_english": (
+        "the server's transcription core supports this but its API does not "
+        "expose it"
+    ),
+}
 
 
-def server_unsupported_options(source: str, options: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return the options set for ``source`` that the server cannot honour.
+def server_unsupported_options(
+    source: str, options: Mapping[str, Any]
+) -> tuple[tuple[str, str], ...]:
+    """Return the options set for ``source`` this submission will not carry.
 
     Args:
         source: The file path or URL being submitted.
         options: The canvas's per-type option snapshot, keyed by type group.
 
     Returns:
-        The option names, sorted, that the user has set to something other than
-        their falsy default and that this submission will not carry. Empty when
-        the submission loses nothing.
+        ``(option name, reason)`` pairs, sorted by name, for options the user
+        set to something other than their falsy default that the ingest-jobs
+        endpoint will not accept. Empty when the submission loses nothing. The
+        reason is included because "unsupported" covers three different
+        situations -- a server-side config, a capability its API does not
+        expose, and a genuine absence -- and a user deciding whether to import
+        locally instead needs to know which one they hit.
     """
     group = get_type_group(source)
     group_options = options.get(group) or {}
     return tuple(
         sorted(
-            name
+            (name, SERVER_UNSUPPORTED_OPTIONS[name])
             for name, value in group_options.items()
             if name in SERVER_UNSUPPORTED_OPTIONS and value not in (None, "", False)
         )

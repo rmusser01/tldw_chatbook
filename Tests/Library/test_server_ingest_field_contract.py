@@ -108,7 +108,7 @@ def test_aliases_all_point_at_fields_the_server_declares():
 
 def test_alias_and_unsupported_sets_do_not_overlap():
     """A field cannot both translate and have no equivalent."""
-    overlap = sorted(set(SERVER_FIELD_ALIASES) & SERVER_UNSUPPORTED_OPTIONS)
+    overlap = sorted(set(SERVER_FIELD_ALIASES) & set(SERVER_UNSUPPORTED_OPTIONS))
     assert not overlap, f"listed as both aliased and unsupported: {overlap}"
 
 
@@ -120,9 +120,11 @@ def test_dropped_options_are_reported_rather_than_lost():
 
     assert "translate_to_english" not in kwargs
     assert kwargs["diarize"] is True
-    assert server_unsupported_options("/tmp/sample.mp3", options) == (
-        "translate_to_english",
-    )
+    lost = server_unsupported_options("/tmp/sample.mp3", options)
+    assert [name for name, _reason in lost] == ["translate_to_english"]
+    # The reason matters: this one is a capability the server HAS and its API
+    # does not expose, which is a different thing from "the server cannot".
+    assert "does not expose it" in dict(lost)["translate_to_english"]
 
 
 def test_an_unset_unsupported_option_is_not_reported_as_lost():

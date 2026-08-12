@@ -45,23 +45,51 @@ undeclared multipart field silently and still answers 200. `extra="allow"` on
 `MediaIngestJobSubmitRequest` had been read as "the server takes these"; it only
 means the client will serialize them.
 
-Verified two ways against a live server (`127.0.0.1:8000`, `auth_mode =
-single_user`): the running instance's own `/openapi.json`, which enumerates
-exactly 72 declared fields, and the server's source for the handler. Per-field
-effect observation via real submissions was not possible — the instance rejects
-the API key in `~/.config/tldw_cli/config.toml` as invalid, and its key is
-env-only on the server process. That limits nothing about the finding: a field
-the endpoint never binds cannot take effect, whatever a submission would show.
+**Proven live**, once the owner pointed at the real key in
+`tldw_Server_API/Config_Files/.env` (the one in `~/.config/tldw_cli/config.toml`
+is stale and the server rejects it):
+
+    POST /media/ingest/jobs -F pdf_parsing_engine=bogus
+      -> 422 {"loc":["body","pdf_parsing_engine"], ...}
+    POST /media/ingest/jobs -F pdf_engine=bogus       # the client's spelling
+      -> 200 {"batch_id":"...","jobs":[{"id":285,"status":"queued"}],"errors":[]}
+
+An invalid value under the server's name is rejected; the same value under the
+client's name is accepted and ignored. `diarize`, `enable_ocr`, `vad_use` and
+`timestamp_option` were confirmed the same way (422 naming the field, so no
+jobs created).
 
 Seven were pure spelling differences and are now translated
 (`SERVER_FIELD_ALIASES`): `pdf_engine`->`pdf_parsing_engine`, `ocr`->`enable_ocr`,
 `ocr_language`->`ocr_lang`, `diarization`->`diarize`, `timestamps`->
 `timestamp_option`, `vad_filter`->`vad_use`, `language`->`transcription_language`.
-Eleven have no equivalent and are no longer sent, with
-`server_unsupported_options()` reporting the ones the user actually set so the
-loss is stated rather than inferred. `cookies_file` is in that set for a
-different reason: the server's `cookies` is a cookie *string*, the canvas holds
-a *path*, so forwarding it would put a filename where a header belongs.
+**Correction after the owner pushed back** ("the server should have full
+support"). They were right that my first characterisation was wrong. Calling
+the rest "no server equivalent" conflated three different situations, and the
+server source says so:
+
+* `transcription_provider` and `translate_to_english` are real capabilities of
+  the transcription core (`transcribe_audio(transcription_provider=...)` and
+  `task="translate"`) that **no** media endpoint exposes -- a gap in the
+  server's HTTP API, not an absence of the feature.
+* `transcription_precision` / `transcription_model_dir` are server-side
+  *config* (faster-whisper `compute_type`, model dir), not per-request fields.
+* `extraction_method` is accepted on `/media/process-ebooks`, just not on
+  ingest-jobs.
+* only `cookies_file` (string-vs-path shape mismatch), `encoding`,
+  `include_toc` and `processing_method` have no counterpart at all.
+
+`SERVER_UNSUPPORTED_OPTIONS` is therefore a dict carrying a per-field reason,
+and `server_unsupported_options()` returns `(name, reason)` pairs -- a user
+deciding whether to import locally instead needs to know which of the three
+they hit. Two entries were **removed** as simply wrong: `scrape_method` and
+`max_pages` are accepted by `/media/ingest-web-content`, and the web group
+never reaches this builder anyway (it routes through `build_web_clip_kwargs`,
+which already sends both).
+
+Endpoint surfaces were compared to make sure the narrow one was not mistaken
+for the whole API: `/media/add` is a strict subset of `/media/ingest/jobs`
+(68 vs 72 fields), so the client is already on the fullest general surface.
 
 The nineteenth was found by widening the check past the options loop:
 `ServerMediaReadingService.submit_ingest_jobs` named
