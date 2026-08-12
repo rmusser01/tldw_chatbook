@@ -1,7 +1,7 @@
 # TASK-13206 clone voice bundle portability UAT
 
 Date: 2026-08-12
-Result: Partial — real model and human audible gate pending
+Result: Audible UAT passed — post-rebase closeout verification pending
 Commit under test: `6eab86144`
 
 This artifact contains sanitized engineering evidence only. It retains no
@@ -112,17 +112,27 @@ live observations.
 - Ruff check, the planned Ruff format check, scoped mypy, normalized legacy
   mypy comparison, CSS bundle synchronization, and `git diff --check` passed.
 
-## Pending real-model and audible gate
+## Exact real-model and audible UAT
 
-No exact model package was provisioned inside Launch B, audio.cpp was not
-launched, and no speech was generated or played. No human audible confirmation
-occurred. The deterministic missing-dependency observer proves the production
-inactive projection only; it is not evidence of real dependency discovery or
-generation. Acceptance criterion 7 and TASK-13206 therefore remain open.
+The real-model run was performed on revision `3583343d1` using the production
+`TTSService` Guided path. The installed audio.cpp 0.5.1 executable matched the
+previously reviewed SHA-256
+`3de9bdb0fd1443110b73bdf5cc196e43ed9f143b47595b4fcd59e4a1ed18d467`.
+The official `audio-cpp/audio.cpp-gguf` PocketTTS English bf16 package was
+219,096,064 bytes and matched the previously reviewed SHA-256
+`267e774a671138c4ebbc1d6d9d73af92f4a8e83a64b45b84f3457ac700ad0cc9`.
 
-To complete the gate, use the same isolated two-launch procedure with the exact
-recipe/model above actually pre-provisioned for Launch B. After restart,
-configure/apply that dependency through the production UI, refresh until the
-imported profile becomes available, generate and play speech with it, and have
-a human confirm yes or no that the expected voice is audible. Record only the
-yes/no result and safe metadata above.
+- Dependency observation was `exact` for recipe
+  `audio-cpp-0.5.1.pocket_tts.pocket_tts_english_bf16`, revision 2, model
+  `pocket-tts-english-bf16`.
+- Production generation returned a complete PCM16 mono WAV at 24,000 Hz:
+  71,040 frames, 142,124 total bytes, and 2.96 seconds.
+- The reference playback process exited 0, followed by generated playback
+  exiting 0. Human audible confirmation: **yes**.
+- Service shutdown left no owned audio.cpp process, private reference
+  materialization, or generated configuration artifact.
+
+The evidence intentionally retains no private path, transcript, audio bytes,
+or audio checksum. The task remains In Progress only until the planned rebase,
+post-rebase automated verification, full repository suite, and final review are
+complete.

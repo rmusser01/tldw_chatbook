@@ -84,9 +84,14 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
   real-child cases; the parent host reran those exact node IDs on `d3d60abcb`
   with `3 passed in 2.33s`, closing scoped automated coverage at 2,281 passed
   and 2 skipped. This does not constitute clone-model or audible UAT.
-- Status remains **In Progress**. No exact pre-provisioned clone model was
-  available inside isolated Launch B; audio.cpp was not launched and no human
-  playback confirmation was performed. Acceptance criterion 7 and task
-  closeout remain pending.
+- A separate exact real-model run on `3583343d1` used the production Guided
+  `TTSService` path with the previously reviewed audio.cpp executable and
+  official PocketTTS English bf16 package. Dependency admission was exact,
+  generation returned a valid PCM16 mono 24 kHz WAV, both reference and result
+  playback exited 0, the user confirmed the expected voice was audible, and
+  shutdown left no owned process/materialization/generated artifact.
+- Status remains **In Progress** until the planned rebase, post-rebase scoped
+  and full-suite verification, and final review are complete. Acceptance
+  criteria remain unchecked until that evidence is available.
 
 Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.
