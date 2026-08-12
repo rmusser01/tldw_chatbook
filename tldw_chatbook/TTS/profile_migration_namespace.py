@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from tldw_chatbook.Utils import private_paths
@@ -15,6 +16,18 @@ from tldw_chatbook.Utils import private_paths
 
 _LIBC = ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
+
+
+class MigrationTombstoneKey(Enum):
+    """Closed finite keys for non-authoritative migration tombstones."""
+
+    JOURNAL = "journal"
+    ACTIVE_CANDIDATE = "active-candidate"
+    ACTIVE_ROLLBACK = "active-rollback"
+    PRE_V3_CANDIDATE = "pre-v3-candidate"
+    PRE_V3_ROLLBACK = "pre-v3-rollback"
+    PRE_V4_CANDIDATE = "pre-v4-candidate"
+    PRE_V4_ROLLBACK = "pre-v4-rollback"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -116,6 +129,12 @@ def _sidecars_absent(parent_fd: int, leaf: str) -> bool:
             continue
         return False
     return True
+
+
+def _holding_path(path: Path, key: MigrationTombstoneKey) -> Path:
+    if type(key) is not MigrationTombstoneKey:
+        raise TypeError
+    return path.with_name(f".profile-migration-{key.value}.tombstone")
 
 
 def move_exact_noreplace(
@@ -224,11 +243,12 @@ def remove_exact(
     *,
     parent_authority: ParentAuthority,
     file_identity: os.stat_result,
+    tombstone_key: MigrationTombstoneKey,
     allowed_links: frozenset[int] = frozenset({1}),
 ) -> None:
     """Quarantine and wipe exact bytes, retaining one safe zero tombstone."""
 
-    holding = path.with_name(f".{path.name}.migration-hold")
+    holding = _holding_path(path, tombstone_key)
     deferred: BaseException | None = None
     try:
         move_exact_noreplace(
@@ -310,10 +330,11 @@ def open_new_or_reused_private_file(
     path: Path,
     *,
     parent_authority: ParentAuthority,
+    tombstone_key: MigrationTombstoneKey,
 ) -> tuple[int, int, os.stat_result, ParentAuthority]:
     """Open a new private file, reusing only its exact zero tombstone."""
 
-    holding = path.with_name(f".{path.name}.migration-hold")
+    holding = _holding_path(path, tombstone_key)
     parent_fd = _open_parent(path, parent_authority)
     file_fd = -1
     created = False
@@ -342,7 +363,52 @@ def open_new_or_reused_private_file(
                     or not _sidecars_absent(parent_fd, holding.name)
                 ):
                     raise ValueError
-                _rename_noreplace(parent_fd, holding.name, path.name)
+                try:
+                    _rename_noreplace(parent_fd, holding.name, path.name)
+                except BaseException as error:
+                    acquired: os.stat_result | None = None
+                    try:
+                        acquired = os.stat(
+                            path.name,
+                            dir_fd=parent_fd,
+                            follow_symlinks=False,
+                        )
+                        os.stat(
+                            holding.name,
+                            dir_fd=parent_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        pass
+                    if acquired is None or not private_paths._same_identity(
+                        acquired, held
+                    ):
+                        raise
+                    # Tuple assignment in the caller has not completed. Put
+                    # the exact zero inode back under its bounded tombstone,
+                    # durably verify both namespaces, then redeliver.
+                    _rename_noreplace(parent_fd, path.name, holding.name)
+                    os.fsync(parent_fd)
+                    restored = os.stat(
+                        holding.name,
+                        dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                    try:
+                        os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise ValueError
+                    reopened = _open_parent(path, parent_authority)
+                    os.close(reopened)
+                    if (
+                        restored.st_size != 0
+                        or not private_paths._same_identity(restored, held)
+                        or not _valid_file(restored, links=frozenset({1}))
+                    ):
+                        raise ValueError
+                    raise error
                 file_fd = holding_fd
                 holding_fd = -1
                 os.fsync(parent_fd)
@@ -392,6 +458,7 @@ def open_new_or_reused_private_file(
 
 
 __all__ = [
+    "MigrationTombstoneKey",
     "ParentAuthority",
     "move_exact_noreplace",
     "open_new_or_reused_private_file",

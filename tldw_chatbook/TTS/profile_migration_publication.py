@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
+    PROFILE_MIGRATION_CANDIDATE_LEAVES,
     PROFILE_MIGRATION_SLOT_SEQUENCES,
     ParsedProfileMigrationJournal,
     ProfileMigrationJournalSlot,
@@ -30,6 +31,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     parse_profile_migration_journal,
 )
 from tldw_chatbook.TTS.profile_migration_namespace import (
+    MigrationTombstoneKey,
     ParentAuthority,
     move_exact_noreplace,
     open_new_or_reused_private_file,
@@ -52,6 +54,16 @@ _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _PUBLICATION_LOCK = Lock()
 _ACTIVE_PUBLICATIONS: set[tuple[int, int, str]] = set()
 _IDENTITY_FACTORY_TOKEN = object()
+_CANDIDATE_TOMBSTONES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    ProfileMigrationPublicationSlot.PRE_V3: MigrationTombstoneKey.PRE_V3_CANDIDATE,
+    ProfileMigrationPublicationSlot.PRE_V4: MigrationTombstoneKey.PRE_V4_CANDIDATE,
+}
+_ROLLBACK_TOMBSTONES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: MigrationTombstoneKey.ACTIVE_ROLLBACK,
+    ProfileMigrationPublicationSlot.PRE_V3: MigrationTombstoneKey.PRE_V3_ROLLBACK,
+    ProfileMigrationPublicationSlot.PRE_V4: MigrationTombstoneKey.PRE_V4_ROLLBACK,
+}
 
 
 class _OpaqueIdentity:
@@ -321,6 +333,28 @@ def prepare_profile_migration_artifact(
         raise _safe_failure() from None
 
 
+def _acquire_profile_migration_candidate_path(
+    parent: str | os.PathLike[str],
+    *,
+    slot: ProfileMigrationPublicationSlot,
+) -> Path:
+    """Acquire one canonical empty candidate, reusing its exact tombstone."""
+
+    if type(slot) is not ProfileMigrationPublicationSlot:
+        raise TypeError
+    directory = lexical_path(parent)
+    selected = directory / PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]
+    selected, parent_identity = _prepare_parent(selected)
+    parent_fd, file_fd, _identity, _authority = open_new_or_reused_private_file(
+        selected,
+        parent_authority=ParentAuthority(parent_identity),
+        tombstone_key=_CANDIDATE_TOMBSTONES[slot],
+    )
+    os.close(file_fd)
+    os.close(parent_fd)
+    return selected
+
+
 def retain_profile_migration_destination(
     path: str | os.PathLike[str],
     *,
@@ -410,9 +444,7 @@ def _journal_authority(
                     slot=artifact._slot,
                     candidate=artifact._path.name,
                     target=destination._path.name,
-                    rollback=(
-                        f".{destination._path.name}.{artifact._slot.value}.rollback"
-                    ),
+                    rollback=f".{destination._path.name}.{artifact._slot.value}.rollback",
                     had_prior=destination._file_identity is not None,
                 ),
                 artifact._file_identity,
@@ -773,6 +805,7 @@ def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
             open_new_or_reused_private_file(
                 selected,
                 parent_authority=parent_authority,
+                tombstone_key=MigrationTombstoneKey.JOURNAL,
             )
         )
         parent_identity = parent_authority.identity
@@ -801,6 +834,7 @@ def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
                     selected,
                     parent_authority=parent_authority,
                     file_identity=identity,
+                    tombstone_key=MigrationTombstoneKey.JOURNAL,
                 )
             except BaseException:
                 pass
@@ -814,6 +848,7 @@ def _unlink_exact(
     path: Path,
     identity: os.stat_result | None,
     parent_authority: ParentAuthority,
+    tombstone_key: MigrationTombstoneKey,
 ) -> bool:
     if identity is None:
         return False
@@ -822,6 +857,7 @@ def _unlink_exact(
             path,
             parent_authority=parent_authority,
             file_identity=identity,
+            tombstone_key=tombstone_key,
         )
         return True
     except (FileNotFoundError, ValueError):
@@ -844,8 +880,9 @@ def _cleanup_exact(
     path: Path,
     identity: os.stat_result | None,
     parent_authority: ParentAuthority,
+    tombstone_key: MigrationTombstoneKey,
 ) -> None:
-    if not _unlink_exact(path, identity, parent_authority):
+    if not _unlink_exact(path, identity, parent_authority, tombstone_key):
         raise OSError
 
 
@@ -934,6 +971,7 @@ def publish_profile_migration(
                         state.rollback_path,
                         state.destination._file_identity,
                         state.parent_authority,
+                        _ROLLBACK_TOMBSTONES[state.artifact._slot],
                     )
                 except BaseException as caught:
                     complete_cleanup_errors.append(caught)
@@ -948,6 +986,7 @@ def publish_profile_migration(
                     journal_path,
                     journal_identity.file,
                     parent_authority,
+                    MigrationTombstoneKey.JOURNAL,
                 )
             except BaseException as caught:
                 complete_cleanup_errors.append(caught)
@@ -1003,6 +1042,7 @@ def publish_profile_migration(
                     artifact._path,
                     artifact._file_identity,
                     parent_authority,
+                    _CANDIDATE_TOMBSTONES[artifact._slot],
                 )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
@@ -1016,6 +1056,7 @@ def publish_profile_migration(
                     journal_path,
                     journal_identity.file,
                     parent_authority,
+                    MigrationTombstoneKey.JOURNAL,
                 )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
@@ -1039,21 +1080,33 @@ def publish_profile_migration(
                 artifact._path,
                 artifact._file_identity,
                 parent_authority,
+                _CANDIDATE_TOMBSTONES[artifact._slot],
             )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
-    if not prepublication_cleanup_errors and journal_path is not None:
+    if (
+        not prepublication_cleanup_errors
+        and journal_path is not None
+        and journal_identity is not None
+    ):
         try:
             _cleanup_exact(
                 journal_path,
-                None if journal_identity is None else journal_identity.file,
+                journal_identity.file,
                 parent_authority,
+                MigrationTombstoneKey.JOURNAL,
             )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
     _finish_claim(artifacts, destinations, key)
 
-    _redeliver_control_flow(body_error, *prepublication_cleanup_errors)
+    if (
+        prepublication_cleanup_errors
+        and body_error is not None
+        and not isinstance(body_error, Exception)
+    ):
+        raise _safe_failure("unavailable") from None
+    _redeliver_control_flow(body_error)
     raise _safe_failure() from None
 
 

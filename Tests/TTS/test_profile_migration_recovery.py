@@ -643,7 +643,7 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     assert not candidate.exists()
     assert not rollback.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
-    for tombstone in tmp_path.glob(".*.migration-hold"):
+    for tombstone in tmp_path.glob(".profile-migration-*.tombstone"):
         assert tombstone.read_bytes() == b""
         assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
 
@@ -659,7 +659,7 @@ def test_foreign_holding_leaf_is_preserved_and_recovery_fails_closed(
     journal = _write_journal(
         publication, active, artifacts, destinations, phase="prepared"
     )
-    holding = tmp_path / f".{candidate.name}.migration-hold"
+    holding = tmp_path / ".profile-migration-active-candidate.tombstone"
     foreign = b"foreign holding bytes"
     holding.write_bytes(foreign)
     holding.chmod(0o600)
@@ -691,7 +691,10 @@ def test_foreign_holding_leaf_inserted_at_atomic_gap_is_preserved(
 
     def occupy_hold(parent_fd: int, source: str, destination: str) -> None:
         nonlocal inserted
-        if source == candidate.name and destination.endswith(".migration-hold"):
+        if (
+            source == candidate.name
+            and destination == ".profile-migration-active-candidate.tombstone"
+        ):
             descriptor = os.open(
                 destination,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
@@ -711,7 +714,9 @@ def test_foreign_holding_leaf_inserted_at_atomic_gap_is_preserved(
         recovery.recover_profile_migration_publication(active)
 
     assert inserted
-    assert (tmp_path / f".{candidate.name}.migration-hold").read_bytes() == foreign
+    assert (
+        tmp_path / ".profile-migration-active-candidate.tombstone"
+    ).read_bytes() == foreign
     assert candidate.is_file()
     assert journal.is_file()
 
@@ -824,8 +829,7 @@ def test_parent_substitution_mid_move_preserves_displaced_recovery_set(
     assert (displaced / journal.name).is_file()
     assert (displaced / rollback.name).is_file()
     assert any(
-        path.name in {candidate.name, target.name}
-        or path.name.endswith(".migration-hold")
+        path.name in {candidate.name, target.name} or path.name.endswith(".tombstone")
         for path in displaced.iterdir()
     )
 

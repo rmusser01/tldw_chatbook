@@ -47,6 +47,19 @@ class ProfileMigrationPublicationStage(StrEnum):
     FINAL_JOURNAL_DURABLE = "final_journal_durable"
 
 
+PROFILE_MIGRATION_JOURNAL_LEAF: Final = ".profiles.migration-publication.json"
+PROFILE_MIGRATION_CANDIDATE_LEAVES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: ".profile-migration-active.candidate.sqlite3",
+    ProfileMigrationPublicationSlot.PRE_V3: ".profile-migration-pre-v3.candidate.sqlite3",
+    ProfileMigrationPublicationSlot.PRE_V4: ".profile-migration-pre-v4.candidate.sqlite3",
+}
+PROFILE_MIGRATION_ROLLBACK_LEAVES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: ".profile-migration-active.rollback.sqlite3",
+    ProfileMigrationPublicationSlot.PRE_V3: ".profile-migration-pre-v3.rollback.sqlite3",
+    ProfileMigrationPublicationSlot.PRE_V4: ".profile-migration-pre-v4.rollback.sqlite3",
+}
+
+
 class _OpaqueAuthority:
     """Refuse generic serialization and copying of private authority."""
 

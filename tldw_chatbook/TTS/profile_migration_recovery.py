@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     parse_profile_migration_journal,
 )
 from tldw_chatbook.TTS.profile_migration_namespace import (
+    MigrationTombstoneKey,
     ParentAuthority,
     move_exact_noreplace,
     remove_exact as remove_exact_namespace,
@@ -39,6 +40,16 @@ from tldw_chatbook.Utils.private_paths import (
 
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _RECOVERY_LOCK = Lock()
+_CANDIDATE_TOMBSTONES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    ProfileMigrationPublicationSlot.PRE_V3: MigrationTombstoneKey.PRE_V3_CANDIDATE,
+    ProfileMigrationPublicationSlot.PRE_V4: MigrationTombstoneKey.PRE_V4_CANDIDATE,
+}
+_ROLLBACK_TOMBSTONES: Final = {
+    ProfileMigrationPublicationSlot.ACTIVE: MigrationTombstoneKey.ACTIVE_ROLLBACK,
+    ProfileMigrationPublicationSlot.PRE_V3: MigrationTombstoneKey.PRE_V3_ROLLBACK,
+    ProfileMigrationPublicationSlot.PRE_V4: MigrationTombstoneKey.PRE_V4_ROLLBACK,
+}
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -364,6 +375,11 @@ def _remove_exact(
         selected.parent / expected.leaf,
         parent_authority=parent_authority,
         file_identity=expected.identity,
+        tombstone_key=(
+            _CANDIDATE_TOMBSTONES[expected.row.slot]
+            if expected.leaf == expected.row.candidate
+            else _ROLLBACK_TOMBSTONES[expected.row.slot]
+        ),
         allowed_links=frozenset({1, 2}),
     )
 
@@ -424,6 +440,7 @@ def _remove_journal(
         selected.parent / journal_leaf,
         parent_authority=parent_authority,
         file_identity=current.identity,
+        tombstone_key=MigrationTombstoneKey.JOURNAL,
     )
 
 

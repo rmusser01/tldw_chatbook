@@ -971,7 +971,7 @@ def test_initial_journal_failure_removes_exact_partial_generation(
 
     assert failed
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
-    tombstone = tmp_path / f".{journal_path.name}.migration-hold"
+    tombstone = tmp_path / ".profile-migration-journal.tombstone"
     assert tombstone.read_bytes() == b""
     assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
     tombstone_identity = tombstone.stat()
@@ -1005,7 +1005,10 @@ def test_initial_journal_cleanup_preserves_foreign_holding_race(
         return real_write(file_fd, value)
 
     def occupy_hold(parent_fd: int, source: str, destination: str) -> None:
-        if source == journal_path.name and destination.endswith(".migration-hold"):
+        if (
+            source == journal_path.name
+            and destination == ".profile-migration-journal.tombstone"
+        ):
             descriptor = os.open(
                 destination,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
@@ -1025,7 +1028,101 @@ def test_initial_journal_cleanup_preserves_foreign_holding_race(
         module._write_new_journal(journal_path, payload)
 
     assert journal_path.read_bytes() == payload[:5]
-    assert (tmp_path / f".{journal_path.name}.migration-hold").read_bytes() == foreign
+    assert (tmp_path / ".profile-migration-journal.tombstone").read_bytes() == foreign
+
+
+def test_tombstone_reuse_rename_cancellation_restores_bounded_reusable_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    journal_path = tmp_path / ".profiles.migration-publication.json"
+    tombstone = tmp_path / ".profile-migration-journal.tombstone"
+    tombstone.touch(mode=0o600)
+    tombstone.chmod(0o600)
+    tombstone_identity = tombstone.stat()
+    cancellation = asyncio.CancelledError("PRIVATE tombstone reuse")
+    real_rename = namespace._rename_noreplace
+    interrupted = False
+
+    def interrupt_after_reuse(parent_fd: int, source: str, destination: str) -> None:
+        nonlocal interrupted
+        real_rename(parent_fd, source, destination)
+        if source == tombstone.name and not interrupted:
+            interrupted = True
+            raise cancellation
+
+    monkeypatch.setattr(namespace, "_rename_noreplace", interrupt_after_reuse)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        module._write_new_journal(journal_path, b"journal payload")
+
+    assert caught.value is cancellation
+    assert not journal_path.exists()
+    assert tombstone.read_bytes() == b""
+    assert tombstone.stat().st_ino == tombstone_identity.st_ino
+
+    identity = module._write_new_journal(journal_path, b"journal payload")
+
+    assert journal_path.read_bytes() == b"journal payload"
+    assert identity.file.st_ino == tombstone_identity.st_ino
+    assert not tombstone.exists()
+
+
+def test_repeated_arbitrary_preflight_candidates_keep_closed_tombstone_set(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    active_path = tmp_path / "profiles.sqlite3"
+    _store(active_path, version=3, marker="old")
+    cancellation = asyncio.CancelledError("PRIVATE preflight")
+
+    def cancel(stage: object) -> None:
+        if stage is module.ProfileMigrationPublicationStage.PREFLIGHT:
+            raise cancellation
+
+    first = tmp_path / ".arbitrary-first-private-name.sqlite3"
+    _store(first, version=4, marker="first")
+    first_artifact = _prepared(
+        module, first, module.ProfileMigrationPublicationSlot.ACTIVE, "first"
+    )
+    first_destination = _retained(
+        module, active_path, module.ProfileMigrationPublicationSlot.ACTIVE, "old"
+    )
+    with pytest.raises(asyncio.CancelledError):
+        module.publish_profile_migration(
+            active_candidate=first_artifact,
+            backup_candidates=(),
+            active_destination=first_destination,
+            backup_destinations=(),
+            stage_hook=cancel,
+        )
+
+    expected = {".profile-migration-active-candidate.tombstone"}
+    assert {path.name for path in tmp_path.glob("*.tombstone")} == expected
+
+    second = tmp_path / ".different-arbitrary-private-name.sqlite3"
+    second_bytes = _store(second, version=4, marker="second")
+    second_artifact = _prepared(
+        module, second, module.ProfileMigrationPublicationSlot.ACTIVE, "second"
+    )
+    second_destination = _retained(
+        module, active_path, module.ProfileMigrationPublicationSlot.ACTIVE, "old"
+    )
+    with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
+        module.publish_profile_migration(
+            active_candidate=second_artifact,
+            backup_candidates=(),
+            active_destination=second_destination,
+            backup_destinations=(),
+            stage_hook=cancel,
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert second.read_bytes() == second_bytes
+    assert {path.name for path in tmp_path.glob("*.tombstone")} == expected
 
 
 @pytest.mark.parametrize("boundary", ["write", "file_fsync"])
@@ -1181,6 +1278,7 @@ def test_cleanup_rejects_replacement_parent_even_for_exact_moved_inode(
             authority,
             file_identity,
             module.ParentAuthority(parent_identity),
+            module.MigrationTombstoneKey.ACTIVE_CANDIDATE,
         )
         is False
     )
@@ -1385,10 +1483,11 @@ def test_candidate_cleanup_failure_retains_recovery_journal(
         path: Path,
         identity: object,
         parent_identity: object,
+        tombstone_key: object,
     ) -> bool:
         if path == candidate_path:
             return False
-        return real_unlink(path, identity, parent_identity)
+        return real_unlink(path, identity, parent_identity, tombstone_key)
 
     monkeypatch.setattr(module, "_unlink_exact", fail_candidate_cleanup)
 
