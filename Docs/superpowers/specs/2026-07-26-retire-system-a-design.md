@@ -146,7 +146,7 @@ Calls using the dotted form (`get_cli_setting("dictation.model", None)`) or an f
 
 ### 6. `code_audit` and the file-operation hooks
 
-`CodeAuditTool` is registered solely at `tool_executor.py:807-810`. Deleting System A removes it from the catalog — but since System A cannot execute anything, this removes a listing that was never invocable, not a working feature. Porting it properly belongs to TASK-694, which already owns the four unported tools.
+`CodeAuditTool` is registered solely at `tool_executor.py:807-810`. Deleting System A removes it from the catalog — but since System A cannot execute anything, this removes a listing that was never invocable, not a working feature. At the time, porting it was assigned to TASK-694, which already owned the four unported tools. **Current disposition:** TASK-694 did not port `code_audit`; TASK-743 now owns the whole subsystem's keep/redesign/delete decision, including every live Console file-mutation seam (`write_file`, `fs_write`, `fs_edit`, and `fs_patch`).
 
 The same block is also the **only** site that calls `install_claude_code_hooks()`, so retiring System A stops `WriteFileTool.execute` from being monkeypatched. This is a deliberate improvement, not collateral damage: as shown above, the patch currently lands or not depending on whether the user opened a settings screen, which is not a defensible way for a gated tool to change behavior.
 

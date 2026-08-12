@@ -1,17 +1,19 @@
 # Claude Code File Audit System
 
+> **Current state:** The implementation/reference code remains importable, but this subsystem is not wired into the Console runtime. It does not monitor the Console builtin `write_file` tool or local `fs_write`, `fs_edit`, and `fs_patch` tools, and must not be relied on as an enforcement or security control. TASK-743 owns the keep/redesign/delete decision for the whole subsystem. The remainder of this guide is historical/reference material for that decision.
+
 ## Overview
 
-The Claude Code File Audit System is a comprehensive monitoring and analysis tool designed to detect deceptive file operations and ensure that Claude Code's file modifications align with user requests. Unlike traditional security pattern matching, this system uses LLM analysis to determine whether changes actually implement what the user requested or contain deceptive modifications.
+The Claude Code File Audit System was designed as a monitoring and analysis tool to detect deceptive file operations and determine whether changes align with user requests. The sections below describe that design and its reference implementation.
 
 ## Key Features
 
 - **Deception Detection**: Analyzes whether file changes align with user prompts
 - **TODO/FIXME Detection**: Identifies incomplete implementations disguised as complete
-- **Real-time Monitoring**: Tracks all file operations (Read, Write, Edit, MultiEdit)
+- **Operation Monitoring Design**: Records hooked file operations (Read, Write, Edit, MultiEdit)
 - **LLM-based Analysis**: Uses Claude Haiku for fast, intelligent change analysis
 - **Audit Trail**: Maintains detailed records of all file operations
-- **Task Tool Integration**: Accessible via the existing Task tool framework
+- **Historical Task Tool Integration**: Was exposed through the retired System A framework
 
 ## Architecture
 
@@ -28,7 +30,9 @@ The Claude Code File Audit System is a comprehensive monitoring and analysis too
 User Request → Set Prompt Context → File Operation → Record Operation → LLM Analysis → Audit Record
 ```
 
-## Usage
+## Historical/Reference Usage
+
+These examples document the former System A interface. `CodeAuditTool` is not registered in the current Console runtime, so they are not current Console commands.
 
 ### Basic Audit Commands
 
@@ -87,7 +91,7 @@ Task(
 
 ## Analysis Types
 
-The system automatically determines analysis type based on your prompt:
+The reference implementation determines analysis type based on your prompt:
 
 - **Recent Changes**: Keywords "recent", "change" → Last N operations summary
 - **Deception Report**: Keywords "report", "deception report" → Comprehensive analysis
@@ -123,18 +127,20 @@ For each file operation, the system analyzes:
 
 ## Integration
 
-### Automatic Integration
+### Retired Automatic Integration
 
-The system automatically hooks into available file operation tools when enabled. Add to your `config.toml`:
+System A formerly used this setting while installing its file-operation hooks:
 
 ```toml
 [tools]
 code_audit_enabled = true
 ```
 
-### Manual Integration
+That install caller was deleted with System A. In the current runtime, setting `code_audit_enabled` does not install hooks or activate monitoring.
 
-For deeper integration, add these calls to your file operation workflows:
+### Reference Manual Integration
+
+The importable reference API can be called explicitly as shown below. No current Console file-mutation seam calls it.
 
 ```python
 from tldw_chatbook.Tools.code_audit_tool import record_file_operation, set_user_prompt
@@ -160,9 +166,9 @@ await record_file_operation(
 )
 ```
 
-## Configuration
+## Reference Configuration (Does Not Activate Hooks)
 
-Add audit system configuration to `config.toml`:
+The historical implementation used the following configuration. It is retained for reference; these settings do not wire the subsystem into the Console runtime:
 
 ```toml
 [tools]
@@ -242,14 +248,14 @@ enable_alignment_analysis = true
 3. **Review High-Risk**: Always manually review HIGH/CRITICAL flagged operations
 4. **Context Matters**: Ensure user prompts are captured for accurate analysis
 
-### For Developers
+### For Developers (If Re-integrated)
 
 1. **Hook Early**: Install hooks before file operations begin
 2. **Capture Context**: Always set user prompt context before operations
 3. **Handle Failures**: Audit recording should not break file operations
 4. **Monitor Performance**: LLM analysis adds latency to file operations
 
-### For System Administrators
+### For System Administrators (If Re-integrated)
 
 1. **Regular Monitoring**: Check audit logs for patterns
 2. **Threshold Tuning**: Adjust risk thresholds based on your environment
@@ -261,7 +267,7 @@ enable_alignment_analysis = true
 ### Common Issues
 
 **Q: No operations are being recorded**
-A: Check that `code_audit_enabled = true` in config and hooks are installed correctly
+A: This is expected in the current Console runtime: `code_audit_enabled = true` does not install hooks. TASK-743 owns any future integration decision.
 
 **Q: Analysis says "No user prompt available"**
 A: Ensure `set_user_prompt()` is called before file operations
@@ -272,7 +278,9 @@ A: Check API keys, model availability, and network connectivity
 **Q: High memory usage**
 A: Reduce `max_records` setting or clear audit records more frequently
 
-### Debug Commands
+### Historical Debug Commands
+
+The first snippet depends on the retired System A executor and is retained only as historical reference. The later snippets inspect the importable audit module directly.
 
 ```python
 # Check if audit tool is registered
