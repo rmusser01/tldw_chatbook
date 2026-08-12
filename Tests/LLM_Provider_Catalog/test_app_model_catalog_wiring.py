@@ -256,7 +256,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
     # Context: the provider list keys being refreshed + the exception type name.
     assert (
         "Model catalog auto-refresh failed "
-        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, ZAI): RuntimeError"
+        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, QwenCloud, ZAI): RuntimeError"
     ) in text
     # No traceback (diagnose=True would dump frame locals) and no exception
     # message, which may carry endpoint URLs or credentials.

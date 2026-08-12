@@ -36,12 +36,13 @@ def _entry(
     model_id: str,
     *,
     source: str,
+    provider: str = "OpenAI",
     capability_status: str = "unknown",
     persisted: bool = False,
 ) -> MergedModelEntry:
     return MergedModelEntry(
-        provider="OpenAI",
-        provider_list_key="OpenAI",
+        provider=provider,
+        provider_list_key=provider,
         model_id=model_id,
         display_name=model_id,
         source=source,
@@ -182,6 +183,41 @@ async def test_model_options_enforce_the_configured_merge_cap_boundary(
 
     assert len(options) == expected_count
     assert options[0].model_id == "saved"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_discovered_models_use_capped_selector_merge() -> None:
+    at_cap = tuple(
+        _entry(
+            f"qwen-runtime-{index}",
+            source="runtime_discovered",
+            provider="QwenCloud",
+        )
+        for index in range(SELECTOR_MERGE_CAP)
+    )
+    over_cap = at_cap + (
+        _entry(
+            "qwen-runtime-over-cap",
+            source="runtime_discovered",
+            provider="QwenCloud",
+        ),
+    )
+
+    capped_options = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        CatalogScopeFixture(at_cap),
+        provider="QwenCloud",
+    )
+    oversized_options = await resolve_provider_model_options(
+        {"QwenCloud": ["saved-model"]},
+        CatalogScopeFixture(over_cap),
+        provider="QwenCloud",
+    )
+
+    assert [option.model_id for option in capped_options] == [
+        f"qwen-runtime-{index}" for index in range(SELECTOR_MERGE_CAP)
+    ]
+    assert oversized_options == []
 
 
 @pytest.mark.asyncio

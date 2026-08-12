@@ -20,6 +20,49 @@ def test_chat_completions_url_maps_to_models_url():
     )
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses/",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions/",
+        "https://user:secret@dashscope-intl.aliyuncs.com/compatible-mode/v1/responses?api_key=secret#fragment",
+    ],
+)
+def test_qwencloud_models_url_normalizes_base_and_both_request_endpoints(endpoint):
+    original_endpoint = endpoint
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert (
+        build_models_url(endpoint, "qwencloud")
+        == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
+    )
+    assert endpoint == original_endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses-extra",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions-extra",
+        "https://dashscope-intl.aliyuncs.com/not-compatible-mode/v1/responses",
+        "https://user:secret@[::1/compatible-mode/v1/responses?api_key=secret",
+    ],
+)
+def test_qwencloud_discovery_rejects_lookalike_or_malformed_paths(endpoint):
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
+
+
+def test_responses_suffix_is_not_broadly_inferred_for_other_endpoint_shapes():
+    endpoint = "https://api.example.test/v1/responses"
+
+    assert supports_openai_compatible_model_discovery("openai", endpoint) is False
+    assert build_models_url(endpoint, "openai") == endpoint
+
+
 def test_llamacpp_completion_url_maps_to_v1_models():
     assert (
         build_models_url("http://127.0.0.1:9099/completion", "llama_cpp")

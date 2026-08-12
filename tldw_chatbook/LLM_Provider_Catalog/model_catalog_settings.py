@@ -16,6 +16,7 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "MistralAI",
     "Moonshot",
     "OpenRouter",
+    "QwenCloud",
     "ZAI",
 )
 

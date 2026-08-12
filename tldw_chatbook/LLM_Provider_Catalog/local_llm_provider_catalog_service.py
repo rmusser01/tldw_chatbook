@@ -55,21 +55,18 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 
-from ..config import LOCAL_PROVIDERS, get_cli_providers_and_models, load_settings
+from ..config import (
+    LOCAL_PROVIDERS,
+    ProviderSettingsError,
+    get_cli_providers_and_models,
+    load_settings,
+    provider_settings_for_key,
+    resolve_provider_api_key,
+)
 
 
 DiscoveryClient = Callable[..., Awaitable[ModelDiscoveryResult]]
 SettingsLoader = Callable[[], Mapping[str, Any]]
-
-_PLACEHOLDER_KEYS = frozenset(
-    {
-        "",
-        "<API_KEY_HERE>",
-        "YOUR_KEY",
-        "your_key",
-        "your-api-key",
-    }
-)
 
 
 class LocalLLMProviderCatalogService:
@@ -191,6 +188,13 @@ class LocalLLMProviderCatalogService:
         settings: Mapping[str, Any] | None,
         provider_key: str,
     ) -> Mapping[str, Any]:
+        if provider_key == "qwencloud":
+            api_settings = (
+                settings.get("api_settings", {})
+                if isinstance(settings, Mapping)
+                else {}
+            )
+            return provider_settings_for_key(api_settings, provider_key)
         matches = cls._provider_settings_matches(settings, provider_key)
         return matches[0] if len(matches) == 1 else {}
 
@@ -200,6 +204,8 @@ class LocalLLMProviderCatalogService:
         settings: Mapping[str, Any] | None,
         provider_key: str,
     ) -> bool:
+        if provider_key == "qwencloud":
+            return False
         return len(cls._provider_settings_matches(settings, provider_key)) > 1
 
     @staticmethod
@@ -208,13 +214,6 @@ class LocalLLMProviderCatalogService:
             return None
         stripped = value.strip()
         return stripped or None
-
-    @classmethod
-    def _valid_api_key(cls, value: object) -> str | None:
-        stripped = cls._valid_text(value)
-        if stripped in _PLACEHOLDER_KEYS:
-            return None
-        return stripped
 
     @classmethod
     def _endpoint_from_provider_settings(
@@ -229,18 +228,20 @@ class LocalLLMProviderCatalogService:
         saved_settings: Mapping[str, Any],
         staged_settings: Mapping[str, Any] | None,
     ) -> str | None:
-        staged_provider_settings = self._provider_settings_for_key(
-            staged_settings, provider_key
-        )
+        try:
+            staged_provider_settings = self._provider_settings_for_key(
+                staged_settings, provider_key
+            )
+            saved_provider_settings = self._provider_settings_for_key(
+                saved_settings, provider_key
+            )
+        except ProviderSettingsError:
+            return None
         staged_endpoint = self._endpoint_from_provider_settings(
             staged_provider_settings
         )
         if staged_endpoint:
             return staged_endpoint
-
-        saved_provider_settings = self._provider_settings_for_key(
-            saved_settings, provider_key
-        )
         return effective_provider_endpoint(
             provider_key,
             staged_endpoint,
@@ -250,13 +251,13 @@ class LocalLLMProviderCatalogService:
     def _api_key_from_provider_settings(
         self, provider_settings: Mapping[str, Any]
     ) -> str | None:
-        configured_key = self._valid_api_key(provider_settings.get("api_key"))
+        configured_key = resolve_provider_api_key(provider_settings.get("api_key"))
         if configured_key:
             return configured_key
 
         env_var = self._valid_text(provider_settings.get("api_key_env_var"))
         if env_var:
-            return self._valid_api_key(self.environ.get(env_var))
+            return resolve_provider_api_key(self.environ.get(env_var))
         return None
 
     def _resolve_api_key(
@@ -267,16 +268,18 @@ class LocalLLMProviderCatalogService:
         saved_settings: Mapping[str, Any],
         staged_settings: Mapping[str, Any] | None,
     ) -> str | None:
-        staged_provider_settings = self._provider_settings_for_key(
-            staged_settings, provider_key
-        )
+        try:
+            staged_provider_settings = self._provider_settings_for_key(
+                staged_settings, provider_key
+            )
+            saved_provider_settings = self._provider_settings_for_key(
+                saved_settings, provider_key
+            )
+        except ProviderSettingsError:
+            return None
         staged_key = self._api_key_from_provider_settings(staged_provider_settings)
         if staged_key:
             return staged_key
-
-        saved_provider_settings = self._provider_settings_for_key(
-            saved_settings, provider_key
-        )
         saved_key = self._api_key_from_provider_settings(saved_provider_settings)
         if saved_key:
             return saved_key

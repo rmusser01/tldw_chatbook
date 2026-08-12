@@ -1,17 +1,28 @@
+import json
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     DiscoveredModel,
+    ModelDiscoveryError,
     ModelDiscoveryResult,
 )
 from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
     LocalLLMProviderCatalogService,
 )
+from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+    ModelCatalogSettings,
+)
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+    ModelCatalogDiskStore,
+)
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
     fingerprint_endpoint,
+    normalize_models_response,
 )
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -216,6 +227,313 @@ async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_fo
             "endpoint": "https://staged.test/v1",
             "api_key": "staged-key",
         }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured_key", "expected_key", "alias_first"),
+    [
+        ("modern-qwen-secret-canary", "modern-qwen-secret-canary", True),
+        ("modern-qwen-secret-canary", "modern-qwen-secret-canary", False),
+        ("", "environment-qwen-secret-canary", True),
+        ("<API_KEY_HERE>", "environment-qwen-secret-canary", False),
+        ("YOUR_KEY", "environment-qwen-secret-canary", True),
+        ("your_key", "environment-qwen-secret-canary", False),
+        ("your-api-key", "environment-qwen-secret-canary", True),
+        (42, "environment-qwen-secret-canary", False),
+    ],
+)
+async def test_qwencloud_discovery_uses_only_its_modern_or_environment_key(
+    configured_key,
+    expected_key,
+    alias_first,
+):
+    discovery_calls = []
+    log_messages: list[str] = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    alias_settings = {
+        "api_key": "alias-qwen-secret-canary",
+        "api_base_url": "https://wrong-qwen.example/compatible-mode/v1",
+    }
+    canonical_settings = {
+        "api_key": configured_key,
+        "api_key_env_var": "DASHSCOPE_API_KEY",
+        "api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    }
+    qwen_items = (
+        [("QWENCLOUD", alias_settings), ("qwencloud", canonical_settings)]
+        if alias_first
+        else [("qwencloud", canonical_settings), ("QWENCLOUD", alias_settings)]
+    )
+    settings = {
+        "providers": {"QwenCloud": ["qwen3.8-max"]},
+        "api_settings": dict(
+            qwen_items + [("openai", {"api_key": "other-provider-secret-canary"})]
+        ),
+    }
+    original_settings = deepcopy(settings)
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        discovery_client=discover_models,
+        environ={
+            "DASHSCOPE_API_KEY": "environment-qwen-secret-canary",
+            "OPENAI_API_KEY": "other-provider-environment-secret-canary",
+        },
+    )
+    sink_id = logger.add(log_messages.append, format="{message}")
+    try:
+        result = await service.discover_models(provider="QwenCloud")
+    finally:
+        logger.remove(sink_id)
+
+    assert result.status == "success"
+    assert discovery_calls == [
+        {
+            "provider": "QwenCloud",
+            "provider_list_key": "QwenCloud",
+            "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "api_key": expected_key,
+        }
+    ]
+    assert all("secret-canary" not in message for message in log_messages)
+    assert "secret-canary" not in repr(result)
+    assert settings == original_settings
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_discovery_accepts_alias_only_settings_without_mutation():
+    discovery_calls = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    settings = {
+        "providers": {"QwenCloud": ["qwen3.8-max"]},
+        "api_settings": {
+            "QWENCLOUD": {
+                "api_key": "alias-only-secret-canary",
+                "api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            }
+        },
+    }
+    original_settings = deepcopy(settings)
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        discovery_client=discover_models,
+        environ={"DASHSCOPE_API_KEY": "environment-secret-canary"},
+    )
+
+    result = await service.discover_models(provider="QwenCloud")
+
+    assert result.status == "success"
+    assert discovery_calls[0]["api_key"] == "alias-only-secret-canary"
+    assert settings == original_settings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed_settings", [None, False, [], "not-a-table"])
+async def test_qwencloud_discovery_rejects_malformed_canonical_settings_safely(
+    malformed_settings,
+):
+    discovery_client = Mock()
+    settings = {
+        "providers": {"QwenCloud": ["qwen3.8-max"]},
+        "api_settings": {
+            "QWENCLOUD": {
+                "api_key": "alias-secret-canary",
+                "api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            },
+            "qwencloud": malformed_settings,
+        },
+    }
+    original_settings = deepcopy(settings)
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        discovery_client=discovery_client,
+        environ={"DASHSCOPE_API_KEY": "environment-secret-canary"},
+    )
+
+    result = await service.discover_models(provider="QwenCloud")
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "missing_endpoint"
+    assert "secret-canary" not in repr(result)
+    assert settings == original_settings
+    discovery_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_catalog_normalization_cache_fallback_and_write_through(
+    tmp_path,
+):
+    endpoint = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    fingerprint = fingerprint_endpoint(endpoint)
+    settings = {
+        "providers": {"QwenCloud": ["configured-model"]},
+        "api_settings": {
+            "qwencloud": {
+                "api_key": "qwen-secret-canary",
+                "api_base_url": endpoint,
+            }
+        },
+    }
+    save_calls = []
+    responses = [
+        ModelDiscoveryResult(
+            provider="QwenCloud",
+            provider_list_key="QwenCloud",
+            endpoint_fingerprint=fingerprint,
+            status="success",
+            models=normalize_models_response(
+                {
+                    "data": [
+                        {"id": " cached-model "},
+                        {"id": "cached-model"},
+                        {"id": "runtime-model"},
+                    ]
+                },
+                provider="QwenCloud",
+                provider_list_key="QwenCloud",
+                endpoint_fingerprint=fingerprint,
+                now_iso="2026-08-11T00:00:00Z",
+            ),
+        ),
+        ModelDiscoveryResult(
+            provider="QwenCloud",
+            provider_list_key="QwenCloud",
+            endpoint_fingerprint=fingerprint,
+            status="error",
+            error=ModelDiscoveryError(
+                kind="invalid_response",
+                message="Invalid models response.",
+                recovery_hint="Retry later.",
+            ),
+        ),
+        ModelDiscoveryResult(
+            provider="QwenCloud",
+            provider_list_key="QwenCloud",
+            endpoint_fingerprint=fingerprint,
+            status="success",
+            models=normalize_models_response(
+                {
+                    "data": [
+                        {"id": "configured-model"},
+                        {"id": "cached-model"},
+                        {"id": "runtime-model"},
+                        {"id": "write-through-model"},
+                    ]
+                },
+                provider="QwenCloud",
+                provider_list_key="QwenCloud",
+                endpoint_fingerprint=fingerprint,
+                now_iso="2026-08-11T00:01:00Z",
+            ),
+        ),
+    ]
+
+    async def discover_models(**_kwargs):
+        return responses.pop(0)
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        discovery_client=discover_models,
+        save_discovered_models_callback=lambda values: (
+            save_calls.append(values) or True
+        ),
+        environ={},
+    )
+
+    first = await service.discover_models(provider="QwenCloud")
+    malformed = await service.discover_models(provider="QwenCloud")
+    cached_after_malformed = service.list_discovered_models(provider="QwenCloud")
+    configured_fallback = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        environ={},
+    ).merge_saved_and_discovered_models(provider="QwenCloud")
+    store = ModelCatalogDiskStore(tmp_path / "model_catalog_cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(write_to_config=frozenset({"qwencloud"})),
+        disk_store=store,
+        force=True,
+    )
+
+    assert first.status == "success"
+    assert malformed.status == "error"
+    assert [model.model_id for model in cached_after_malformed] == [
+        "cached-model",
+        "runtime-model",
+    ]
+    assert [entry.model_id for entry in configured_fallback] == ["configured-model"]
+    qwen_outcome = next(
+        outcome
+        for outcome in report.outcomes
+        if outcome.provider_list_key == "QwenCloud"
+    )
+    assert qwen_outcome.new_model_ids == ("write-through-model",)
+    assert qwen_outcome.saved_model_ids == ("write-through-model",)
+    assert save_calls == [
+        {"providers": {"QwenCloud": ["configured-model", "write-through-model"]}}
+    ]
+    cache_text = (tmp_path / "model_catalog_cache.json").read_text(encoding="utf-8")
+    assert "write-through-model" in cache_text
+    assert "qwen-secret-canary" not in cache_text
+
+    dirty_cache_path = tmp_path / "dirty-model-catalog-cache.json"
+    dirty_cache_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "qwen": {
+                        "provider_list_key": "QwenCloud",
+                        "endpoint_fingerprint": fingerprint,
+                        "fetched_at": "2026-08-11T00:00:00Z",
+                        "models": [
+                            "",
+                            "cached-model",
+                            "cached-model",
+                            42,
+                            "runtime-model",
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    dirty_service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: settings["providers"],
+        settings_loader=lambda: settings,
+        environ={},
+    )
+    ModelCatalogDiskStore(dirty_cache_path).load_into(dirty_service.discovery_cache)
+    dirty_merged = dirty_service.merge_saved_and_discovered_models(provider="QwenCloud")
+    assert [entry.model_id for entry in dirty_merged] == [
+        "configured-model",
+        "cached-model",
+        "runtime-model",
     ]
 
 

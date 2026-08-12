@@ -24,6 +24,7 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
+_QWENCLOUD_COMPATIBLE_BASE_PATH = "/compatible-mode/v1"
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -38,6 +39,7 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "local_vllm",
         "openai",
         "openrouter",
+        "qwencloud",
         "tabbyapi",
         "vllm",
     }
@@ -51,6 +53,9 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         "/completions",
         "/api/v1",
         "/api/paas/v4",
+        _QWENCLOUD_COMPATIBLE_BASE_PATH,
+        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models",
+        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/responses",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -197,6 +202,13 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         return "/v1/models"
     if normalized_path in {"/api/v1", "/api/paas/v4"}:
         return f"{normalized_path}/models"
+    if normalized_path in {
+        _QWENCLOUD_COMPATIBLE_BASE_PATH,
+        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models",
+        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/responses",
+        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/chat/completions",
+    }:
+        return f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models"
     if normalized_path in {"/completion", "/completions"}:
         return "/v1/models"
     if normalized_path.endswith("/v1/chat/completions"):
