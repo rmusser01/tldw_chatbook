@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from urllib.parse import SplitResult, urlsplit, urlunsplit
+
+import idna
 
 
 class OpenAIAuthenticationMode(StrEnum):
@@ -31,6 +34,7 @@ _KNOWN_PATHS = {
     "/v1/audio/speech": ("/v1/audio/speech", "/v1/models"),
 }
 _SCHEME_PATTERN = re.compile(r"(?i)https?://")
+_UNICODE_DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 
 
 def _invalid_endpoint() -> ValueError:
@@ -39,19 +43,55 @@ def _invalid_endpoint() -> ValueError:
     )
 
 
+def _canonical_hostname(parsed: SplitResult) -> tuple[str, bool]:
+    raw_hostname = parsed.hostname
+    if not raw_hostname:
+        raise _invalid_endpoint()
+
+    hostname = raw_hostname.translate(_UNICODE_DOTS)
+    if parsed.netloc.startswith("["):
+        try:
+            return ipaddress.IPv6Address(hostname).compressed, True
+        except ipaddress.AddressValueError as error:
+            raise _invalid_endpoint() from error
+
+    hostname = hostname.rstrip(".")
+    if not hostname:
+        raise _invalid_endpoint()
+
+    numeric_labels = hostname.split(".")
+    if len(numeric_labels) == 4 and all(
+        label.isascii() and label.isdecimal() for label in numeric_labels
+    ):
+        try:
+            return str(ipaddress.IPv4Address(hostname)), False
+        except ipaddress.AddressValueError as error:
+            raise _invalid_endpoint() from error
+
+    try:
+        canonical = idna.encode(
+            hostname.lower(),
+            uts46=True,
+            std3_rules=True,
+        ).decode("ascii")
+    except (UnicodeError, idna.IDNAError) as error:
+        raise _invalid_endpoint() from error
+    return canonical, False
+
+
 def _normalized_authority(parsed: SplitResult) -> tuple[str, str, int | None]:
     scheme = parsed.scheme.lower()
-    hostname = (parsed.hostname or "").lower()
     try:
         port = parsed.port
     except ValueError as error:
         raise _invalid_endpoint() from error
-    if not hostname or port == 0:
+    if port == 0:
         raise _invalid_endpoint()
 
+    hostname, ipv6 = _canonical_hostname(parsed)
     default_port = 80 if scheme == "http" else 443
     normalized_port = None if port in (None, default_port) else port
-    rendered_host = f"[{hostname}]" if ":" in hostname else hostname
+    rendered_host = f"[{hostname}]" if ipv6 else hostname
     authority = (
         rendered_host
         if normalized_port is None
@@ -83,6 +123,7 @@ def normalize_openai_compatible_endpoint(raw: str) -> OpenAICompatibleEndpoint:
             or parsed.password is not None
             or parsed.query
             or parsed.fragment
+            or "//" in parsed.path
         ):
             raise _invalid_endpoint()
         authority, hostname, port = _normalized_authority(parsed)

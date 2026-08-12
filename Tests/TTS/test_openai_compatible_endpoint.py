@@ -149,6 +149,24 @@ def test_authentication_mode_is_explicit_and_official_fails_closed() -> None:
         normalize_openai_authentication_mode("none", endpoint=official)
 
 
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "https://api.openai.com./v1/audio/speech",
+        "https://api.openai.com.../v1/audio/speech",
+        "https://api\u3002openai\uff0ecom\uff61/v1/audio/speech",
+    ),
+)
+def test_official_hostname_equivalents_require_api_key(raw) -> None:
+    endpoint = normalize_openai_compatible_endpoint(raw)
+
+    assert endpoint.origin == "https://api.openai.com"
+    assert endpoint.speech_url == "https://api.openai.com/v1/audio/speech"
+    assert endpoint.official is True
+    with pytest.raises(ValueError, match="API key"):
+        normalize_openai_authentication_mode("none", endpoint=endpoint)
+
+
 def test_destination_fingerprint_uses_provider_and_normalized_origin_only() -> None:
     first = normalize_openai_compatible_endpoint("HTTP://EXAMPLE.test:80/one/speech")
     second = normalize_openai_compatible_endpoint("http://example.test/two/speech")
@@ -161,11 +179,57 @@ def test_destination_fingerprint_uses_provider_and_normalized_origin_only() -> N
     assert "speech" not in same_destination
 
 
-def test_repeated_trailing_slashes_remain_an_exact_unknown_speech_path() -> None:
-    endpoint = normalize_openai_compatible_endpoint("https://example.test/v1//")
+def test_idn_and_ipv6_equivalents_share_origin_and_fingerprint() -> None:
+    unicode_host = normalize_openai_compatible_endpoint(
+        "https://b\u00fccher.example./custom/speech"
+    )
+    punycode_host = normalize_openai_compatible_endpoint(
+        "https://xn--bcher-kva.example/another/speech"
+    )
+    expanded_ipv6 = normalize_openai_compatible_endpoint(
+        "https://[2001:0DB8:0:0:0:0:0:1]/custom/speech"
+    )
+    compressed_ipv6 = normalize_openai_compatible_endpoint(
+        "https://[2001:db8::1]/another/speech"
+    )
 
-    assert endpoint.speech_url == "https://example.test/v1//"
-    assert endpoint.catalog_url is None
+    assert unicode_host.origin == "https://xn--bcher-kva.example"
+    assert unicode_host.origin == punycode_host.origin
+    assert openai_destination_fingerprint(
+        "openai", unicode_host
+    ) == openai_destination_fingerprint("openai", punycode_host)
+    assert expanded_ipv6.origin == "https://[2001:db8::1]"
+    assert expanded_ipv6.origin == compressed_ipv6.origin
+    assert openai_destination_fingerprint(
+        "openai", expanded_ipv6
+    ) == openai_destination_fingerprint("openai", compressed_ipv6)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "https://example.test/v1//",
+        "https://example.test//v1",
+        "https://example.test/v1///audio/speech",
+        "https://example.test/custom//speech",
+    ),
+)
+def test_repeated_path_separators_are_rejected(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "https://example..test/v1",
+        "https://-invalid.example/v1",
+        "https://invalid-.example/v1",
+    ),
+)
+def test_invalid_dns_hostnames_are_rejected(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
 
 
 def _capture_transport(requests: list[httpx.Request]) -> httpx.MockTransport:

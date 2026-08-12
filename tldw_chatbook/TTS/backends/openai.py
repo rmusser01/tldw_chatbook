@@ -3,7 +3,6 @@
 #
 # Imports
 from typing import AsyncGenerator, Optional, Dict, Any
-import json
 import httpx
 import os
 from loguru import logger
@@ -27,6 +26,33 @@ from tldw_chatbook.config import get_cli_setting
 
 
 _DEFAULT_OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
+
+
+def _http_status_failure(status_code: int) -> tuple[str, ValueError]:
+    if status_code == 401:
+        return (
+            "authentication_failed",
+            ValueError(
+                "Authentication failed. Please check your API configuration (HTTP 401)."
+            ),
+        )
+    if status_code == 429:
+        return (
+            "rate_limited",
+            ValueError("Rate limit exceeded. Please try again later (HTTP 429)."),
+        )
+    if status_code >= 500:
+        return (
+            "service_unavailable",
+            ValueError(
+                "TTS service temporarily unavailable. Please try again later "
+                f"(HTTP {status_code})."
+            ),
+        )
+    return (
+        "request_rejected",
+        ValueError(f"TTS request was rejected by the service (HTTP {status_code})."),
+    )
 
 
 class OpenAITTSBackend(APITTSBackend):
@@ -198,6 +224,7 @@ class OpenAITTSBackend(APITTSBackend):
             f"format={response_format}, speed={speed}"
         )
 
+        http_failure: ValueError | None = None
         try:
             async with self.client.stream(
                 "POST", self.base_url, headers=headers, json=payload
@@ -247,44 +274,13 @@ class OpenAITTSBackend(APITTSBackend):
 
             logger.info("OpenAITTSBackend: Successfully completed TTS generation")
 
-        except httpx.HTTPStatusError as e:
-            # Try to read error content safely
-            error_msg = f"HTTP {e.response.status_code}"
-            error_details = None
-
-            # Check if response can still be read
-            if hasattr(e.response, "is_closed") and not e.response.is_closed:
-                try:
-                    error_content = await e.response.aread()
-                    error_details = error_content.decode("utf-8", errors="ignore")
-
-                    # Try to extract meaningful error message
-                    try:
-                        error_data = json.loads(error_details)
-                        if "error" in error_data and "message" in error_data["error"]:
-                            error_msg = error_data["error"]["message"]
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        # Keep the status code message if JSON parsing fails
-                        pass
-                except Exception as read_error:
-                    logger.debug(f"Could not read error response body: {read_error}")
-
-            # Log error without exposing sensitive information
-            logger.error(f"OpenAI API error {e.response.status_code}: {error_msg}")
-
-            # Provide user-friendly error messages
-            if e.response.status_code == 401:
-                raise ValueError(
-                    "Authentication failed. Please check your API configuration."
-                )
-            elif e.response.status_code == 429:
-                raise ValueError("Rate limit exceeded. Please try again later.")
-            elif e.response.status_code >= 500:
-                raise ValueError(
-                    "TTS service temporarily unavailable. Please try again later."
-                )
-            else:
-                raise ValueError(f"TTS request failed: {error_msg}")
+        except httpx.HTTPStatusError as error:
+            status_code = error.response.status_code
+            category, http_failure = _http_status_failure(status_code)
+            logger.error(
+                "OpenAITTSBackend: Request failed "
+                f"(http_status={status_code}, category={category})"
+            )
 
         except httpx.RequestError:
             # Log without exposing connection details
@@ -297,6 +293,9 @@ class OpenAITTSBackend(APITTSBackend):
             # Log error without stack trace that might contain sensitive data
             logger.error("OpenAITTSBackend: Unexpected error during TTS generation")
             raise ValueError("An unexpected error occurred during TTS generation.")
+
+        if http_failure is not None:
+            raise http_failure
 
 
 #

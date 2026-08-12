@@ -53,6 +53,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppSupervisor,
     _AudioCppDiagnosticRing,
 )
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -1017,6 +1018,66 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
     assert secret[-10:] not in rendered
     assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
     assert "API key length" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_hostile_error_response_is_not_exposed() -> None:
+    private_input = "PRIVATE_OPENAI_SYNTHESIS_INPUT_91f24d"
+    private_credential = "sk-PRIVATE_OPENAI_CREDENTIAL_2d8a71"
+    private_reason = "PRIVATE_OPENAI_REASON_74c31e"
+    messages: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = (
+            f'{{"error":{{"message":"echoed {private_input} {private_credential}"}}}}'
+        ).encode()
+        return httpx.Response(
+            422,
+            content=body,
+            extensions={"reason_phrase": private_reason.encode()},
+        )
+
+    backend = OpenAITTSBackend(
+        {
+            "OPENAI_BASE_URL": "https://speech.example.test/v1/audio/speech",
+            "OPENAI_AUTH_MODE": "none",
+            "OPENAI_API_KEY": private_credential,
+        }
+    )
+    await backend.client.aclose()
+    backend.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    caught: BaseException | None = None
+    try:
+        request = OpenAISpeechRequest(
+            model="pocket-tts",
+            input=private_input,
+            voice="alba",
+            response_format="wav",
+        )
+        try:
+            async for _chunk in backend.generate_speech_stream(request):
+                pass
+        except BaseException as error:
+            caught = error
+    finally:
+        logger.remove(sink_id)
+        await backend.close()
+
+    assert isinstance(caught, ValueError)
+    assert str(caught) == "TTS request was rejected by the service (HTTP 422)."
+    assert _exception_graph(caught) == [caught]
+    rendered = " ".join(
+        (
+            "\n".join(messages),
+            repr(_exception_graph(caught)),
+            "".join(traceback.format_exception(caught)),
+        )
+    )
+    assert "http_status=422" in rendered
+    assert "category=request_rejected" in rendered
+    for private_value in (private_input, private_credential, private_reason):
+        assert private_value not in rendered
 
 
 @pytest.mark.asyncio
