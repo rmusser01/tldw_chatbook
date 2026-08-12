@@ -376,7 +376,9 @@ def test_delete_requires_prompt_sync_event_before_success(db, monkeypatch, surfa
     assert _complete_mutation_state(db) == baseline
 
 
-def test_begin_immediate_validates_after_competing_writer_commits(db):
+def test_begin_immediate_preflights_after_competing_recovery_metadata_commit(
+    db, monkeypatch
+):
     prompt_id, _ = _add_artifact(
         db,
         name="Writer race prompt",
@@ -384,30 +386,76 @@ def test_begin_immediate_validates_after_competing_writer_commits(db):
         body="writer race body",
     )
     _add_collection_membership(db, prompt_id, "Writer race collection")
+    keyword = (
+        db.get_connection()
+        .execute(
+            """
+        SELECT keyword_table.*
+        FROM PromptKeywordLinks AS link
+        JOIN PromptKeywordsTable AS keyword_table
+          ON keyword_table.id = link.keyword_id
+        WHERE link.prompt_id = ?
+        """,
+            (prompt_id,),
+        )
+        .fetchone()
+    )
+    assert keyword is not None
+    link = (
+        db.get_connection()
+        .execute("SELECT * FROM PromptKeywordLinks WHERE prompt_id = ?", (prompt_id,))
+        .fetchone()
+    )
+    assert link is not None
     baseline = _complete_mutation_state(db)
     competitor = PromptsDatabase(db.db_path, client_id="competing-writer")
-    writer_reserved = threading.Event()
+    metadata_staged = threading.Event()
     batch_begin_attempted = threading.Event()
     allow_writer_commit = threading.Event()
     writer_committed = threading.Event()
     outcomes: queue.Queue[BaseException | object] = queue.Queue()
+    helper_calls: list[int] = []
+    original = db._delete_prompt_in_transaction
+
+    def record_helper(*args, **kwargs):
+        helper_calls.append(int(kwargs["row"]["id"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_delete_prompt_in_transaction", record_helper)
 
     def writer() -> None:
         try:
             with competitor.transaction(immediate=True) as conn:
                 conn.execute(
+                    "DELETE FROM PromptKeywordsTable WHERE id = ?", (keyword["id"],)
+                )
+                conn.execute(
                     """
-                    UPDATE Prompts
-                    SET last_modified = ?, version = 2, client_id = ?
-                    WHERE id = ? AND version = 1 AND deleted = 0
+                    INSERT INTO PromptKeywordsTable (
+                        id, keyword, uuid, last_modified, version, client_id,
+                        deleted, prev_version, merge_parent_uuid
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        competitor._get_current_utc_timestamp_str(),
-                        competitor.client_id,
-                        prompt_id,
+                        keyword["id"],
+                        keyword["keyword"],
+                        "PRIVATE INVALID COMPETING UUID",
+                        keyword["last_modified"],
+                        keyword["version"],
+                        keyword["client_id"],
+                        keyword["deleted"],
+                        keyword["prev_version"],
+                        keyword["merge_parent_uuid"],
                     ),
                 )
-                writer_reserved.set()
+                conn.execute(
+                    """
+                    INSERT INTO PromptKeywordLinks (id, prompt_id, keyword_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (link["id"], link["prompt_id"], link["keyword_id"]),
+                )
+                metadata_staged.set()
                 if not allow_writer_commit.wait(5):
                     raise AssertionError("batch never attempted BEGIN IMMEDIATE")
             writer_committed.set()
@@ -435,10 +483,11 @@ def test_begin_immediate_validates_after_competing_writer_commits(db):
     writer_thread = threading.Thread(target=writer, name="prompt-competing-writer")
     batch_thread = threading.Thread(target=batch_delete, name="prompt-batch-writer")
     writer_thread.start()
-    assert writer_reserved.wait(5)
+    assert metadata_staged.wait(5)
     batch_thread.start()
     assert batch_begin_attempted.wait(5)
     assert not writer_committed.is_set()
+    assert helper_calls == []
     allow_writer_commit.set()
     writer_thread.join(5)
     batch_thread.join(5)
@@ -449,17 +498,26 @@ def test_begin_immediate_validates_after_competing_writer_commits(db):
     while not outcomes.empty():
         observed.append(outcomes.get_nowait())
     assert len(observed) == 1
-    assert isinstance(observed[0], ExpectedVersionConflictError)
+    assert isinstance(observed[0], DatabaseError)
+    assert str(observed[0]) == "Prompt batch delete failed."
+    assert observed[0].__cause__ is None
+    assert helper_calls == []
     current = _complete_mutation_state(db)
-    assert _row_state(db, prompt_id) == (0, 2)
-    assert current["PromptKeywordLinks"] == baseline["PromptKeywordLinks"]
-    assert current["sync_log"] == baseline["sync_log"]
-    assert current["prompts_fts"] == baseline["prompts_fts"]
-    assert current["prompt_keywords_fts"] == baseline["prompt_keywords_fts"]
-    assert current["LocalPromptCollections"] == baseline["LocalPromptCollections"]
-    assert (
-        current["LocalPromptCollectionItems"] == baseline["LocalPromptCollectionItems"]
+    mutated_keyword = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM PromptKeywordsTable WHERE id = ?",
+            (keyword["id"],),
+        )
+        .fetchone()
     )
+    assert mutated_keyword is not None
+    assert dict(mutated_keyword) == {
+        **dict(keyword),
+        "uuid": "PRIVATE INVALID COMPETING UUID",
+    }
+    for table in baseline.keys() - {"PromptKeywordsTable"}:
+        assert current[table] == baseline[table]
 
 
 def test_batch_delete_and_restore_preserve_exact_database_state(db):
