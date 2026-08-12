@@ -11,9 +11,10 @@ import asyncio
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from loguru import logger
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -21,7 +22,17 @@ from textual.compose import compose as _drain_compose_result
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
+from textual.widgets import (
+    Button,
+    Input,
+    Label,
+    OptionList,
+    RadioButton,
+    RadioSet,
+    Static,
+    Switch,
+)
+from textual.widgets.option_list import Option
 from textual.worker import Worker, get_current_worker
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
@@ -79,6 +90,11 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_provider_support import (
+        ConsoleProviderCatalogEntry,
+    )
 
 
 class SetupRadioButton(RadioButton):
@@ -252,6 +268,49 @@ class SetupStep(WizardStep):
 CLOUD_PROBE_TIMEOUT_SECONDS = 8.0
 
 
+class ProviderChoiceOption(Option):
+    """A provider row or a disabled group heading in the provider list."""
+
+    def __init__(
+        self,
+        prompt: Text,
+        *,
+        option_id: str,
+        provider_key: str | None,
+    ) -> None:
+        super().__init__(prompt, id=option_id, disabled=provider_key is None)
+        self.provider_key: str | None = provider_key
+
+
+def _provider_group_option_id(title: str) -> str:
+    """Return the deterministic option ID for a provider group heading."""
+    return "group-" + "-".join(title.casefold().split())
+
+
+def _provider_options(
+    entries: Sequence[ConsoleProviderCatalogEntry],
+) -> list[Option]:
+    """Build grouped provider options with non-selectable heading rows."""
+    options: list[Option] = []
+    for group_title, group in ProviderStep._grouped_sections(entries):
+        options.append(
+            ProviderChoiceOption(
+                Text(group_title, style="bold"),
+                option_id=_provider_group_option_id(group_title),
+                provider_key=None,
+            )
+        )
+        options.extend(
+            ProviderChoiceOption(
+                Text(entry.display_name),
+                option_id=f"provider-{entry.readiness_key}",
+                provider_key=entry.readiness_key,
+            )
+            for entry in group
+        )
+    return options
+
+
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
@@ -297,8 +356,8 @@ class ProviderStep(SetupStep):
             # TASK-1498: the discovery payoff is PINNED above the list — the
             # subtitle promises "we'll look for them", so the found-server
             # banner must appear where that promise was made, not below a
-            # scrolling list. Being before the RadioSet in DOM also keeps the
-            # TASK-1496 Tab order intact (radio → key input; the button is
+            # scrolling list. Being before the OptionList in DOM also keeps the
+            # TASK-1496 Tab order intact (provider list → key input; the button is
             # only reachable backwards or by click, and it is hidden until a
             # server is actually found).
             # Hidden until discovery finds something — an empty banner would
@@ -313,19 +372,14 @@ class ProviderStep(SetupStep):
                 "Use this server", id="setup-provider-use-detected",
                 classes="hidden", variant="primary",
             )
-            with RadioSet(id="setup-provider-choice", classes="setup-choice-list"):
-                # TASK-1498: visible group headers; popular providers first so
-                # the capped list's initial window is the useful one.
-                for group_title, group in self._grouped_sections(entries):
-                    yield Static(group_title, classes="setup-choice-header")
-                    for entry in group:
-                        yield SetupRadioButton(
-                            entry.display_name,
-                            id=f"setup-provider-{entry.readiness_key}",
-                        )
+            yield OptionList(
+                *_provider_options(entries),
+                id="setup-provider-choice",
+                classes="setup-choice-list",
+            )
             # TASK-1496: key Input, its status line, and the Keep/Replace/
             # Clear affordances sit BEFORE the discovered-server banner/button
-            # in both DOM and visual order now -- Tab from the RadioSet above
+            # in both DOM and visual order now -- Tab from the OptionList above
             # must reach the key Input next, not a below-the-fold "Use this
             # server" Button (Textual's focus chain follows DOM order, not
             # rendered position). Before this reorder, a discovered local
@@ -408,10 +462,10 @@ class ProviderStep(SetupStep):
         button is visible (it precedes the list in DOM order).
 
         Returns:
-            The provider RadioSet, or None if it is not queryable yet.
+            The provider OptionList, or None if it is not queryable yet.
         """
         try:
-            return self.query_one("#setup-provider-choice", RadioSet)
+            return self.query_one("#setup-provider-choice", OptionList)
         except Exception:
             return None
 
@@ -490,48 +544,32 @@ class ProviderStep(SetupStep):
             actions.add_class("hidden")
         self.query_one("#setup-provider-probe-status", Static).update("")
 
-    @on(RadioSet.Changed, "#setup-provider-choice")
-    def _on_provider_chosen(self, event: RadioSet.Changed) -> None:
-        pressed_id = event.pressed.id or ""
-        self.select_provider(pressed_id.removeprefix("setup-provider-"))
+    def _select_provider_option(self, option: Option) -> None:
+        provider_key = getattr(option, "provider_key", None)
+        if provider_key is not None and not option.disabled:
+            self.select_provider(provider_key)
+
+    @on(OptionList.OptionHighlighted, "#setup-provider-choice")
+    def _on_provider_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self._select_provider_option(event.option)
+
+    @on(OptionList.OptionSelected, "#setup-provider-choice")
+    def _on_provider_chosen(self, event: OptionList.OptionSelected) -> None:
+        self._select_provider_option(event.option)
 
     def _effective_provider_key(self) -> str:
-        """F-A fix: the RadioSet's own ``pressed_button`` is the source of
-        truth at commit time, not just the ``Changed``-driven instance
-        attribute.
-
-        ``self.selected_provider_key`` is set by ``select_provider()``, which
-        runs from two places: the ``RadioSet.Changed`` handler above (a real
-        keyboard-toggle/click), and ``_on_use_detected`` (the one-click
-        "Use this server" path, which never presses a RadioButton in
-        ``#setup-provider-choice`` at all). Textual's RadioSet distinguishes
-        the merely-*highlighted* button (arrow-key navigation moves this,
-        see ``RadioSet.action_next_button``/``action_previous_button``) from
-        the *pressed* one (``RadioSet.pressed_button``, only set by an
-        explicit toggle -- Enter/Space/click, or an initial ``value=True`` at
-        mount, see ``RadioSet._on_mount``'s ``switched_on`` handling) --
-        which never fires ``Changed``. No button in this step's catalog sets
-        ``value=True`` today, so this fallback is currently a no-op guard
-        against a future default selection (mirroring how WelcomeStep reads
-        its RadioButton's live ``.value`` instead of trusting an instance
-        attribute) or any other path that presses a radio without routing
-        through ``select_provider()``.
-
-        Preferring ``self.selected_provider_key`` when it is already set
-        keeps the "Use this server" one-click path correct even if an
-        earlier, different radio press left a stale ``pressed_button``
-        behind; the RadioSet is consulted only when this step's own
-        bookkeeping has nothing.
-        """
+        """Return the selected key, falling back to the highlighted option."""
         if self.selected_provider_key:
             return self.selected_provider_key
         try:
-            pressed = self.query_one("#setup-provider-choice", RadioSet).pressed_button
+            highlighted = self.query_one(
+                "#setup-provider-choice", OptionList
+            ).highlighted_option
         except Exception:
             return ""
-        if pressed is None:
+        if highlighted is None or highlighted.disabled:
             return ""
-        return (pressed.id or "").removeprefix("setup-provider-")
+        return getattr(highlighted, "provider_key", None) or ""
 
     @on(Button.Pressed, "#setup-provider-key-replace")
     def _on_replace(self) -> None:

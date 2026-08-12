@@ -5,22 +5,17 @@ from unittest.mock import MagicMock
 import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Button, Input, RadioButton, RadioSet, Static, Switch
+from textual.widgets import (
+    Button,
+    Input,
+    OptionList,
+    RadioButton,
+    RadioSet,
+    Static,
+    Switch,
+)
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    AppearanceStep,
-    CLOUD_PROBE_TIMEOUT_SECONDS,
-    FirstRunSetupWizard,
-    ModelStep,
-    NotesSyncStep,
-    ProtectKeysStep,
-    ProviderStep,
-    RagStep,
-    SetupWizardContainer,
-    SummaryStep,
-    ToolsStep,
-)
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
@@ -33,6 +28,22 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_SUMMARY,
     TRACK_FULL,
     TRACK_QUICK,
+)
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    CLOUD_PROBE_TIMEOUT_SECONDS,
+    AppearanceStep,
+    FirstRunSetupWizard,
+    ModelStep,
+    NotesSyncStep,
+    ProtectKeysStep,
+    ProviderChoiceOption,
+    ProviderStep,
+    RagStep,
+    SetupWizardContainer,
+    SummaryStep,
+    ToolsStep,
+    _provider_group_option_id,
+    _provider_options,
 )
 
 
@@ -317,6 +328,43 @@ class _StepHost(App):
 
 
 @pytest.mark.asyncio
+async def test_provider_down_and_space_never_selects_group_heading():
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        assert all(
+            option.disabled
+            for index in range(choices.option_count)
+            if (option := choices.get_option_at_index(index)).id.startswith("group-")
+        )
+
+        choices.focus()
+        await pilot.press("down", "space", "down", "space")
+        await pilot.pause()
+
+        assert step.selected_provider_key
+        assert not step.selected_provider_key.startswith("group-")
+
+
+@pytest.mark.asyncio
+async def test_provider_keyboard_walk_visits_only_provider_rows():
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        choices.focus()
+
+        for _ in range(choices.option_count + 3):
+            await pilot.press("down")
+            assert choices.highlighted is not None
+            highlighted = choices.get_option_at_index(choices.highlighted)
+            assert not highlighted.disabled
+
+
+@pytest.mark.asyncio
 async def test_provider_step_env_key_shows_found_in_environment():
     step = _provider_step(environ={"OPENAI_API_KEY": "sk-x"})
     app = _StepHost(step)
@@ -369,18 +417,8 @@ async def test_provider_step_commit_writes_key_and_notes_key_entered():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_commit_reads_pressed_radio_without_changed_event():
-    """F-A regression (UAT): ProviderStep relied solely on RadioSet.Changed
-    to set selected_provider_key. Textual's RadioSet distinguishes the
-    merely-*highlighted* button (arrow-key navigation, see
-    RadioSet.action_next_button) from the *pressed* one (pressed_button,
-    only set by an explicit toggle or an initial value=True at mount --
-    RadioSet._on_mount's "switched_on" handling never fires Changed). This
-    test simulates exactly that: a button IS pressed per the RadioSet's own
-    bookkeeping, but Changed genuinely never fired, so ProviderStep's own
-    handler never ran. commit() must still recover the real choice instead
-    of silently skipping (which is what left chat_defaults untouched during
-    live UAT)."""
+async def test_provider_step_commit_reads_highlighted_option_without_event():
+    """Commit recovers the live OptionList highlight if its event is pending."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -394,13 +432,16 @@ async def test_provider_step_commit_reads_pressed_radio_without_changed_event():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        radio_set = step.query_one("#setup-provider-choice", RadioSet)
-        target = step.query_one("#setup-provider-anthropic", RadioButton)
-        # Simulate the mount-time "switched_on" bookkeeping (or any other
-        # path) that leaves a button pressed without ever posting
-        # RadioButton.Changed / RadioSet.Changed.
-        radio_set._pressed_button = target
-        assert step.selected_provider_key == ""  # sanity: Changed truly never fired
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        target_index = next(
+            index
+            for index in range(choices.option_count)
+            if getattr(
+                choices.get_option_at_index(index), "provider_key", None
+            ) == "anthropic"
+        )
+        step.selected_provider_key = ""
+        choices.highlighted = target_index
 
         ok, error = await step.commit()
         assert ok, error
@@ -410,10 +451,8 @@ async def test_provider_step_commit_reads_pressed_radio_without_changed_event():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_nothing_pressed_still_legitimately_skips():
-    """The other half of the F-A fix: when the RadioSet genuinely reports no
-    pressed_button (nothing was ever toggled -- just the default focus
-    highlight), commit() must still skip, not fabricate a selection."""
+async def test_provider_step_nothing_highlighted_still_legitimately_skips():
+    """Commit skips when neither state nor the OptionList supplies a choice."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -427,8 +466,9 @@ async def test_provider_step_nothing_pressed_still_legitimately_skips():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        radio_set = step.query_one("#setup-provider-choice", RadioSet)
-        assert radio_set.pressed_button is None  # sanity: nothing pressed
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        choices.highlighted = None
+        step.selected_provider_key = ""
 
         ok, error = await step.commit()
         assert ok, error
@@ -436,7 +476,7 @@ async def test_provider_step_nothing_pressed_still_legitimately_skips():
         wizard.commit_config.assert_not_called()
 
 
-def test_provider_grouping_orders_cloud_then_local_then_custom():
+def test_provider_grouping_orders_popular_then_other_nonempty_sections():
     """Mirror settings_screen.py:6423's grouping rule (task-6 brief interface)."""
     from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
 
@@ -457,16 +497,44 @@ def test_provider_grouping_orders_cloud_then_local_then_custom():
             readiness_key="anthropic", execution_key="anthropic",
             display_name="Anthropic", requires_api_key=True,
         ),
+        ConsoleProviderCatalogEntry(
+            readiness_key="groq", execution_key="groq",
+            display_name="Groq", requires_api_key=True,
+        ),
+        ConsoleProviderCatalogEntry(
+            readiness_key="vllm", execution_key="vllm",
+            display_name="vLLM", requires_api_key=False,
+        ),
     )
     # TASK-1498: flat _grouped was replaced by sectioned _grouped_sections —
     # Popular (fixed order) first, then Cloud/Local alphabetical, custom/
     # legacy alias keys under Other, empty sections dropped.
     sections = ProviderStep._grouped_sections(entries)
     titles = [title for title, _ in sections]
-    assert titles == ["Popular", "Other"]
+    assert titles == ["Popular", "Cloud", "Local", "Other"]
     popular_keys = [e.readiness_key for e in dict(sections)["Popular"]]
     assert popular_keys == ["openai", "anthropic", "ollama"]
+    assert [e.readiness_key for e in dict(sections)["Cloud"]] == ["groq"]
+    assert [e.readiness_key for e in dict(sections)["Local"]] == ["vllm"]
     assert [e.readiness_key for e in dict(sections)["Other"]] == ["local_llamacpp"]
+
+    options = _provider_options(entries)
+    headings = [
+        option
+        for option in options
+        if isinstance(option, ProviderChoiceOption)
+        and option.provider_key is None
+    ]
+    assert [option.id for option in headings] == [
+        "group-popular",
+        "group-cloud",
+        "group-local",
+        "group-other",
+    ]
+    assert all(option.disabled for option in headings)
+    assert _provider_group_option_id("Custom Provider Group") == (
+        "group-custom-provider-group"
+    )
 
 
 @pytest.mark.asyncio
@@ -515,9 +583,9 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_tab_from_radio_reaches_key_input_before_detected_button():
+async def test_provider_step_tab_from_list_reaches_key_input_before_detected_button():
     """TASK-1496: with a discovered local server (the "Use this server"
-    Button unhidden), Tab from the provider RadioSet must reach the API-key
+    Button unhidden), Tab from the provider OptionList must reach the API-key
     Input BEFORE that Button. Textual's focus chain follows DOM/compose()
     order, and before this fix the detected-server banner+Button sat ahead
     of the key Input in that order (unhidden the instant discovery
@@ -543,16 +611,16 @@ async def test_provider_step_tab_from_radio_reaches_key_input_before_detected_bu
         use_button = step.query_one("#setup-provider-use-detected", Button)
         assert "hidden" not in use_button.classes  # sanity: discovery landed
 
-        radio_set = step.query_one("#setup-provider-choice", RadioSet)
-        radio_set.focus()
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        choices.focus()
         await pilot.pause(0.1)
-        assert app.focused is radio_set  # sanity: focus starts on the radio list
+        assert app.focused is choices  # sanity: focus starts on the provider list
 
         await pilot.press("tab")
         await pilot.pause(0.1)
         key_input = step.query_one("#setup-provider-key-input", Input)
         assert app.focused is key_input, (
-            f"Tab from the radio list landed on {app.focused!r}, not the key "
+            f"Tab from the provider list landed on {app.focused!r}, not the key "
             "Input -- a discovered server must not steal focus ahead of it"
         )
 
@@ -2028,8 +2096,8 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
         _assert_focus_on_current_step_content()
         provider_step = container.steps[container.current_step]
         assert isinstance(provider_step, ProviderStep)
-        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
-        assert app.focused is radio_set  # the auto-focus landed here, no Tab needed
+        choices = provider_step.query_one("#setup-provider-choice", OptionList)
+        assert app.focused is choices  # the auto-focus landed here, no Tab needed
 
         await pilot.press("ctrl+n")  # Provider -> Model
         await pilot.pause(0.2)
@@ -2068,7 +2136,7 @@ async def test_down_space_selects_provider_with_no_tab_presses():
     F-B focus fix parked focus on the nav bar's Next button after every step
     change, so Down/Space (RadioSet-only bindings) landed on the wrong
     widget and silently selected nothing -- reproducing F-A's "no provider
-    commit" symptom purely through keyboard navigation, no click/RadioSet
+    commit" symptom purely through keyboard navigation, no click/OptionList
     stub involved."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
@@ -2082,14 +2150,13 @@ async def test_down_space_selects_provider_with_no_tab_presses():
         await pilot.pause(0.2)
         provider_step = container.steps[container.current_step]
         assert isinstance(provider_step, ProviderStep)
-        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
-        assert app.focused is radio_set  # sanity: no Tab needed to reach it
+        choices = provider_step.query_one("#setup-provider-choice", OptionList)
+        assert app.focused is choices  # sanity: no Tab needed to reach it
 
         await pilot.press("down")
         await pilot.press("space")
         await pilot.pause(0.2)
 
-        assert radio_set.pressed_button is not None
         assert provider_step.selected_provider_key != ""
 
 
@@ -2741,31 +2808,39 @@ class TestThemePickerShortlist:
 @pytest.mark.asyncio
 async def test_provider_list_grouped_popular_first_with_pinned_discovery():
     """TASK-1498: section headers, popular-first order, banner above list."""
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupRadioButton
-
     step = _provider_step()
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        radio_set = step.query_one("#setup-provider-choice", RadioSet)
-        headers = [str(h.render()) for h in radio_set.query(".setup-choice-header")]
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        options = [
+            choices.get_option_at_index(index)
+            for index in range(choices.option_count)
+        ]
+        headers = [str(option.prompt) for option in options if option.disabled]
         assert headers[0] == "Popular"
         assert "Cloud" in headers and "Local" in headers
         first_keys = [
-            (b.id or "").removeprefix("setup-provider-")
-            for b in radio_set.query(SetupRadioButton)
+            option.provider_key
+            for option in options
+            if getattr(option, "provider_key", None) is not None
         ][:4]
         assert first_keys[0] == "openai"
         assert "anthropic" in first_keys
-        # Radios still function with headers interleaved.
-        target = radio_set.query_one("#setup-provider-anthropic", SetupRadioButton)
-        target.value = True
+        # Provider rows still function with disabled headers interleaved.
+        choices.highlighted = next(
+            index
+            for index in range(choices.option_count)
+            if getattr(
+                choices.get_option_at_index(index), "provider_key", None
+            ) == "anthropic"
+        )
         await pilot.pause()
         assert step.selected_provider_key == "anthropic"
         # The discovery banner sits ABOVE the list in DOM order.
         banner = step.query_one("#setup-provider-detected")
         siblings = list(banner.parent.children)
-        assert siblings.index(banner) < siblings.index(radio_set)
+        assert siblings.index(banner) < siblings.index(choices)
 
 
 @pytest.mark.asyncio
@@ -2823,7 +2898,7 @@ async def test_key_hints_footer_and_test_button_probe():
 @pytest.mark.asyncio
 async def test_provider_reentry_with_visible_discovery_button_focuses_list():
     """Review finding: after discovery unhides the pinned button, re-entering
-    Provider must still focus the RadioSet, not the earlier-in-DOM button."""
+    Provider must still focus the OptionList, not the earlier-in-DOM button."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -2850,8 +2925,8 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         await pilot.pause(0.2)
         await pilot.press("ctrl+b")  # back to Provider (re-entry)
         await pilot.pause(0.2)
-        radio_set = provider_step.query_one("#setup-provider-choice", RadioSet)
-        assert app.focused is radio_set, f"focus stole by {app.focused!r}"
+        choices = provider_step.query_one("#setup-provider-choice", OptionList)
+        assert app.focused is choices, f"focus stole by {app.focused!r}"
 
 
 class TestComposeCrashPolicy:
