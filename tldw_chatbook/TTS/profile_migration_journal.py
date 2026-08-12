@@ -106,19 +106,23 @@ class ProfileMigrationJournalSlot:
     ) -> str | None:
         """Return a bounded authority label for one verified namespace object."""
 
-        if self.matches_candidate(
+        candidate_matches = self.matches_candidate(
             identity,
             byte_length=byte_length,
             sha256_digest=sha256_digest,
             schema_version=schema_version,
-        ):
+        )
+        prior_matches = self.matches_prior(
+            identity,
+            byte_length=byte_length,
+            sha256_digest=sha256_digest,
+            schema_version=schema_version,
+        )
+        if candidate_matches and prior_matches:
+            return None
+        if candidate_matches:
             return "candidate"
-        if self.matches_prior(
-            identity,
-            byte_length=byte_length,
-            sha256_digest=sha256_digest,
-            schema_version=schema_version,
-        ):
+        if prior_matches:
             return "prior"
         return None
 
@@ -251,7 +255,10 @@ def _validate_recovery_rows(
 
 def _validate_authority_evidence(
     rows: tuple[ProfileMigrationJournalSlot, ...],
+    *,
+    parent_dev: int,
 ) -> None:
+    identities: set[tuple[int, int]] = set()
     for row in rows:
         expected_schema = _CANDIDATE_SCHEMA_BY_SLOT[row.slot]
         if (
@@ -265,6 +272,14 @@ def _validate_authority_evidence(
             )
         ):
             raise ValueError
+        evidence = (row._candidate_evidence, row._prior_evidence)
+        for item in evidence:
+            if item is None:
+                continue
+            identity = (item.dev, item.ino)
+            if item.dev != parent_dev or identity in identities:
+                raise ValueError
+            identities.add(identity)
 
 
 def _evidence_payload(evidence: _ArtifactEvidence) -> dict[str, object]:
@@ -366,7 +381,7 @@ def _new_profile_migration_journal_authority(
         tuple(authority_rows),
     )
     _validate_recovery_rows(result.rows)
-    _validate_authority_evidence(result.rows)
+    _validate_authority_evidence(result.rows, parent_dev=result.parent_dev)
     return result
 
 
@@ -544,7 +559,10 @@ def _decode_journal_frame(
         )
     result = tuple(recovery_rows)
     _validate_recovery_rows(result)
-    _validate_authority_evidence(result)
+    _validate_authority_evidence(result, parent_dev=parent["dev"])
+    reconstructed = _JournalAuthority(parent["dev"], parent["ino"], result)
+    if _encode_initial_journal(reconstructed)[0] != frame:
+        raise ValueError
     return phase, result, (parent["dev"], parent["ino"]), checksum
 
 

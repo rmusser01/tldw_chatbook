@@ -75,19 +75,42 @@ def _encoded_journal(
 ) -> bytes:
     identity = tmp_path.stat()
     authority_rows = []
+    next_inode = identity.st_ino + 1
+
+    def unique_identity() -> os.stat_result:
+        nonlocal next_inode
+        result = os.stat_result(
+            (
+                identity.st_mode,
+                next_inode,
+                identity.st_dev,
+                identity.st_nlink,
+                identity.st_uid,
+                identity.st_gid,
+                identity.st_size,
+                identity.st_atime,
+                identity.st_mtime,
+                identity.st_ctime,
+            )
+        )
+        next_inode += 1
+        return result
+
     for row in rows:
         schema_version = {
             module.ProfileMigrationPublicationSlot.ACTIVE: 4,
             module.ProfileMigrationPublicationSlot.PRE_V3: 2,
             module.ProfileMigrationPublicationSlot.PRE_V4: 3,
         }[row.slot]
+        candidate_identity = unique_identity()
+        prior_identity = unique_identity() if row.had_prior else None
         authority_rows.append(
             (
                 row,
-                identity,
+                candidate_identity,
                 (1, b"\x01" * 32),
                 schema_version,
-                identity if row.had_prior else None,
+                prior_identity,
                 (1, b"\x02" * 32) if row.had_prior else None,
                 schema_version if row.had_prior else None,
             )
@@ -473,6 +496,135 @@ def test_canonical_forged_invalid_authority_evidence_fails_boundedly(
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["candidate_prior_same", "cross_row_duplicate", "foreign_device"],
+)
+def test_initial_authority_rejects_duplicate_or_foreign_identities(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=slot.ACTIVE,
+            candidate=".active",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+        module.ProfileMigrationJournalSlot(
+            slot=slot.PRE_V4,
+            candidate=".pre-v4",
+            target="profiles.pre-v4.sqlite3",
+            rollback=".profiles.pre-v4.sqlite3.pre_v4.rollback",
+            had_prior=True,
+        ),
+    )
+    decoded = json.loads(_encoded_journal(module, tmp_path, rows))
+    authority = decoded["recovery"]["authority"]
+    first = authority["slots"][0]
+    second = authority["slots"][1]
+    if mutation == "candidate_prior_same":
+        first["prior_evidence"]["dev"] = first["candidate_evidence"]["dev"]
+        first["prior_evidence"]["ino"] = first["candidate_evidence"]["ino"]
+    elif mutation == "cross_row_duplicate":
+        second["candidate_evidence"]["dev"] = first["candidate_evidence"]["dev"]
+        second["candidate_evidence"]["ino"] = first["candidate_evidence"]["ino"]
+    else:
+        second["candidate_evidence"]["dev"] = authority["parent"]["dev"] + 1
+    recovery = json.dumps(
+        decoded["recovery"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    decoded["checksum"] = sha256(recovery).hexdigest()
+    forged = (
+        json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode("ascii")
+        + b"\n"
+    )
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.parse_profile_migration_journal(forged)
+
+
+def test_classification_rejects_ambiguous_authority_match(tmp_path: Path) -> None:
+    module = _publication_module()
+    journal_module = importlib.import_module(
+        "tldw_chatbook.TTS.profile_migration_journal"
+    )
+    identity = tmp_path.stat()
+    evidence = journal_module._ArtifactEvidence(
+        identity.st_dev,
+        identity.st_ino,
+        1,
+        b"\x01" * 32,
+        4,
+    )
+    row = module.ProfileMigrationJournalSlot(
+        slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+        candidate=".candidate",
+        target="profiles.sqlite3",
+        rollback=".profiles.sqlite3.active.rollback",
+        had_prior=True,
+        _candidate_evidence=evidence,
+        _prior_evidence=evidence,
+    )
+
+    assert (
+        row.classify_artifact(
+            identity,
+            byte_length=1,
+            sha256_digest=b"\x01" * 32,
+            schema_version=4,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("encoding", ["whitespace", "default_json", "uppercase"])
+def test_initial_frame_rejects_noncanonical_bytes(
+    tmp_path: Path,
+    encoding: str,
+) -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    canonical = _encoded_journal(module, tmp_path, rows)
+    decoded = json.loads(canonical)
+    if encoding == "whitespace":
+        malformed = b" " + canonical
+    elif encoding == "default_json":
+        malformed = json.dumps(decoded).encode("ascii") + b"\n"
+    else:
+        decoded["recovery"]["authority"]["slots"][0]["candidate_evidence"]["sha256"] = (
+            "AB" * 32
+        )
+        recovery = json.dumps(
+            decoded["recovery"],
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        decoded["checksum"] = sha256(recovery).hexdigest()
+        malformed = (
+            json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode("ascii")
+            + b"\n"
+        )
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.parse_profile_migration_journal(malformed)
 
 
 def test_journal_authority_encoder_is_not_public() -> None:
