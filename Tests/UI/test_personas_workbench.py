@@ -64,6 +64,7 @@ from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, Shortcu
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
@@ -10066,6 +10067,7 @@ def _character_tts_availability(
     state: str = "available",
     configuration_revision: int = 4,
     catalog_revision: int | None = 8,
+    dependency: TTSProfileDependencyProjection | None = None,
 ) -> TTSProfileAvailabilitySnapshot:
     recovery = {
         "available": "none",
@@ -10081,6 +10083,7 @@ def _character_tts_availability(
                 profile_id=profile.profile_id,
                 state=state,  # type: ignore[arg-type]
                 recovery_action=recovery,  # type: ignore[arg-type]
+                dependency=dependency or TTSProfileDependencyProjection(),
             )
             for profile in page.profiles
         ),
@@ -10094,10 +10097,12 @@ class _CharacterTTSProfileService:
         page: TTSProfilePageSnapshot,
         assigned: LoadedCharacterTTSAssignment,
         availability_state: str = "available",
+        dependency: TTSProfileDependencyProjection | None = None,
     ) -> None:
         self.page = page
         self.assigned = assigned
         self.availability_state = availability_state
+        self.dependency = dependency
         self.assignment_count_value = 1
         self.get_calls: list[CharacterRef] = []
         self.availability_calls: list[TTSProfilePageSnapshot] = []
@@ -10137,6 +10142,7 @@ class _CharacterTTSProfileService:
         return _character_tts_availability(
             page,
             state=self.availability_state,
+            dependency=self.dependency,
         )
 
     async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
@@ -10345,6 +10351,61 @@ async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile(
 
         assert app.actions == []
         assert selector.value == "__global__"
+
+
+async def test_character_tts_widget_renders_and_dispatches_shared_recovery_truth() -> None:
+    profile = _character_tts_profile(1)
+    dependency = TTSProfileDependencyProjection(
+        reason="recipe_mismatch",
+        display="Needs compatible model",
+        action="open_audio_cpp_settings",
+        advisory="recipe_provenance_unavailable",
+        advisory_display="Recipe provenance unavailable",
+        advisory_action="generate_new_profile",
+    )
+    option = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+        dependency=dependency,
+    )
+    app = _CharacterTTSWidgetHost()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(option,),
+                selected_profile_id=profile.profile_id,
+                status="Needs compatible model. Recipe provenance unavailable.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        actions = dependency_recovery_actions(dependency)
+        blocker = widget.query_one(
+            ".personas-character-tts-dependency-primary", Button
+        )
+        advisory = widget.query_one(
+            ".personas-character-tts-dependency-advisory", Button
+        )
+        assert (str(blocker.label), blocker.tooltip) == (
+            actions[0].label,
+            actions[0].tooltip,
+        )
+        assert (str(advisory.label), advisory.tooltip) == (
+            actions[1].label,
+            actions[1].tooltip,
+        )
+
+        blocker.press()
+        advisory.press()
+        await pilot.pause()
+
+        assert [(message.action, message.profile_id) for message in app.actions] == [
+            ("open_audio_cpp_settings", profile.profile_id),
+            ("generate_new_profile", profile.profile_id),
+        ]
 
 
 async def test_character_tts_suggestion_is_guidance_not_assignment() -> None:
@@ -11290,6 +11351,14 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
                 profile=profile,
             ),
         ),
+        dependency=TTSProfileDependencyProjection(
+            reason="recipe_missing",
+            display="Needs compatible model",
+            action="open_audio_cpp_settings",
+            advisory="recipe_provenance_unavailable",
+            advisory_display="Recipe provenance unavailable",
+            advisory_action="generate_new_profile",
+        ),
     )
     _configure_character_tts_app(mock_app_instance, service)
     app = _NavCaptureApp(mock_app_instance)
@@ -11311,6 +11380,50 @@ async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfa
         assert type(preset) is TTSPlaygroundSelectionPreset
         assert preset.model_id == profile.model_id
         assert preset.voice_id == profile.voice_id
+
+        screen.post_message(
+            CharacterTTSActionRequested("open_audio_cpp_settings", profile.profile_id)
+        )
+        await pilot.pause()
+        assert app.nav_routes[-1] == "settings"
+        assert app.nav_contexts[-1]["category"] == "speech-tts"
+
+        screen.post_message(
+            CharacterTTSActionRequested("generate_new_profile", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert app.nav_routes[-1] == "stts"
+        recovery_preset = app.nav_contexts[-1]["profile_preset"]
+        assert type(recovery_preset) is TTSPlaygroundSelectionPreset
+        assert recovery_preset.model_id == profile.model_id
+
+        snapshot = screen._character_tts_snapshot
+        assert snapshot is not None
+        pending = TTSProfileDependencyProjection(
+            reason="recipe_pending_apply",
+            display="Compatible model saved; apply settings",
+            action="open_speech_lab_apply",
+        )
+        screen._character_tts_snapshot = replace(
+            snapshot,
+            availability=tuple(
+                replace(item, dependency=pending) for item in snapshot.availability
+            ),
+        )
+        for operation in ("open_speech_lab_apply",):
+            screen.post_message(
+                CharacterTTSActionRequested(operation, profile.profile_id)
+            )
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            assert app.nav_routes[-1] == "stts"
+            recovery_preset = app.nav_contexts[-1]["profile_preset"]
+            assert type(recovery_preset) is TTSPlaygroundSelectionPreset
+            assert recovery_preset.model_id == profile.model_id
+            assert recovery_preset.voice_id == profile.voice_id
+        assert service.set_calls == []
+        assert service.detach_calls == []
 
         screen.post_message(CharacterTTSActionRequested("create", None))
         await pilot.pause()

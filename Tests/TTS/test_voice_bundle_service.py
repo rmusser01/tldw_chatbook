@@ -9,7 +9,7 @@ import pickle
 import stat
 import struct
 import threading
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -316,6 +316,60 @@ async def test_inspection_narrows_source_and_cleans_private_operation_root(
     assert dependency.calls == 1
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("uuid_conflict", "name_conflict"),
+    ((False, False), (True, False), (False, True), (True, True)),
+)
+async def test_review_exposes_only_safe_collision_booleans(
+    tmp_path: Path,
+    uuid_conflict: bool,
+    name_conflict: bool,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle = _bundle()
+    candidate = command_to_profile(
+        SimpleNamespace(
+            choice="create",
+            source_profile_id=PROFILE_ID,
+            copy_profile_id=None,
+            copy_display_name=None,
+            source_draft=bundle.profile.draft,
+            canonical_reference=bundle.reference,
+            recipe_requirement=bundle.recipe_requirement,
+        )
+    )
+    id_match = (
+        replace(
+            candidate,
+            display_name="CANARY uuid collision",
+            normalized_name="canary uuid collision",
+        )
+        if uuid_conflict
+        else None
+    )
+    name_match = (
+        replace(
+            candidate,
+            profile_id=COPY_ID,
+            display_name="CANARY name collision",
+            normalized_name="canary name collision",
+        )
+        if name_conflict
+        else None
+    )
+    repository.collisions = TTSProfileCollisionSnapshot(id_match, name_match)
+
+    review = await service.inspect(source)
+
+    assert review.uuid_conflict is uuid_conflict
+    assert review.name_conflict is name_conflict
+    assert "CANARY" not in repr(review)
+    await service.close()
 
 
 @pytest.mark.asyncio

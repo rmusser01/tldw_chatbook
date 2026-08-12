@@ -1223,6 +1223,19 @@ TTSVoiceBundleReviewModal {
     margin-bottom: 1;
 }
 
+/* Portable material controls stay visibly inert without stacking the generic
+ * whole-widget fade, Textual's disabled ink and the app's disabled token.
+ * The neutral surface carries state; the label remains readable at the
+ * product's 3:1 disabled-control floor in every bundled theme. */
+.stts-portability-dialog .stts-portability-actions Button:disabled,
+STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+}
+
 .stts-portability-actions Button:focus,
 .stts-portability-dialog Checkbox:focus,
 .stts-portability-dialog Select:focus,

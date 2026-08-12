@@ -38,6 +38,9 @@ CharacterTTSAction = Literal[
     "edit",
     "remove",
     "dismiss_suggestion",
+    "open_audio_cpp_settings",
+    "open_speech_lab_apply",
+    "generate_new_profile",
 ]
 
 
@@ -56,11 +59,21 @@ class CharacterTTSActionRequested(Message):
             "edit",
             "remove",
             "dismiss_suggestion",
+            "open_audio_cpp_settings",
+            "open_speech_lab_apply",
+            "generate_new_profile",
         }:
             raise ValueError("invalid character TTS action")
         if profile_id is not None and type(profile_id) is not UUID:
             raise TypeError("profile_id must be a UUID")
-        if action in {"preview", "edit", "remove"} and profile_id is None:
+        if action in {
+            "preview",
+            "edit",
+            "remove",
+            "open_audio_cpp_settings",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        } and profile_id is None:
             raise ValueError("profile action requires profile_id")
         if action in {"create", "dismiss_suggestion"} and profile_id is not None:
             raise ValueError(f"{action} does not accept profile_id")

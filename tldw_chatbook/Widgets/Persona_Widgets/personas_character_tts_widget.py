@@ -16,6 +16,7 @@ from ...TTS.profile_service import (
     ProfileRecoveryAction,
     TTSProfileDependencyProjection,
 )
+from ...UI.tts_profile_recovery import dependency_recovery_actions
 from .personas_pane_messages import CharacterTTSAction, CharacterTTSActionRequested
 
 _GLOBAL_PROFILE_VALUE = "__global__"
@@ -262,6 +263,22 @@ class PersonasCharacterTTSWidget(Container):
                     disabled=True,
                     tooltip="Dismiss the saved Voice Profile suggestion.",
                 )
+                yield Button(
+                    "Recovery",
+                    classes=(
+                        "console-action-subdued "
+                        "personas-character-tts-dependency-primary hidden"
+                    ),
+                    disabled=True,
+                )
+                yield Button(
+                    "Recovery",
+                    classes=(
+                        "console-action-subdued "
+                        "personas-character-tts-dependency-advisory hidden"
+                    ),
+                    disabled=True,
+                )
 
     def apply_state(self, state: CharacterTTSPresentationState) -> None:
         """Render one immutable screen-owned presentation snapshot."""
@@ -351,6 +368,22 @@ class PersonasCharacterTTSWidget(Container):
         dismiss.set_class(not has_suggestion, "hidden")
         dismiss.display = has_suggestion
         dismiss.disabled = not has_suggestion
+        recovery_actions = (
+            () if selected is None else dependency_recovery_actions(selected.dependency)
+        )
+        actions_by_role = {action.role: action for action in recovery_actions}
+        for role, selector in (
+            ("blocker", ".personas-character-tts-dependency-primary"),
+            ("advisory", ".personas-character-tts-dependency-advisory"),
+        ):
+            button = self.query_one(selector, Button)
+            action = actions_by_role.get(role)
+            visible = action is not None and not has_suggestion
+            button.set_class(not visible, "hidden")
+            button.display = visible
+            button.disabled = not (visible and state.controls_enabled)
+            button.label = "Recovery" if action is None else action.label
+            button.tooltip = None if action is None else action.tooltip
 
     def _restore_selected_value(self) -> None:
         selector = self.query_one(".personas-character-tts-profile", Select)
@@ -405,6 +438,37 @@ class PersonasCharacterTTSWidget(Container):
             return
         profile_id = self._state.selected_profile_id
         if profile_id is None:
+            return
+        selected = next(
+            (
+                option
+                for option in self._state.profiles
+                if option.profile_id == profile_id
+            ),
+            None,
+        )
+        if button.has_class("personas-character-tts-dependency-primary"):
+            role = "blocker"
+        elif button.has_class("personas-character-tts-dependency-advisory"):
+            role = "advisory"
+        else:
+            role = None
+        if role is not None:
+            if selected is None:
+                return
+            projected = next(
+                (
+                    action
+                    for action in dependency_recovery_actions(selected.dependency)
+                    if action.role == role
+                ),
+                None,
+            )
+            if projected is None:
+                return
+            self.post_message(
+                CharacterTTSActionRequested(projected.operation, profile_id)
+            )
             return
         if button.has_class("personas-character-tts-preview"):
             action: CharacterTTSAction = "preview"

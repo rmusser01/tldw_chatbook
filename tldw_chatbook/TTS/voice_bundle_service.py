@@ -167,6 +167,12 @@ class TTSVoiceBundleReview:
     copy_profile_id: UUID | None
     copy_profile_name: str | None
     exact_private_duplicate: bool
+    uuid_conflict: bool = False
+    name_conflict: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.uuid_conflict) is not bool or type(self.name_conflict) is not bool:
+            raise TTSVoiceBundleError("operation_failed")
 
     def __repr__(self) -> str:
         return "TTSVoiceBundleReview(<safe facts>)"
@@ -236,6 +242,8 @@ class _ReviewEvidence:
             review.copy_profile_id,
             review.copy_profile_name,
             review.exact_private_duplicate,
+            review.uuid_conflict,
+            review.name_conflict,
             self.repository_generation,
             self.dependency_revision,
             self.source_collisions,
@@ -1287,6 +1295,8 @@ class TTSVoiceBundlePortabilityService:
                 copy_profile_id=evidence.review.copy_profile_id,
                 copy_profile_name=evidence.review.copy_profile_name,
                 exact_private_duplicate=evidence.review.exact_private_duplicate,
+                uuid_conflict=evidence.review.uuid_conflict,
+                name_conflict=evidence.review.name_conflict,
             )
             final_evidence = _ReviewEvidence(
                 review=review,
@@ -1357,6 +1367,8 @@ class TTSVoiceBundlePortabilityService:
             copy_profile_id=copy_profile_id,
             copy_profile_name=copy_name,
             exact_private_duplicate=exact_duplicate,
+            uuid_conflict=collisions.profile_id_match is not None,
+            name_conflict=collisions.normalized_name_match is not None,
         )
         return _ReviewEvidence(
             review=review,

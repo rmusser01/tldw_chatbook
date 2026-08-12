@@ -161,6 +161,12 @@ from ..stts_profile_library import (
     TTSProfileEditorModal,
     profile_action_error_copy,
 )
+from ..tts_profile_recovery import dependency_recovery_actions
+from ..Speech.speech_runtime_status import speech_tts_navigation_context
+from ..Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
 from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryAttachRequested,
     DictionaryDetachRequested,
@@ -2345,6 +2351,35 @@ class PersonasScreen(BaseAppScreen):
         if message.action == "create":
             self._navigate_to_speech()
             return
+        if message.action in {
+            "open_audio_cpp_settings",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
+            if message.profile_id is None:
+                return
+            tokens = self._character_tts_profile_tokens(snapshot, message.profile_id)
+            if tokens is None or message.action not in {
+                action.operation
+                for action in dependency_recovery_actions(tokens[1].dependency)
+            }:
+                return
+        if message.action == "open_audio_cpp_settings":
+            self.app.post_message(
+                NavigateToScreen(
+                    "settings",
+                    {
+                        "category": "speech-tts",
+                        **speech_tts_navigation_context(
+                            SpeechTTSNavigationTarget(
+                                "audio_cpp",
+                                SpeechTTSNavigationIntent.CONFIGURE,
+                            )
+                        ),
+                    },
+                )
+            )
+            return
         if message.action in {"assign", "remove"}:
             if message.action == "assign":
                 self._clear_character_tts_profile_suggestion()
@@ -2361,7 +2396,11 @@ class PersonasScreen(BaseAppScreen):
             return
         if message.profile_id is None:
             return
-        if message.action == "preview":
+        if message.action in {
+            "preview",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
             self.run_worker(
                 self._character_tts_preview_worker(
                     message.profile_id,

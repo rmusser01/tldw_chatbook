@@ -60,6 +60,18 @@ from tldw_chatbook.TTS.profile_portability import (
     portable_profile_json,
 )
 from tldw_chatbook.TTS.profile_types import PROFILE_PROVIDER_REQUIRES_EXACT_VOICE
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    speech_tts_navigation_context,
+)
+from tldw_chatbook.UI.Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
+from tldw_chatbook.UI.tts_profile_recovery import (
+    TTSProfileDependencyActionProjection,
+    dependency_recovery_actions,
+)
 from tldw_chatbook.Utils.input_validation import validate_text_input
 
 PROFILE_PAGE_SIZE = 50
@@ -280,6 +292,55 @@ class VoiceBundleActionProjection:
 class VoiceBundleReviewDecision:
     choice: Literal["create", "reuse", "copy"]
     inactive_consent: bool
+
+
+def voice_bundle_export_actions(
+    *,
+    bundle_disabled: bool,
+    bundle_recovery: str | None,
+) -> tuple[VoiceBundleActionProjection, VoiceBundleActionProjection]:
+    """Project both export choices from one immutable source of truth."""
+
+    sanitized = VoiceBundleActionProjection(
+        operation="sanitized_export",
+        label="Export sanitized profile",
+        tooltip="Export profile settings without voice audio or transcript.",
+        disabled=False,
+    )
+    bundle = VoiceBundleActionProjection(
+        operation="bundle_export",
+        label="Export portable voice bundle",
+        tooltip=(
+            bundle_recovery
+            or "Export plaintext voice audio and transcript."
+        ),
+        disabled=bundle_disabled,
+        recovery=bundle_recovery,
+    )
+    return sanitized, bundle
+
+
+def voice_bundle_import_choice(
+    action: VoiceBundleActionProjection,
+    *,
+    inactive_consent: bool,
+) -> TTSVoiceBundleImportChoice:
+    """Translate only an enabled projected import operation for the service."""
+
+    choices: dict[
+        str, Literal["create", "reuse", "copy"]
+    ] = {
+        "import_create": "create",
+        "import_reuse": "reuse",
+        "import_copy": "copy",
+    }
+    choice = choices.get(action.operation)
+    if action.disabled or choice is None:
+        raise ValueError("action is not an enabled import operation")
+    return TTSVoiceBundleImportChoice(
+        choice=choice,
+        inactive_consent=inactive_consent,
+    )
 
 
 def voice_bundle_review_action(
@@ -909,13 +970,22 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
             self.dismiss(True)
 
 
-class TTSProfileExportChoiceModal(ModalScreen[Literal["sanitized", "bundle"] | None]):
+class TTSProfileExportChoiceModal(ModalScreen[VoiceBundleActionProjection | None]):
     """Keep sanitized JSON the default while exposing explicit bundle export."""
 
     BINDINGS = (("escape", "dismiss(None)", "Cancel"),)
 
-    def __init__(self, bundle_action: VoiceBundleActionProjection) -> None:
+    def __init__(
+        self,
+        sanitized_action: VoiceBundleActionProjection,
+        bundle_action: VoiceBundleActionProjection,
+    ) -> None:
         super().__init__()
+        if sanitized_action.operation != "sanitized_export":
+            raise ValueError("sanitized action has the wrong operation")
+        if bundle_action.operation != "bundle_export":
+            raise ValueError("bundle action has the wrong operation")
+        self.sanitized_action = sanitized_action
         self.bundle_action = bundle_action
 
     def compose(self) -> ComposeResult:
@@ -928,11 +998,14 @@ class TTSProfileExportChoiceModal(ModalScreen[Literal["sanitized", "bundle"] | N
             )
             with Horizontal(classes="stts-portability-actions"):
                 yield Button("Cancel", id="stts-export-choice-cancel")
-                yield Button(
-                    "Export sanitized profile",
+                sanitized = Button(
+                    self.sanitized_action.label,
                     id="stts-export-choice-sanitized",
                     variant="primary",
+                    disabled=self.sanitized_action.disabled,
                 )
+                sanitized.tooltip = self.sanitized_action.tooltip
+                yield sanitized
                 bundle = Button(
                     self.bundle_action.label,
                     id="stts-export-choice-bundle",
@@ -958,13 +1031,14 @@ class TTSProfileExportChoiceModal(ModalScreen[Literal["sanitized", "bundle"] | N
     @on(Button.Pressed, "#stts-export-choice-sanitized")
     def _sanitized(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss("sanitized")
+        if not self.sanitized_action.disabled:
+            self.dismiss(self.sanitized_action)
 
     @on(Button.Pressed, "#stts-export-choice-bundle")
     def _bundle(self, event: Button.Pressed) -> None:
         event.stop()
         if not self.bundle_action.disabled:
-            self.dismiss("bundle")
+            self.dismiss(self.bundle_action)
 
 
 class TTSVoiceBundleConsentModal(ModalScreen[bool]):
@@ -1041,6 +1115,8 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
             f"Provider / model: {review.provider_id} / {review.model_id}\n"
             f"Recipe: {review.recipe_id} revision {review.recipe_revision}\n"
             f"Dependency: {review.dependency_state.replace('_', ' ')}\n"
+            f"UUID conflict: {'yes' if review.uuid_conflict else 'no'}\n"
+            f"Name conflict: {'yes' if review.name_conflict else 'no'}\n"
             f"Exact private duplicate: {'yes' if review.exact_private_duplicate else 'no'}"
         )
         if review.copy_profile_id is not None and review.copy_profile_name is not None:
@@ -1078,8 +1154,8 @@ class TTSVoiceBundleReviewModal(ModalScreen[VoiceBundleReviewDecision | None]):
             )
             yield Static("", id="stts-bundle-review-recovery", classes="stts-portability-recovery")
             with Horizontal(classes="stts-portability-actions"):
-                yield Button("Cancel", id="stts-bundle-review-cancel")
                 yield Button("Confirm", id="stts-bundle-review-confirm", variant="primary")
+                yield Button("Cancel", id="stts-bundle-review-cancel")
 
     def on_mount(self) -> None:
         self._sync_action()
@@ -1216,7 +1292,7 @@ class STTSProfileLibrary(Widget):
 
     #stts-profile-status {
         height: auto;
-        max-height: 5;
+        max-height: 6;
         background: $panel;
         border: round $surface-lighten-1;
         color: $text;
@@ -1247,6 +1323,23 @@ class STTSProfileLibrary(Widget):
         background: $panel;
         color: $text;
         scrollbar-size-horizontal: 0;
+    }
+
+    #stts-profile-dependency-actions {
+        display: none;
+        width: 100%;
+        height: 1;
+        min-height: 1;
+    }
+
+    #stts-profile-dependency-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+        margin-right: 1;
     }
 
     #stts-profile-actions {
@@ -1293,6 +1386,9 @@ class STTSProfileLibrary(Widget):
             else bundle_platform_supported
         )
         self._active_bundle_handle: TTSVoiceBundleHandle | None = None
+        self._bundle_invalidation_tasks: dict[
+            TTSVoiceBundleHandle, asyncio.Task[None]
+        ] = {}
         self._portability_request_id = 0
         self._service: _ProfileService | None = None
         self._live = False
@@ -1355,6 +1451,19 @@ class STTSProfileLibrary(Widget):
                 show_line_numbers=False,
                 compact=True,
             )
+            with Horizontal(id="stts-profile-dependency-actions", classes="hidden"):
+                yield Button(
+                    "Recovery",
+                    id="stts-profile-dependency-primary-btn",
+                    classes="hidden",
+                    disabled=True,
+                )
+                yield Button(
+                    "Recovery",
+                    id="stts-profile-dependency-advisory-btn",
+                    classes="hidden",
+                    disabled=True,
+                )
         with Horizontal(id="stts-profile-actions"):
             yield Button(
                 "Preview",
@@ -1814,6 +1923,29 @@ class STTSProfileLibrary(Widget):
             self.query_one("#stts-profile-table", DataTable).focus()
         identifiers.display = False
         identifiers.load_text("")
+        self._render_dependency_actions(())
+
+    def _render_dependency_actions(
+        self,
+        actions: tuple[TTSProfileDependencyActionProjection, ...],
+    ) -> None:
+        """Render blocker then advisory from their immutable projections."""
+
+        actions_by_role = {action.role: action for action in actions}
+        container = self.query_one("#stts-profile-dependency-actions", Horizontal)
+        container.display = bool(actions)
+        container.set_class(not actions, "hidden")
+        for role, selector in (
+            ("blocker", "#stts-profile-dependency-primary-btn"),
+            ("advisory", "#stts-profile-dependency-advisory-btn"),
+        ):
+            button = self.query_one(selector, Button)
+            action = actions_by_role.get(role)
+            button.display = action is not None
+            button.set_class(action is None, "hidden")
+            button.disabled = action is None
+            button.label = "Recovery" if action is None else action.label
+            button.tooltip = None if action is None else action.tooltip
 
     def _sync_selected_actions(self) -> None:
         disabled = (
@@ -1915,6 +2047,11 @@ class STTSProfileLibrary(Widget):
                 "Preview or generate the voice, save it as a new profile, then "
                 "reassign or remove the old profile."
             )
+        self._render_dependency_actions(
+            ()
+            if availability is None
+            else dependency_recovery_actions(availability.dependency)
+        )
         status = self.query_one("#stts-profile-status-copy", Static)
         status.add_class("selected-detail")
         status.update(Text(f"{status_line}\nSelected: {profile.display_name}"))
@@ -2238,12 +2375,29 @@ class STTSProfileLibrary(Widget):
         service = self._voice_bundle_service
         if service is None:
             return
+        task = self._bundle_invalidation_tasks.get(handle)
+        if task is None:
+            task = asyncio.create_task(
+                service.invalidate(handle),
+                name="invalidate_tts_voice_bundle_review",
+            )
+            self._bundle_invalidation_tasks[handle] = task
+        cancellation: asyncio.CancelledError | None = None
         try:
-            await service.invalidate(handle)
-        except asyncio.CancelledError:
-            raise
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            cancellation = error
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
         except Exception:  # noqa: BLE001 - invalidation is best-effort cleanup
             return
+        if cancellation is not None:
+            raise cancellation
 
     async def _choose_voice_bundle_export_path(self) -> Path | None:
         from tldw_chatbook.Third_Party.textual_fspicker import Filters
@@ -2303,7 +2457,9 @@ class STTSProfileLibrary(Widget):
         if loaded is None or not self._action_target_is_current(loaded):
             return False
         profile = loaded.profile
-        export_mode: Literal["sanitized", "bundle"] = "sanitized"
+        operation: Literal["sanitized_export", "bundle_export"] = (
+            "sanitized_export"
+        )
         reference = profile.reference
         if reference is not None:
             bundle_disabled = not self._bundle_platform_supported
@@ -2311,21 +2467,17 @@ class STTSProfileLibrary(Widget):
             if reference.recipe_requirement is None:
                 bundle_disabled = True
                 recovery = PROFILE_BUNDLE_MIGRATED_COPY
-            choice = await self._push_owned_modal(
-                TTSProfileExportChoiceModal(
-                    VoiceBundleActionProjection(
-                        operation="bundle_export",
-                        label="Export portable voice bundle",
-                        tooltip=recovery or "Export plaintext voice audio and transcript.",
-                        disabled=bundle_disabled,
-                        recovery=recovery,
-                    )
-                )
+            sanitized_action, bundle_action = voice_bundle_export_actions(
+                bundle_disabled=bundle_disabled,
+                bundle_recovery=recovery,
             )
-            if choice not in {"sanitized", "bundle"}:
+            choice = await self._push_owned_modal(
+                TTSProfileExportChoiceModal(sanitized_action, bundle_action)
+            )
+            if type(choice) is not VoiceBundleActionProjection or choice.disabled:
                 return False
-            export_mode = cast(Literal["sanitized", "bundle"], choice)
-        if export_mode == "bundle":
+            operation = choice.operation
+        if operation == "bundle_export":
             return await self._export_selected_voice_bundle(loaded)
         try:
             content = portable_profile_json(
@@ -2414,66 +2566,63 @@ class STTSProfileLibrary(Widget):
         if not self._portability_request_is_current(request_id):
             await self._invalidate_bundle_handle(review.handle)
             return False
-        self._active_bundle_handle = review.handle
-        while self._portability_request_is_current(request_id):
-            try:
+        owned_handle: TTSVoiceBundleHandle | None = review.handle
+        self._active_bundle_handle = owned_handle
+        try:
+            while self._portability_request_is_current(request_id):
                 decision = await self._push_owned_modal(
                     TTSVoiceBundleReviewModal(review)
                 )
-            except asyncio.CancelledError:
-                await asyncio.shield(self._invalidate_bundle_handle(review.handle))
-                if self._active_bundle_handle is review.handle:
-                    self._active_bundle_handle = None
-                raise
-            if type(decision) is not VoiceBundleReviewDecision:
-                await self._invalidate_bundle_handle(review.handle)
-                if self._active_bundle_handle is review.handle:
-                    self._active_bundle_handle = None
-                return False
-            action = voice_bundle_review_action(
-                review,
-                decision.choice,
-                inactive_consent=decision.inactive_consent,
-            )
-            if action.disabled:
-                continue
-            try:
-                result = await service.commit(
-                    review.handle,
-                    TTSVoiceBundleImportChoice(
-                        choice=cast(
-                            Literal["create", "reuse", "copy"],
-                            action.operation.removeprefix("import_"),
-                        ),
-                        inactive_consent=decision.inactive_consent,
-                    ),
+                if type(decision) is not VoiceBundleReviewDecision:
+                    return False
+                action = voice_bundle_review_action(
+                    review,
+                    decision.choice,
+                    inactive_consent=decision.inactive_consent,
                 )
-            except asyncio.CancelledError:
-                await asyncio.shield(self._invalidate_bundle_handle(review.handle))
-                if self._active_bundle_handle is review.handle:
-                    self._active_bundle_handle = None
-                raise
-            except Exception:  # noqa: BLE001 - no exception-owned values in UI
-                self._active_bundle_handle = None
-                self._set_status(PROFILE_ACTION_FAILED_COPY)
-                return False
-            if not self._portability_request_is_current(request_id):
+                if action.disabled:
+                    continue
+                try:
+                    result = await service.commit(
+                        review.handle,
+                        voice_bundle_import_choice(
+                            action,
+                            inactive_consent=decision.inactive_consent,
+                        ),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - no exception-owned values in UI
+                    self._set_status(PROFILE_ACTION_FAILED_COPY)
+                    return False
+                finally:
+                    if self._active_bundle_handle is owned_handle:
+                        self._active_bundle_handle = None
+                    # commit() owns and consumes its input handle on every
+                    # terminal result, including a replacement review.
+                    owned_handle = None
                 successor = result.review
                 if successor is not None:
-                    await self._invalidate_bundle_handle(successor.handle)
-                return False
-            if result.status == "stale_inspection" and result.review is not None:
-                review = result.review
-                self._active_bundle_handle = review.handle
-                self._set_status(
-                    "The bundle or profile store changed. Review the updated facts and confirm again."
-                )
-                continue
-            self._active_bundle_handle = None
-            self._set_status(PROFILE_BUNDLE_IMPORT_COMPLETE_COPY)
-            self._queue_page_request(self._search, self._offset)
-            return True
-        return False
+                    review = successor
+                    owned_handle = successor.handle
+                    self._active_bundle_handle = owned_handle
+                if not self._portability_request_is_current(request_id):
+                    return False
+                if result.status == "stale_inspection" and successor is not None:
+                    self._set_status(
+                        "The bundle or profile store changed. Review the updated facts and confirm again."
+                    )
+                    continue
+                self._set_status(PROFILE_BUNDLE_IMPORT_COMPLETE_COPY)
+                self._queue_page_request(self._search, self._offset)
+                return True
+            return False
+        finally:
+            handle = owned_handle
+            if handle is not None:
+                if self._active_bundle_handle is handle:
+                    self._active_bundle_handle = None
+                await self._invalidate_bundle_handle(handle)
 
     def _portability_request_is_current(self, request_id: int) -> bool:
         return self._live and request_id == self._portability_request_id
@@ -2549,6 +2698,51 @@ class STTSProfileLibrary(Widget):
             self._set_status(PROFILE_ACTION_FAILED_COPY)
             return
         self.post_message(ProfilePreviewRequested(preset))
+
+    @on(
+        Button.Pressed,
+        "#stts-profile-dependency-primary-btn, #stts-profile-dependency-advisory-btn",
+    )
+    def _handle_dependency_recovery(self, event: Button.Pressed) -> None:
+        """Execute only the operation projected for the selected fresh row."""
+
+        event.stop()
+        loaded = self._selected_profile
+        if loaded is None or not self._action_target_is_current(loaded):
+            return
+        availability = self._row_availability.get(str(loaded.profile.profile_id))
+        if availability is None:
+            return
+        actions = dependency_recovery_actions(availability.dependency)
+        role = (
+            "advisory"
+            if event.button.id == "stts-profile-dependency-advisory-btn"
+            else "blocker"
+        )
+        action = next((item for item in actions if item.role == role), None)
+        if action is None:
+            return
+        operation = action.operation
+        if operation == "open_audio_cpp_settings":
+            self.app.post_message(
+                NavigateToScreen(
+                    "settings",
+                    {
+                        "category": "speech-tts",
+                        **speech_tts_navigation_context(
+                            SpeechTTSNavigationTarget(
+                                "audio_cpp",
+                                SpeechTTSNavigationIntent.CONFIGURE,
+                            )
+                        ),
+                    },
+                )
+            )
+            return
+        # Applying saved settings and migrating a null-provenance reference
+        # both require the exact selected voice in Speech Lab. Reuse the
+        # existing preview seam; neither action changes assignments/defaults.
+        self._handle_preview(event)
 
     @on(Button.Pressed, "#stts-profile-edit-btn")
     def _handle_edit(self, event: Button.Pressed) -> None:
