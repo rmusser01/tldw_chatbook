@@ -6,9 +6,15 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 from typing import TypeAlias
 
 import tldw_chatbook.TTS.profile_schema as _profile_schema
+from tldw_chatbook.DB import private_sqlite as _private_sqlite
+from tldw_chatbook.DB.private_sqlite import (
+    ProfileMigrationBoundaryDestination,
+    backup_profile_migration_boundary,
+)
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
 
@@ -43,38 +49,43 @@ _ProfileDomain: TypeAlias = tuple[
 _ReferenceDomain: TypeAlias = tuple[tuple[object, ...], ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class _BoundaryEvidence:
     schema_version: int
     profile_domain: _ProfileDomain
     reference_domain: _ReferenceDomain
 
-
-@dataclass(slots=True)
-class _SnapshotCapabilityState:
-    snapshot: sqlite3.Connection
-    evidence: _BoundaryEvidence
-    used: bool = False
+    def __repr__(self) -> str:
+        return "_BoundaryEvidence(<private>)"
 
 
 _CAPABILITY_FACTORY_TOKEN = object()
-_CAPABILITY_STATES: dict[object, _SnapshotCapabilityState] = {}
 
 
 class ProfileMigrationBoundarySnapshot:
     """Revocable single-use authority to copy one exact validated boundary."""
 
-    __slots__ = ("__key",)
+    __slots__ = ("__evidence", "__snapshot", "__thread_id", "__used")
 
-    def __init__(self, factory_token: object, key: object) -> None:
+    def __init__(
+        self,
+        factory_token: object,
+        snapshot: sqlite3.Connection,
+        evidence: _BoundaryEvidence,
+    ) -> None:
         if factory_token is not _CAPABILITY_FACTORY_TOKEN:
             raise ProfileRepositoryError("migration_failed")
-        self.__key = key
+        from threading import get_ident
+
+        self.__evidence: _BoundaryEvidence | None = evidence
+        self.__snapshot: sqlite3.Connection | None = snapshot
+        self.__thread_id = get_ident()
+        self.__used = False
 
     def __repr__(self) -> str:
         return "ProfileMigrationBoundarySnapshot()"
 
-    def backup_to(self, destination: sqlite3.Connection) -> None:
+    def backup_to(self, destination: ProfileMigrationBoundaryDestination) -> None:
         """Copy the boundary into one caller-owned empty destination.
 
         Args:
@@ -88,45 +99,40 @@ class ProfileMigrationBoundarySnapshot:
         """
 
         try:
-            state = _CAPABILITY_STATES.get(self.__key)
-            if state is None or state.used:
-                raise ValueError
-            state.used = True
+            from threading import get_ident
+
+            snapshot = self.__snapshot
+            evidence = self.__evidence
             if (
-                not isinstance(destination, sqlite3.Connection)
-                or destination is state.snapshot
-                or destination.in_transaction
+                snapshot is None
+                or evidence is None
+                or self.__used
+                or self.__thread_id != get_ident()
             ):
                 raise ValueError
-            _require_boundary_evidence(state.snapshot, state.evidence)
-            destination.row_factory = sqlite3.Row
-            destination.execute("PRAGMA foreign_keys = ON")
-            database_rows = list(destination.execute("PRAGMA database_list"))
-            version_row = destination.execute("PRAGMA user_version").fetchone()
-            objects_row = destination.execute(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'"
-            ).fetchone()
-            if (
-                len(database_rows) != 1
-                or database_rows[0][1] != "main"
-                or version_row is None
-                or len(version_row) != 1
-                or type(version_row[0]) is not int
-                or version_row[0] != 0
-                or objects_row is None
-                or len(objects_row) != 1
-                or type(objects_row[0]) is not int
-                or objects_row[0] != 0
-            ):
+            self.__used = True
+            if type(destination) is not ProfileMigrationBoundaryDestination:
                 raise ValueError
-            state.snapshot.backup(destination)
-            _require_boundary_evidence(destination, state.evidence)
+            _require_boundary_evidence(snapshot, evidence)
+            backup_profile_migration_boundary(
+                snapshot,
+                destination,
+                schema_version=evidence.schema_version,
+                validate=lambda connection: _require_boundary_evidence(
+                    connection,
+                    evidence,
+                ),
+            )
         except ProfileRepositoryError:
             raise ProfileRepositoryError("migration_failed") from None
         except BaseException as error:
             if not isinstance(error, Exception):
                 raise
             raise ProfileRepositoryError("migration_failed") from None
+
+    def _revoke(self) -> None:
+        self.__snapshot = None
+        self.__evidence = None
 
 
 ProfileMigrationBoundarySink = Callable[
@@ -282,11 +288,34 @@ def _capture_boundary_evidence(
     return _BoundaryEvidence(
         schema_version=version,
         profile_domain=_profile_schema._migration_domain_snapshot(connection),
-        reference_domain=(
-            _profile_schema._migration_reference_snapshot(connection)
-            if version >= 3
-            else ()
-        ),
+        reference_domain=_compact_reference_evidence(connection)
+        if version >= 3
+        else (),
+    )
+
+
+def _compact_reference_evidence(
+    connection: sqlite3.Connection,
+) -> _ReferenceDomain:
+    """Capture exact reference identity/metadata without retaining WAV bytes."""
+
+    return tuple(
+        (
+            row[0],
+            row[1],
+            len(row[2].encode("utf-8")),
+            sha256(row[2].encode("utf-8")).hexdigest(),
+            *tuple(row[3:]),
+        )
+        for row in connection.execute(
+            f"""
+            SELECT profile_id, reference_id, reference_text, sha256,
+                   byte_length, duration_ms, sample_rate_hz, channels,
+                   sample_encoding, created_at, updated_at
+            FROM {_profile_schema._REFERENCE_TABLE}
+            ORDER BY profile_id
+            """
+        )
     )
 
 
@@ -299,7 +328,7 @@ def _require_boundary_evidence(
         _profile_schema._migration_domain_snapshot(connection)
         != evidence.profile_domain
         or (
-            _profile_schema._migration_reference_snapshot(connection)
+            _compact_reference_evidence(connection)
             if evidence.schema_version >= 3
             else ()
         )
@@ -329,6 +358,8 @@ def _run_boundary_callback(
             _emit_boundary(connection, evidence, request, sink)
         except BaseException as error:
             callback_error = error
+    else:
+        callback_error = ValueError()
     try:
         _require_boundary_evidence(connection, evidence)
     except BaseException as error:
@@ -343,26 +374,29 @@ def _emit_boundary(
     sink: ProfileMigrationBoundarySink,
 ) -> None:
     snapshot: sqlite3.Connection | None = None
-    key = object()
+    capability: ProfileMigrationBoundarySnapshot | None = None
     body_error: BaseException | None = None
     validation_error: BaseException | None = None
     close_error: BaseException | None = None
     try:
-        snapshot = sqlite3.connect(":memory:", isolation_level=None)
-        snapshot.row_factory = sqlite3.Row
-        snapshot.execute("PRAGMA foreign_keys = ON")
-        connection.backup(snapshot)
+        snapshot = _private_sqlite._snapshot_connection_to_memory(connection)
         _require_boundary_evidence(snapshot, evidence)
-        _CAPABILITY_STATES[key] = _SnapshotCapabilityState(
-            snapshot=snapshot,
-            evidence=evidence,
+        capability = ProfileMigrationBoundarySnapshot(
+            _CAPABILITY_FACTORY_TOKEN,
+            snapshot,
+            evidence,
         )
-        capability = ProfileMigrationBoundarySnapshot(_CAPABILITY_FACTORY_TOKEN, key)
         sink(capability, request)
+        if not object.__getattribute__(
+            capability,
+            "_ProfileMigrationBoundarySnapshot__used",
+        ):
+            raise ValueError
     except BaseException as error:
         body_error = error
     finally:
-        _CAPABILITY_STATES.pop(key, None)
+        if capability is not None:
+            capability._revoke()
     if snapshot is not None:
         try:
             _require_boundary_evidence(snapshot, evidence)
@@ -419,10 +453,17 @@ def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
         ):
             raise ValueError
         connection.commit()
-    except BaseException:
+    except BaseException as primary_error:
+        rollback_error: BaseException | None = None
         if connection.in_transaction:
-            connection.rollback()
-        raise
+            try:
+                connection.rollback()
+            except BaseException as error:
+                rollback_error = error
+        for pending_error in (primary_error, rollback_error):
+            if pending_error is not None and not isinstance(pending_error, Exception):
+                raise pending_error
+        raise primary_error
 
 
 __all__ = [

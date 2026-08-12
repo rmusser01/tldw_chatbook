@@ -12,6 +12,8 @@ from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.DB.private_sqlite as private_sqlite
+import tldw_chatbook.TTS.profile_migration_candidate as migration_candidate
 import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2, v2_to_v3
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -157,7 +159,7 @@ def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
     result = step_profile_migration_candidate(
         connection,
         boundary_sink=lambda snapshot, request: boundary_rows.append(
-            _candidate_reference_row(snapshot, request)
+            _candidate_reference_row(snapshot, request, tmp_path / "pre-v4.sqlite3")
         ),
     )
 
@@ -180,14 +182,19 @@ def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
 def _candidate_reference_row(
     snapshot: ProfileMigrationBoundarySnapshot,
     request: ProfileMigrationBoundaryRequest,
+    destination_path: Path,
 ) -> tuple[object, ...]:
     assert request == ProfileMigrationBoundaryRequest(
         ProfileMigrationBoundary.PRE_V4,
         3,
     )
-    destination = sqlite3.connect(":memory:")
+    opaque = private_sqlite.open_profile_migration_boundary_destination(
+        destination_path,
+        schema_version=request.schema_version,
+    )
+    snapshot.backup_to(opaque)
+    destination = sqlite3.connect(destination_path)
     try:
-        snapshot.backup_to(destination)
         return tuple(
             destination.execute(
                 f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
@@ -196,6 +203,97 @@ def _candidate_reference_row(
         )
     finally:
         destination.close()
+
+
+def test_boundary_evidence_retains_no_private_blob_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    captured: list[object] = []
+    original_capture = migration_candidate._capture_boundary_evidence
+
+    def capture(candidate: sqlite3.Connection, version: int):
+        evidence = original_capture(candidate, version)
+        captured.append(evidence)
+        return evidence
+
+    migration_candidate._capture_boundary_evidence = capture
+    try:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda snapshot, request: _candidate_reference_row(
+                snapshot,
+                request,
+                tmp_path / "compact.sqlite3",
+            ),
+        )
+    finally:
+        migration_candidate._capture_boundary_evidence = original_capture
+
+    assert captured
+    assert not _nested_contains_bytes(captured[0])
+    assert repr(reference_before[2]) not in repr(captured[0])
+    assert reference_before[3] not in repr(captured[0])
+
+
+def test_boundary_compact_evidence_rejects_isolated_transcript_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    destination_path = tmp_path / "mutated-boundary.sqlite3"
+
+    def mutate_isolated(
+        snapshot: ProfileMigrationBoundarySnapshot,
+        request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        isolated = object.__getattribute__(
+            snapshot,
+            "_ProfileMigrationBoundarySnapshot__snapshot",
+        )
+        assert isinstance(isolated, sqlite3.Connection)
+        isolated.execute(
+            f"UPDATE {REFERENCE_TABLE} SET reference_text = 'Different valid transcript'"
+        )
+        isolated.commit()
+        destination = private_sqlite.open_profile_migration_boundary_destination(
+            destination_path,
+            schema_version=request.schema_version,
+        )
+        with destination:
+            snapshot.backup_to(destination)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection, boundary_sink=mutate_isolated)
+
+    reopened = sqlite3.connect(destination_path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        reopened.close()
+    live = sqlite3.connect(path)
+    try:
+        assert tuple(live.execute(f"SELECT * FROM {REFERENCE_TABLE}").fetchone()) == (
+            reference_before
+        )
+    finally:
+        live.close()
+
+
+def _nested_contains_bytes(value: object) -> bool:
+    if type(value) is bytes:
+        return True
+    if hasattr(value, "__dataclass_fields__"):
+        return any(
+            _nested_contains_bytes(getattr(value, name))
+            for name in value.__dataclass_fields__  # type: ignore[attr-defined]
+        )
+    if isinstance(value, tuple):
+        return any(_nested_contains_bytes(item) for item in value)
+    return False
 
 
 def test_v3_candidate_rejects_corrupt_reference_before_boundary(
@@ -240,7 +338,14 @@ def test_candidate_step_rejects_private_reference_mutation_and_rolls_back(
     monkeypatch.setitem(profile_schema.MIGRATIONS, 3, mutate_reference)
 
     with _safe_error("migration_failed"):
-        step_profile_migration_candidate(connection)
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda snapshot, request: _candidate_reference_row(
+                snapshot,
+                request,
+                tmp_path / "mutated.sqlite3",
+            ),
+        )
 
     reopened = sqlite3.connect(path)
     try:

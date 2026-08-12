@@ -370,6 +370,7 @@ def _dotted_name(expression: ast.expr) -> str | None:
 _PUBLIC_PRIVATE_SQLITE_SEAMS = {
     "backup_connection_to_private",
     "backup_open_connections_to_private",
+    "backup_profile_migration_boundary",
     "connect_private_sqlite",
     "copy_private_sqlite",
     "restore_private_sqlite",
@@ -488,6 +489,8 @@ def _private_sqlite_seam_violations(
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
+        if seam_name == "backup_profile_migration_boundary":
+            continue
         owner_arguments = [(0, "owner_id")]
         if seam_name == "restore_private_sqlite":
             owner_arguments.append((1, "pre_restore_owner_id"))
@@ -577,12 +580,13 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # database for its notes/conversation sub-legs (TASK-3996). C41 is
         # the retained exact-v2 TTS migration source/backup boundary. C42 is
         # the keyword leg's read-only read of the live Prompts database for
-        # its prompts sub-leg (TASK-15020/B2).
+        # its prompts sub-leg (TASK-15020/B2). C43 is the isolated TTS
+        # migration-boundary memory snapshot and opaque private destination.
         f"C{number:02d}"
-        for number in range(1, 43)
+        for number in range(1, 44)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 18)
+        f"B{number:02d}" for number in range(1, 19)
     ]
 
 
@@ -920,7 +924,11 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
         helper = (
             "backup_connection_to_private"
             if row["id"] in {"C13", "C18", "C21"}
-            else "connect_private_sqlite"
+            else (
+                "open_profile_migration_boundary_destination"
+                if row["id"] == "C43"
+                else "connect_private_sqlite"
+            )
         )
         assert row["disposition"].startswith(f"Migrated via `{helper}`.")
     for row in backup_rows:
@@ -976,6 +984,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
         {
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 2,
+            "backup_profile_migration_boundary": 1,
             "copy_private_sqlite": 9,
             "restore_private_sqlite": 2,
         }
@@ -1046,6 +1055,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "backup_connection_to_private",
             ): 1,
             (
+                "tldw_chatbook/TTS/profile_migration_candidate",
+                "ProfileMigrationBoundarySnapshot.backup_to",
+                "backup_profile_migration_boundary",
+            ): 1,
+            (
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._backup_worker",
                 "copy_private_sqlite",
@@ -1074,6 +1088,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             if seam_name in {
                 "backup_connection_to_private",
                 "backup_open_connections_to_private",
+                "backup_profile_migration_boundary",
                 "copy_private_sqlite",
                 "restore_private_sqlite",
             }:

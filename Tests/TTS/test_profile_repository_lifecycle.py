@@ -22,6 +22,7 @@ from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.DB.private_sqlite as private_sqlite
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _raw_migrate_v1_to_v2
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -340,9 +341,17 @@ def test_restore_candidate_uses_path_free_version_stepper_without_touching_activ
     restore.row_factory = sqlite3.Row
     observed: list[ProfileMigrationBoundary] = []
 
+    def consume_boundary(snapshot, request) -> None:
+        observed.append(request.kind)
+        destination = private_sqlite.open_profile_migration_boundary_destination(
+            tmp_path / f"restore-{request.kind.value}.sqlite3",
+            schema_version=request.schema_version,
+        )
+        snapshot.backup_to(destination)
+
     result = step_profile_migration_candidate(
         restore,
-        boundary_sink=lambda _borrowed, request: observed.append(request.kind),
+        boundary_sink=consume_boundary,
     )
 
     assert result.source_version == 1

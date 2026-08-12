@@ -61,6 +61,7 @@ Classifications have these meanings:
 | C40 | tldw_chatbook/RAG_Search/simplified/rag_service | RAGService._connect_chacha_readonly | rag.chachanotes_keyword_leg | read_only_uri | keyword-leg notes/conversation read | Migrated via `connect_private_sqlite`. The hybrid FTS leg reads `notes_fts`/`messages_fts` out of the live ChaChaNotes database (TASK-3996); the seam gives it the same per-component `O_NOFOLLOW` path walk the media sub-leg gets, and a read-only URI so a search can never write to, create, or migrate the user's main database. `preserve_read_only_source_mode` keeps this reader from reasserting permissions on a file `db.chachanotes.primary` owns. |
 | C41 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository v2 migration-backup helpers | tts.profile_migration_backup | private_file, read_only_uri | exact v2 source and retained-backup validation | Migrated via `connect_private_sqlite`. Under the repository's exclusive lease, validate the writable v2 source, a private temporary backup target, and any inert retained backup without exposing their paths. |
 | C42 | tldw_chatbook/RAG_Search/simplified/rag_service | RAGService._connect_prompts_readonly | rag.prompts_keyword_leg | read_only_uri | keyword-leg prompts read | Migrated via `connect_private_sqlite`. The hybrid FTS leg reads `prompts_fts` out of the live Prompts database (TASK-15020/B2) -- the only retrieval path saved prompts have, since nothing indexes them semantically. Same treatment as C40: the seam's per-component `O_NOFOLLOW` path walk, and a read-only URI so a search can never write to, create, or migrate the user's prompts database. `preserve_read_only_source_mode` keeps this reader from reasserting permissions on a file `db.prompts.primary` owns. |
+| C43 | tldw_chatbook/TTS/profile_migration_candidate | ProfileMigrationBoundarySnapshot.backup_to | tts.profile_migration_boundary | private_file, memory | isolated boundary snapshot and future artifact | Migrated via `open_profile_migration_boundary_destination`. The centralized memory snapshot seam supplies exact revocable snapshot authority and an opaque owner-private destination; neither raw connection nor artifact path crosses the public candidate API. |
 
 ## SQLite backup and restore inventory
 
@@ -83,6 +84,7 @@ Classifications have these meanings:
 | B15 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_create_recovery_backup | tts.profile_recovery | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Back up the leased live connection to a private recovery target while retaining per-page deadline checks. |
 | B16 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker fresh-target branch | settings.restore | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. A never-before-created custom restore target has no live database to quiesce or snapshot, so it is copied directly into a fresh private target instead of going through the guarded live-restore path (TASK-927 follow-up). |
 | B17 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_publish_v2_migration_backup | tts.profile_migration_backup | private_file, read_only_uri | backup_open_connections_to_private | Migrated via `backup_open_connections_to_private`. Publish the exact validated v2 source into a private temporary SQLite target before atomically retaining it for downgrade. |
+| B18 | tldw_chatbook/TTS/profile_migration_candidate | ProfileMigrationBoundarySnapshot.backup_to | tts.profile_migration_boundary | private_file, memory | backup_profile_migration_boundary | Migrated via `backup_profile_migration_boundary`. Copy an isolated exact v2/v3 snapshot into one exclusive `0600` destination, recheck identity and validation, normalize journaling, fsync, close, and refuse any raw destination connection. |
 
 Restore retains one exclusive destination connection across the quiescence
 probe, private safety snapshot, final transactional page backup, and
@@ -150,7 +152,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains 39 classified connection sites and sixteen
+The migrated boundary retains 43 classified connection sites and eighteen
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.

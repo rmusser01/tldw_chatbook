@@ -63,6 +63,7 @@ RESTORE_BACKUP_OWNER_IDS = (
     "settings.pre_restore_backup",
     "settings.restore",
 )
+MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
 @pytest.mark.parametrize(
@@ -129,6 +130,7 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
         *COPY_BACKUP_OWNER_IDS,
         *OPEN_CONNECTION_BACKUP_OWNER_IDS,
         *RESTORE_BACKUP_OWNER_IDS,
+        *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
 
     assert exercised_owner_ids == {
@@ -136,6 +138,156 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
         for owner_id, policy in SQLITE_OWNER_REGISTRY.items()
         if policy.centralized_backup_allowed
     }
+
+
+def test_profile_migration_boundary_destination_is_opaque_private_and_exact(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "private-boundary.sqlite3"
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE exact_boundary (value INTEGER NOT NULL)")
+    source.execute("INSERT INTO exact_boundary VALUES (42)")
+    source.execute("PRAGMA user_version = 2")
+    source.commit()
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+
+    assert repr(destination) == "ProfileMigrationBoundaryDestination(<private>)"
+    assert str(target) not in repr(destination)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    private_sqlite.backup_profile_migration_boundary(
+        source,
+        destination,
+        schema_version=2,
+        validate=lambda connection: (
+            connection.execute("SELECT value FROM exact_boundary").fetchone()[0] == 42
+            or pytest.fail("destination validation did not observe exact state")
+        ),
+    )
+    source.close()
+
+    reopened = sqlite3.connect(target)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone() == (2,)
+        assert reopened.execute("SELECT value FROM exact_boundary").fetchone() == (42,)
+    finally:
+        reopened.close()
+    assert not any(Path(f"{target}{suffix}").exists() for suffix in ("-wal", "-shm"))
+
+
+@pytest.mark.parametrize("unsafe_kind", ["symlink", "hardlink", "permissive"])
+def test_profile_migration_boundary_destination_refuses_existing_artifact(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    outside = tmp_path / "outside.sqlite3"
+    outside.write_bytes(b"outside-private-value")
+    if unsafe_kind == "symlink":
+        target.symlink_to(outside)
+    elif unsafe_kind == "hardlink":
+        os.link(outside, target)
+    else:
+        target.write_bytes(b"existing")
+        target.chmod(0o666)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+        private_sqlite.open_profile_migration_boundary_destination(
+            target,
+            schema_version=2,
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert str(target) not in repr(caught.value)
+    assert outside.read_bytes() == b"outside-private-value"
+
+
+def test_profile_migration_boundary_destination_rejects_substitution_before_copy(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    original = tmp_path / "original.sqlite3"
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+    target.rename(original)
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_value (value TEXT)")
+    source.execute("INSERT INTO private_value VALUES ('must-not-copy')")
+    source.commit()
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.backup_profile_migration_boundary(
+            source,
+            destination,
+            schema_version=2,
+            validate=lambda _connection: None,
+        )
+
+    source.close()
+    assert target.read_bytes() == b""
+    reopened = sqlite3.connect(original)
+    try:
+        assert reopened.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name = 'private_value'"
+        ).fetchone() == (0,)
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("unsafe_kind", ["attached", "populated", "transaction"])
+def test_profile_migration_boundary_destination_revalidates_connection_state(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    target = tmp_path / "boundary.sqlite3"
+    destination = private_sqlite.open_profile_migration_boundary_destination(
+        target,
+        schema_version=2,
+    )
+    connection = object.__getattribute__(
+        destination,
+        "_ProfileMigrationBoundaryDestination__connection",
+    )
+    assert isinstance(connection, sqlite3.Connection)
+    if unsafe_kind == "attached":
+        connection.execute("ATTACH DATABASE ':memory:' AS foreign_store")
+    elif unsafe_kind == "populated":
+        connection.execute("CREATE TABLE foreign_data (value TEXT)")
+        connection.commit()
+    else:
+        connection.execute("BEGIN IMMEDIATE")
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE private_data (value TEXT)")
+    source.execute("INSERT INTO private_data VALUES ('must-not-copy')")
+    source.commit()
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+        private_sqlite.backup_profile_migration_boundary(
+            source,
+            destination,
+            schema_version=2,
+            validate=lambda _connection: None,
+        )
+
+    source.close()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert str(target) not in repr(caught.value)
+    reopened = sqlite3.connect(target)
+    try:
+        assert reopened.execute(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name = 'private_data'"
+        ).fetchone() == (0,)
+    finally:
+        reopened.close()
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
