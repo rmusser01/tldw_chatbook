@@ -651,8 +651,11 @@ api_mode = "responses" # or "chat_completions"
 model = "qwen3.8-max"
 ```
 
-`responses` is the default API mode. It sends stateless history with
-`store=false`; Chatbook does not use QwenCloud response or conversation IDs.
+`responses` is the default API mode. It re-sends the required history, does
+not send `previous_response_id` or QwenCloud conversation IDs, and does not
+rely on provider-managed session state. It requests `store=false` where the
+compatible endpoint honors it; this is not a claim about QwenCloud's
+operational retention or caching.
 `chat_completions` is also supported and explicitly disables preserved
 thinking because Chatbook does not retain private reasoning for replay.
 Existing Chatbook function tools work in both modes; QwenCloud-hosted built-in

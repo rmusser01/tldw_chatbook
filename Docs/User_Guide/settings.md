@@ -165,12 +165,17 @@ The mode changes only QwenCloud's external wire protocol:
 
 | Mode | Behavior and parameter limits |
 |---|---|
-| **Responses** (`responses`, default) | Re-sends canonical history on every turn, requests `store=false`, and never uses `previous_response_id`, conversation IDs, or a server-side session cache. Supported generation fields are temperature, top-p, maximum output, and the documented reasoning-effort values. Maximum output must be at least 16. Seed, penalties, response format, stop, `n`, log probabilities, verbosity, and reasoning summary are intentionally omitted. |
+| **Responses** (`responses`, default) | Re-sends canonical history on every turn; it does not send `previous_response_id` or conversation IDs and does not rely on provider-managed session state. It requests `store=false` where the compatible endpoint honors it, without making a claim about provider operational retention or caching. Supported generation fields are temperature, top-p, maximum output, and reasoning effort `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Maximum output must be at least 16. Seed, penalties, response format, stop, `n`, log probabilities, verbosity, and reasoning summary are intentionally omitted. |
 | **Chat Completions** (`chat_completions`) | Sends `preserve_thinking=false` because Chatbook does not store private `reasoning_content` for exact replay. It supports temperature, top-p/top-k, maximum completion tokens, seed, presence penalty, stop, text/JSON-object response format, `n`, log probabilities, and reasoning effort. Tool requests require `n=1`; min-p, frequency penalty, logit bias, user identifiers, reasoning summary, verbosity, Anthropic thinking fields, and prompt-caching fields are intentionally omitted. |
 
 These lists are fail-closed: generic settings outside the selected mode's
 allowlist are not forwarded. A model can still reject a supported mode or
 parameter; Chatbook does not infer compatibility from its name.
+
+For existing function tools in either mode, `tool_choice` may be unset,
+`auto`, or `none`. Chatbook rejects `required`, a forced function/name, and
+object-shaped choices before network I/O even if an upstream API supports
+additional choices.
 
 Existing Chatbook function tools use the ordinary Console agent runtime in
 both modes, including structured continuation. QwenCloud-hosted built-in tool

@@ -86,7 +86,10 @@ ADR would duplicate the existing decision.
   Chat Completions into the existing internal contracts; no Qwen-specific
   agent loop, cache, Settings surface, or built-in-tool execution path was
   introduced.
-- Implemented stateless Responses history with `store=false`, exact
+- Implemented Chatbook-side stateless Responses history without sending
+  provider continuation IDs, requesting `store=false` where honored, and
+  without relying on provider-managed session state. This makes no claim
+  about provider operational retention or caching. Also implemented exact
   call/output pairing, Chat preserved-thinking replay disabled, fail-closed
   mode-specific parameters, record-aware streaming, terminal usage, bounded
   retries, and deterministic response closure/cancellation.
@@ -106,7 +109,12 @@ ADR would duplicate the existing decision.
 - Task 9 checks also verified both paid cases collect and skip by default;
   Ruff, Ruff format, MyPy, compileall, `git diff --check`, and the scoped
   documentation term/link/anchor check pass. No credential, prompt, or
-  response content is emitted by the live harness.
+  response content is emitted by the live harness. Structural guards verify
+  that its expected calculator-derived marker is absent from the initial
+  prompts, a mutated calculator result fails validation, and profile paths are
+  isolated before Chatbook imports. The follow-up live-harness and exact
+  parameter checks passed with `16 passed, 2 skipped`; the skips remained the
+  paid modes, and no paid live request was run.
 - Architecture: follows
   [ADR-045](../decisions/045-qwencloud-dual-api-provider-boundary.md), with no
   implementation deviation from its provider/runtime ownership. No schema
