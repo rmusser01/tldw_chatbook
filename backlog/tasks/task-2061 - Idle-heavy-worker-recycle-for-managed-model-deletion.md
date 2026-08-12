@@ -1,14 +1,17 @@
 ---
 id: TASK-2061
 title: Idle heavy-worker recycle for managed model deletion
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-03 20:11'
+updated_date: '2026-08-12 20:25'
 labels:
   - stt
   - artifacts
   - architecture
 dependencies: []
+documentation:
+  - Docs/superpowers/specs/2026-08-12-task-2061-idle-worker-recycle-design.md
 priority: medium
 ---
 
