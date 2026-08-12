@@ -1328,31 +1328,29 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
     ``App.mouse_captured`` referencing a removed widget forever,
     permanently breaking click dispatch app-wide.
 
-    Only "conversations" and "media" have a canvas ``sync_state`` hook
-    today -- ``LibraryNotesCanvas`` has none (see task-252's
-    Implementation Notes inventory: its constructor's own ``sync_state``
-    parameter, an unrelated notes-sync-panel display state, shadows the
-    method name a targeted-update hook would need). An unsupported
-    ``kind``, like any other failure here (e.g. the canvas isn't mounted
-    because a mode switch raced), falls back to the old whole-screen
-    recompose rather than raising.
+    TASK-15457 extends the contract to every high-frequency Library canvas.
+    An unsupported ``kind``, like any other failure here (e.g. the canvas
+    isn't mounted because a mode switch raced), falls back to the old
+    whole-screen recompose rather than raising.
 
     Args:
         screen: The Library screen instance driving the update.
-        kind: "conversations", "media", or "media-trash".
+        kind: Supported Library canvas kind.
 
     Returns:
         None.
     """
     try:
+        sync_args: tuple[Any, ...] = ()
+        sync_kwargs: dict[str, Any] = {}
         if kind == "conversations":
             canvas = screen.query_one(
                 "#library-conversations-canvas", LibraryConversationsCanvas
             )
-            new_state = screen._build_library_conversations_state()
+            sync_args = (screen._build_library_conversations_state(),)
         elif kind == "media":
             canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
-            new_state = screen._build_library_media_state()
+            sync_args = (screen._build_library_media_state(),)
         elif kind == "media-trash":
             # task-4025: the media canvas's Trash view -- same targeted
             # contract, its own mounted widget/state builder.
@@ -1361,6 +1359,32 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
             )
             new_state = screen._build_library_media_trash_state()
             screen._selected_media_trash_id = new_state.selected_id
+            sync_args = (new_state,)
+        elif kind == "notes":
+            canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+            sync_kwargs = screen._library_notes_canvas_kwargs()
+        elif kind == "prompts":
+            canvas = screen.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            )
+            sync_kwargs = screen._library_prompts_canvas_kwargs()
+        elif kind == "skills":
+            canvas = screen.query_one(
+                "#library-skills-canvas", LibrarySkillsListCanvas
+            )
+            sync_kwargs = screen._library_skills_canvas_kwargs()
+        elif kind == "ingest":
+            canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+            sync_args = (screen._build_library_ingest_state(),)
+        elif kind == "search":
+            canvas = screen.query_one(
+                "#library-search-rag-panel", LibrarySearchRagPanel
+            )
+            screen._library_rag_answer_render_key = None
+            sync_args = (screen._library_rag_panel_state(),)
+        elif kind == "export":
+            canvas = screen.query_one("#library-export-canvas", LibraryExportCanvas)
+            sync_args = (screen._build_library_export_state(),)
         else:
             raise ValueError(
                 f"Unsupported Library canvas kind for targeted sync: {kind!r}"
@@ -1373,7 +1397,7 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
                     "Mouse-capture release before Library canvas sync skipped.",
                     exc_info=True,
                 )
-        canvas.sync_state(new_state)
+        canvas.sync_state(*sync_args, **sync_kwargs)
     except Exception:
         logger.debug(
             f"Library {kind} canvas sync failed; falling back to full recompose.",
@@ -4927,20 +4951,20 @@ class LibraryScreen(BaseAppScreen):
             self._supersede_library_notes_navigation()
             self._library_notes_view = "list"
             self._reset_library_notes_sync_transient_state()
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             self.call_after_refresh(self._focus_library_notes_filter_input)
             return
         if self._library_notes_select_mode:
             self._library_notes_select_mode = False
             self._library_notes_row_selection.clear()
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             self.call_after_refresh(
                 self._focus_library_note_control, "#library-notes-select-toggle"
             )
             return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             self.call_after_refresh(
                 self._focus_library_note_control, "#library-notes-sort"
             )
@@ -7963,80 +7987,12 @@ class LibraryScreen(BaseAppScreen):
                             classes="destination-purpose",
                             markup=False,
                         )
-                elif (
-                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
-                    and self._library_notes_view == "editor"
-                ):
-                    editor_state = self._library_note_editor_state()
-                    if editor_state is None:
-                        with Vertical(id="library-note-load-state"):
-                            with Horizontal(id="library-note-load-heading"):
-                                yield Button(
-                                    "‹ Notes",
-                                    id="library-note-back",
-                                    classes="library-canvas-action",
-                                    compact=True,
-                                )
-                                yield Static(
-                                    "Edit note",
-                                    id="library-note-loading-title",
-                                    markup=False,
-                                )
-                            load_copy = (
-                                self._library_note_load_message
-                                if self._library_note_load_state == "failed"
-                                else "Loading note…"
-                            )
-                            yield Static(
-                                load_copy,
-                                id="library-note-loading",
-                                classes="destination-purpose",
-                                markup=False,
-                            )
-                            with Vertical(id="library-note-loading-viewport"):
-                                if self._library_note_load_state == "failed":
-                                    yield Button(
-                                        "Retry",
-                                        id="library-note-load-retry",
-                                        classes="library-canvas-action",
-                                        compact=True,
-                                    )
-                    else:
-                        yield LibraryNotesCanvas(
-                            mode="editor",
-                            presentation_state=self._library_note_presentation_state(),
-                            compact=self._library_notes_compact,
-                            title_placeholder_only=(
-                                self._library_note_pending_blank_gc_id is not None
-                                and self._library_note_pending_blank_gc_id
-                                == self._selected_note_id
-                            ),
-                            id="library-notes-canvas",
-                        )
-                elif (
-                    shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
-                    and self._library_notes_view == "sync"
+                elif shell.canvas_kind in (
+                    LIBRARY_CANVAS_KIND_NOTES,
+                    LIBRARY_CANVAS_KIND_NOTES_CREATE,
                 ):
                     yield LibraryNotesCanvas(
-                        mode="sync",
-                        sync_state=self._build_library_notes_sync_state(),
-                        compact=self._library_notes_compact,
-                        id="library-notes-canvas",
-                    )
-                elif shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
-                    yield LibraryNotesCanvas(
-                        self._build_library_notes_state(),
-                        sort_mode=self._library_notes_sort,
-                        filter_value=self._library_notes_filter,
-                        compact=self._library_notes_compact,
-                        id="library-notes-canvas",
-                    )
-                elif shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES_CREATE:
-                    yield LibraryNotesCanvas(
-                        mode="create",
-                        compact=self._library_notes_compact,
-                        create_running=self._library_note_create_running,
-                        create_status=self._library_note_create_status,
+                        **self._library_notes_canvas_kwargs(),
                         id="library-notes-canvas",
                     )
                 elif (
@@ -8625,7 +8581,176 @@ class LibraryScreen(BaseAppScreen):
             self._local_source_counts.get("notes", 0) + 1
         )
         return True
+    def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
+        """Return every compose input for the mounted Database Notes canvas."""
+        values: dict[str, Any] = {
+            "list_state": None,
+            "sort_mode": self._library_notes_sort,
+            "filter_value": self._library_notes_filter,
+            "mode": "list",
+            "presentation_state": None,
+            "sync_panel_state": None,
+            "title_placeholder_only": False,
+            "compact": self._library_notes_compact,
+            "create_running": self._library_note_create_running,
+            "create_status": self._library_note_create_status,
+            "load_state": self._library_note_load_state,
+            "load_message": self._library_note_load_message,
+        }
+        if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
+            values["mode"] = "create"
+        elif self._library_notes_view == "sync":
+            values["mode"] = "sync"
+            values["sync_panel_state"] = self._build_library_notes_sync_state()
+        elif self._library_notes_view == "editor":
+            presentation_state = self._library_note_editor_state()
+            if presentation_state is None:
+                values["mode"] = "loading"
+            else:
+                values["mode"] = "editor"
+                values["presentation_state"] = (
+                    self._library_note_presentation_state()
+                )
+                values["title_placeholder_only"] = (
+                    self._library_note_pending_blank_gc_id is not None
+                    and self._library_note_pending_blank_gc_id
+                    == self._selected_note_id
+                )
+        else:
+            values["list_state"] = self._build_library_notes_state()
+        return values
 
+    def _library_prompts_canvas_kwargs(self) -> dict[str, Any]:
+        """Return every compose input for the mounted Prompts canvas."""
+        membership_state = (
+            self._library_prompt_collections_controller.membership_state
+        )
+        values: dict[str, Any] = {
+            "state": None,
+            "sort_mode": "newest",
+            "filter_value": "",
+            "browse_result": None,
+            "mode": "list",
+            "editor_state": None,
+            "conflict": False,
+            "status": "",
+            "show_open_existing": False,
+            "import_open": False,
+            "import_path": "",
+            "import_status": "",
+            "dirty": self._library_prompt_dirty,
+            "can_update_original": False,
+            "include_starter_content": (
+                self._library_prompt_include_starter_content
+            ),
+            "history_state": self._library_prompt_history_state,
+            "history_current_compatible": self._library_prompt_block_state is not None,
+            "collection_label": "All prompts",
+            "membership_state": membership_state,
+            "sort_choices_visible": False,
+        }
+        if self._library_prompts_view == "editor":
+            values["mode"] = "editor"
+            if self._library_prompt_conflict_snapshot is not None:
+                values["editor_state"] = self._current_library_prompt_editor_state(
+                    self._library_prompt_conflict_snapshot
+                )
+                values["conflict"] = True
+            elif self._library_prompt_detail is None:
+                values["mode"] = "loading"
+            else:
+                values["editor_state"] = self._current_library_prompt_editor_state()
+                values["status"] = self._library_prompt_status
+                values["show_open_existing"] = (
+                    self._library_prompt_status
+                    == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
+                )
+                values["can_update_original"] = (
+                    self._library_prompt_can_update_original()
+                )
+            return values
+
+        scope = self._library_prompt_browse_controller.scope
+        values.update(
+            {
+                "state": self._build_library_prompts_state(),
+                "sort_mode": "name" if scope.sort_by == "name" else "newest",
+                "filter_value": scope.query,
+                "browse_result": self._library_prompt_browse_controller.result,
+                "import_open": self._library_prompts_import_open,
+                "import_path": self._library_prompts_import_path,
+                "import_status": self._library_prompts_import_status,
+                "collection_label": self._library_prompt_collections_controller.collection_label(
+                    scope.collection_id
+                ),
+                "sort_choices_visible": self._library_prompts_sort_choices_visible,
+            }
+        )
+        return values
+
+    def _library_skills_canvas_kwargs(self) -> dict[str, Any]:
+        """Return every compose input for the mounted Skills canvas."""
+        values: dict[str, Any] = {
+            "state": None,
+            "sort_mode": self._library_skills_sort,
+            "filter_value": self._library_skills_filter,
+            "mode": "list",
+            "trust_posture": self._library_skills_trust_posture,
+            "confirming_reset": self._library_skill_trust_confirming_reset,
+            "editor_state": None,
+            "warnings": "",
+            "status": "",
+            "conflict": False,
+            "active_review": None,
+            "is_create": not self._selected_skill_name,
+            "dirty": self._library_skill_dirty,
+            "confirming_delete": self._library_skill_confirming_delete,
+            "scroll_to_actions": False,
+            "skill_path": "",
+            "import_open": False,
+            "import_path": "",
+            "import_status": "",
+            "import_review_name": "",
+            "sort_choices_visible": False,
+        }
+        if self._library_skills_view == "editor":
+            editor_state = self._library_skill_editor_state
+            if editor_state is None:
+                values["mode"] = "loading"
+            else:
+                values.update(
+                    {
+                        "mode": "editor",
+                        "editor_state": editor_state,
+                        "warnings": "\n".join(
+                            skill_editor_warning_lines(
+                                live_name=editor_state.name,
+                                trust_status=editor_state.trust_status,
+                                trust_blocked=editor_state.trust_blocked,
+                            )
+                        ),
+                        "status": self._library_skill_status,
+                        "conflict": self._library_skill_conflict,
+                        "active_review": self._library_skill_active_review,
+                        "scroll_to_actions": (
+                            self._consume_library_skill_scroll_pending()
+                        ),
+                        "skill_path": self._library_skill_on_disk_path(),
+                    }
+                )
+            return values
+
+        values.update(
+            {
+                "state": self._build_library_skills_state(),
+                "import_open": self._library_skills_import_open,
+                "import_path": self._library_skills_import_path,
+                "import_status": self._library_skills_import_status,
+                "import_review_name": self._library_skills_import_review_name,
+                "sort_choices_visible": self._library_skills_sort_choices_visible,
+            }
+        )
+        return values
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
 
@@ -9059,7 +9184,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_note_missing_warning()
             self._refresh_local_source_snapshot()
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return
         if outcome.kind is NoteLoadOutcomeKind.FAILED:
             self._library_note_load_state = "failed"
@@ -9067,7 +9192,7 @@ class LibraryScreen(BaseAppScreen):
                 outcome.message or "Unable to load note. Press Retry."
             )
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "notes")
             return
 
         self._library_note_load_state = "loaded"
@@ -9077,7 +9202,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_context = False
         self._library_note_editor_armed = False
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             self.call_after_refresh(self._arm_library_note_editor)
             self.call_after_refresh(
                 self._restore_library_notes_focus_identity,
@@ -12280,10 +12405,7 @@ class LibraryScreen(BaseAppScreen):
                 ):
                     return False
                 canvas: Widget = LibraryNotesCanvas(
-                    self._build_library_notes_state(),
-                    sort_mode=self._library_notes_sort,
-                    filter_value=self._library_notes_filter,
-                    compact=self._library_notes_compact,
+                    **self._library_notes_canvas_kwargs(),
                     id="library-notes-canvas",
                 )
             elif shell.canvas_kind == "media":
@@ -12653,7 +12775,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "media")
         if self._library_media_type_choices_visible:
             self.call_after_refresh(
                 self._focus_library_choice_strip_active,
@@ -12683,7 +12805,7 @@ class LibraryScreen(BaseAppScreen):
             # bulk-delete confirmation either, and states the discard like
             # every other exit.
             self._exit_library_media_select_mode(announce_discard=True)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "media")
         self.call_after_refresh(
             self._focus_library_control, "#library-media-type-filter"
         )
@@ -13561,7 +13683,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible = (
             not self._library_notes_sort_choices_visible
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, ".library-notes-sort-choice")
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
@@ -13576,7 +13698,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
@@ -13593,7 +13715,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
         self.call_after_refresh(self._focus_library_notes_filter_input)
 
     @on(Input.Submitted, "#library-notes-filter")
@@ -13612,7 +13734,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
             return
         self.run_worker(
             self._run_library_notes_filter(submitted),
@@ -13621,7 +13743,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _run_library_notes_filter(self, query: str) -> None:
-        """Fetch filtered notes from the ``search_notes`` seam and recompose.
+        """Fetch filtered notes and sync the mounted Notes canvas.
 
         Clearing the filter (an empty submit) is handled synchronously by
         ``handle_library_notes_filter`` and never starts this worker, so it
@@ -13655,7 +13777,7 @@ class LibraryScreen(BaseAppScreen):
         if query != self._library_notes_filter:
             return
         self._library_notes_filter_records = list(records or [])
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
         self.call_after_refresh(self._focus_library_notes_filter_input)
 
     def _focus_library_notes_filter_input(self) -> None:
@@ -13678,7 +13800,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_sort_choices_visible = (
             not self._library_prompts_sort_choices_visible
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "prompts")
         if self._library_prompts_sort_choices_visible:
             current = (
                 "name"
@@ -13710,7 +13832,7 @@ class LibraryScreen(BaseAppScreen):
         scope = self._library_prompt_browse_controller.scope
         current = "name" if scope.sort_by == "name" else "newest"
         if requested not in {"newest", "name"} or requested == current:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "prompts")
             self.call_after_refresh(
                 self._focus_library_control, "#library-prompts-sort"
             )
@@ -13821,7 +13943,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = (
             not self._library_skills_sort_choices_visible
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "skills")
         if self._library_skills_sort_choices_visible:
             self.call_after_refresh(
                 self._focus_library_choice_strip_active,
@@ -13849,7 +13971,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = False
         if requested in _LIBRARY_SKILLS_SORT_MODES:
             self._library_skills_sort = requested
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "skills")
         self.call_after_refresh(
             self._focus_library_control, "#library-skills-sort"
         )
@@ -13870,7 +13992,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_filter = self._safe_text(
             event.value, max_length=200
         ).strip()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "skills")
 
     @on(Button.Pressed, "#library-skills-import")
     def handle_library_skills_import(self, event: Button.Pressed) -> None:
@@ -14054,10 +14176,18 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _apply_library_skills_import_status(self, text: str) -> None:
-        """Set the Import row's outcome line and recompose to show it."""
+        """Set and patch the Import row's one-line outcome in place."""
         self._library_skills_import_status = text
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
+        ):
+            return
+        try:
+            self.query_one("#library-skills-import-status", Static).update(text)
+        except (NoMatches, QueryError):
+            _sync_library_canvas(self, "skills")
 
     async def _run_library_skills_import(self, raw_path: str) -> None:
         """Import ONE skill from a SKILL.md file path or a skill's own directory.
@@ -14412,7 +14542,7 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_skill_detail",
             )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "skills")
 
     async def _refresh_library_skill_detail(self, skill_name: str) -> None:
         """Fetch and store the full detail for a selected Library skill.
@@ -14430,7 +14560,7 @@ class LibraryScreen(BaseAppScreen):
         if not callable(get_skill):
             self._library_skill_detail = None
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "skills")
             return
         try:
             detail = await self._run_library_service_call(
@@ -14458,7 +14588,7 @@ class LibraryScreen(BaseAppScreen):
             self._reset_library_skill_editor_state()
             self._refresh_local_source_snapshot()
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "skills")
             return
         self._apply_library_skill_detail(detail)
 
@@ -14486,7 +14616,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_script_grant = False
         self._library_skill_editor_armed = False
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "skills")
             self.call_after_refresh(self._arm_library_skill_editor)
         # Task 7: not part of ``get_skill``'s response, so it needs its own
         # off-thread fetch -- see ``_refresh_library_skill_script_grant``.
@@ -16667,7 +16797,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _apply_library_prompts_import_status(self, text: str) -> None:
-        """Set the Import row's outcome line and recompose to show it."""
+        """Set and patch the Import row's one-line outcome in place."""
         if (
             not self.is_mounted
             or self.app.screen is not self
@@ -16675,7 +16805,10 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._library_prompts_import_status = text
-        self.refresh(recompose=True)
+        try:
+            self.query_one("#library-prompts-import-status", Static).update(text)
+        except (NoMatches, QueryError):
+            _sync_library_canvas(self, "prompts")
 
     async def _run_library_prompts_import(self, raw_path: str) -> None:
         """Import prompts from a file or folder path, skipping duplicate names.
@@ -16968,7 +17101,7 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_prompt_detail",
             )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "prompts")
 
     async def _refresh_library_prompt_detail(
         self,
@@ -17010,7 +17143,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_prompt_detail = None
             self._library_prompt_version = None
             if self.is_mounted:
-                self.refresh(recompose=True)
+                _sync_library_canvas(self, "prompts")
             return
         try:
             detail = await self._run_library_service_call(
@@ -17063,7 +17196,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._load_library_prompt_memberships()
         if self.is_mounted:
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "prompts")
             self.call_after_refresh(self._arm_library_prompt_editor)
 
     def _adopt_library_prompt_persisted_detail(
@@ -18570,7 +18703,13 @@ class LibraryScreen(BaseAppScreen):
             return False
         _subject, opener_selector, visibility_attr = open_strip
         setattr(self, visibility_attr, False)
-        self.refresh(recompose=True)
+        canvas_kind = {
+            "_library_media_type_choices_visible": "media",
+            "_library_prompts_sort_choices_visible": "prompts",
+            "_library_skills_sort_choices_visible": "skills",
+            "_library_export_quality_choices_visible": "export",
+        }[visibility_attr]
+        _sync_library_canvas(self, canvas_kind)
         self.call_after_refresh(self._focus_library_control, opener_selector)
         return True
 
@@ -20035,7 +20174,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-sync-back")
     async def handle_library_notes_sync_back(self, event: Button.Pressed) -> None:
@@ -20053,7 +20192,7 @@ class LibraryScreen(BaseAppScreen):
         self._supersede_library_notes_navigation()
         self._library_notes_view = "list"
         self._reset_library_notes_sync_transient_state()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Input.Changed, "#library-notes-sync-folder")
     def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
@@ -20115,7 +20254,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_folder_text = str(path)
         save_setting_to_cli_config("notes", "sync_directory", str(path))
         if self._library_notes_view == "sync":
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, ".library-notes-sync-direction-choice")
     def handle_library_notes_sync_direction(self, event: Button.Pressed) -> None:
@@ -20134,7 +20273,7 @@ class LibraryScreen(BaseAppScreen):
         save_setting_to_cli_config(
             "notes", "sync_direction", self._library_notes_sync_direction
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, ".library-notes-sync-conflict-choice")
     def handle_library_notes_sync_conflict(self, event: Button.Pressed) -> None:
@@ -20153,7 +20292,7 @@ class LibraryScreen(BaseAppScreen):
         save_setting_to_cli_config(
             "notes", "sync_conflict_resolution", self._library_notes_sync_conflict
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-sync-auto")
     def handle_library_notes_sync_auto_toggle(self, event: Button.Pressed) -> None:
@@ -20178,7 +20317,7 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_notes_auto_sync_timer()
         else:
             self._cancel_library_notes_auto_sync_timer()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-sync-run")
     def handle_library_notes_sync_run(self, event: Button.Pressed) -> None:
@@ -20969,7 +21108,7 @@ class LibraryScreen(BaseAppScreen):
         cap = get_capabilities(event.group)
         field = next((f for f in cap.fields if f.name == event.name), None)
         if field is not None and field.type not in ("text", "number"):
-            self.refresh(recompose=True)
+            _sync_library_canvas(self, "ingest")
         elif field is not None:
             # (task-2130) Text/number edits deliberately skip the recompose
             # (cursor survival), which used to leave the panel-header receipt
@@ -23087,7 +23226,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_title_user_edited = False
         if note_id:
             self._begin_library_note_load(note_id)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
@@ -23099,13 +23238,9 @@ class LibraryScreen(BaseAppScreen):
         unconditional here to mirror ``handle_library_notes_row``'s
         always-flush-first behavior.
 
-        Still a full ``self.refresh(recompose=True)`` (task-252 leaves
-        this un-converted, unlike its conversations/media equivalents):
-        ``LibraryNotesCanvas`` has no ``sync_state`` hook -- its
-        constructor's own ``sync_state`` parameter (the unrelated
-        notes-sync-panel display state) shadows that method name. See
-        ``_sync_library_canvas``'s docstring and task-252's
-        Implementation Notes inventory.
+        TASK-15457 renames the unrelated sync-panel constructor field and
+        routes this structural list change through the Notes canvas's own
+        ``sync_state`` hook.
 
         Args:
             event: Button press event emitted by the notes canvas's
@@ -23117,30 +23252,28 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_notes_select_mode = not self._library_notes_select_mode
         self._library_notes_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-all")
     def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
         """Select every note row currently rendered by the canvas.
 
-        Full recompose, not converted -- see
-        ``handle_library_notes_select_toggle``'s docstring.
+        Rebuilds only the mounted Notes canvas.
         """
         event.stop()
         rows = self._build_library_notes_state().rows
         self._library_notes_row_selection.select_all(r.note_id for r in rows)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
         """Clear the current notes selection without leaving select mode.
 
-        Full recompose, not converted -- see
-        ``handle_library_notes_select_toggle``'s docstring.
+        Rebuilds only the mounted Notes canvas.
         """
         event.stop()
         self._library_notes_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-export-selected")
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
@@ -25676,7 +25809,7 @@ class LibraryScreen(BaseAppScreen):
             "rag" if self._library_rag_mode == "search" else "search"
         )
         self._reset_library_rag_retrieval_state()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "search")
 
     @on(Button.Pressed, ".library-rag-scope-toggle")
     def toggle_library_rag_scope_source(self, event: Button.Pressed) -> None:
@@ -25702,7 +25835,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_rag_scope_deselected.discard(source_type)
         else:
             self._library_rag_scope_deselected.add(source_type)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "search")
 
     @on(Collapsible.Toggled, "#library-rag-history")
     def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:

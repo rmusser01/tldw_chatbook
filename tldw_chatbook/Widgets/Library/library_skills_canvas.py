@@ -679,10 +679,68 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
+        if self.mode == "loading":
+            yield Static(
+                "Loading skill…",
+                id="library-skill-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
         if self.mode == "editor":
             yield from self._compose_editor()
             return
         yield from self._compose_list()
+
+    def sync_state(
+        self,
+        *,
+        state: SkillsListState | None,
+        sort_mode: str,
+        filter_value: str,
+        mode: str,
+        trust_posture: str,
+        confirming_reset: bool,
+        editor_state: SkillEditorState | None,
+        warnings: str,
+        status: str,
+        conflict: bool,
+        active_review: Mapping[str, Any] | None,
+        is_create: bool,
+        dirty: bool,
+        confirming_delete: bool,
+        scroll_to_actions: bool,
+        skill_path: str,
+        import_open: bool,
+        import_path: str,
+        import_status: str,
+        import_review_name: str,
+        sort_choices_visible: bool,
+    ) -> None:
+        """Apply a complete skills snapshot within the mounted canvas."""
+        self.state = state
+        self.sort_mode = sort_mode
+        self.filter_value = filter_value
+        self.mode = mode
+        self.trust_posture = trust_posture
+        self.confirming_reset = confirming_reset
+        self.editor_state = editor_state
+        self.warnings = warnings
+        self.status = status
+        self.conflict = conflict
+        self.active_review = active_review
+        self.is_create = is_create
+        self.dirty = dirty
+        self.confirming_delete = confirming_delete
+        self.scroll_to_actions = scroll_to_actions
+        self.skill_path = skill_path
+        self.import_open = import_open
+        self.import_path = import_path
+        self.import_status = import_status
+        self.import_review_name = import_review_name
+        self.sort_choices_visible = sort_choices_visible
+        self.refresh(recompose=True)
+        self._schedule_scroll_to_actions()
 
     def on_mount(self) -> None:
         """task-417: a recompose lands a fresh canvas scrolled to the top.
@@ -692,6 +750,10 @@ class LibrarySkillsListCanvas(VerticalScroll):
         user still sees the Save button and its status line they just
         acted on.
         """
+        self._schedule_scroll_to_actions()
+
+    def _schedule_scroll_to_actions(self) -> None:
+        """Preserve the post-save scroll receipt across canvas-only syncs."""
         if not (self.scroll_to_actions and self.mode == "editor"):
             return
 
