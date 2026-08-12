@@ -180,9 +180,19 @@ class FakeLocalPromptService:
         self.calls.append(("update_prompt", prompt_identifier, payload))
         return {**self.prompt, **payload}
 
-    def delete_prompt(self, prompt_identifier):
-        self.calls.append(("delete_prompt", prompt_identifier))
+    def delete_prompt(self, prompt_identifier, *, expected_version=None):
+        self.calls.append(("delete_prompt", prompt_identifier, expected_version))
         return True
+
+    def restore_deleted_prompt(self, prompt_identifier, *, expected_version):
+        self.calls.append(
+            ("restore_deleted_prompt", prompt_identifier, expected_version)
+        )
+        return {
+            **self.prompt,
+            "version": expected_version + 1,
+            "deleted": 0,
+        }
 
     def count_prompt_versions(self, prompt_identifier):
         self.calls.append(("count_prompt_versions", prompt_identifier))
@@ -875,6 +885,50 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         "prompts.update.server",
         "prompts.delete.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_restores_deleted_local_prompt_as_conditional_update():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    restored = await service.restore_deleted_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        expected_version=4,
+    )
+
+    assert restored["id"] == "local:prompt:local-uuid-7"
+    assert restored["local_id"] == 7
+    assert restored["version"] == 5
+    assert local.calls[-1] == (
+        "restore_deleted_prompt",
+        "local-uuid-7",
+        4,
+    )
+    assert server.calls == []
+    assert policy.actions == ["prompts.update.local"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_forwards_expected_version_for_local_delete():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    server = FakeServerPromptService()
+    service = PromptScopeService(local, server, policy)
+
+    deleted = await service.delete_prompt(
+        mode="local",
+        prompt_identifier="local-uuid-7",
+        expected_version=4,
+    )
+
+    assert deleted is True
+    assert local.calls[-1] == ("delete_prompt", "local-uuid-7", 4)
+    assert server.calls == []
+    assert policy.actions == ["prompts.delete.local"]
 
 
 @pytest.mark.asyncio

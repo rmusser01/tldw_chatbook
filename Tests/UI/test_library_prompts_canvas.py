@@ -38,6 +38,7 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextAr
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
+    LibraryPromptDeleteReceipt,
     PromptBrowseResult,
     PromptBrowseScope,
     PromptEditorState,
@@ -628,6 +629,27 @@ async def test_prompts_canvas_renders_a_button_per_row():
             assert button.prompt_id == prompt_id
         rows = pilot.app.query(".library-prompt-row")
         assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_renders_named_delete_receipt_actions_literal():
+    receipt = LibraryPromptDeleteReceipt(
+        prompt_id=2,
+        title="[draft] Morning brief",
+        artifact_type="recipe",
+        expected_version=4,
+    )
+    app = _CanvasHost(_three_row_state(), delete_receipt=receipt)
+
+    async with app.run_test() as pilot:
+        copy = pilot.app.query_one(
+            "#library-prompts-delete-receipt-copy", Static
+        )
+        assert str(copy.renderable) == "✓ deleted · Recipe · [draft] Morning brief"
+        assert pilot.app.query_one("#library-prompts-delete-undo", Button)
+        assert pilot.app.query_one(
+            "#library-prompts-delete-receipt-dismiss", Button
+        )
 
 
 @pytest.mark.asyncio
@@ -4524,7 +4546,7 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_path):
+async def test_library_prompt_delete_receipt_undo_restores_row_and_count(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     eta_id, _uuid, _msg = db.add_prompt(
         name="Eta", author="A", details="d", user_prompt="x"
@@ -4564,6 +4586,30 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
         deleted = db.fetch_prompt_details(eta_id, include_deleted=True)
         assert deleted is not None
         assert deleted["deleted"] == 1
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-prompts-delete-receipt-copy"
+        )
+        assert "✓ deleted · Prompt · Eta" in str(receipt.renderable)
+
+        screen.query_one("#library-prompts-delete-undo", Button).press()
+        for _ in range(150):
+            rail_rows = screen.query("#library-row-browse-prompts")
+            rail_label = str(rail_rows.first().label) if rail_rows else ""
+            if (
+                "(2)" in rail_label
+                and len(screen.query(f"#library-prompt-row-{eta_id}")) == 1
+                and not screen.query("#library-prompts-delete-receipt-copy")
+            ):
+                break
+            await pilot.pause(0.02)
+
+        assert "(2)" in rail_label
+        assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 1
+        assert not screen.query("#library-prompts-delete-receipt-copy")
+        restored = db.fetch_prompt_details(eta_id, include_deleted=True)
+        assert restored is not None
+        assert restored["deleted"] == 0
+        assert restored["version"] == 3
 
 
 @pytest.mark.asyncio
@@ -4651,6 +4697,10 @@ def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
         _library_prompt_version=2,
         _library_prompt_block_state=SimpleNamespace(artifact_type="prompt"),
         _library_prompt_delete_fingerprint=lambda: "library-prompt:9:2:prompt",
+        _library_prompts_mutation_in_flight=False,
+        _library_prompt_delete_receipt=None,
+        _read_library_prompt_editor_fields=lambda: ("Draft", "", "", "", "", ""),
+        _library_prompt_action_artifact_type=lambda: "prompt",
         run_worker=Mock(),
         _delete_library_prompt=Mock(),
         _update_library_prompt_status_static=Mock(),
@@ -4661,6 +4711,24 @@ def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
     LibraryScreen._settle_library_prompt_delete(screen, decision)
 
     screen.run_worker.assert_called_once()
+
+
+def test_library_prompt_undo_interlock_rejects_a_concurrent_delete_settlement() -> None:
+    """Undo and delete share one admission flag and one worker group."""
+    screen = SimpleNamespace(
+        _library_prompts_mutation_in_flight=True,
+        _library_prompt_delete_pending_fingerprint="library-prompt:9:2:prompt",
+        run_worker=Mock(),
+    )
+
+    LibraryScreen._settle_library_prompt_delete(
+        screen, PromptDeleteDecision(True, "library-prompt:9:2:prompt")
+    )
+
+    screen.run_worker.assert_not_called()
+    assert screen._library_prompt_delete_pending_fingerprint == (
+        "library-prompt:9:2:prompt"
+    )
 
 
 @pytest.mark.asyncio
@@ -6515,7 +6583,8 @@ async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_
     release = threading.Event()
     calls: list[int] = []
 
-    async def delayed_delete(*, mode, prompt_identifier):
+    async def delayed_delete(*, mode, prompt_identifier, expected_version):
+        assert expected_version == 1
         calls.append(prompt_identifier)
         started.set()
         await asyncio.to_thread(release.wait)

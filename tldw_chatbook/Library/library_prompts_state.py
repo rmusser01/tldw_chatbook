@@ -1661,6 +1661,34 @@ class PromptListRow:
 
 
 @dataclass(frozen=True)
+class LibraryPromptDeleteReceipt:
+    """Exact Prompt/Recipe tombstone available to restore from the list."""
+
+    prompt_id: int
+    title: str
+    artifact_type: ArtifactType
+    expected_version: int
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.prompt_id, int)
+            or isinstance(self.prompt_id, bool)
+            or self.prompt_id < 1
+        ):
+            raise ValueError("Prompt delete receipt id must be positive.")
+        if not isinstance(self.title, str):
+            raise TypeError("Prompt delete receipt title must be text.")
+        if self.artifact_type not in {"prompt", "recipe"}:
+            raise ValueError("Prompt delete receipt type must be prompt or recipe.")
+        if (
+            not isinstance(self.expected_version, int)
+            or isinstance(self.expected_version, bool)
+            or self.expected_version < 1
+        ):
+            raise ValueError("Prompt delete receipt version must be positive.")
+
+
+@dataclass(frozen=True)
 class PromptsListState:
     """Display state for the Library prompts canvas's list view.
 

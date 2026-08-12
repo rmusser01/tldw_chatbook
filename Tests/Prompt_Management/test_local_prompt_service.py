@@ -86,6 +86,16 @@ class FakePromptDB:
             "retained_current_keywords": False,
         }
 
+    def restore_deleted_prompt(self, prompt_id, *, expected_version):
+        self.updated = ("deleted", prompt_id, expected_version)
+        return {
+            "id": 1,
+            "uuid": "prompt-uuid",
+            "name": "Updated",
+            "version": expected_version + 1,
+            "deleted": 0,
+        }
+
 
 class FakePromptInterop:
     def __init__(self):
@@ -104,6 +114,10 @@ class FakePromptInterop:
 
     def get_db_instance(self):
         return self.db
+
+    def soft_delete_prompt(self, prompt_identifier, *, expected_version=None):
+        self.db.updated = ("delete", prompt_identifier, expected_version)
+        return True
 
 
 @pytest.mark.asyncio
@@ -138,6 +152,29 @@ async def test_local_prompt_service_restores_exact_retained_version_conditionall
 
     assert restored["outcome"] == "restored"
     assert interop.db.updated == ("prompt-uuid", 1, 1, 2)
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_restores_exact_deleted_version_conditionally():
+    interop = FakePromptInterop()
+    service = LocalPromptService(interop_module=interop)
+
+    restored = await service.restore_deleted_prompt(1, expected_version=2)
+
+    assert restored["version"] == 3
+    assert restored["deleted"] == 0
+    assert interop.db.updated == ("deleted", 1, 2)
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_deletes_exact_current_version_conditionally():
+    interop = FakePromptInterop()
+    service = LocalPromptService(interop_module=interop)
+
+    deleted = await service.delete_prompt(1, expected_version=2)
+
+    assert deleted is True
+    assert interop.db.updated == ("delete", 1, 2)
 
 
 @pytest.mark.asyncio

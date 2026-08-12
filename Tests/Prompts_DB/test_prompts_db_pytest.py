@@ -20,6 +20,7 @@ from tldw_chatbook.DB.Prompts_DB import (
     DatabaseError,
     InputError,
     ConflictError,
+    ExpectedVersionConflictError,
     add_or_update_prompt,
     load_prompt_details_for_ui,
     export_prompt_keywords_to_csv,
@@ -187,6 +188,70 @@ class TestPromptOperations:
         # Should not be in active prompts
         prompts = in_memory_db.get_all_prompts()
         assert not any(p["id"] == prompt_id for p in prompts)
+
+    def test_restore_deleted_prompt_preserves_artifact_and_keywords(self, in_memory_db):
+        """Undo resurrects the exact tombstone as a new current version."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Restore recipe",
+            author="Author",
+            details="Details",
+            system_prompt="System lane",
+            user_prompt="User lane",
+            keywords=["Alpha", "Beta"],
+            artifact_type="recipe",
+        )
+        assert in_memory_db.soft_delete_prompt(prompt_id) is True
+
+        restored = in_memory_db.restore_deleted_prompt(
+            prompt_id, expected_version=2
+        )
+
+        assert restored["id"] == prompt_id
+        assert restored["deleted"] == 0
+        assert restored["version"] == 3
+        assert restored["artifact_type"] == "recipe"
+        assert restored["system_prompt"] == "System lane"
+        assert restored["user_prompt"] == "User lane"
+        assert in_memory_db.fetch_keywords_for_prompt(prompt_id) == ["alpha", "beta"]
+        events = in_memory_db.get_sync_log_entries()
+        prompt_events = [event for event in events if event["entity"] == "Prompts"]
+        assert prompt_events[-1]["operation"] == "update"
+        assert prompt_events[-1]["payload"]["deleted"] == 0
+        assert prompt_events[-1]["payload"]["keywords"] == ["alpha", "beta"]
+
+    def test_restore_deleted_prompt_rejects_stale_expected_version(self, in_memory_db):
+        """A stale receipt cannot resurrect a newer tombstone."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Stale restore", author=None, details=None
+        )
+        assert in_memory_db.soft_delete_prompt(prompt_id) is True
+
+        with pytest.raises(ExpectedVersionConflictError):
+            in_memory_db.restore_deleted_prompt(prompt_id, expected_version=1)
+
+        tombstone = in_memory_db.fetch_prompt_details(prompt_id, include_deleted=True)
+        assert tombstone is not None
+        assert tombstone["deleted"] == 1
+        assert tombstone["version"] == 2
+
+    def test_soft_delete_prompt_rejects_stale_expected_version(self, in_memory_db):
+        """A stale editor cannot create a tombstone its receipt cannot restore."""
+        prompt_id, _uuid, _message = in_memory_db.add_prompt(
+            name="Concurrent delete", author=None, details=None
+        )
+        in_memory_db.update_prompt_by_id(
+            prompt_id,
+            {"details": "changed elsewhere"},
+            expected_version=1,
+        )
+
+        with pytest.raises(ExpectedVersionConflictError):
+            in_memory_db.soft_delete_prompt(prompt_id, expected_version=1)
+
+        current = in_memory_db.fetch_prompt_details(prompt_id, include_deleted=True)
+        assert current is not None
+        assert current["deleted"] == 0
+        assert current["version"] == 2
 
     def test_duplicate_prompt_name(self, in_memory_db):
         """Test that duplicate prompt names are rejected."""

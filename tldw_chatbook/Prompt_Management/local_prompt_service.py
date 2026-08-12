@@ -178,8 +178,50 @@ class LocalPromptService:
             "message": message,
         }
 
-    async def delete_prompt(self, prompt_id: int | str) -> bool:
-        return bool(self.interop.soft_delete_prompt(prompt_id))
+    async def delete_prompt(
+        self, prompt_id: int | str, *, expected_version: int | None = None
+    ) -> bool:
+        """Soft-delete one local Prompt/Recipe conditionally.
+
+        Args:
+            prompt_id: Numeric id, UUID, or name of the artifact.
+            expected_version: Optional active-row version required for deletion.
+
+        Returns:
+            ``True`` when the artifact is soft-deleted.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ConflictError: If no active artifact matches the identifier.
+            ExpectedVersionConflictError: If the expected version is stale.
+            DatabaseError: If persistence fails.
+        """
+        return bool(
+            self.interop.soft_delete_prompt(
+                prompt_id, expected_version=expected_version
+            )
+        )
+
+    async def restore_deleted_prompt(
+        self, prompt_id: int | str, *, expected_version: int
+    ) -> dict[str, Any]:
+        """Restore one exact local Prompt/Recipe tombstone.
+
+        Args:
+            prompt_id: Numeric id, UUID, or name of the tombstone.
+            expected_version: Exact deleted-row version required for restore.
+
+        Returns:
+            The restored Prompt/Recipe record with canonical keywords.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ExpectedVersionConflictError: If the tombstone version is stale.
+            DatabaseError: If recovery metadata is unavailable or persistence fails.
+        """
+        return self.interop.get_db_instance().restore_deleted_prompt(
+            prompt_id, expected_version=expected_version
+        )
 
     async def list_prompt_versions(
         self,

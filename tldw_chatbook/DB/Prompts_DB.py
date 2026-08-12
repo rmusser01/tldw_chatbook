@@ -2104,10 +2104,36 @@ class PromptsDatabase:
                 raise e
             raise DatabaseError(f"Failed to update prompt ID {prompt_id}: {e}") from e
 
-    def soft_delete_prompt(self, prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
+    def soft_delete_prompt(
+        self,
+        prompt_id_or_name_or_uuid: Union[int, str],
+        *,
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """Soft-delete one active Prompt/Recipe and record its tombstone.
+
+        Args:
+            prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
+            expected_version: Optional active-row version required for deletion.
+
+        Returns:
+            ``True`` when the artifact is soft-deleted.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ConflictError: If no active artifact matches the identifier.
+            ExpectedVersionConflictError: If the expected version is stale.
+            DatabaseError: If persistence fails.
+        """
         start_time = time.time()
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
+        if expected_version is not None and (
+            not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or expected_version < 1
+        ):
+            raise InputError("expected_version must be a positive integer or None.")
 
         col_name = "id"
         if isinstance(prompt_id_or_name_or_uuid, str):
@@ -2143,7 +2169,31 @@ class PromptsDatabase:
                     prompt_info["uuid"],
                     prompt_info["version"],
                 )
+                if expected_version is not None and current_version != expected_version:
+                    raise ExpectedVersionConflictError(
+                        "Prompt changed after it was opened.",
+                        "Prompts",
+                        prompt_id,
+                    )
                 new_version = current_version + 1
+
+                # ADR-055 recovery metadata: PromptKeywordLinks are removed
+                # below as part of the existing sync contract, so preserve the
+                # exact canonical membership on the versioned tombstone. Undo
+                # can then restore the artifact without trusting UI-captured
+                # state or conflating resurrection with retained-history
+                # restore (ADR-049).
+                cursor.execute(
+                    """
+                    SELECT pkw.keyword, pkw.uuid AS keyword_uuid
+                    FROM PromptKeywordLinks pkl
+                    JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
+                    WHERE pkl.prompt_id = ? AND pkw.deleted = 0
+                    ORDER BY pkw.keyword COLLATE NOCASE
+                    """,
+                    (prompt_id,),
+                )
+                keywords_to_unlink = cursor.fetchall()
 
                 # Soft delete the prompt
                 cursor.execute(
@@ -2159,6 +2209,8 @@ class PromptsDatabase:
                     "version": new_version,
                     "client_id": client_id,
                     "deleted": 1,
+                    "keywords": [row["keyword"] for row in keywords_to_unlink],
+                    "keywords_captured": True,
                 }
                 self._log_sync_event(
                     conn, "Prompts", prompt_uuid, "delete", new_version, delete_payload
@@ -2166,17 +2218,6 @@ class PromptsDatabase:
                 self._delete_fts_prompt(conn, prompt_id)
 
                 # Explicitly unlink keywords and log those events
-                cursor.execute(
-                    """
-                               SELECT pkw.uuid AS keyword_uuid
-                               FROM PromptKeywordLinks pkl
-                                        JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                               WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                               """,
-                    (prompt_id,),
-                )
-                keywords_to_unlink = cursor.fetchall()
-
                 if keywords_to_unlink:
                     # The FK ON DELETE CASCADE on PromptKeywordLinks will remove rows.
                     # However, we want to log these 'unlink' events.
@@ -2266,6 +2307,157 @@ class PromptsDatabase:
                 raise e
             else:
                 raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
+
+    def restore_deleted_prompt(
+        self,
+        prompt_id_or_name_or_uuid: Union[int, str],
+        *,
+        expected_version: int,
+    ) -> Dict[str, Any]:
+        """Restore one exact Prompt/Recipe tombstone as a new current version.
+
+        This is the store-level resurrection seam required by ADR-055. It is
+        intentionally separate from ``restore_prompt_history_entry``: retained
+        history restores artifact content onto an active row, while this method
+        only revives a deleted current row whose tombstone version still matches
+        the caller's receipt.
+
+        Args:
+            prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the tombstone.
+            expected_version: Exact deleted-row version captured after delete.
+
+        Returns:
+            The restored Prompt row with canonical keywords attached.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ExpectedVersionConflictError: If the row is missing, active, or newer.
+            DatabaseError: If exact tombstone recovery metadata is unavailable.
+        """
+        if (
+            not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or expected_version < 1
+        ):
+            raise InputError("expected_version must be a positive integer.")
+
+        col_name = "id"
+        if isinstance(prompt_id_or_name_or_uuid, str):
+            try:
+                uuid.UUID(prompt_id_or_name_or_uuid, version=4)
+                col_name = "uuid"
+            except ValueError:
+                col_name = "name"
+        if not validate_column_name(col_name, "Prompts"):
+            raise InputError(f"Invalid column name: {col_name}")
+
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"SELECT * FROM Prompts WHERE {col_name} = ?",
+                    (prompt_id_or_name_or_uuid,),
+                )
+                row = cursor.fetchone()
+                if (
+                    row is None
+                    or int(row["deleted"]) != 1
+                    or int(row["version"]) != expected_version
+                ):
+                    raise ExpectedVersionConflictError(
+                        "Prompt tombstone changed or is no longer deleted.",
+                        "Prompts",
+                        prompt_id_or_name_or_uuid,
+                    )
+
+                prompt_id = int(row["id"])
+                prompt_uuid = str(row["uuid"])
+                cursor.execute(
+                    """
+                    SELECT payload
+                    FROM sync_log
+                    WHERE entity = 'Prompts'
+                      AND entity_uuid = ?
+                      AND operation = 'delete'
+                      AND version = ?
+                    ORDER BY change_id DESC
+                    LIMIT 1
+                    """,
+                    (prompt_uuid, expected_version),
+                )
+                tombstone_event = cursor.fetchone()
+                try:
+                    tombstone_payload = json.loads(tombstone_event["payload"])
+                except (TypeError, KeyError, json.JSONDecodeError):
+                    tombstone_payload = None
+                if (
+                    not isinstance(tombstone_payload, dict)
+                    or tombstone_payload.get("keywords_captured") is not True
+                    or not isinstance(tombstone_payload.get("keywords"), list)
+                    or any(
+                        not isinstance(keyword, str)
+                        for keyword in tombstone_payload["keywords"]
+                    )
+                ):
+                    raise DatabaseError(
+                        "Prompt tombstone does not contain exact recovery metadata."
+                    )
+                keywords = self._canonicalize_prompt_keywords(
+                    tombstone_payload["keywords"]
+                )
+
+                current_time = self._get_current_utc_timestamp_str()
+                new_version = expected_version + 1
+                cursor.execute(
+                    """
+                    UPDATE Prompts
+                    SET deleted = 0, last_modified = ?, version = ?, client_id = ?
+                    WHERE id = ? AND deleted = 1 AND version = ?
+                    """,
+                    (
+                        current_time,
+                        new_version,
+                        self.client_id,
+                        prompt_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ExpectedVersionConflictError(
+                        "Prompt tombstone changed before it could be restored.",
+                        "Prompts",
+                        prompt_id,
+                    )
+
+                cursor.execute("SELECT * FROM Prompts WHERE id = ?", (prompt_id,))
+                restored_payload = dict(cursor.fetchone())
+                change_id = self._log_sync_event(
+                    conn,
+                    "Prompts",
+                    prompt_uuid,
+                    "update",
+                    new_version,
+                    restored_payload,
+                )
+                self.update_keywords_for_prompt(prompt_id, keywords)
+                self._finalize_prompt_sync_snapshot(
+                    conn, change_id, prompt_id, restored_payload
+                )
+                self._update_fts_prompt(
+                    conn,
+                    prompt_id,
+                    restored_payload["name"],
+                    restored_payload.get("author"),
+                    restored_payload.get("details"),
+                    restored_payload.get("system_prompt"),
+                    restored_payload.get("user_prompt"),
+                )
+                restored_payload["keywords"] = keywords
+                return restored_payload
+        except (InputError, ConflictError, DatabaseError):
+            raise
+        except sqlite3.Error as exc:
+            raise DatabaseError(f"Failed to restore deleted prompt: {exc}") from exc
 
     def soft_delete_keyword(self, keyword_text: str) -> bool:
         if not keyword_text or not keyword_text.strip():
