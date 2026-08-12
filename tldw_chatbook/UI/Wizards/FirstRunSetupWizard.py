@@ -126,6 +126,29 @@ class SetupRadioButton(RadioButton):
 
 _SETUP_STEP_FAILURE_REASONS = frozenset({"compose_failed", "render_failed"})
 
+REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
+    wizard_state.STEP_WELCOME: "diagnostics",
+    wizard_state.STEP_PROVIDER: "providers-models",
+    wizard_state.STEP_MODEL: "providers-models",
+    wizard_state.STEP_SPEECH: "speech-tts",
+    wizard_state.STEP_TOOLS: "advanced-config",
+    wizard_state.STEP_NOTES: "advanced-config",
+    wizard_state.STEP_APPEARANCE: "appearance",
+    wizard_state.STEP_PROTECT: "privacy-security",
+    wizard_state.STEP_SUMMARY: "diagnostics",
+}
+
+
+def manual_settings_context_for_required_step(
+    step_id: str,
+) -> dict[str, str] | None:
+    """Return the actionable Settings context for a known required step."""
+
+    category = REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.get(step_id)
+    if category is None:
+        return None
+    return {"category": category}
+
 
 @dataclass(frozen=True, slots=True)
 class SetupStepFailure:
@@ -274,7 +297,14 @@ class SetupStep(WizardStep):
             ),
             Horizontal(
                 Button("Retry", id="setup-step-retry", variant="primary"),
-                Button("Use manual setup", id="setup-step-manual"),
+                Button(
+                    "Use manual setup",
+                    id="setup-step-manual",
+                    disabled=manual_settings_context_for_required_step(
+                        failure.step_id
+                    )
+                    is None,
+                ),
                 Button("Finish later", id="setup-step-later"),
                 classes="setup-step-recovery-actions",
             ),
@@ -4277,27 +4307,19 @@ class SetupWizardContainer(WizardContainer):
             )
         return saved
 
-    @staticmethod
-    def _manual_settings_context(step_id: str) -> dict[str, str]:
-        categories = {
-            wizard_state.STEP_PROVIDER: "providers-models",
-            wizard_state.STEP_MODEL: "providers-models",
-            wizard_state.STEP_RAG: "library-rag",
-            wizard_state.STEP_SPEECH: "speech-tts",
-            wizard_state.STEP_APPEARANCE: "appearance",
-            wizard_state.STEP_PROTECT: "privacy-security",
-            wizard_state.STEP_SUMMARY: "diagnostics",
-        }
-        return {"category": categories.get(step_id, "overview")}
-
     async def _use_manual_setup(self) -> None:
         try:
             step = self._active_required_failure()
             if step is None or step.config is None:
                 return
+            context = manual_settings_context_for_required_step(step.config.id)
+            if context is None:
+                step.show_step_error(
+                    "Manual setup is unavailable for this step. Retry or finish later."
+                )
+                return
             if not await self._checkpoint_required_failure():
                 return
-            context = self._manual_settings_context(step.config.id)
             result = {
                 "completed": False,
                 "exit_route": "settings",

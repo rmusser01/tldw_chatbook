@@ -56,9 +56,11 @@ from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ModelStep,
+    NotesSyncStep,
     ProviderStep,
     SpeechSetupStep,
     SetupWizardContainer,
+    ToolsStep,
     _SettlingGuardedConfirmationDialog,
 )
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
@@ -71,7 +73,9 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_SUMMARY,
+    STEP_TOOLS,
     STEP_WELCOME,
+    TRACK_FULL,
     TRACK_QUICK,
     WIZARD_STATE_SECTION,
     SETUP_STARTED_KEY,
@@ -1287,6 +1291,68 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
             assert draft is not None
             assert draft.active_step_id == STEP_PROVIDER
             assert draft.values[STEP_WELCOME] == {"track": TRACK_QUICK}
+
+
+@pytest.mark.parametrize(
+    ("step_type", "step_id"),
+    ((ToolsStep, STEP_TOOLS), (NotesSyncStep, STEP_NOTES)),
+)
+@pytest.mark.asyncio
+async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    step_type,
+    step_id: str,
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=True)
+    app._initial_tab_value = "home"
+    monkeypatch.setattr(step_type, "compose_step", _raising_compose_step)
+    results: list[dict[str, object]] = []
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            app.app_config[WIZARD_STATE_SECTION][SETUP_COMPLETED_KEY] = False
+            wizard = FirstRunSetupWizard(app, rerun=True)
+            await app.push_screen(wizard, results.append)
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            container.select_track(TRACK_FULL)
+            container.wizard_data[STEP_WELCOME] = {"track": TRACK_FULL}
+            container.show_step(container._step_index_for_id(step_id))
+            await pilot.pause(0.2)
+
+            _press(app.screen, "#setup-step-manual")
+            await _wait_until(pilot, lambda: bool(results))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "SettingsScreen"
+                and getattr(app.screen, "active_category", None)
+                == "advanced-config",
+            )
+
+            assert results == [
+                {
+                    "completed": False,
+                    "exit_route": "settings",
+                    "exit_context": {"category": "advanced-config"},
+                }
+            ]
+            assert (
+                app.app_config[WIZARD_STATE_SECTION].get(SETUP_COMPLETED_KEY)
+                is False
+            )
+            draft = read_setup_draft(app.app_config)
+            assert draft is not None
+            assert draft.active_step_id == step_id
+            assert draft.values[STEP_WELCOME] == {"track": TRACK_FULL}
 
 
 # ---------------------------------------------------------------------------

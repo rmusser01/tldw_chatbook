@@ -22,10 +22,16 @@ from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardStepConfig,
 )
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    STEP_APPEARANCE,
+    STEP_MODEL,
+    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
+    STEP_SPEECH,
     STEP_SUMMARY,
+    STEP_TOOLS,
+    STEP_WELCOME,
     TRACK_FULL,
     TRACK_QUICK,
 )
@@ -39,6 +45,8 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ProviderChoiceOption,
     ProviderStep,
     RagStep,
+    SetupStep,
+    SetupStepFailure,
     SetupWizardContainer,
     SummaryStep,
     ToolsStep,
@@ -3019,6 +3027,71 @@ class TestComposeCrashPolicy:
                 required=True,
                 reason_code="sensitive raw exception",
             )
+
+    @pytest.mark.parametrize(
+        ("step_id", "expected_category"),
+        (
+            (STEP_WELCOME, "diagnostics"),
+            (STEP_PROVIDER, "providers-models"),
+            (STEP_MODEL, "providers-models"),
+            (STEP_SPEECH, "speech-tts"),
+            (STEP_TOOLS, "advanced-config"),
+            (STEP_NOTES, "advanced-config"),
+            (STEP_APPEARANCE, "appearance"),
+            (STEP_PROTECT, "privacy-security"),
+            (STEP_SUMMARY, "diagnostics"),
+        ),
+    )
+    def test_required_manual_route_mapping_is_exhaustive_and_actionable(
+        self, step_id, expected_category
+    ):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
+            manual_settings_context_for_required_step,
+        )
+
+        app_instance = MagicMock()
+        app_instance.app_config = {}
+        container = SetupWizardContainer(app_instance)
+        required_step_ids = {
+            step.config.id
+            for step in container.steps
+            if isinstance(step, SetupStep) and step.required and step.config
+        }
+
+        assert set(REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES) == required_step_ids
+        assert manual_settings_context_for_required_step(step_id) == {
+            "category": expected_category
+        }
+
+    def test_unknown_required_failure_disables_manual_action(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            manual_settings_context_for_required_step,
+        )
+
+        step = SetupStep(
+            wizard=MagicMock(),
+            config=WizardStepConfig(
+                id="forged-required-step",
+                title="Forged",
+                step_number=99,
+                can_skip=False,
+            ),
+        )
+        failure = SetupStepFailure(
+            step_id="forged-required-step",
+            required=True,
+            reason_code="compose_failed",
+        )
+        actions = step._failure_widgets(failure)[1]
+        manual_button = next(
+            child
+            for child in actions._pending_children
+            if child.id == "setup-step-manual"
+        )
+
+        assert manual_settings_context_for_required_step(failure.step_id) is None
+        assert manual_button.disabled is True
 
     @pytest.mark.asyncio
     async def test_required_provider_compose_failure_stays_active_and_blocks_next(
