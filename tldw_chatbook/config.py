@@ -2660,6 +2660,29 @@ ingest_directory_scan_limit = 1000
 # still pass through verbatim.
 anthropic_enabled = true
 
+[agents]
+# Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
+# authoritative defaults live in `Agents/agent_service.py`
+# (DEFAULT_MAX_LIVE_SUBAGENTS / DEFAULT_CHILD_MAX_WALL_SECONDS /
+# DEFAULT_SUBAGENTS_OUTLIVE_TURN), and shipping a live copy here would give
+# the same value two homes that can silently drift apart. Uncomment a line
+# to override. See Docs/User_Guide/console/agent-runs-and-tools.md.
+#
+# How many sub-agents of ONE conversation may run at once, counting any
+# still working from an earlier message. 1 disables the fleet (sub-agents
+# run inline, one at a time). The cap is per conversation AND per running
+# app -- N conversations can hold N * this between them.
+# max_live_subagents = 3
+#
+# Whether a sub-agent may keep working after the reply that spawned it has
+# finished. false settles every sub-agent at the end of its own turn.
+# subagents_outlive_turn = true
+#
+# How long ONE background sub-agent may keep working, in seconds. Checked
+# between the child's own steps, so it does not interrupt a provider call
+# already in flight.
+# child_max_wall_seconds = 1800.0
+
 [splash_screen]
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens

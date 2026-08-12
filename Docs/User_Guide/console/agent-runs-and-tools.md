@@ -173,7 +173,11 @@ own task concurrently. The Agent rail shows this directly: several
   The cap applies to the **conversation**, not to one reply: a sub-agent
   that is still working when its reply finishes keeps holding its slot, so
   the next message you send can only start as many new sub-agents as there
-  are free slots left.
+  are free slots left (see [When a sub-agent outlives the
+  reply](#when-a-sub-agent-outlives-the-reply)). Be aware of what the cap
+  is *not*: it is per conversation **and** per running app, so two
+  conversations can each run the full cap at the same time, and nothing
+  caps the total across all of them.
   Setting it to `1` turns the fleet off entirely: sub-agents go back to
   running one at a time, synchronously, exactly as before. Trying to spawn
   a sub-agent past the live cap is refused ("live sub-agent limit reached
@@ -246,18 +250,108 @@ because a fleet ran underneath it.
   distinctly by glyph (`⚠`/`✗`), just not by color, so they're
   distinguishable but not visually called out.
 - Row detail is transient, not durable. Elapsed time, the secondary line
-  and the token count are read from the live fleet, which is discarded the
-  moment the whole turn finishes — so seconds after a reply completes,
-  every row in that run reverts to name-and-task only, in the same session,
-  without a restart. Verified live during PR 2b's own verification pass
-  (task-15200 covers restoring the elapsed time and the secondary line from
-  the run database; the token count cannot be restored that way at all —
-  `agent_runs` has no column for it — so that dimension stays live-only
-  until the schema gains one).
+  and the token count are read from the live fleet, so they exist only for
+  a child this app process actually ran. A row for a child that has already
+  reached a terminal status is dropped from the panel when your **next**
+  message starts, and a conversation you reopen later (or after a restart)
+  falls back to the sparser historical rendering — name and task only. A
+  child that is *still working* keeps its full row across the reply and
+  across later turns; that part changed in fleet PR 3a-1 (task-15200 covers
+  restoring the elapsed time and the secondary line from the run database;
+  the token count cannot be restored that way at all — `agent_runs` has no
+  column for it — so that dimension stays live-only until the schema gains
+  one).
+- A still-working row's elapsed segment does not tick on its own. It is
+  rewritten only when something else repaints the rail — the child's own
+  next step, your next message, drilling into the row and back. Between
+  those, a sub-agent that has been working for a minute can still show
+  `· 1s`. Observed live during PR 3a-1's verification pass; the status
+  glyph and the "N working" summary stay correct throughout (task-15664).
 - There is no "View all" tail, and expanding the panel does not scroll it
   into view. With a dozen-plus children, or several rail sections open
   above it, you may need to scroll the rail manually to reach the last
   rows (task-15201).
+
+#### When a sub-agent outlives the reply
+
+The supervisor doesn't have to wait for every sub-agent it started. If it
+answers you without collecting one, that sub-agent **keeps working after
+the reply finishes** — the turn is over for you, not for it.
+
+What this means in practice:
+
+- **The reply you read does not contain that sub-agent's result.** The
+  supervisor answered without it, deliberately. Today nothing carries a
+  late result back into the conversation on its own: the finished work
+  lands in the sub-agent's own run record (**View full log**) and in any
+  files it edited, not in a new message. Ask in your next message if you
+  want it folded into the thread.
+- **It stays visible.** The **Sub-agents** panel keeps its row — glyph,
+  name/task, elapsed — after the reply lands and across the turns that
+  follow, and clicking that row still drills into that child. The summary
+  keeps counting it under "N working". (The elapsed number goes stale
+  between repaints; see *Known gaps* above.)
+- **It stays cancellable.** Focus the row and press **Delete** (see
+  [The fleet panel](#the-fleet-panel--three-states)). The cancel is
+  *cooperative*: the child notices between its own steps, so if it is
+  waiting on a model response the row can stay `●` for another several
+  seconds before flipping to cancelled — whatever it had produced up to
+  that point is kept as its result.
+- **Stop is different before and after.** Pressing **Stop** during the
+  turn that spawned it cancels the whole tree, survivors included — Stop
+  stays a kill switch for everything that turn started. Once that turn
+  has returned, Stop no longer reaches the child; the row's **Delete** is
+  the gesture that does.
+
+**What bounds it.** Three separate limits, none of which is a promise the
+others make:
+
+- **Wall clock, per child** — `[agents] child_max_wall_seconds` in
+  `config.toml` (default **1800**, i.e. 30 minutes). A background child
+  gets its own ceiling rather than whatever was left of the turn's.
+  The ceiling is checked *between* the child's steps, so a child stuck
+  inside a single long provider call is not cut off until that call
+  returns.
+- **How many at once** — `[agents] max_live_subagents`, which counts
+  survivors from earlier messages against the same cap. Per conversation
+  and per running app: N conversations can hold N × the cap between them.
+- **Tokens, per run** — each child runs against a run token ceiling of
+  its own rather than a slice of the parent's remainder, so a fleet's
+  worst-case spend scales with the number of children, not with what the
+  parent had left.
+
+**Changes it makes to files.** Change review keeps a survivor's edits in
+their own record instead of folding them into whatever turn happens to be
+running: a turn that ends with children still working gets a
+"✎ A sub-agent edited N files after this turn" row, and a turn that
+*starts* while an earlier turn's child is still writing is stamped
+"⚠ a sub-agent from an earlier turn was still writing during this turn —
+some of these changes may be its, not this turn's". Change tracking diffs
+a working tree and cannot tell two writers apart, so it discloses the
+overlap rather than implying sole authorship.
+
+**If the app restarts.** A child still running when the app exits cannot
+survive the process. The next time Console opens the run database (once
+per app run), every row left `running` is swept to **error** with the
+result "Interrupted by app restart" — so a killed child shows up as
+errored, not silently missing. The sweep assumes one app instance per data
+directory; a second instance sharing the same directory would flip the
+first's genuinely-running rows.
+
+**Honest limits of the current release:**
+
+- A survivor's token spend reaches the **cost chip only**. Hover it and
+  the tooltip breaks the figure out as `Sub-agents: N tok (not priced)`,
+  and it is folded into the chip's own token total. It is *not* on the
+  assistant message's own usage row and *not* in conversation exports, and
+  it is remembered only for as long as the Console screen stays open.
+- Nothing wakes the supervisor when the last child finishes, and nothing
+  notifies you from another tab or screen.
+
+**Turning it off.** Set `[agents] subagents_outlive_turn = false` in
+`config.toml`: sub-agents are then settled at the end of the turn that
+spawned them, exactly as before this behavior existed. Setting
+`max_live_subagents = 1` removes it too, by removing the fleet entirely.
 
 ### Skills
 
@@ -373,6 +467,15 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   earlier message (default 3; `1` disables the fleet). No
   Settings UI switch; see [Parallel sub-agents](#parallel-sub-agents-the-fleet)
   above.
+- **`[agents] child_max_wall_seconds`** in `config.toml` — how long one
+  background sub-agent may keep working, in seconds (default `1800`).
+  Checked between the child's steps, so it does not interrupt a provider
+  call already in flight. No Settings UI switch; see [When a sub-agent
+  outlives the reply](#when-a-sub-agent-outlives-the-reply) above.
+- **`[agents] subagents_outlive_turn`** in `config.toml` — whether a
+  sub-agent may keep working after the reply that spawned it finishes
+  (default `true`). Set it to `false` to settle every sub-agent at the end
+  of its own turn. No Settings UI switch.
 - **Settings > Agents** — create and manage the named agent definitions the
   supervisor can delegate to; see [Named agents](#named-agents) above.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
@@ -417,4 +520,21 @@ read Running, and clicking the second row drilled straight into that
 child. Two checks NOT confirmed live and reported as such: Delete-to-cancel
 (lost the race against child completion across ~7 attempts; covered by
 passing tests) and a durable token figure on a finished row — which
-surfaced the transience now documented under Known gaps).*
+surfaced the transience now documented under Known gaps). "When a
+sub-agent outlives the reply", the per-conversation/per-process cap
+wording, and the two Known-gaps corrections added @ d87bef16d —
+2026-08-11 (fleet PR3a-1 Task 7: driven live against a real Anthropic
+model on an isolated scratch profile. Confirmed by pane and by
+`agent_runs`: a child was still `running` when its reply rendered
+"STARTED" and its primary row read `done`; it reached `done` 31.7s later
+with a 6,104-character result; a whole later turn ran start-to-finish
+while it stayed `running`, never `superseded`; the Sub-agents panel showed
+`● 1 working, 0 done` with the child's row after the turn returned and
+again after a later turn; focusing that row and pressing Delete flipped it
+to `cancelled` ~18s later with its partial text preserved; SIGKILL with a
+child live, then relaunch, left its row `error` / "Interrupted by app
+restart"; and hovering the cost chip showed `Sub-agents: 1.8k tok (not
+priced)`. One thing found and NOT fixed here: a still-working row's
+elapsed segment froze at `· 1s` for a child a minute old until something
+else repainted the rail — now documented under Known gaps as
+task-15664.)*
