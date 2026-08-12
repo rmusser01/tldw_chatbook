@@ -147,3 +147,49 @@ task's scope. Worth a follow-up task to either mark the affected tests
 **Files added:** `Tests/UI/test_llm_screen_ollama_probe_nonblocking.py`,
 `Tests/UI/test_llm_screen_ollama_ux_unchanged.py`,
 `Tests/UI/test_nav_overflow_tick_gating.py`.
+
+## Review fix (post-approval minor)
+
+Reviewer flagged a real race the async conversion introduced:
+`_update_ollama_api_state` checked `is_attached`/`screen.is_active` only BEFORE the
+now-awaited (up to ~0.25s) probe call; the old synchronous version was atomic
+end-to-end, so a widget that detached or whose screen went inactive WHILE the probe
+was in flight used to still get its buttons mutated once the probe resolved, since
+nothing re-checked after the `await`. Fixed by repeating the identical guard
+immediately after `available = await self._ollama_api_available()`, before touching
+any button.
+
+Added `test_a_screen_switch_mid_probe_leaves_buttons_untouched` in
+`Tests/UI/test_llm_screen_ollama_ux_unchanged.py`: holds the probe open on an
+`asyncio.Event`, pushes a new screen on top of Models (so `screen.is_active` goes
+`False` while the window stays fully mounted), releases the probe with a result that
+WOULD flip every gated button, and asserts every button's `(disabled, tooltip)` is
+byte-identical to its pre-probe baseline. Mutation-tested (removed the new guard,
+confirmed red; restored, confirmed green).
+
+One trap hit while writing this test, worth recording since it nearly produced a
+vacuous pass: the first version simulated the race with `await window.remove()`
+(genuinely flips `is_attached` to `False`) instead of a screen push. That mutation-
+tested as a FALSE PASS -- removing the window also tears down its descendants, so
+`view.query(Button)` returns zero buttons post-removal and the loop body never runs
+regardless of whether the guard exists, i.e. the test would have passed even with
+the guard deleted. Switched to pushing a new screen on top (confirmed: `is_attached`
+stays `True`, buttons remain real and query-able, only `screen.is_active` flips) --
+that version killed the mutant. Lesson candidate for
+`backlog/docs/lessons-testing-evidence.md` if this pattern recurs: a widget-removal
+race test can silently test nothing if removal also empties the exact query the
+code under test uses.
+
+Also hit and fixed independently: this file's mount helper used a single
+`pilot.pause()` (unlike `test_llm_screen_lab_adoption.py`'s established two-pause
+convention for this same deferred mount), which surfaced as a genuine low-rate
+flake (`NoMatches` on `#llm-view-ollama`) reproduced in a 30-run loop at roughly
+1-in-15. Fixed by matching the two-`pilot.pause()` convention inside the shared
+`_mount_models_with_probe_result` helper; reran 20/20 clean afterward.
+
+Reviewer's second minor accepted as residual, not fixed: the refused-connection
+path's promptness (`_probe_local_server` returning `False` quickly on ECONNREFUSED)
+is logically OS-immediate but has no test asserting an upper time bound --
+`test_probe_reports_down_on_a_refused_connection` in
+`Tests/UI/test_llm_screen_ollama_probe_nonblocking.py` asserts the boolean outcome
+only. Left as-is per reviewer guidance.

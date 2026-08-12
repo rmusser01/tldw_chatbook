@@ -645,6 +645,15 @@ class LLMManagementWindow(Container):
         except Exception:  # noqa: BLE001 - view not mounted
             return
         available = await self._ollama_api_available()
+        # task-15473 review: the probe above can take up to ~0.25s (it now
+        # awaits instead of blocking), during which this widget can detach
+        # or its screen can go inactive -- the old synchronous version was
+        # atomic end-to-end, so the pre-await guard above was sufficient;
+        # the async version needs the identical check repeated here before
+        # touching any button, or a detach mid-probe mutates widgets that
+        # are no longer the active screen's.
+        if not self.is_attached or not self.screen.is_active:
+            return
         for button in view.query(Button):
             if not button.id or button.id in excluded:
                 continue
