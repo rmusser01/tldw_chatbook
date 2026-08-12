@@ -4,7 +4,7 @@ title: Bulk export of prompts via the chatbook format
 status: In Progress
 assignee: []
 created_date: '2026-07-12 13:16'
-updated_date: '2026-08-12 15:00'
+updated_date: '2026-08-12 15:44'
 labels:
   - library
   - prompts
@@ -29,3 +29,20 @@ Deferred from the 2026-07-12 Library Prompts spec: v1 ships per-prompt .md expor
 - [ ] #6 A Chatbook exported from a real source database imports into a fresh real database with portable Prompt and Recipe content unchanged, including multiline and Unicode lanes, literal markup-looking text, keywords, structured-v2 definitions, and compatibility-only stored definitions.
 - [ ] #7 Automated database, codec, Chatbook, Library scope, service, and mounted Textual tests cover legacy compatibility, invalid versions, more than one browse page, deleted exclusion, Everything scope, server-mode refusal, stale/error paths, and narrow-toolbar geometry; user documentation explains the final bulk workflow and exclusions.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/057-portable-chatbook-prompt-records.md
+Reason: TASK-197 defines a durable portable Prompt schema, backward-compatible dispatch, privacy/identity exclusions, and an all-or-nothing cross-module export boundary.
+
+Detailed plan: Docs/superpowers/plans/2026-08-12-task-197-bulk-prompt-chatbook-export.md
+
+1. Build the strict portable Prompt-record codec RED-first.
+2. Add coherent privacy-safe Prompt export snapshots and uncapped active IDs in real SQLite.
+3. Make Chatbook Prompt collection/import lossless, archive-local, backward-compatible, and all-or-nothing.
+4. Extend Library export counts, selections, labels, and real round trips with Prompts.
+5. Restore Prompt Export… through the existing canvas and verify local-only lifecycle, focus, privacy, and real compositor geometry.
+6. Run affected regression/static/security gates, update both user guides, obtain independent review, and complete task hygiene.
+<!-- SECTION:PLAN:END -->
