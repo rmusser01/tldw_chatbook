@@ -202,6 +202,7 @@ from ...Chat.console_generate_video import (
     run_video_generation,
 )
 from ...Video_Generation.config import get_video_generation_config
+from ...Video_Generation.video_formats import canonical_video_extension
 from ...Video_Generation.video_store import (
     VideoCapacityExceeded,
     VideoPublicationGate,
@@ -17555,7 +17556,12 @@ class ChatScreen(BaseAppScreen):
             meta = getattr(message, "video_metadata", None)
             if meta is None:
                 continue
-            path = store.resolve(self._video_storage_message_id(message), meta.name)
+            extension = canonical_video_extension(meta.container)
+            path = store.resolve(
+                self._video_storage_message_id(message),
+                meta.name,
+                extension=extension,
+            )
             specs[message.id] = ConsoleVideoCardSpec(
                 message_id=message.id,
                 meta=meta,
@@ -17935,6 +17941,12 @@ class ChatScreen(BaseAppScreen):
         import secrets
         import shutil
 
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        target = validate_path_simple(target, probe_existing=False)
+        extension = canonical_video_extension(artifact.extension)
+        if target.suffix != f".{extension}":
+            raise ValueError("external video target extension does not match")
         ChatScreen._require_external_video_pinned_capabilities()
         target.parent.mkdir(parents=False, exist_ok=True)
         parent_identity = ChatScreen._external_video_parent_identity(target.parent)
@@ -18139,12 +18151,21 @@ class ChatScreen(BaseAppScreen):
             selected = await self._wait_for_console_screen_result(
                 EnhancedFileSave(
                     title="Save generated video",
-                    default_filename=f"{artifact.slug}.mp4",
+                    default_filename=f"{artifact.slug}.{artifact.extension}",
                 )
             )
             if not self._owns_pending_console_video(artifact) or not selected:
                 return None
-            target = Path(selected).expanduser()
+            try:
+                target = ChatScreen._normalize_pending_video_target(
+                    Path(selected).expanduser(), artifact.extension
+                )
+            except ValueError:
+                self.app_instance.notify(
+                    "Choose a filename with no extension or the generated video format.",
+                    severity="warning",
+                )
+                continue
             confirmed_identity = None
             reconfirmation_required = False
 
@@ -18247,6 +18268,19 @@ class ChatScreen(BaseAppScreen):
                 confirmed_identity = None
             # Replacement declined: return to the picker with the stage live.
         return None
+
+    @staticmethod
+    def _normalize_pending_video_target(target: Path, extension: str) -> Path:
+        """Append the canonical suffix or require its exact lowercase spelling."""
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        target = validate_path_simple(target, probe_existing=False)
+        canonical = canonical_video_extension(extension)
+        if not target.suffix:
+            return target.with_suffix(f".{canonical}")
+        if target.suffix == f".{canonical}":
+            return target
+        raise ValueError("external video target extension does not match")
 
     @staticmethod
     def _open_video_with_os(path: Path) -> None:
@@ -18566,6 +18600,7 @@ class ChatScreen(BaseAppScreen):
                 prompt=prompt_text,
                 negative_prompt=negative_text or None,
                 style_negative_prompt=args.style is not None,
+                video_format="mp4",
                 duration_seconds=style_params.get("duration_seconds"),
                 fps=style_params.get("fps"),
                 ratio=style_params.get("ratio"),
@@ -18611,8 +18646,11 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
+        extension = canonical_video_extension(meta.container)
         path = self._ensure_console_video_store().resolve(
-            self._video_storage_message_id(message), meta.name
+            self._video_storage_message_id(message),
+            meta.name,
+            extension=extension,
         )
         if path is None:
             await self._sync_native_console_chat_ui()
@@ -18669,8 +18707,11 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
+        extension = canonical_video_extension(meta.container)
         path = self._ensure_console_video_store().resolve(
-            self._video_storage_message_id(message), meta.name
+            self._video_storage_message_id(message),
+            meta.name,
+            extension=extension,
         )
         if path is None:
             await self._sync_native_console_chat_ui()
@@ -18689,10 +18730,10 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             save_location.mkdir(parents=True, exist_ok=True)
-            target = save_location / f"{meta.name}.mp4"
+            target = save_location / f"{meta.name}.{extension}"
             counter = 1
             while target.exists():
-                target = save_location / f"{meta.name}_{counter}.mp4"
+                target = save_location / f"{meta.name}_{counter}.{extension}"
                 counter += 1
             shutil.copy2(path, target)
             return target
@@ -18765,6 +18806,7 @@ class ChatScreen(BaseAppScreen):
                 ratio=meta.ratio,
                 seed=-1,
                 model=meta.model,
+                video_format=meta.container,
                 cancel_event=cancel_event,
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),

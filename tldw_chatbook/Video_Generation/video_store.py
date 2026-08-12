@@ -41,6 +41,10 @@ from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.config import (
     get_video_generation_config,
 )
+from tldw_chatbook.Video_Generation.video_formats import (
+    SUPPORTED_VIDEO_FORMATS,
+    canonical_video_extension,
+)
 
 VIDEO_MARKER_PREFIX = "[video] "
 """Prefix identifying a video card's content marker in a message row."""
@@ -246,7 +250,7 @@ class VideoStore:
             raise ValueError(f"unsafe slug component: {slug!r}")
         if slug.startswith(_STAGE_PREFIX):
             raise ValueError("slug uses reserved internal stage namespace")
-        safe_ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "mp4"
+        safe_ext = canonical_video_extension(extension)
         candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
         try:
             resolved_root = self._root.resolve()
@@ -293,6 +297,13 @@ class VideoStore:
             raise VideoStoreSaveError("managed video target validation failed") from exc
         raise VideoStoreSaveError("managed video target already exists")
 
+    def _ensure_slug_absent(self, message_id: str, slug: str) -> None:
+        """Require that no canonical container already owns this message slug."""
+        for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS:
+            self._ensure_target_absent(
+                self._video_path(message_id, slug, extension)
+            )
+
     # -- write/resolve ----------------------------------------------------
 
     def allocate_slug(self, message_id: str, prompt: str) -> str:
@@ -307,7 +318,10 @@ class VideoStore:
         base = slugify_prompt(prompt)
         for attempt in range(1, _SLUG_MAX_SUFFIX_ATTEMPTS + 1):
             slug = base if attempt == 1 else f"{base}-{attempt}"
-            if self.resolve(message_id, slug) is None:
+            if all(
+                self.resolve(message_id, slug, extension=extension) is None
+                for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS
+            ):
                 return slug
         raise ValueError(f"no free slug for base {base!r} under message {message_id!r}")
 
@@ -317,7 +331,7 @@ class VideoStore:
         slug: str,
         content: bytes,
         *,
-        extension: str = "mp4",
+        extension: str,
         publication_gate: VideoPublicationGate | None = None,
     ) -> Path | VideoCapacityExceeded:
         """Publish a normal payload and evict only the old files needed for it."""
@@ -336,7 +350,7 @@ class VideoStore:
             with self._root_lease():
                 self._ensure_safe_root(create=True)
                 self._cleanup_orphan_stages_unlocked()
-                self._ensure_target_absent(path)
+                self._ensure_slug_absent(message_id, slug)
                 try:
                     self._atomic_publish(
                         content,
@@ -366,7 +380,7 @@ class VideoStore:
         stream: BinaryIO,
         size_bytes: int,
         *,
-        extension: str = "mp4",
+        extension: str,
         publication_gate: VideoPublicationGate | None = None,
     ) -> Path:
         """Adopt one caller-owned over-cap stream as the sole managed video.
@@ -378,13 +392,6 @@ class VideoStore:
             raise ValueError("refusing to adopt an empty video payload")
         try:
             path = self._video_path(message_id, slug, extension)
-        except VideoStoreSaveError:
-            try:
-                stream.seek(0)
-            except (OSError, ValueError):
-                pass
-            raise
-        try:
             try:
                 stream.seek(0)
             except (OSError, ValueError) as exc:
@@ -395,7 +402,7 @@ class VideoStore:
                 with self._root_lease():
                     self._ensure_safe_root(create=True)
                     self._cleanup_orphan_stages_unlocked()
-                    self._ensure_target_absent(path)
+                    self._ensure_slug_absent(message_id, slug)
                     try:
                         self._atomic_publish(
                             stream,
@@ -436,7 +443,7 @@ class VideoStore:
             except (OSError, ValueError):
                 pass
 
-    def resolve(self, message_id: str, slug: str, *, extension: str = "mp4") -> Path | None:
+    def resolve(self, message_id: str, slug: str, *, extension: str) -> Path | None:
         """Resolve a name to a live file, or ``None`` when missing/expired.
 
         Missing is the normal post-restart/post-expiry state (ADR-044

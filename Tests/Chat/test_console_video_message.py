@@ -8,6 +8,7 @@ never provenance keys), clobber guards on every persistence seam, and
 image-reader isolation (ADR-044).
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +46,27 @@ def _ttl_config():
     return SimpleNamespace(
         retention="ttl", retention_ttl_hours=1, max_store_mb=2048
     )
+
+
+def _reload_video_messages(db, conversation_id):
+    conversation_service = ChatConversationService(db)
+    tree = conversation_service.get_conversation_tree(
+        conversation_id, depth_cap=10_000, root_limit=10_000
+    )
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = db
+    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    active_leaf_id = db.get_conversation_active_leaf(conversation_id)
+
+    fresh_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    fresh_session = fresh_store.restore_persisted_session(
+        title="Video reload",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=all_nodes,
+        active_leaf_persisted_id=active_leaf_id,
+    )
+    return screen, fresh_store.messages_for_session(fresh_session.id)
 
 
 class FakeVideoPersistence:
@@ -182,6 +204,35 @@ def test_screen_state_round_trip_preserves_video_metadata(store_with_session):
     assert parse_video_marker(restored.content) == "dusk-over-neon-tokyo"
 
 
+def test_webm_video_card_survives_real_screen_state_round_trip(tmp_path):
+    metadata = _video_meta(container="webm")
+    message = ConsoleChatMessage(
+        id="screen-state-webm-message",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[video] dusk-over-neon-tokyo",
+        video_metadata=metadata,
+    )
+    video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
+    stored_path = video_store.save(
+        message.id,
+        metadata.name,
+        b"webm-video-bytes",
+        extension="webm",
+    )
+
+    payload = ConsoleMessageController._serialize_console_message(message)
+    restored = ChatScreen._restore_console_message(payload)
+    assert restored is not None
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_video_store = video_store
+    spec = screen._build_video_card_specs([restored])[restored.id]
+
+    assert restored.video_metadata == metadata
+    assert spec.status == "ready"
+    assert spec.file_path == str(stored_path)
+
+
 def test_console_video_store_prefers_explicit_test_override(tmp_path):
     app_store = VideoStore(root=tmp_path / "app")
     override = VideoStore(root=tmp_path / "override")
@@ -222,7 +273,8 @@ def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
     video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
     persisted_id = "persisted-video-message"
     stored_path = video_store.save(
-        persisted_id, _video_meta().name, b"video-bytes"
+        persisted_id, _video_meta().name, b"video-bytes",
+        extension="mp4",
     )
     message = ConsoleChatMessage(
         id="fresh-native-message",
@@ -251,7 +303,7 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
         video_metadata=_video_meta(),
     )
     assert message.persisted_message_id is None
-    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes")
+    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes", extension="mp4")
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_video_store = video_store
 
@@ -264,10 +316,8 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
 
 
 @pytest.mark.integration
-def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
-    """Real-DB reload: persist a video message, drop the store, resume via
-    the real converter + restore path. The video facts survive in
-    metadata_json; image-generation readers see nothing (ADR-044)."""
+def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
+    """A fresh Console resolves WebM from metadata persisted in SQLite."""
     db = CharactersRAGDB(tmp_path / "video_reload.sqlite", "test_client")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
@@ -278,11 +328,14 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         video_root = tmp_path / "generated_videos"
         initial_video_store = VideoStore(root=video_root, config=_ttl_config())
         stored_path = initial_video_store.save(
-            preallocated_id, _video_meta().name, b"video-bytes"
+            preallocated_id,
+            _video_meta().name,
+            b"video-bytes",
+            extension="webm",
         )
         msg = store.append_video_message(
             session.id,
-            video_metadata=_video_meta(),
+            video_metadata=_video_meta(container="webm"),
             persist=True,
             message_id=preallocated_id,
         )
@@ -290,25 +343,7 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         assert conversation_id is not None
 
         # ---- Simulate reload: persist -> DROP the store -> fresh store ----
-        conversation_service = ChatConversationService(db)
-        tree = conversation_service.get_conversation_tree(
-            conversation_id, depth_cap=10_000, root_limit=10_000
-        )
-        screen = ChatScreen(_build_test_app())
-        screen.app_instance.chachanotes_db = db
-        all_nodes = screen._console_messages_from_conversation_tree(tree)
-        active_leaf_id = db.get_conversation_active_leaf(conversation_id)
-
-        fresh_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
-        fresh_session = fresh_store.restore_persisted_session(
-            title="Video reload",
-            workspace_id=None,
-            persisted_conversation_id=conversation_id,
-            all_nodes=all_nodes,
-            active_leaf_persisted_id=active_leaf_id,
-        )
-
-        reloaded = fresh_store.messages_for_session(fresh_session.id)
+        screen, reloaded = _reload_video_messages(db, conversation_id)
         video_msg = next(m for m in reloaded if m.video_metadata is not None)
 
         assert video_msg.id != preallocated_id
@@ -325,7 +360,7 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         assert specs[video_msg.id].file_path == str(stored_path)
 
         # The named card's facts and still-within-TTL bytes survive reload.
-        assert video_msg.video_metadata == _video_meta()
+        assert video_msg.video_metadata == _video_meta(container="webm")
         assert video_msg.metadata is None
         assert parse_video_marker(video_msg.content) == "dusk-over-neon-tokyo"
 
@@ -338,6 +373,56 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         # renders the marker+metadata with no byte access and no error.
         payload = ConsoleMessageController._serialize_console_message(video_msg)
         assert payload["content"] == "[video] dusk-over-neon-tokyo"
-        assert VideoGenerationMetadata.from_json(payload["metadata_json"]) == _video_meta()
+        assert VideoGenerationMetadata.from_json(payload["metadata_json"]) == _video_meta(
+            container="webm"
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.integration
+def test_historical_video_message_without_container_reloads_as_mp4(tmp_path):
+    db = CharactersRAGDB(tmp_path / "historical_video_reload.sqlite", "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Historical video reload")
+        store.active_session_id = session.id
+        message_id = "historical-video-reload-id"
+        video_root = tmp_path / "generated_videos"
+        video_store = VideoStore(root=video_root, config=_ttl_config())
+        stored_path = video_store.save(
+            message_id,
+            "historical-clip",
+            b"historical-mp4-bytes",
+            extension="mp4",
+        )
+        store.append_video_message(
+            session.id,
+            video_metadata=_video_meta(name="historical-clip"),
+            persist=True,
+            message_id=message_id,
+        )
+        historical_payload = json.dumps(
+            {
+                "video_generation": {
+                    "name": "historical-clip",
+                    "prompt": "historical prompt",
+                    "backend": "minimax",
+                }
+            }
+        )
+        assert db.update_message_metadata_local(message_id, historical_payload)
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+
+        screen, reloaded = _reload_video_messages(db, conversation_id)
+        video_msg = next(message for message in reloaded if message.video_metadata)
+        fresh_video_store = VideoStore(root=video_root, config=_ttl_config())
+        screen._console_video_store = fresh_video_store
+        spec = screen._build_video_card_specs(reloaded)[video_msg.id]
+
+        assert video_msg.video_metadata.container == "mp4"
+        assert spec.status == "ready"
+        assert spec.file_path == str(stored_path)
     finally:
         db.close_connection()

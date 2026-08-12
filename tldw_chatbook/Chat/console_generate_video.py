@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
     GENERATE_VIDEO_COMMAND_NAME,
 )
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
 from tldw_chatbook.Video_Generation.video_store import (
     VideoCapacityExceeded,
     VideoPublicationGate,
@@ -194,6 +195,7 @@ def run_video_generation(
     ratio: str | None = None,
     seed: int | None = None,
     model: str | None = None,
+    video_format: str = "mp4",
     cancel_event: threading.Event | None = None,
     publication_gate: VideoPublicationGate | None = None,
     video_store: VideoStore | None = None,
@@ -213,6 +215,7 @@ def run_video_generation(
         style_negative_prompt: Whether ``negative_prompt`` came from a style
             template and may be suppressed for an incompatible workflow.
         duration_seconds/fps/width/height/ratio/seed/model: Optional params.
+        video_format: Canonical requested output container.
         cancel_event: Optional cooperative-cancellation event, threaded to
             adapters that support it (minimax).
         publication_gate: Optional gate that linearizes managed publication
@@ -260,6 +263,7 @@ def run_video_generation(
         ratio=ratio,
         seed=seed,
         model=model,
+        video_format=video_format,
     )
     # worker.run_generation is the single validation choke point AND the
     # dispatch seam; adapters that don't declare cancel_event support are
@@ -270,6 +274,7 @@ def run_video_generation(
         prompt=prompt,
         negative_prompt=negative_prompt or "",
         backend=request.backend,
+        container=result.container,
         model=result.resolved_model or model,
         seed=result.resolved_seed if result.resolved_seed is not None else seed,
         duration_seconds=result.duration_seconds
@@ -280,7 +285,7 @@ def run_video_generation(
         height=result.height or height,
         ratio=ratio,
     )
-    extension = "mp4"
+    extension = canonical_video_extension(result.container)
     try:
         outcome = store.save(
             message_id,

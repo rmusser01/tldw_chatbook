@@ -138,7 +138,9 @@ def test_video_retention_runs_during_app_construction_once(
 ) -> None:
     video_root, _ = isolated_video_store
     prior_store = VideoStore()
-    prior_path = prior_store.save("prior-message", "prior-media", b"prior-video")
+    prior_path = prior_store.save(
+        "prior-message", "prior-media", b"prior-video", extension="mp4"
+    )
     real_enforce_retention = VideoStore.enforce_retention
     retention_calls: list[VideoStore] = []
 
@@ -174,6 +176,7 @@ def test_next_app_startup_applies_session_retention_again(
         message.id,
         metadata.name,
         b"current-video",
+        extension="mp4",
     )
 
     second_app = _production_app(monkeypatch)
@@ -196,11 +199,13 @@ def test_next_app_startup_keeps_fresh_ttl_video_and_removes_stale(
         "fresh-message",
         "fresh-media",
         b"fresh-video",
+        extension="mp4",
     )
     stale_path = first_app.generated_video_store.save(
         "stale-message",
         "stale-media",
         b"stale-video",
+        extension="mp4",
     )
     stale_time = time.time() - 3700
     os.utime(stale_path, (stale_time, stale_time))
@@ -210,7 +215,9 @@ def test_next_app_startup_keeps_fresh_ttl_video_and_removes_stale(
     assert fresh_path.exists()
     assert not stale_path.exists()
     assert (
-        second_app.generated_video_store.resolve("fresh-message", "fresh-media")
+        second_app.generated_video_store.resolve(
+            "fresh-message", "fresh-media", extension="mp4"
+        )
         == fresh_path
     )
 
@@ -287,17 +294,20 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 name="current-run-clip",
                 prompt="current run",
                 backend="comfyui",
+                container="webm",
             )
             stored = app.generated_video_store.save(
                 message_id,
                 metadata.name,
                 b"current-run-bytes",
+                extension="webm",
             )
-            message = ConsoleChatMessage(
-                id=message_id,
-                role=ConsoleMessageRole.ASSISTANT,
-                content="[video] current-run-clip",
+            console_store = chat._ensure_console_chat_store()
+            assert console_store.active_session_id is not None
+            message = console_store.append_video_message(
+                console_store.active_session_id,
                 video_metadata=metadata,
+                message_id=message_id,
             )
             assert chat._ensure_console_video_store() is app.generated_video_store
             assert chat._build_video_card_specs([message])[message_id].status == "ready"
@@ -332,7 +342,10 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 restored_chat._ensure_console_video_store()
                 is app.generated_video_store
             )
-            spec = restored_chat._build_video_card_specs([message])[message_id]
+            restored_store = restored_chat._ensure_console_chat_store()
+            restored_message = restored_store.get_message(message_id)
+            assert restored_message.video_metadata == metadata
+            spec = restored_chat._build_video_card_specs([restored_message])[message_id]
             assert spec.status == "ready"
             assert spec.file_path == str(stored)
             assert stored.read_bytes() == b"current-run-bytes"

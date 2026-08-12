@@ -92,6 +92,7 @@ def test_happy_path_submit_poll_download(adapter, http_recorder):
 
     assert result.content == b"video-bytes"
     assert result.content_type == "video/mp4"
+    assert result.container == "mp4"
     assert result.bytes_len == len(b"video-bytes")
     assert result.duration_seconds == 6
     assert result.width == 1920 and result.height == 1080
@@ -144,20 +145,67 @@ def test_resolution_tier_mapping(adapter, http_recorder):
     assert submits[1]["kwargs"]["json"]["resolution"] == "2K"
 
 
-def test_file_id_fallback_via_files_retrieve(adapter, http_recorder):
+@pytest.mark.parametrize("observed_type", [None, "application/octet-stream", "video/webm"])
+def test_file_id_fallback_requires_observed_mp4_mime(
+    adapter, http_recorder, observed_type
+):
     calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t2"}
     routes[("GET", "/v2/query/")] = {"task_id": "t2", "status": "Success", "file_id": "98765"}
     routes[("GET", "/v1/files/retrieve")] = {
         "file": {"download_url": "https://cdn.example.com/fallback.mp4"}
     }
-    routes[("BYTES", "cdn.example.com")] = (b"fallback-bytes", "application/octet-stream")
+    routes[("BYTES", "cdn.example.com")] = (b"fallback-bytes", observed_type)
 
-    result = adapter.generate(_request())
-    assert result.content == b"fallback-bytes"
-    assert result.content_type == "video/mp4"  # non-video content-type coerced
+    with pytest.raises(VideoGenerationError, match="video/mp4 MIME"):
+        adapter.generate(_request())
     retrieve = next(c for c in calls if "/v1/files/retrieve" in c["url"])
     assert retrieve["kwargs"]["params"] == {"file_id": "98765"}
+
+
+def test_file_id_fallback_accepts_exact_normalized_mp4_result(adapter, http_recorder):
+    calls, routes = http_recorder
+    routes[("POST", "/v2/video_generation")] = {"task_id": "t2-positive"}
+    routes[("GET", "/v2/query/")] = {
+        "task_id": "t2-positive",
+        "status": "Success",
+        "file_id": "12345",
+    }
+    routes[("GET", "/v1/files/retrieve")] = {
+        "file": {"download_url": "https://cdn.example.com/fallback.mp4"}
+    }
+    routes[("BYTES", "cdn.example.com")] = (
+        b"fallback-bytes",
+        " Video/MP4 ; codecs=avc1 ",
+    )
+
+    result = adapter.generate(_request())
+
+    assert result.content == b"fallback-bytes"
+    assert result.content_type == "video/mp4"
+    assert result.container == "mp4"
+    retrieve = next(c for c in calls if "/v1/files/retrieve" in c["url"])
+    assert retrieve["kwargs"]["params"] == {"file_id": "12345"}
+
+
+def test_download_accepts_normalized_mp4_mime_with_parameters(adapter, http_recorder):
+    _calls, routes = http_recorder
+    routes[("POST", "/v2/video_generation")] = {"task_id": "t-params"}
+    routes[("GET", "/v2/query/")] = {
+        "task": {
+            "status": "succeeded",
+            "content": {"url": "https://cdn.example.com/params.mp4"},
+        }
+    }
+    routes[("BYTES", "cdn.example.com")] = (
+        b"video",
+        " Video/MP4 ; codecs=avc1 ",
+    )
+
+    result = adapter.generate(_request())
+
+    assert result.content_type == "video/mp4"
+    assert result.container == "mp4"
 
 
 # -- failures ----------------------------------------------------------------

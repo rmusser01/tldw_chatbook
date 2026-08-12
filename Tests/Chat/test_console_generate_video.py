@@ -86,18 +86,28 @@ def _reset_registry():
     c.reset_video_generation_config_cache()
 
 
-def _register_fake(result_content: bytes = b"vid-bytes", **result_kwargs):
+def _register_fake(
+    result_content: bytes = b"vid-bytes",
+    *,
+    captured_requests: list | None = None,
+    **result_kwargs,
+):
     from tldw_chatbook.Video_Generation.adapter_registry import get_registry
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
 
     class FakeAdapter:
         name = "fakevid"
-        supported_formats = {"mp4"}
+        supported_formats = {"mp4", "webm"}
 
         def generate(self, request):
+            if captured_requests is not None:
+                captured_requests.append(request)
             return VideoGenResult(
-                content=result_content, content_type="video/mp4",
-                bytes_len=len(result_content), **result_kwargs,
+                content=result_content,
+                content_type=f"video/{request.format}",
+                container=request.format,
+                bytes_len=len(result_content),
+                **result_kwargs,
             )
 
     registry = get_registry()
@@ -124,6 +134,7 @@ def _register_capturing_comfyui(
             return VideoGenResult(
                 content=b"video",
                 content_type="video/mp4",
+                container="mp4",
                 bytes_len=5,
             )
 
@@ -184,7 +195,29 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert meta.model == "FakeH3"  # resolved model wins
     assert meta.duration_seconds == 6.0
     assert meta.width == 1920 and meta.height == 1080
-    assert store.resolve("msg-42", "a-red-dragon") == path
+    assert meta.container == "mp4"
+    assert path.suffix == ".mp4"
+    assert store.resolve("msg-42", "a-red-dragon", extension="mp4") == path
+
+
+def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_path):
+    captured_requests = []
+    _register_fake(captured_requests=captured_requests)
+    store = VideoStore(root=tmp_path / "gv")
+
+    meta, path = run_video_generation(
+        backend="fakevid",
+        prompt="A WebM Dragon",
+        message_id="msg-webm",
+        video_format="webm",
+        video_store=store,
+    )
+
+    assert [request.format for request in captured_requests] == ["webm"]
+    assert path.suffix == ".webm"
+    assert path.read_bytes() == b"vid-bytes"
+    assert meta.container == "webm"
+    assert store.resolve("msg-webm", "a-webm-dragon", extension="webm") == path
 
 
 def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
@@ -223,7 +256,9 @@ def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
 
         def generate(self, request, *, cancel_event=None):
             received.append(cancel_event)
-            return VideoGenResult(content=b"v", content_type="video/mp4", bytes_len=1)
+            return VideoGenResult(
+                content=b"v", content_type="video/mp4", container="mp4", bytes_len=1
+            )
 
     registry = get_registry()
     registry._enabled_backends = ["fakevid"]
@@ -261,6 +296,70 @@ def test_run_video_generation_invalid_request_never_writes(tmp_path):
     assert list(store.iter_stored()) == []
 
 
+@pytest.mark.parametrize(
+    ("container", "content_type"),
+    [
+        ("mov", "video/mp4"),
+        ("webm", "video/mp4"),
+    ],
+)
+def test_invalid_adapter_result_never_reaches_any_persistence_boundary(
+    tmp_path, monkeypatch, container, content_type
+):
+    from tldw_chatbook.Video_Generation.adapter_registry import get_registry
+    from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+
+    dispatches = []
+    save_calls = []
+    temp_calls = []
+
+    class ContradictoryAdapter:
+        name = "fakevid"
+        supported_formats = {"mp4", "webm"}
+
+        def generate(self, request):
+            dispatches.append(request)
+            return VideoGenResult(
+                content=b"PRIVATE-VIDEO-BYTES",
+                content_type=content_type,
+                container=container,
+                bytes_len=19,
+            )
+
+    class RecordingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            save_calls.append((args, kwargs))
+            return super().save(*args, **kwargs)
+
+    registry = get_registry()
+    registry._enabled_backends = ["fakevid"]
+    registry._default_backend = "fakevid"
+    registry.register_adapter("fakevid", ContradictoryAdapter)
+
+    managed_root = tmp_path / "absent-managed-root"
+    store = RecordingStore(root=managed_root)
+    monkeypatch.setattr(
+        console_generate_video_module.tempfile,
+        "TemporaryFile",
+        lambda **kwargs: temp_calls.append(kwargs) or pytest.fail("must not stage"),
+    )
+
+    with pytest.raises(VideoGenerationError, match="result format") as exc_info:
+        run_video_generation(
+            backend="fakevid",
+            prompt="reject before persistence",
+            message_id="invalid-result",
+            video_store=store,
+        )
+
+    assert len(dispatches) == 1
+    assert save_calls == []
+    assert temp_calls == []
+    assert not managed_root.exists()
+    assert "PRIVATE-VIDEO-BYTES" not in str(exc_info.value)
+
+
 def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_path):
     payload = b"oversized-video" * 70_000
     assert len(payload) > 1024 * 1024
@@ -283,6 +382,7 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
         prompt="A Red Dragon",
         message_id="msg-over-cap",
         ratio="16:9",
+        video_format="webm",
         video_store=store,
     )
 
@@ -290,7 +390,7 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
     assert result.reason == "over_capacity"
     assert result.message_id == "msg-over-cap"
     assert result.slug == "a-red-dragon"
-    assert result.extension == "mp4"
+    assert result.extension == "webm"
     assert result.size_bytes == len(payload)
     assert result.max_bytes == 1024 * 1024
     assert result.error_type is None
@@ -305,14 +405,29 @@ def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_pat
     assert result.metadata.width == 1920
     assert result.metadata.height == 1080
     assert result.metadata.ratio == "16:9"
+    assert result.metadata.container == "webm"
     assert result.stream.tell() == 0
     assert result.stream.read() == payload
     assert list(store.iter_stored()) == []
     result.close()
 
 
+@pytest.mark.parametrize("extension", ["", "mov", "MP4", ".webm"])
+def test_video_store_explicit_bad_extension_fails_without_creating_root(
+    tmp_path, extension
+):
+    root = tmp_path / "absent-root"
+    store = VideoStore(root=root)
+
+    with pytest.raises(ValueError, match="container"):
+        store.save("message", "clip", b"video", extension=extension)
+
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("video_format", ["mp4", "webm"])
 def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
-    tmp_path,
+    tmp_path, video_format
 ):
     payload = b"recoverable-video"
     _register_fake(result_content=payload, resolved_model="FakeH3")
@@ -335,6 +450,7 @@ def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
             backend="fakevid",
             prompt="Recover this",
             message_id="msg-store-failure",
+            video_format=video_format,
             video_store=store,
         )
     finally:
@@ -347,6 +463,8 @@ def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
     assert result.size_bytes == len(payload)
     assert result.message_id == "msg-store-failure"
     assert result.metadata.model == "FakeH3"
+    assert result.extension == video_format
+    assert result.metadata.container == video_format
     assert result.stream.tell() == 0
     assert result.stream.read() == payload
     assert "PRIVATE-PATH" not in repr(result)
@@ -653,6 +771,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
             return VideoGenResult(
                 content=b"video",
                 content_type="video/mp4",
+                container="mp4",
                 bytes_len=5,
             )
 
@@ -824,4 +943,5 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
     )
     assert captured_dispatch["kwargs"]["negative_prompt"] == "style-derived negative"
     assert captured_dispatch["kwargs"]["style_negative_prompt"] is True
+    assert captured_dispatch["kwargs"]["video_format"] == "mp4"
     assert appended_messages

@@ -196,6 +196,7 @@ def test_submits_packaged_workflow_through_observed_history_shape(
 
     assert result.content == b"video"
     assert result.content_type == "video/mp4"
+    assert result.container == "mp4"
     assert result.bytes_len == 5
     submit = next(call for call in calls if call["method"] == "POST" and call["url"].endswith("/prompt"))
     assert submit["url"] == "http://127.0.0.1:8188/prompt"
@@ -214,7 +215,7 @@ def test_submits_packaged_workflow_through_observed_history_shape(
     assert len(histories) == 2
 
 
-def test_generic_non_mp4_output_is_rejected_before_console_storage(
+def test_generic_webm_output_returns_observed_container(
     adapter, json_recorder, monkeypatch
 ):
     calls, routes = json_recorder
@@ -238,7 +239,7 @@ def test_generic_non_mp4_output_is_rejected_before_console_storage(
             "max_bytes": max_bytes,
             "trusted_origins": trusted_origins,
         }))
-        return b"animated", "application/octet-stream"
+        return b"video", " Video/WebM ; codecs=vp9 "
 
     # Match the shared helper's transport contract, not the call under test.
     assert tuple(inspect.signature(fake_fetch_bytes).parameters) == tuple(
@@ -248,29 +249,62 @@ def test_generic_non_mp4_output_is_rejected_before_console_storage(
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-2"}
     routes[("GET", "/history/job-2")] = {
-        "job-2": {"outputs": {"7": {"gifs": [{"filename": "clip.webp", "subfolder": "", "type": "temp"}]}}}
+        "job-2": {
+            "outputs": {"7": {"videos": [{"filename": "clip.webm", "subfolder": "", "type": "output"}]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
     }
 
-    with pytest.raises(VideoGenerationError, match="MP4 output"):
-        adapter.generate(
-            _request(width=1280, height=704, duration_seconds=6, fps=24)
+    result = adapter.generate(
+        _request(
+            video_format="webm",
+            width=1280,
+            height=704,
+            duration_seconds=6,
+            fps=24,
         )
+    )
 
     assert download_calls == [(
-        "http://127.0.0.1:8188/view?filename=clip.webp&subfolder=&type=temp",
+        "http://127.0.0.1:8188/view?filename=clip.webm&subfolder=&type=output",
         {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
     )]
+    assert result.content_type == "video/webm"
+    assert result.container == "webm"
 
 
-def test_non_mp4_request_is_rejected_before_remote_side_effects(adapter, monkeypatch):
+def test_h3_webm_request_rejects_after_local_graph_load_before_remote_preflight(
+    adapter, monkeypatch
+):
     effects: list[str] = []
+    original_load = adapter._load_workflow
+    monkeypatch.setattr(
+        adapter,
+        "_load_workflow",
+        lambda name: effects.append("load") or original_load(name),
+    )
     monkeypatch.setattr(adapter, "_base_url", lambda: effects.append("base_url"))
+    monkeypatch.setattr(
+        adapter,
+        "_validate_required_nodes",
+        lambda *_args: effects.append("object_info"),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_resolve_uploaded_image",
+        lambda *_args: effects.append("upload"),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_queue_prompt",
+        lambda *_args: effects.append("queue"),
+    )
 
-    with pytest.raises(VideoGenerationError, match="unsupported output format: webm"):
+    with pytest.raises(VideoGenerationError, match="H3.*MP4"):
         adapter.generate(_request(video_format="webm"))
 
-    assert adapter.supported_formats == {"mp4"}
-    assert effects == []
+    assert adapter.supported_formats == {"mp4", "webm"}
+    assert effects == ["load"]
 
 
 @pytest.mark.parametrize("observed_type", ["application/octet-stream", None, "video/webm"])
@@ -303,7 +337,8 @@ def test_h3_download_requires_observed_mp4_mime(
                         {"filename": "clip.mp4", "subfolder": "", "type": "output"}
                     ]
                 }
-            }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
@@ -332,7 +367,10 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-3"}
     routes[("GET", "/history/job-3")] = {
-        "job-3": {"outputs": {"7": {"videos": [{"filename": "clip.mp4", "subfolder": "", "type": "output"}]}}}
+        "job-3": {
+            "outputs": {"7": {"videos": [{"filename": "clip.mp4", "subfolder": "", "type": "output"}]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
     }
     image = ResolvedReferenceAsset("first_frame", b"png-bytes", "image/png", "source.png")
 
@@ -587,7 +625,7 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
         "status_str": "success",
         "messages": [],
     }
-    with pytest.raises(VideoGenerationError, match="video or animated"):
+    with pytest.raises(VideoGenerationError, match="no matching canonical video output"):
         adapter.generate(_request())
 
 
@@ -612,7 +650,7 @@ def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapt
     }
 
     with pytest.raises(VideoGenerationError, match="execution failed: model unavailable"):
-        adapter._find_output_descriptor(history, "job-6", graph)
+        adapter._find_output_descriptor(history, "job-6", graph, "mp4")
 
 
 def test_output_selection_uses_save_video_node_not_preview(adapter):
@@ -635,7 +673,7 @@ def test_output_selection_uses_save_video_node_not_preview(adapter):
         }
     }
 
-    assert adapter._find_output_descriptor(history, "job", graph)["filename"] == "clip.mp4"
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4")["filename"] == "clip.mp4"
 
 
 def test_save_video_output_accepts_arbitrary_list_collection(adapter):
@@ -648,11 +686,12 @@ def test_save_video_output_accepts_arbitrary_list_collection(adapter):
                         {"filename": "clip.mp4", "subfolder": "video", "type": "output"}
                     ]
                 }
-            }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
-    assert adapter._find_output_descriptor(history, "job", graph) == {
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4") == {
         "filename": "clip.mp4",
         "subfolder": "video",
         "type": "output",
@@ -667,40 +706,146 @@ def test_save_video_output_accepts_arbitrary_list_collection(adapter):
         {"filename": ""},
         {"filename": "clip.mp4", "subfolder": {}},
         {"filename": "clip.mp4", "type": []},
+        {"filename": "clip.mp4"},
         {"filename": "still.png", "subfolder": "", "type": "output"},
     ],
 )
-def test_save_video_output_skips_malformed_or_unsupported_descriptors(adapter, descriptor):
-    graph = _h3_workflow()
-    history = {"job": {"outputs": {"save": {"files": [descriptor]}}}}
-
-    assert adapter._find_output_descriptor(history, "job", graph) is None
-
-
-@pytest.mark.parametrize(
-    ("class_type", "filename"),
-    [
-        ("VHS_VideoCombine", "clip.webm"),
-        ("SaveAnimatedWEBP", "clip.webp"),
-    ],
-)
-def test_output_selection_preserves_supported_generic_non_mp4_outputs(
-    adapter, class_type, filename
+def test_terminal_output_rejects_malformed_or_unsupported_descriptors(
+    adapter, descriptor
 ):
-    graph = {"output": {"class_type": class_type, "inputs": {}}}
+    graph = _h3_workflow()
+    history = {
+        "job": {
+            "outputs": {"save": {"files": [descriptor]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="no matching canonical"):
+        adapter._find_output_descriptor(history, "job", graph, "mp4")
+
+
+@pytest.mark.parametrize("requested", ["mp4", "webm"])
+def test_output_selection_uses_only_request_matching_canonical_descriptor(
+    adapter, requested
+):
+    graph = {
+        "unrelated": {"class_type": "OtherNode", "inputs": {}},
+        "output": {"class_type": "VHS_VideoCombine", "inputs": {}},
+    }
+    history = {
+        "job": {
+            "outputs": {
+                "unrelated": {
+                    "files": [
+                        {"filename": f"wrong-node.{requested}", "subfolder": "", "type": "output"}
+                    ]
+                },
+                "output": {
+                    "arbitrary_collection": [
+                        {"filename": "animated.webp", "subfolder": "", "type": "output"},
+                        {"filename": "first.mp4", "subfolder": "", "type": "output"},
+                        {"filename": "second.webm", "subfolder": "", "type": "output"},
+                        {"filename": "movie.mov", "subfolder": "", "type": "output"},
+                    ]
+                }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    expected = "first.mp4" if requested == "mp4" else "second.webm"
+    assert adapter._find_output_descriptor(history, "job", graph, requested)["filename"] == expected
+
+
+def test_output_selection_waits_for_explicit_terminal_success(adapter):
+    graph = {"output": {"class_type": "SaveVideo", "inputs": {}}}
     history = {
         "job": {
             "outputs": {
                 "output": {
-                    "arbitrary_collection": [
-                        {"filename": filename, "subfolder": "", "type": "output"}
+                    "videos": [
+                        {"filename": "partial.mp4", "subfolder": "", "type": "output"}
                     ]
                 }
-            }
+            },
+            "status": {"completed": False, "status_str": "running", "messages": []},
         }
     }
 
-    assert adapter._find_output_descriptor(history, "job", graph)["filename"] == filename
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4") is None
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_output_selection_rejects_multiple_matching_final_outputs_boundedly(
+    adapter, reverse_order
+):
+    node_ids = ["save-a", "save-b"]
+    if reverse_order:
+        node_ids.reverse()
+    graph = {
+        node_id: {"class_type": "SaveVideo", "inputs": {}} for node_id in node_ids
+    }
+    output_items = [
+        (
+            "save-a",
+            {
+                "videos": [
+                    {"filename": "PRIVATE-A.mp4", "subfolder": "", "type": "output"},
+                    {"filename": "temp.mp4", "subfolder": "", "type": "temp"},
+                ]
+            },
+        ),
+        (
+            "save-b",
+            {
+                "files": [
+                    {"filename": "PRIVATE-B.mp4", "subfolder": "", "type": "output"}
+                ]
+            },
+        ),
+    ]
+    if reverse_order:
+        output_items.reverse()
+        for _node_id, collections in output_items:
+            collections["files" if "files" in collections else "videos"].reverse()
+    history = {
+        "job": {
+            "outputs": dict(output_items),
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="multiple matching canonical") as exc_info:
+        adapter._find_output_descriptor(history, "job", graph, "mp4")
+
+    assert "PRIVATE-A" not in str(exc_info.value)
+    assert "PRIVATE-B" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_output_selection_ignores_temp_descriptor_with_matching_suffix(
+    adapter, reverse_order
+):
+    descriptors = [
+        {"filename": "temp.mp4", "subfolder": "", "type": "temp"},
+        {"filename": "final.mp4", "subfolder": "video", "type": "output"},
+    ]
+    if reverse_order:
+        descriptors.reverse()
+    graph = {"save": {"class_type": "SaveVideo", "inputs": {}}}
+    history = {
+        "job": {
+            "outputs": {"save": {"videos": descriptors}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4") == {
+        "filename": "final.mp4",
+        "subfolder": "video",
+        "type": "output",
+    }
 
 
 def test_terminal_success_without_media_fails_without_waiting(adapter):
@@ -718,8 +863,8 @@ def test_terminal_success_without_media_fails_without_waiting(adapter):
         }
     }
 
-    with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
-        adapter._find_output_descriptor(history, "job-7", graph)
+    with pytest.raises(VideoGenerationError, match="no matching canonical video output"):
+        adapter._find_output_descriptor(history, "job-7", graph, "mp4")
 
 
 def test_poll_timeout_is_bounded_by_remaining_deadline(adapter, monkeypatch):
@@ -766,6 +911,7 @@ def test_poll_timeout_is_bounded_by_remaining_deadline(adapter, monkeypatch):
             "job-timeout",
             None,
             _h3_workflow(),
+            "mp4",
         )
 
     assert now[0] == pytest.approx(2.0)
