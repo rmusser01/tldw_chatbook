@@ -9,7 +9,11 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenerationAdapter
-from tldw_chatbook.Image_Generation.config import get_image_generation_config
+from tldw_chatbook.Image_Generation.config import (
+    _IMAGE_GENERATION_RUNTIME_LOCK,
+    _use_image_generation_config_snapshot,
+    get_image_generation_config,
+)
 
 
 class ImageAdapterRegistry:
@@ -24,10 +28,12 @@ class ImageAdapterRegistry:
         "modelstudio": "tldw_chatbook.Image_Generation.adapters.modelstudio_image_adapter.ModelStudioImageAdapter",
         "gemini": "tldw_chatbook.Image_Generation.adapters.gemini_image_adapter.GeminiImageAdapter",
         "fal": "tldw_chatbook.Image_Generation.adapters.fal_image_adapter.FalImageAdapter",
+        "comfyui": "tldw_chatbook.Image_Generation.adapters.comfyui_image_adapter.ComfyUIImageAdapter",
     }
 
     def __init__(self, config_override: dict[str, Any] | None = None) -> None:
         config = get_image_generation_config()
+        self.config = config
         default_backend = config.default_backend
         enabled_backends = list(config.enabled_backends)
         if config_override:
@@ -91,7 +97,8 @@ class ImageAdapterRegistry:
 
         try:
             adapter_cls = self._resolve_adapter_class(spec)
-            adapter = adapter_cls()  # type: ignore[call-arg]
+            with _use_image_generation_config_snapshot(self.config):
+                adapter = adapter_cls()  # type: ignore[call-arg]
             self._adapters[name] = adapter
             return adapter
         except Exception as exc:
@@ -135,11 +142,13 @@ _registry: ImageAdapterRegistry | None = None
 
 def get_registry() -> ImageAdapterRegistry:
     global _registry
-    if _registry is None:
-        _registry = ImageAdapterRegistry()
-    return _registry
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        if _registry is None:
+            _registry = ImageAdapterRegistry()
+        return _registry
 
 
 def reset_registry() -> None:
     global _registry
-    _registry = None
+    with _IMAGE_GENERATION_RUNTIME_LOCK:
+        _registry = None

@@ -778,25 +778,6 @@ class MediaViewerPanel(Container):
                                     value="4096",
                                 )
 
-                    # Prompt search and filtering
-                    yield Label("Search Prompts:", classes="prompt-label")
-                    yield Input(
-                        placeholder="Search for prompts...", id="prompt-search-input"
-                    )
-
-                    yield Label("Filter by Keywords:", classes="prompt-label")
-                    yield Input(
-                        placeholder="Enter keywords separated by commas...",
-                        id="prompt-keyword-input",
-                    )
-
-                    # Prompt selection dropdown
-                    yield Select(
-                        [],  # Will be populated by search results
-                        prompt="Select a prompt",
-                        id="prompt-select",
-                    )
-
                     # System prompt
                     yield Label("System Prompt:", classes="prompt-label")
                     yield TextArea(
@@ -1602,79 +1583,6 @@ class MediaViewerPanel(Container):
         except Exception as e:
             logger.error(f"Error updating models for provider {provider}: {e}")
 
-    @work(thread=True)
-    def search_prompts(self, search_term: str, keywords: str = "") -> None:
-        """Search for prompts in the database."""
-        try:
-            from ...DB.Prompts_DB import get_prompts_db
-
-            prompts_db = get_prompts_db()
-            if not prompts_db:
-                return
-
-            # Parse keywords
-            keyword_list = (
-                [k.strip() for k in keywords.split(",") if k.strip()]
-                if keywords
-                else []
-            )
-
-            # Search prompts
-            if keyword_list:
-                results = prompts_db.search_prompts_by_keyword(
-                    keyword_list, search_term
-                )
-            else:
-                results = (
-                    prompts_db.search_prompts(search_term)
-                    if search_term
-                    else prompts_db.get_all_prompts()
-                )
-
-            # Format results for Select widget
-            options = [
-                (str(p["id"]), f"{p['name']} - {p['description'][:50]}...")
-                for p in results
-            ]
-
-            # Update select widget from thread
-            self.app.call_from_thread(self._update_prompt_select, options)
-
-        except Exception as e:
-            logger.error(f"Error searching prompts: {e}")
-
-    def _update_prompt_select(self, options: List[Tuple[str, str]]) -> None:
-        """Update prompt select options from thread."""
-        try:
-            prompt_select = self.query_one("#prompt-select", Select)
-            prompt_select.set_options(options)
-        except Exception:
-            pass
-
-    def load_prompt_details(self, prompt_id: str) -> None:
-        """Load selected prompt into text areas."""
-        try:
-            from ...DB.Prompts_DB import get_prompts_db
-
-            prompts_db = get_prompts_db()
-            if not prompts_db:
-                return
-
-            # Get prompt details
-            prompt = prompts_db.get_prompt_details(int(prompt_id))
-            if not prompt:
-                return
-
-            # Update text areas
-            system_area = self.query_one("#system-prompt-area", TextArea)
-            user_area = self.query_one("#user-prompt-area", TextArea)
-
-            system_area.text = prompt.get("system_prompt", "")
-            user_area.text = prompt.get("user_prompt", "")
-
-        except Exception as e:
-            logger.error(f"Error loading prompt details: {e}")
-
     def prepare_analysis_messages(self) -> Tuple[str, str]:
         """Prepare system and user prompts with media content."""
         logger.debug("Preparing analysis messages")
@@ -1802,38 +1710,6 @@ class MediaViewerPanel(Container):
         """Handle model selection change."""
         # Just store the selection, no additional action needed
         pass
-
-    @on(Input.Changed, "#prompt-search-input")
-    def handle_prompt_search(self, event: Input.Changed) -> None:
-        """Handle prompt search input with debouncing."""
-        # Get keyword filter value
-        try:
-            keyword_input = self.query_one("#prompt-keyword-input", Input)
-            keywords = keyword_input.value
-        except Exception:
-            keywords = ""
-
-        # Trigger search
-        self.search_prompts(event.value, keywords)
-
-    @on(Input.Changed, "#prompt-keyword-input")
-    def handle_prompt_keyword_change(self, event: Input.Changed) -> None:
-        """Handle prompt keyword filter change."""
-        # Get search term
-        try:
-            search_input = self.query_one("#prompt-search-input", Input)
-            search_term = search_input.value
-        except Exception:
-            search_term = ""
-
-        # Trigger search
-        self.search_prompts(search_term, event.value)
-
-    @on(Select.Changed, "#prompt-select")
-    def handle_prompt_selection(self, event: Select.Changed) -> None:
-        """Handle prompt selection."""
-        if event.value and event.value != Select.BLANK:
-            self.load_prompt_details(event.value)
 
     @on(Button.Pressed, "#generate-analysis-btn")
     def handle_generate_analysis(self) -> None:

@@ -218,6 +218,8 @@ class ConsoleMessageController:
         keep_console_generation_variant: Callable[[Any], None],
         handle_console_toggle_image_view: Callable[[str], None],
         invalidate_console_persisted_rows_cache: Callable[[], None],
+        play_console_video: Callable[[str], Any] | None = None,
+        save_console_video_copy: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -318,6 +320,10 @@ class ConsoleMessageController:
                 cluster's cache invalidator (already a named callable on
                 `session.py`), used only by `handle_console_message_
                 action`'s delete branch.
+            play_console_video: `ChatScreen._play_console_video`, used by
+                the video play action.
+            save_console_video_copy: `ChatScreen._save_console_video_copy`,
+                used by the video save action.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -352,6 +358,8 @@ class ConsoleMessageController:
         self._invalidate_console_persisted_rows_cache_fn = (
             invalidate_console_persisted_rows_cache
         )
+        self._play_console_video_fn = play_console_video
+        self._save_console_video_copy_fn = save_console_video_copy
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -463,6 +471,18 @@ class ConsoleMessageController:
     @property
     def _invalidate_console_persisted_rows_cache(self) -> Any:
         return self._invalidate_console_persisted_rows_cache_fn
+
+    @property
+    def _play_console_video(self) -> Any:
+        if self._play_console_video_fn is None:
+            raise RuntimeError("Console video play action is not wired")
+        return self._play_console_video_fn
+
+    @property
+    def _save_console_video_copy(self) -> Any:
+        if self._save_console_video_copy_fn is None:
+            raise RuntimeError("Console video save action is not wired")
+        return self._save_console_video_copy_fn
 
     # -- Moved cluster methods (byte-for-byte except as documented above) --
 
@@ -1998,6 +2018,8 @@ class ConsoleMessageController:
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
+            ("console-message-action-video-play-", "video-play"),
+            ("console-message-action-video-save-copy-", "video-save-copy"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),

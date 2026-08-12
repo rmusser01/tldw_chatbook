@@ -1,4 +1,4 @@
-# RAG eval harness — fixture corpus (49 documents)
+# RAG eval harness — fixture corpus (172 documents; P1 authored the first 49)
 #
 # Read this before editing. The corpus is a measuring instrument, not sample
 # data: each document is planted to make one retrieval capability observable
@@ -6,10 +6,23 @@
 # between a target and a decoy would make baselines jitter for reasons that
 # have nothing to do with a retrieval change.
 #
+# The first 49 documents (down to the vector-blind section) are P1's, and are
+# BYTE-IDENTICAL to what P1 committed: every baseline recorded before this
+# file grew was anchored to them, and a reworded sentence would silently
+# change what those numbers meant. Additions go at the end.
+#
+# The P2ab sections after them scale the haystack to 172 (spec target: ~150;
+# the probe asked for the rest — see the anchor-dilution section) and carry
+# the fail-first classes. At 49 documents a top-10 was a fifth of everything,
+# which flattered every recall number in the report.
+#
 # Schema (exact — the loader rejects missing/unknown keys):
 #   slug         stable fixture identifier, unique, never a DB id
-#   source_type  "note" | "media" | "conversation" (singular; matches the
-#                app's ITEM_TYPE_* ingestion contract)
+#   source_type  "note" | "media" | "conversation" | "prompt" (singular;
+#                matches the app's ITEM_TYPE_* ingestion contract). "prompt"
+#                has NO writer in the harness and no engine seam: those
+#                documents are validated, skipped at ingestion and therefore
+#                invisible to every mode — deliberately, see their section.
 #   title        indexed alongside content by the real writers — treat it as
 #                part of the document when reasoning about token overlap
 #   content      >= 3 sentences, self-contained, timeless (no wall-clock
@@ -731,4 +744,1437 @@ The two alders behind the hide hold nesting boxes that are cleared of old down a
 Bats use the same boxes later in the season, so nobody touches them between the two occupations.
 The approach boardwalk greens over quickly in shade and is brushed clear where the planks turn slippery underfoot.
 A record of each visit is left in the wardens' cabinet by the gate, so the following party knows what was already done and what was only started.
+"""
+
+# ===========================================================================
+# SCOPED FAMILY — the Kelsingham works collection (24 pool + 8 targets)
+# ===========================================================================
+#
+# The scoped category needs something no other group here provides: a scope
+# large enough that a top-10 can EXCLUDE a document. A scope of five
+# documents cannot — a semantic search over five returns all five, and the
+# cell reports recall 1.000 for a reason that says nothing about retrieval.
+# So these 32 documents are one plausible collection ("the Kelsingham works
+# estate"), and every scoped query scopes the whole of it.
+#
+# The 24 pool documents are ordinary operations writing, deliberately
+# homogeneous: they are what a scoped query's surface reading matches.
+#
+# The 8 targets are the estate's NON-operational records (heritage, wildlife,
+# amenity), each carrying one query's terms in a different sense — the
+# `note-saltmarsh-hide` recipe, replicated: the conjunction of the query's
+# words occurs in exactly one document (so the keyword path resolves it
+# uniquely), while every individual word occurs in several (so no word is a
+# rare-token beacon for the embedder — the lesson that killed the first
+# vector-blind attempt).
+#
+# Editing rule: never write one of the scoped triples into a pool document.
+# `test_scoped_queries_resolve_to_exactly_one_document_by_conjunction` fails
+# if you do, and it fails for the right reason — the query would stop being
+# keyword-findable and its cell would measure nothing.
+
+# --- the pool: Kelsingham works operations (media) ---
+
+[[doc]]
+slug = "media-kelsingham-inlet-screens"
+source_type = "media"
+title = "Kelsingham inlet screens, method note"
+content = """
+The mechanical screens at the Kelsingham inlet lift rag and debris onto the wash press before the flow reaches the grit channel.
+Screen rakes are stepped through a test cycle at the start of each shift, and any rake that stalls is taken out of automatic control.
+Debris drops into the skip under the walkway and is removed once it reaches the painted line on the side.
+"""
+
+[[doc]]
+slug = "media-kelsingham-rapid-filters"
+source_type = "media"
+title = "Kelsingham rapid gravity filters, operating note"
+content = """
+The rapid gravity filters at Kelsingham run in a fixed rotation so that no single filter carries the works for long.
+Head loss across each filter is trended, and a filter that reaches its set point out of turn is examined rather than simply washed.
+The underdrain nozzles were checked for blinding at the last drain-down and two were found partly closed.
+"""
+
+[[doc]]
+slug = "media-kelsingham-dosing-line"
+source_type = "media"
+title = "Kelsingham coagulant dosing line"
+content = """
+Coagulant is dosed into the flume ahead of the flocculators, and the dosing line carries a duty and a standby unit.
+The dose is trimmed against raw water quality rather than held at a fixed figure, because the catchment responds quickly to rainfall.
+A blocked injection quill shows first as a slow drift in settled water quality and only later as an alarm.
+"""
+
+[[doc]]
+slug = "media-kelsingham-contact-tank"
+source_type = "media"
+title = "Kelsingham contact tank and disinfection"
+content = """
+Disinfection happens in the serpentine contact tank downstream of the filters, where the flow doubles back four times.
+Contact time is calculated from the tank volume and the flow through it, so a partly drained tank shortens the effective contact even when the dose is unchanged.
+Baffle walls are looked over at each drain-down for scour at the joints.
+"""
+
+[[doc]]
+slug = "media-kelsingham-sludge-press"
+source_type = "media"
+title = "Kelsingham belt press and cake handling"
+content = """
+Thickened sludge is pressed three days out of seven and the cake is stacked on the concrete pad for collection.
+Polymer make-up is prepared fresh, because a stale solution shears in the line and gives a wet cake that stands badly.
+Belt wash water is drawn from final water and returns to the head of the works.
+"""
+
+[[doc]]
+slug = "media-kelsingham-storm-tanks"
+source_type = "media"
+title = "Kelsingham storm tank operation"
+content = """
+The storm tanks hold the first flush from the catchment once inlet flow passes the retained figure.
+Tanks are emptied back to the head of the works as soon as capacity allows, so the storage stands ready for the next event.
+Level and duration are logged for every fill so the frequency can be trended across the season.
+"""
+
+[[doc]]
+slug = "media-kelsingham-telemetry-outstation"
+source_type = "media"
+title = "Kelsingham telemetry outstation"
+content = """
+The outstation reports levels, flows and alarms from Kelsingham to the control room over a single link.
+A watchdog message is expected on a fixed interval, and a missed watchdog raises a communications alarm rather than leaving a silent gap.
+Spare analogue inputs are wired out to the marshalling rail so a temporary instrument can be brought online without a panel change.
+"""
+
+[[doc]]
+slug = "media-kelsingham-standby-generator"
+source_type = "media"
+title = "Kelsingham standby generator exercise"
+content = """
+The standby generator is exercised off load every week and on load every quarter, with fuel polished on a rolling schedule.
+Transfer is proved by dropping the incomer rather than by simulating the signal, because the signal path is the part that has failed in service.
+Coolant and oil levels go on the run sheet at each exercise.
+"""
+
+[[doc]]
+slug = "media-kelsingham-tanker-deliveries"
+source_type = "media"
+title = "Kelsingham chemical tanker deliveries"
+content = """
+Tankers deliver into the bunded compound through dedicated fill connections, each keyed to a single product.
+The driver hands the delivery ticket to the operator on duty, and the connection is unlocked only once the ticket and the label agree.
+Overfill protection is proved before the hose is coupled.
+"""
+
+[[doc]]
+slug = "media-kelsingham-flow-monitoring"
+source_type = "media"
+title = "Kelsingham flow monitoring arrangement"
+content = """
+Flow is measured at the inlet, after the filters and at the final outfall, so a discrepancy narrows to a section rather than to the whole site.
+Meters are verified in place against a portable clamp instrument once a season.
+A drift on any one meter is treated as a fault until it has been proved otherwise.
+"""
+
+[[doc]]
+slug = "media-kelsingham-lab-sampling"
+source_type = "media"
+title = "Kelsingham laboratory sampling round"
+content = """
+Samples are drawn from fixed positions around the works and carried to the laboratory in a chilled case.
+Each bottle carries the identifier, the time drawn and the operator initials, because a sample without those three is not evidence of anything.
+Bottles are pre-dosed where the determinand needs it.
+"""
+
+[[doc]]
+slug = "media-kelsingham-weir-maintenance"
+source_type = "media"
+title = "Kelsingham measuring weir upkeep"
+content = """
+The measuring weir is kept clear of growth so the head reading stays true, and the crest is checked for damage after any high flow.
+Weed screens upstream are raked by hand rather than by machine, because a machine knocks the crest out of level.
+Silt in the approach channel is dug out when the depth reaches the marked peg.
+"""
+
+# --- the pool: Kelsingham works operations (notes) ---
+
+[[doc]]
+slug = "note-kelsingham-shift-handover"
+source_type = "note"
+title = "Kelsingham shift handover practice"
+content = """
+Handover is done at the desk with the alarm list open, never in the corridor on the way out.
+The outgoing operator names every item left in hand and every piece of equipment out of automatic control.
+Anything not handed over in that form is treated as unfinished at the next round.
+"""
+
+[[doc]]
+slug = "note-kelsingham-filter-backwash"
+source_type = "note"
+title = "Kelsingham backwash records"
+content = """
+Backwash volume for each filter is recorded against the wash it followed, so a rising trend shows before it becomes a supply problem.
+Air scour runs ahead of the water wash and is timed from the panel rather than counted out by hand.
+A filter needing a second wash in the same run is reported the same shift.
+"""
+
+[[doc]]
+slug = "note-kelsingham-valve-exercise"
+source_type = "note"
+title = "Kelsingham valve exercising register"
+content = """
+Every isolating valve on the site is worked through its full travel once a season and the turns counted against the register.
+A valve that binds is greased and worked again rather than forced, because a sheared spindle takes the section out of service for weeks.
+Numbering follows the site drawing, and a new valve goes on the drawing before it is buried.
+"""
+
+[[doc]]
+slug = "note-kelsingham-hydrant-flushing"
+source_type = "note"
+title = "Kelsingham hydrant flushing rota"
+content = """
+Hydrants in the zone are flushed on a rota, working outward from the works so that disturbed water is never drawn back toward it.
+Flushing continues until turbidity settles at the meter, and the figures go on the round sheet.
+A hydrant stiff to open is reported for attention rather than levered.
+"""
+
+[[doc]]
+slug = "note-kelsingham-pump-overhaul"
+source_type = "note"
+title = "Kelsingham transfer pump overhaul"
+content = """
+The transfer pump was lifted for overhaul after vibration climbed steadily across the season.
+Wear rings were renewed, the shaft was checked for straightness, and coupling alignment was taken hot as well as cold.
+The pump returned to duty on the same curve as its twin.
+"""
+
+[[doc]]
+slug = "note-kelsingham-alarm-review"
+source_type = "note"
+title = "Kelsingham monthly alarm review"
+content = """
+The alarm list is reviewed monthly and every repeating alarm is either fixed or re-ranged, because an alarm that cries wolf is worse than no alarm at all.
+Standing alarms are not left sitting in the accepted state overnight.
+The review notes which alarms fired outside working hours and who answered them.
+"""
+
+[[doc]]
+slug = "note-kelsingham-chemical-store"
+source_type = "note"
+title = "Kelsingham chemical store keeping"
+content = """
+The store holds sealed containers only, and a part-used drum goes back to the bunded compound rather than onto the store floor.
+Incompatible products sit on opposite sides of the aisle with their labels facing out.
+Spill kit contents are checked against the list on the door each month.
+"""
+
+[[doc]]
+slug = "note-kelsingham-fence-line-check"
+source_type = "note"
+title = "Kelsingham perimeter check"
+content = """
+The perimeter is walked in full once a month and after any high wind, with attention to the stretch behind the sludge pad where the ground moves.
+Loose panels are strapped on the spot and listed for permanent repair.
+Locks are tried by hand rather than merely looked at.
+"""
+
+[[doc]]
+slug = "note-kelsingham-access-track"
+source_type = "note"
+title = "Kelsingham approach track upkeep"
+content = """
+The approach track carries tanker traffic, so its surface is walked after every delivery season and holes are filled before they spread.
+Verges are cut back twice a season to keep the sight line open at the bend.
+Drainage grips along the upper stretch are cleared before the wet months.
+"""
+
+[[doc]]
+slug = "note-kelsingham-borehole-levels"
+source_type = "note"
+title = "Kelsingham borehole level records"
+content = """
+Rest and pumping levels in the two boreholes are dipped weekly and plotted against abstraction.
+A widening gap between the two figures points at a fouled well screen rather than at the aquifer.
+Dip tapes are checked against the fixed datum mark each season.
+"""
+
+[[doc]]
+slug = "note-kelsingham-odour-complaint"
+source_type = "note"
+title = "Kelsingham odour complaint follow-up"
+content = """
+An odour complaint from the village was logged and traced to the sludge pad rather than to the storm tanks.
+Cake was moved off the pad within the shift and the loading regime changed so that it no longer stands over a weekend.
+The complainant was called back once the change had held for a month.
+"""
+
+[[doc]]
+slug = "note-kelsingham-training-matrix"
+source_type = "note"
+title = "Kelsingham training matrix"
+content = """
+The matrix lists every task on the site against the operators signed off to do it, and a task with a single name against it is flagged.
+Refresher intervals sit on the same sheet so a lapse is visible at a glance.
+A new operator shadows a signed-off operator for a full rotation before working alone.
+"""
+
+# --- the scoped targets: the same estate's non-operational records ---
+
+[[doc]]
+slug = "note-kelsingham-icehouse"
+source_type = "note"
+title = "Icehouse and courtyard, conservation note"
+content = """
+The brick icehouse behind the old courtyard predates the works and is the only structure on the estate with a listed entry.
+Its dome is built in three rings of handmade brick laid dry above the springing line, and the entrance passage turns twice so that daylight never reaches the store itself.
+A small pump chamber sits under the flagstones at the courtyard corner, put there when the estate drew its supply from the spring at the top of the field, and the cast lever frame is still bolted to the wall.
+Volunteers from the local history society hold a key and carry out an annual inspection of the fabric, working from a photographic record made when the ivy was first cut back.
+Their notes describe the brickwork as sound apart from a band of frost damage where the dome meets the retaining wall.
+The passage floor is swept rather than washed, because standing water draws salts through the brick and leaves a white bloom across the face.
+Bats have used the passage in the colder months, so any work is timed to avoid them and the outer grille stays in place.
+The society asks that nothing is stored inside, and the door is kept shut so the temperature holds even through the seasons.
+A short interpretation panel by the gate explains what the building was for, and the same volunteer repaints it every few seasons.
+"""
+
+[[doc]]
+slug = "media-kelsingham-angling"
+source_type = "media"
+title = "Angling club water, stretch description"
+content = """
+The angling club holds the fishing on two miles of river below the estate boundary, and this description is the one handed to new members.
+The upstream limit is the concrete apron by the storm overflow, and the downstream limit is the second footbridge where the bank turns to alder.
+Members keep a catch record in the hut, entering species, length and the swim fished, and the club asks that blank days go in too so the picture stays honest.
+The best water sits along the outside of the long bend, where the current has cut under the far bank and left a shelf that holds fish through the warm months.
+Wading is discouraged above the island because the gravel is loose there and the bed shelves away without warning.
+Barbless hooks are the rule throughout, and an unhooking mat is kept at the hut for anyone who arrives without one.
+Approach is on foot from the small parking area by the track, and the stile at the top corner is the only crossing the landowner permits.
+Members are asked to shut the gate behind them and to keep dogs leashed where sheep are grazed.
+The committee walks the stretch twice a season and cuts back the worst of the growth on the near bank, leaving the far side untouched for cover.
+"""
+
+[[doc]]
+slug = "note-kelsingham-pond"
+source_type = "note"
+title = "Wildlife pond, volunteer group note"
+content = """
+The wildlife pond in the far corner of the estate was dug by the volunteer group and has filled and settled since without any help.
+Water reaches it along a shallow ditch from the spring line, and a coarse intake screen of galvanised mesh keeps leaf litter out of the ditch mouth.
+The group carries out a survey of the margins twice a season, counting flowering stems along a fixed transect and noting which species have spread.
+Marsh marigold has taken the wet shelf at the north end, and the ragged robin sown in the second season now seeds itself.
+Frogs spawn in the shallow bay each spring and the group counts clumps rather than adults, because the clumps are countable and the adults are not.
+A pair of moorhens nest most seasons in the sedge, and the group keeps clear of that corner until the young are off the water.
+Dragonflies use the open centre, so only half the marginal growth is cut in any one season and the rest is left standing.
+The sunny bank is kept short as a basking strip and the cuttings are stacked away from the water so nutrients do not wash back in.
+Nothing is stocked and nothing is fed, which the group regards as the whole point of the exercise.
+"""
+
+[[doc]]
+slug = "note-kelsingham-allotment"
+source_type = "note"
+title = "Staff allotment strip, standing note"
+content = """
+The strip of ground behind the mess room has been worked as a staff allotment for as long as anyone on site remembers.
+Four plots are marked out with string and pegs, and a fifth is kept as a nursery bed for anyone taking a plot for the first time.
+Water comes from a standpipe on the wall, and the meter box key hangs inside the door of the tool shed so nobody has to go hunting for it.
+The shed holds two spades, a fork, a hoe and a barrow, and whoever borrows the barrow is asked to bring it back clean.
+Compost is made in three bays built from old scaffold boards, turned in rotation, and the finished heap is shared out in the spring.
+Beans and peas do best at the far end where the ground drains, while the near end grows better roots.
+A netting cage over the brassica bed keeps the pigeons off, and the frame folds flat when the bed is dug over.
+Nobody is charged for a plot, and the only rule is that a plot left untended for a full season goes back into the ring for somebody else.
+Surplus is left in a crate by the mess room door with an honesty tin beside it.
+"""
+
+[[doc]]
+slug = "media-kelsingham-cycle-shelter"
+source_type = "media"
+title = "Cycle shelter and travel note"
+content = """
+The cycle shelter by the north gate went up after a travel count showed a third of the crew arriving on two wheels.
+It takes twelve machines under cover, with a hooped rail set in concrete and a run of lighting fed from the gate circuit.
+The ground under the shelter was made up over an old valve pit, so the slab was cast with a lifting panel and the access cover beneath it stays reachable without breaking anything out.
+A repair stand and a track pump are chained inside, and the pump gauge is renewed whenever it stops reading true.
+Lockers by the door hold waterproofs, and the drying rail above them runs warm off the return pipe in the corridor.
+Riders are asked to walk machines through the gate rather than ride, because the sight line to the track is short and the surface is loose at the join.
+Two of the spaces are wide enough for a trailer or a cargo machine and are marked out on the floor.
+The roof is cleared of leaves each autumn, since the gutter feeds a butt that supplies the allotment strip.
+The travel group reviews the count once a season and has asked for a second stand at the south gate.
+"""
+
+[[doc]]
+slug = "media-kelsingham-fence-artwork"
+source_type = "media"
+title = "Boundary fence artwork, commission note"
+content = """
+The boundary fence along the village footpath carries a run of painted panels made by the school and the art group across two seasons.
+Each panel takes a species found on the estate, drawn large and flat so that it reads from the far side of the footpath.
+The group worked from a sample point on the north fence, painting one board and leaving it out through a full winter before committing to the rest, which is why the colours have held.
+A small sign at the stile names the school and the group and asks that the panels are left alone, and it has been respected.
+Boards are cut from marine ply and primed on both faces, because a board primed on one face cups within a season.
+Fixings are stainless and slightly oversized in the hole so the boards can move without splitting.
+Two panels were renewed after a branch came down in a gale, and the replacements were painted by the same hands to keep the run consistent.
+The art group asks that any repainting waits for dry settled weather rather than being fitted into a maintenance round.
+A photograph of every panel is kept in the office so that a lost board can be redrawn rather than guessed at.
+"""
+
+[[doc]]
+slug = "note-kelsingham-mess-room"
+source_type = "note"
+title = "Mess room, house note"
+content = """
+The mess room is looked after by whoever uses it, and the arrangement has held for years without anyone being put in charge of it.
+Tea and coffee come out of a tin on the shelf, and the duty board notice by the kettle simply lists who last topped it up.
+The fridge is emptied on the last Friday of the month and anything unlabelled goes out, which is why the marker pen is chained to the door.
+Two of the chairs came from the old office and are the reason nobody has been persuaded to replace the rest.
+The window is propped with a wooden wedge because the stay was lost and the replacement never fitted.
+A shelf of paperbacks has grown by donation and is treated as a lending shelf, with no record kept of who has what.
+The microwave is cleaned by the person who splits something in it, an arrangement enforced entirely by the people who eat there.
+Boots come off at the door, since the floor was laid by the crew themselves and they are protective of it.
+Notices about the social fund go up on the same board and stay there until somebody takes them down.
+"""
+
+[[doc]]
+slug = "note-kelsingham-hedgerow"
+source_type = "note"
+title = "Hedgerow laying, volunteer note"
+content = """
+The estate hedge along the top boundary is laid in short lengths, a stretch each winter, so the whole run is never open at once.
+Stems are cut most of the way through at the heel and bent over to lie along the line, which keeps them alive and thickens the bottom.
+A line marker post is driven at each end of the season's work so the next group can see where to take up from.
+Stakes are cut from the previous season's brash where the growth is straight enough, and the rest is burnt on the same spot each time.
+Binders are woven along the top to hold the stakes together, and the ends are tucked rather than nailed.
+Brambles are pulled out ahead of the work because they hide the stems and take the edge off the billhook.
+The group works from the sheltered end so that the finished stretch is the one taking the weather first.
+Gaps left by dead elm are filled with hawthorn and hazel whips, protected against rabbits with spirals.
+Nothing is cut between the middle of spring and the end of summer, which is the one rule the group treats as absolute.
+"""
+
+# ===========================================================================
+# NEGATION FAMILY — the outstation chain and the depot fleet (18)
+# ===========================================================================
+#
+# A negation query names what most of the corpus asserts and asks for the
+# exception. The mechanism that makes it hard is deliberate and is the whole
+# design: the norm-asserting documents carry the query's cue phrase ("the
+# standard mains supply", "a surfaced approach road") and the exception
+# document does NOT carry it at all — it describes the exception in its own
+# words. So the keyword paths cannot reach the target (AND-of-terms fails on
+# the cue), and the vector leg is drawn to the documents that state the norm,
+# which is the negation blindness this class exists to measure.
+#
+# Each exception deviates on exactly ONE aspect and is silent about the rest,
+# so every negation query has exactly one answer in this corpus. Adding a
+# second exception for an aspect quietly turns its query into a two-target
+# query with one target labelled.
+
+# --- the norm: eight outstations, all standard ---
+
+[[doc]]
+slug = "media-ferrers-hill-outstation"
+source_type = "media"
+title = "Ferrers Hill outstation, site record"
+content = """
+The Ferrers Hill outstation stands on the ridge above the village and is reached by the surfaced approach road that serves the reservoir.
+It takes the standard mains supply through the meter cabinet at the gate, with the usual battery reserve behind it.
+The cabinet carries the standard fan tray, and the mast holds the standard three-panel head on a single collar.
+"""
+
+[[doc]]
+slug = "media-underhill-outstation"
+source_type = "media"
+title = "Underhill outstation, site record"
+content = """
+Underhill sits in the fold below the quarry and is reached by the surfaced approach road shared with the weighbridge.
+The site takes the standard mains supply from the quarry ring, and the incomer is metered at the cabin.
+Its cabinet carries the standard fan tray and the mast holds the standard three-panel head.
+"""
+
+[[doc]]
+slug = "media-cove-head-outstation"
+source_type = "media"
+title = "Cove Head outstation, site record"
+content = """
+Cove Head looks over the bay from the old coastguard ground and is reached by the surfaced approach road behind the terrace.
+The standard mains supply arrives underground from the village transformer, which keeps the feed clear of salt.
+The cabinet carries the standard fan tray, and a standard three-panel head is mounted at the top of the mast.
+"""
+
+[[doc]]
+slug = "media-barrow-gate-outstation"
+source_type = "media"
+title = "Barrow Gate outstation, site record"
+content = """
+Barrow Gate stands beside the level crossing and is reached by the surfaced approach road that runs off the junction.
+It takes the standard mains supply through a shared meter with the signal hut.
+The cabinet carries the standard fan tray and the mast holds the standard three-panel head above the cable gantry.
+"""
+
+[[doc]]
+slug = "note-sedgemoor-cross-outstation"
+source_type = "note"
+title = "Sedgemoor Cross outstation, site note"
+content = """
+Sedgemoor Cross occupies a corner of the pumping compound and is reached by the surfaced approach road from the main gate.
+The standard mains supply is taken from the compound distribution board with its own way and label.
+Its cabinet carries the standard fan tray, and the standard three-panel head sits on the short mast beside the tank.
+"""
+
+[[doc]]
+slug = "note-hollin-ridge-outstation"
+source_type = "note"
+title = "Hollin Ridge outstation, site note"
+content = """
+Hollin Ridge is the highest site on the chain and is reached by the surfaced approach road laid when the forest track was upgraded.
+It takes the standard mains supply from the forestry feed, with the meter housed in the same cabin.
+The cabinet carries the standard fan tray, and the standard three-panel head faces down both valleys.
+"""
+
+[[doc]]
+slug = "note-wraith-point-outstation"
+source_type = "note"
+title = "Wraith Point outstation, site note"
+content = """
+Wraith Point stands on the headland above the light and is reached by the surfaced approach road that ends at the turning circle.
+The standard mains supply comes in overhead from the last pole on the run.
+Its cabinet carries the standard fan tray, and the mast holds the standard three-panel head clear of the parapet.
+"""
+
+[[doc]]
+slug = "note-marsden-fold-outstation"
+source_type = "note"
+title = "Marsden Fold outstation, site note"
+content = """
+Marsden Fold sits behind the barn on the home farm and is reached by the surfaced approach road the farm keeps graded.
+It takes the standard mains supply through the farm meter with a separate submeter for the rental.
+The cabinet carries the standard fan tray and the standard three-panel head is bolted to the gable mast.
+"""
+
+# --- the exceptions, one aspect each, none using the norm's words ---
+
+[[doc]]
+slug = "note-skellow-isle-supply"
+source_type = "note"
+title = "Skellow Isle, supply arrangement"
+content = """
+Skellow Isle draws everything it needs from a solar array on the shed roof, with a battery bank sized for a fortnight of dull weather.
+A small wind machine on the same mast tops the bank through the winter, so nothing has to be carried out to the island in the wet months.
+The engine that used to sit in the corner was taken away once the array had proved itself, and its slab now mounts the spare antenna.
+Load is trimmed hard: the heater is thermostatic, the lighting runs on a timer, and the radio drops to a lower duty cycle overnight.
+"""
+
+[[doc]]
+slug = "media-cranmere-sands-visits"
+source_type = "media"
+title = "Cranmere Sands, visiting arrangements"
+content = """
+Cranmere Sands is reached only by boat from the quay at the head of the creek, and the crossing is possible for about four hours either side of high water.
+Equipment goes up the shingle on a barrow along a run of scaffold boards that the crew lay out and lift again each visit.
+There is no vehicle on the island at all, so a battery change is planned as a two-person carry rather than as a delivery.
+Visits are timed to the tide table and abandoned outright when the forecast turns, because a crew stranded there has nowhere to shelter.
+"""
+
+[[doc]]
+slug = "conv-dunnock-row-cooling"
+source_type = "conversation"
+title = "Chat: why the Dunnock Row cabinet is so quiet"
+content = """
+Someone asked on the thread why the Dunnock Row cabinet runs so much quieter than the rest of the chain.
+The answer is that it is cooled through the case alone, with finned sides and a shaded hood, because the site sits in blown sand and anything drawing air in silts up within a season.
+The trade is that the cabinet is derated through the warmest weeks and the radio drops power rather than shutting down.
+Nobody has asked for that to be changed, since silt was what took the previous cabinet out twice.
+"""
+
+[[doc]]
+slug = "note-tarn-foot-mast"
+source_type = "note"
+title = "Tarn Foot mast arrangement"
+content = """
+Tarn Foot carries a single dish on its mast rather than the arrangement used along the rest of the chain.
+The link runs to one repeater across the water, so there is nothing to serve in the other directions and no reason to hang more hardware in the wind.
+The dish is aligned on a fixed bearing and its mounting is checked for movement after any gale, because a shift of half a degree loses the link.
+Spare feeds are held at the depot rather than on site.
+"""
+
+# --- the norm: the depot fleet ---
+
+[[doc]]
+slug = "media-depot-fleet-vans"
+source_type = "media"
+title = "Depot fleet: van specification"
+content = """
+Every van in the depot fleet is fitted with a tail lift rated for a quarter tonne, and the lift is examined on the same interval as the vehicle.
+A tracker sits behind the dash and reports engine hours as well as position, which is how the service intervals are raised.
+Livery is applied at handover so a vehicle never runs unmarked.
+"""
+
+[[doc]]
+slug = "note-fleet-tail-lift-checks"
+source_type = "note"
+title = "Fleet tail lift checks"
+content = """
+The tail lift on each van is function-tested at the weekly check and load-tested at the annual examination.
+A lift that creeps under load is taken out of use on the spot rather than noted for later.
+The examination certificate is held in the cab folder with the tracker details.
+"""
+
+[[doc]]
+slug = "note-fleet-tracker-reports"
+source_type = "note"
+title = "Fleet tracker reporting"
+content = """
+The tracker in each van feeds the depot report that pairs engine hours against distance, and the pairing is what shows an idling problem.
+Drivers are told what the tracker records and what it does not, because a device nobody understands gets unplugged.
+A tracker that stops reporting raises a ticket in the same queue as a mechanical fault.
+"""
+
+[[doc]]
+slug = "conv-fleet-livery-order"
+source_type = "conversation"
+title = "Chat: livery for the two new vans"
+content = """
+Purchasing asked whether the two new vans should take the full livery or only the door panels.
+The depot answered full livery, since a van with a tail lift and a tracker but no markings looks like a hire vehicle at a gate.
+The order went in with the same wrap as the rest of the fleet.
+"""
+
+[[doc]]
+slug = "note-flatbed-loading"
+source_type = "note"
+title = "Flatbed loading method"
+content = """
+The flatbed is loaded over the side by the yard crane, and the load is strapped through the rope hooks along the rail.
+Its deck sits low enough that a drum can be rolled up a ramp when the crane is busy, which is how most single items go on.
+Nothing is lifted at the rear of the flatbed, so the tail of the deck is kept clear for the strapping.
+Drivers are reminded that the deck edge is the working line and that a load must never overhang it.
+"""
+
+[[doc]]
+slug = "conv-shared-car-agreement"
+source_type = "conversation"
+title = "Chat: the shared car and the crew agreement"
+content = """
+Somebody asked why the shared car does not show up on the depot report with the rest of the vehicles.
+It was left out under the crew agreement when the car was brought in, since it doubles as personal transport at weekends and nobody wanted a position log of that.
+Mileage is claimed on the paper sheet in the glovebox instead, and the fuel card statement is reconciled against it.
+The arrangement is reviewed whenever the agreement is reopened.
+"""
+
+# ===========================================================================
+# ACRONYM FAMILY — bare acronym in the query, expansion in the target (10)
+# ===========================================================================
+#
+# The query names an acronym; the target spells the expansion out and never
+# uses the letters (or, for the reverse case, uses only the letters while the
+# query spells it out). Nothing bridges the two: FTS cannot, because the
+# string is simply absent, and MiniLM has no reason to place "RTO" near
+# "recovery time objective". The acronym-noise documents below DO carry the
+# letters, in a different sense, so the keyword paths return something
+# plausible and wrong rather than nothing — a miss with a decoy on top of it
+# is the honest shape of this failure.
+
+[[doc]]
+slug = "media-filling-head-reliability"
+source_type = "media"
+title = "Filling head reliability study"
+content = """
+The mean time between failures on the filling head is quoted at nine hundred running hours across the fleet of machines, and the figure is dominated by the nozzle seats rather than by the drive.
+Failures cluster in the weeks after a seat change, which points at fitting rather than at wear.
+The study recommends a fitting jig and a torque check in place of the current feel method.
+"""
+
+[[doc]]
+slug = "note-wash-bay-procedure"
+source_type = "note"
+title = "Wash bay working method"
+content = """
+The standard operating procedure for the wash bay puts the interceptor check before the first vehicle of the shift, not at the end of it.
+Detergent is drawn from the wall unit at the fixed dilution, and a stronger mix is never made up by eye.
+The bay floor is squeegeed toward the channel so the interceptor sees the flow it was sized for.
+"""
+
+[[doc]]
+slug = "note-settlement-ledger-recovery"
+source_type = "note"
+title = "Settlement ledger recovery targets"
+content = """
+The recovery time objective for the settlement ledger is four hours, and the recovery point objective is fifteen minutes of committed work.
+Those two figures drive the replication arrangement rather than the other way around, which is why the standby copy is synchronous and the archive copy is not.
+A restore rehearsal is held each quarter and timed against both figures.
+"""
+
+[[doc]]
+slug = "media-protective-equipment-store"
+source_type = "media"
+title = "Personal protective equipment store"
+content = """
+The personal protective equipment store is restocked against the issue sheet rather than against a fixed order, so sizes that move quickly stay on the shelf.
+Gloves, goggles and hearing defenders sit at the hatch, and everything requiring a fit test is issued from the office instead.
+Stock is counted at the end of each month and the slow lines are moved to the back.
+"""
+
+[[doc]]
+slug = "conv-gatehouse-power"
+source_type = "conversation"
+title = "Chat: how long the gate house holds up"
+content = """
+The gate house asked how long it stays live when the incomer drops, since the barrier and the camera feed both matter at a shift change.
+The UPS there holds about ninety minutes at the present load, and the figure was measured rather than taken from the label.
+Dropping the heater off that supply would add half an hour again, and the heater has been moved to the raw side.
+"""
+
+[[doc]]
+slug = "note-capping-turret-parts"
+source_type = "note"
+title = "Capping turret parts list"
+content = """
+The bill of materials for the capping turret runs to sixty lines, of which eleven are consumable and the rest are fitted for the life of the machine.
+Each line carries the drawing reference and the store location so a fitter does not have to guess between two similar items.
+Anything superseded stays on the list with its replacement named beside it.
+"""
+
+# --- acronym noise: the letters, in another sense ---
+
+[[doc]]
+slug = "media-vendor-reliability-claims"
+source_type = "media"
+title = "Reading vendor reliability claims"
+content = """
+Vendors quote an MTBF figure without naming the duty it was measured at, and an MTBF taken from a bench trial says very little about a wet room.
+Ask instead for the failure modes behind the number and for the sample size, since a large MTBF over four units is arithmetic rather than evidence.
+A figure that cannot be traced to a trial is treated here as marketing.
+"""
+
+[[doc]]
+slug = "note-sop-index"
+source_type = "note"
+title = "SOP index and numbering"
+content = """
+The SOP index lists every procedure by number, owner and review month, and it is the only place a current revision is confirmed.
+An SOP withdrawn from use stays in the index with its status marked so that a copy found in a drawer can be identified as dead.
+Numbers are never reused, which keeps a reference in an old report meaningful.
+"""
+
+[[doc]]
+slug = "conv-rto-licence-office"
+source_type = "conversation"
+title = "Chat: the RTO and the operator licence"
+content = """
+Transport asked who deals with the operator licence renewal, since the online route kept rejecting the upload.
+The RTO in the county town takes a paper copy over the counter and stamps it while you wait, which is faster than arguing with the portal.
+They keep the same opening hours as the weighbridge office, so one trip covers both.
+"""
+
+[[doc]]
+slug = "note-ppe-sizing-cards"
+source_type = "note"
+title = "PPE sizing cards"
+content = """
+Each member of the crew has a sizing card recording glove, boot and coverall size, and the card is what a supervisor reads before ordering PPE for a new task.
+Sizes are re-measured when someone returns from long leave rather than being assumed to hold.
+The cards live with the training file so a single folder answers both questions.
+"""
+
+# ===========================================================================
+# COMPOSITIONAL FAMILY — the Wrenfold works parts-and-incidents web (19)
+# ===========================================================================
+#
+# A compositional query states a conjunction ("the supplier OF the coupling
+# THAT failed on the north run"). Its answer document holds both halves, in
+# different sentences and in its own words; the decoys each hold exactly one
+# half and state it squarely. The retrieval question is whether a mode can
+# tell "both halves, diluted" from "one half, on the nose" — embedding
+# similarity rewards the second, which is the failure this class measures.
+#
+# The decoys are the load-bearing part of the design. Delete one and the
+# query stops being compositional: with nothing satisfying the halves
+# separately, any mode that matches half the query lands on the answer by
+# accident and the cell reports a capability nobody has.
+
+[[doc]]
+slug = "note-wrenfold-north-run-history"
+source_type = "note"
+title = "North run, fitters' running history"
+content = """
+The north run has been re-piped twice since the works took the compound over, and this note is the running history the fitters keep between them.
+Its drive coupling came in on the Ostrander schedule with the second batch of spares, which is why the part number does not match the one carried on the south side.
+The joint parted on a cold morning at the start of a shift, and the run stood down for a day while the spare was fetched from the depot.
+Alignment was taken again after the repair and the readings are pinned inside the panel door.
+The run has been quiet since, and the fitters put that down to the alignment rather than to the part.
+"""
+
+[[doc]]
+slug = "note-ostrander-supply-agreement"
+source_type = "note"
+title = "Ostrander Drives standing agreement"
+content = """
+Ostrander Drives supplies couplings and drive units to the works under a standing agreement renewed every second season.
+Prices are held for the term and carriage is included above a modest order value, which is why small items are batched rather than ordered singly.
+The agreement names a two-week lead on stock lines and six weeks on anything wound to order.
+"""
+
+[[doc]]
+slug = "conv-north-run-cold-start"
+source_type = "conversation"
+title = "Chat: the north run on a cold start"
+content = """
+Ops reported that the north run went down at the beginning of a shift when the coupling let go on a cold start.
+The fitter on call found the element in pieces in the guard and the shafts untouched, which is what the element is there to do.
+The run was left isolated until a spare could be brought over.
+"""
+
+[[doc]]
+slug = "media-halloway-south-run-drive"
+source_type = "media"
+title = "South run drive, Halloway build record"
+content = """
+The south run drive was built by Halloway Castings to the works drawing, with the housing machined from their own iron.
+Its coupling is the pattern Halloway fit as standard, which is heavier than the Ostrander item and carries a different bolt circle.
+Nothing on the south run has been changed since the build, and the record is kept with the drawing.
+"""
+
+[[doc]]
+slug = "note-renshaw-training-record"
+source_type = "note"
+title = "Renshaw, operator training record"
+content = """
+Renshaw came onto the shift team from the workshop, and this record follows the tasks he has been released for since.
+He logged the overflow at the balance tank on a night shift and wrote the entry up himself before handover, which is the first time he had raised one alone.
+Tank work was released to him in the spring by Mowbray, who watched two full drain-downs before putting a signature against it.
+Pressure work is still shadowed and is expected to be released after the next rotation.
+The record is reviewed with him at each rotation rather than once a season.
+"""
+
+[[doc]]
+slug = "note-mowbray-signoff-list"
+source_type = "note"
+title = "Mowbray, tasks released to others"
+content = """
+Mowbray holds the release for tank work, confined entry and the chemical round, and has signed off five of the shift team on the first of those.
+A release is given only after two full observations rather than one, which is stricter than the matrix asks for.
+Anyone released by Mowbray is re-observed at the following rotation as a matter of habit.
+"""
+
+[[doc]]
+slug = "conv-balance-tank-overflow"
+source_type = "conversation"
+title = "Chat: the balance tank overflow"
+content = """
+The night shift reported an overflow at the balance tank that ran for about twenty minutes before the level probe was cleared.
+Discussion settled on the probe boot filling with grease from the return, which had happened once before on the same tank.
+The clean-up was done before handover and the entry was logged the same night.
+"""
+
+[[doc]]
+slug = "media-mixing-line-strip-report"
+source_type = "media"
+title = "Mixing line drive, strip report"
+content = """
+The drive that seized on the mixing line was stripped on the bench with the works fitter and the maker's engineer both present.
+Its gasket had been cut from graphite sheet rather than from the fibre the drawing calls for, and the sheet had extruded into the oil way.
+Bearings were blued on the outer race, which fits a supply starved by that blocked way rather than a shock load.
+The report recommends that cut gaskets are made only from the sheet held under the drawing reference.
+Photographs of the extruded section are held with the report.
+"""
+
+[[doc]]
+slug = "note-gasket-material-policy"
+source_type = "note"
+title = "Gasket materials held on site"
+content = """
+Two gasket sheets are held on site: a fibre for oil and water duties and a graphite sheet for hot flanges.
+Cutting from the wrong sheet is the commonest workshop error, so the two are kept apart and the fibre is dyed at the edge.
+Anything above the temperature marked on the rack goes to the maker rather than being cut here.
+"""
+
+[[doc]]
+slug = "conv-filling-head-seizure"
+source_type = "conversation"
+title = "Chat: the filling head seizure"
+content = """
+The filling head seized during a long run and the machine tripped on drive current before anything let go.
+The fitter found the nozzle carrier stiff on its shaft with the grease dried out, which had been reported once already.
+Lubrication was moved onto the weekly round rather than the monthly one.
+"""
+
+[[doc]]
+slug = "note-store-flood-repairs"
+source_type = "note"
+title = "Lower store, repairs after the flood"
+content = """
+The lower store took water through the wall vents when the yard drain surcharged, and this note lists what was renewed afterwards.
+The switchgear on the store wall was replaced with a Cawdron unit of the same rating, since the old one had been discontinued and no spare was to be had.
+Racking was cleaned and re-painted at the feet, and the bottom shelf everywhere was raised by a hand's width.
+Stock lost to the water was written off against the incident rather than the ordinary shrinkage line.
+The drain itself was jetted and is now on the seasonal round.
+"""
+
+[[doc]]
+slug = "note-cawdron-framework"
+source_type = "note"
+title = "Cawdron Electrical framework"
+content = """
+Cawdron Electrical supplies switchgear, distribution boards and the associated protection under a framework the works shares with two neighbouring sites.
+Their standard delivery is four weeks, with an emergency route that trades price for a two-day turnaround.
+Drawings come as issued rather than as-fitted, so the site marks them up on completion.
+"""
+
+[[doc]]
+slug = "conv-lower-store-flood"
+source_type = "conversation"
+title = "Chat: water in the lower store"
+content = """
+Somebody found water across the lower store floor after heavy rain and called it in before the shift started.
+The yard drain had surcharged and pushed back through the wall vents, which nobody had seen happen there before.
+Pumping out took most of the morning and the stock on the bottom shelf was a loss.
+"""
+
+[[doc]]
+slug = "note-tower-ladder-register"
+source_type = "note"
+title = "Tower ladder, register entry"
+content = """
+The fixed ladder at the tower was condemned at its examination and taken out of use the same day, with the lower flight sheeted over.
+Askew carried out the examination and marked the stiles as the reason, having found corrosion behind the wall fixings rather than on the rungs.
+A hooped replacement has been drawn up and priced, and the tower is reached from the scaffold stair until it is fitted.
+The register entry carries the photographs taken at the examination.
+The next examination on the register falls due whether or not the replacement is in by then.
+"""
+
+[[doc]]
+slug = "note-ladder-examination-policy"
+source_type = "note"
+title = "Ladder examination policy"
+content = """
+Every fixed ladder and every portable ladder on site is examined on a set interval and tagged with the month it next falls due.
+A ladder that fails is destroyed rather than returned to the store, because a condemned ladder put back on a rack is found again by somebody.
+Examinations are carried out by a competent examiner from outside the maintenance team.
+"""
+
+[[doc]]
+slug = "conv-tower-access-restriction"
+source_type = "conversation"
+title = "Chat: getting up the tower while the ladder is out"
+content = """
+Crews asked how to reach the tower head now that the ladder is out of use and the lower flight is sheeted.
+The answer is the scaffold stair on the north face, which is signed and lit and stays up until the replacement is fitted.
+Anything carried up goes on a rope rather than on a shoulder.
+"""
+
+[[doc]]
+slug = "note-filling-head-leak-log"
+source_type = "note"
+title = "Filling head, leak log entry"
+content = """
+The night shift found weeping at the filling head manifold during the second hour and stopped the run rather than nursing it to the end.
+The head was closed for the remainder of the run and the batch was diverted to the second machine, which cost about an hour of output.
+A seat kit was fitted at the front of the following shift and the head was proved on water before product went through it.
+The log entry names the joint and the seat kit number so a repeat is easy to spot.
+"""
+
+[[doc]]
+slug = "conv-filling-head-closure"
+source_type = "conversation"
+title = "Chat: closing the filling head mid-run"
+content = """
+The thread argued about whether the filling head should have been closed mid-run or nursed to the end of the batch.
+Production held that a diverted batch costs an hour while a wet floor costs a shift, and nobody contested it.
+The closure stands as the example the induction now uses.
+"""
+
+[[doc]]
+slug = "note-shift-pattern"
+source_type = "note"
+title = "Shift pattern and handover times"
+content = """
+The site works three shifts with a twenty-minute overlap at each handover, which is the only time two crews are on the floor together.
+The night shift carries one fewer operator and leans on the standing instruction for anything outside routine running.
+Rotation moves forward rather than back, since forward rotation costs less sleep across the cycle.
+"""
+
+# ===========================================================================
+# PROMPT FIXTURES (6) — written and keyword-searchable, never vector-indexed
+# ===========================================================================
+#
+# These documents are `source_type = "prompt"`. When they were authored
+# (2026-08-10) NOTHING retrieved them: no prompts writer in the harness, no
+# prompts sub-leg in the engine, no vector index anywhere — recall 0.000 in
+# every mode by construction rather than by a retrieval defect. They were
+# authored here, beside the classes they sit with, because a before-number
+# written after the fix is not a before-number.
+#
+# TASK-15020/B2 (2026-08-11) shipped the writer (`PromptsDatabase.add_prompt`,
+# body in `system_prompt`) and the engine's prompts keyword sub-leg. Prompts
+# are now ingested, mapped and reachable — through the FTS leg alone, since
+# B2 deliberately did not add semantic indexing of prompts
+# (`ingest.UNINDEXED_SOURCE_TYPES`). The golden prompt cells nonetheless did
+# not move, for reasons recorded at the prompt class header in golden.toml.
+
+[[doc]]
+slug = "prompt-shift-summary"
+source_type = "prompt"
+title = "Saved prompt: shift log to summary"
+content = """
+Read the shift log below and write a short summary for the incoming supervisor, no longer than six lines.
+Lead with anything left in hand or out of automatic control, then equipment faults, then routine work.
+Keep every figure exactly as written in the log and never round one, and say plainly when the log does not answer a question.
+"""
+
+[[doc]]
+slug = "prompt-incident-timeline"
+source_type = "prompt"
+title = "Saved prompt: incident timeline builder"
+content = """
+From the notes below, build a timeline of the incident as a numbered list, one entry per event, in the order the events happened.
+Each entry carries the clock time if the notes give one, the actor, and what changed; entries without a time are placed by their stated order and marked as such.
+Do not merge two events into one line and do not infer a cause the notes do not state.
+"""
+
+[[doc]]
+slug = "prompt-vendor-chaser"
+source_type = "prompt"
+title = "Saved prompt: chasing a late order"
+content = """
+Draft a short courteous message to a supplier chasing an order that has passed its promised date.
+Open with the order reference and the promised date, state the operational effect in one sentence, and ask for a revised date rather than an explanation.
+Keep the tone level, close with a named contact, and never threaten a remedy the agreement does not carry.
+"""
+
+[[doc]]
+slug = "prompt-meeting-actions"
+source_type = "prompt"
+title = "Saved prompt: actions out of meeting notes"
+content = """
+Extract every action from the meeting notes below as a table of owner, action and due date.
+An item without an owner is listed with the owner column marked unassigned rather than being dropped or guessed at.
+Decisions are listed separately from actions, because a decision with no action attached is the thing most often lost.
+"""
+
+[[doc]]
+slug = "prompt-glossary-builder"
+source_type = "prompt"
+title = "Saved prompt: glossary from a document"
+content = """
+Work through the document and list every term that a newcomer to the site would not know, with a one-line explanation drawn only from the text.
+Where the document uses an abbreviation and spells it out somewhere, pair the two in a single entry.
+List a term once, at its clearest occurrence, and say when the document never explains a term it uses.
+"""
+
+[[doc]]
+slug = "prompt-risk-review"
+source_type = "prompt"
+title = "Saved prompt: method statement review"
+content = """
+Review the method statement below and list what it leaves unaddressed, ordered by how badly it could go.
+For each gap, name the step it belongs to and the control that is missing, in one sentence each.
+Do not rewrite the method and do not praise what is already covered; the reader wants only the holes.
+"""
+
+# ===========================================================================
+# GENERAL DISTRACTORS (14) — the haystack the classes above are measured in
+# ===========================================================================
+#
+# Ordinary site writing that answers nobody's query. They exist so the corpus
+# is a haystack rather than a lookup table: at 49 documents a top-10 was
+# nearly a fifth of everything, which flattered every recall number in the
+# report.
+
+[[doc]]
+slug = "note-tool-crib-register"
+source_type = "note"
+title = "Tool crib register"
+content = """
+Every calibrated tool in the crib is signed out against a name and a job number, and the register is closed off at the end of each shift.
+A tool returned with damage is quarantined on the top shelf rather than being put back into circulation.
+Calibration due dates are colour banded so an out-of-date tool is visible from the hatch.
+"""
+
+[[doc]]
+slug = "note-first-aid-room"
+source_type = "note"
+title = "First aid room stock"
+content = """
+The first aid room is checked weekly against the contents list on the inside of the cupboard door.
+Anything used is replaced from the reserve box and the reserve is topped up at the monthly order rather than opportunistically.
+The eyewash bottles are dated and swapped out on the earliest of the printed date or six months from opening.
+"""
+
+[[doc]]
+slug = "media-key-cabinet-control"
+source_type = "media"
+title = "Key cabinet control"
+content = """
+Site keys are held in the cabinet by the gate office and drawn against a tag with the holder's name on it.
+A key not returned by the end of shift raises a query with the supervisor before the crew leaves the site.
+Duplicates are held sealed in the safe and their seal numbers are recorded on the register.
+"""
+
+[[doc]]
+slug = "note-uniform-ordering"
+source_type = "note"
+title = "Workwear ordering"
+content = """
+Workwear is ordered twice a season against the sizing cards rather than on request, which cuts the number of part orders.
+Anyone whose size has changed tells the storekeeper before the order closes.
+Worn items are returned when the replacements arrive, since a crew that keeps both wears neither out.
+"""
+
+[[doc]]
+slug = "media-visitor-induction"
+source_type = "media"
+title = "Visitor induction briefing"
+content = """
+Every visitor takes the short induction at the gate office before going beyond the office corridor.
+The briefing covers the alarm tones, the muster point, the traffic route and the one-way door at the compressor room.
+Visitors are escorted throughout unless they hold a site card, and the escort is named on the badge.
+"""
+
+[[doc]]
+slug = "note-waste-segregation"
+source_type = "note"
+title = "Waste segregation at the yard"
+content = """
+Four skips stand at the yard: general, metal, wood and the covered one for anything oily.
+A skip contaminated with the wrong stream is charged at the highest rate for the whole load, which is why the covered skip is locked between uses.
+Transfer notes are filed with the yard sheets and checked against the weighbridge tickets.
+"""
+
+[[doc]]
+slug = "media-noise-survey"
+source_type = "media"
+title = "Noise survey across the machine hall"
+content = """
+The survey walked the machine hall on a normal running day and took readings at head height at fixed positions.
+Two positions came back above the upper action level, both of them beside the compressor door, and hearing protection is now mandatory in that zone.
+The zone is marked on the floor and on the door rather than in a notice nobody reads.
+"""
+
+[[doc]]
+slug = "note-scaffold-tagging"
+source_type = "note"
+title = "Scaffold tagging system"
+content = """
+Every scaffold carries a tag at each access point stating who handed it over and when it was last examined.
+A scaffold with no tag, or with the tag reversed, is treated as incomplete and must not be climbed.
+Alterations are made by the scaffold contractor alone, and a crew that needs a board moved raises it rather than moving it.
+"""
+
+[[doc]]
+slug = "media-weld-procedure-record"
+source_type = "media"
+title = "Weld procedure record"
+content = """
+The procedure record names the material group, the consumable, the preheat and the position each welder is approved for.
+Approval lapses if a welder does not work in that position for six months, and the lapse is tracked on the same sheet.
+Test pieces are retained until the following approval so a query about workmanship has something physical behind it.
+"""
+
+[[doc]]
+slug = "note-paint-store"
+source_type = "note"
+title = "Paint store arrangements"
+content = """
+The paint store is ventilated at low and high level and holds no more than the quantity named on the door notice.
+Tins are kept closed and on their sides only where the maker says so, and thinners sit in the metal cupboard at the far end.
+Mixing is done in the yard bay rather than inside the store.
+"""
+
+[[doc]]
+slug = "conv-forklift-charging"
+source_type = "conversation"
+title = "Chat: where the forklifts charge overnight"
+content = """
+Somebody asked whether the second forklift could charge beside the first one at the end of the loading bay.
+The answer was no, because the bay charger is on a circuit sized for one machine and the wall is not ventilated for two.
+The second machine charges in the yard corner where the fan unit was fitted.
+"""
+
+[[doc]]
+slug = "media-lighting-survey"
+source_type = "media"
+title = "Lighting survey of the yard"
+content = """
+Illuminance across the yard was measured on a grid after dark with the gate lights at full output.
+The corner behind the skips read well under the figure for a traffic area, and a column has been added on the drawing.
+Fittings elsewhere were found dirty rather than failed, and a cleaning round has been put on the seasonal list.
+"""
+
+[[doc]]
+slug = "note-drain-map"
+source_type = "note"
+title = "Drainage map for the site"
+content = """
+The drainage map marks foul and surface runs in two colours and names every interceptor, silt trap and penstock on the site.
+It is the drawing a spill response starts from, so a copy hangs at the gate office as well as in the maintenance room.
+Any new run is added to the map before it is covered over rather than at the end of the job.
+"""
+
+[[doc]]
+slug = "conv-spares-min-max"
+source_type = "conversation"
+title = "Chat: setting minimum and maximum on spares"
+content = """
+Stores proposed setting a minimum and a maximum on the fast-moving spares instead of ordering each one as it runs out.
+Maintenance agreed for the consumables but asked that anything with a long lead is held to a fixed quantity regardless of usage.
+The figures are reviewed at the end of each season against what actually moved.
+"""
+
+# ===========================================================================
+# ANCHOR DILUTION (24) — the documents the probe asked for
+# ===========================================================================
+#
+# Round 1 of the probe rejected most candidates for one reason: their
+# subject was nearly unique in the corpus, so the topical anchor ("the wash
+# bay", "the north run") resolved the query on its own and the class's
+# mechanism was never exercised. A rank-1 hit earned by an anchor measures
+# the corpus's sparseness, not the pipeline's capability.
+#
+# These documents give each anchor company. They are ordinary site writing
+# and are nobody's answer; what they change is that a query naming the
+# anchor now has eight plausible documents to choose between, so whatever
+# does the choosing is the mechanism under test.
+
+# --- scoped: overflow records and marker posts ---
+
+[[doc]]
+slug = "media-kelsingham-spill-records"
+source_type = "media"
+title = "Kelsingham spill recording arrangements"
+content = """
+Every discharge from the storm tanks is recorded with its start, its finish and the level at which it began.
+The record is compiled monthly and read alongside the rainfall figures, because a discharge in a dry spell means something different from one in a wet week.
+Records are held for the full retention period and are the first thing asked for at an audit.
+"""
+
+[[doc]]
+slug = "note-kelsingham-overflow-returns"
+source_type = "note"
+title = "Kelsingham overflow returns"
+content = """
+The overflow returns go out at the end of each month and carry the count of events, the total duration and the estimated volume.
+Figures are taken from the level record rather than from the operator log, since the log rounds to the nearest hour and the return does not.
+A month with no events is returned as a nil rather than left blank.
+"""
+
+[[doc]]
+slug = "note-cable-route-markers"
+source_type = "note"
+title = "Cable route markers across the estate"
+content = """
+The buried cable route is marked with a post at every change of direction and at each joint bay, painted in the route colour.
+A marker post knocked over by machinery is reset from the drawing rather than by eye, because a post in the wrong position is worse than no post.
+The route is walked once a season and missing posts are listed for replacement.
+"""
+
+[[doc]]
+slug = "media-survey-marker-posts"
+source_type = "media"
+title = "Survey marker posts and setting out"
+content = """
+Setting out on the site works from three permanent marker posts cast into concrete at the corners of the compound.
+Each post carries a stamped plate with its coordinates, and a line taken between any two of them is the reference for temporary pegs.
+A post disturbed by works is re-established by the surveyor before anything else is set out from it.
+"""
+
+[[doc]]
+slug = "note-boundary-marker-upkeep"
+source_type = "note"
+title = "Boundary marker upkeep"
+content = """
+The boundary is marked with a post at every angle and at each field entrance, and the line between two posts is the boundary itself.
+Posts are re-painted every second season and any post that has rotted at ground level is replaced in the same hole.
+A neighbour who moves a marker post is written to rather than argued with on the ground.
+"""
+
+[[doc]]
+slug = "media-yard-line-marking"
+source_type = "media"
+title = "Yard line marking scheme"
+content = """
+The yard is marked with a painted line for the traffic route, hatching at the crossing points and a bay line at each loading position.
+Marking is renewed before the wet months, since a worn line in poor light is the commonest cause of a vehicle straying into the walking route.
+Posts stand at the corners where a line alone would not survive the sweeper.
+"""
+
+# --- negation: company for each norm ---
+
+[[doc]]
+slug = "media-cabinet-fan-tray-service"
+source_type = "media"
+title = "Cabinet fan tray servicing"
+content = """
+The fan tray in each roadside cabinet is serviced on the same visit as the battery check, with the fans run up and the current read at the tray.
+A fan drawing more than its rated current is changed as a set with its partner rather than singly, so the tray stays balanced.
+Trays are refitted with their filters the right way up, which is the mistake most often found at the following visit.
+"""
+
+[[doc]]
+slug = "note-fan-tray-filter-mats"
+source_type = "note"
+title = "Fan tray filter mats"
+content = """
+Filter mats behind the fan tray grille are changed twice a season on the dusty sites and once elsewhere.
+A blocked mat shows as a rising cabinet temperature long before it shows as an alarm, so the trend is read rather than the alarm awaited.
+Mats are cut from the roll held at the depot and never washed and reused.
+"""
+
+[[doc]]
+slug = "note-cabinet-cooling-survey"
+source_type = "note"
+title = "Cabinet cooling survey across the chain"
+content = """
+Cabinet temperatures were logged across the chain for a full summer and read against the fan tray running hours at each site.
+Every cabinet on the survey carries a standard fan tray, and the three that ran hottest were all found to have filter mats overdue.
+The survey recommends the mat interval is set by dust rather than by the calendar.
+"""
+
+[[doc]]
+slug = "conv-fan-tray-spares"
+source_type = "conversation"
+title = "Chat: holding spare fan trays"
+content = """
+Stores asked how many spare fan trays to hold now that the chain has grown.
+Maintenance answered two complete trays and a box of fans, since a tray is quick to swap and a fan is quick to fit but a tray on order is a hot cabinet for a fortnight.
+The figures went onto the minimum and maximum sheet.
+"""
+
+[[doc]]
+slug = "media-approach-road-surfacing"
+source_type = "media"
+title = "Approach road surfacing across the chain"
+content = """
+The surfaced approach road at each site is inspected once a season and patched where the edges have broken away.
+A surfaced approach road costs more to lay than a stone track but far less to keep, which is why every site on the chain has one.
+Edges are the first thing to go, so the verge is kept cut back to let the surface dry.
+"""
+
+[[doc]]
+slug = "note-approach-road-gates"
+source_type = "note"
+title = "Gates on the approach roads"
+content = """
+Each surfaced approach road carries a gate at the public end, hung to swing clear of the surface and fitted with the standard lock.
+Gate posts are concreted rather than driven, because a driven post moves once the surface is loaded by a delivery vehicle.
+A gate that drags is re-hung rather than eased with a shovel.
+"""
+
+[[doc]]
+slug = "note-tail-lift-training"
+source_type = "note"
+title = "Tail lift training for drivers"
+content = """
+Every driver is trained on the tail lift before taking a van out, and the training covers loading from the platform as well as the controls.
+A load is never left standing on the tail lift while the driver walks away, which is the point the training returns to twice.
+Refresher training falls due with the licence check.
+"""
+
+[[doc]]
+slug = "media-tail-lift-examination-regime"
+source_type = "media"
+title = "Tail lift examination regime"
+content = """
+The tail lift on each vehicle is examined at six-monthly intervals as lifting equipment, separately from the vehicle inspection.
+The examination covers the ram, the hoses, the platform hinges and the interlock that stops the lift working with the doors shut.
+A report with a defect stops the vehicle rather than the lift alone, since a van whose lift is out of use cannot do the round it was scheduled for.
+"""
+
+[[doc]]
+slug = "note-tracker-fitting-standard"
+source_type = "note"
+title = "Tracker fitting standard"
+content = """
+A tracker is fitted behind the dash on a permanent feed with its own fuse, and never into a switched circuit that leaves it blind overnight.
+The antenna is placed where the screen does not shade it, which on most of the fleet is the corner above the mirror.
+Fitting is signed off with a live report from the vehicle before it leaves the workshop.
+"""
+
+[[doc]]
+slug = "conv-tracker-data-retention"
+source_type = "conversation"
+title = "Chat: how long tracker data is kept"
+content = """
+Somebody asked how long the tracker records are kept and who can look at them.
+The answer is ninety days for the position trail and a year for the summary, with access limited to the transport supervisor.
+The retention was agreed with the crew when the trackers were fitted and is written into the vehicle notice.
+"""
+
+# --- acronym: company for the wash bay anchor ---
+
+[[doc]]
+slug = "media-wash-bay-interceptor"
+source_type = "media"
+title = "Wash bay interceptor maintenance"
+content = """
+The interceptor under the wash bay is emptied on a fixed interval and always before the silt reaches the marked depth.
+A full interceptor passes oil straight to the drain, which is the failure the whole arrangement exists to prevent.
+Emptying is done by a licensed carrier and the transfer note is filed with the yard sheets.
+"""
+
+[[doc]]
+slug = "note-wash-bay-rota"
+source_type = "note"
+title = "Wash bay rota"
+content = """
+The wash bay is booked on a rota so that two vehicles are never queued across the traffic route.
+Vans wash on the early slots and the yard machines take the late ones, because the machines leave the bay dirtiest.
+A crew that misses its slot rebooks rather than washing at the end of the day.
+"""
+
+[[doc]]
+slug = "conv-wash-bay-detergent"
+source_type = "conversation"
+title = "Chat: detergent at the wash bay"
+content = """
+The yard asked whether a stronger detergent could be used at the wash bay for the road film in winter.
+The answer was no, because the interceptor is sized for the present product and a stronger mix carries oil through in solution.
+A brush and warm water were suggested instead, and a longer slot was added to the rota.
+"""
+
+[[doc]]
+slug = "note-wash-bay-drainage"
+source_type = "note"
+title = "Wash bay drainage layout"
+content = """
+The wash bay falls to a channel across its mouth so that nothing runs out onto the yard surface.
+The channel feeds the interceptor and then the foul connection, and the surface drain in the yard is deliberately not connected to it.
+The layout is on the drainage map and the two systems are labelled at every cover.
+"""
+
+# --- compositional: company for the north run anchor ---
+
+[[doc]]
+slug = "media-north-run-pipework"
+source_type = "media"
+title = "North run pipework survey"
+content = """
+The pipework along the north run was surveyed for wall thickness at every bend and at the two low points.
+Readings were within tolerance apart from one bend downstream of the strainer, which is on a watch list rather than a work list.
+The survey positions are marked so the next set of readings is taken at the same points.
+"""
+
+[[doc]]
+slug = "note-north-run-isolation"
+source_type = "note"
+title = "Isolating the north run"
+content = """
+The north run is isolated at the compound valve and at the header, and both are locked before anyone opens a joint.
+The drain point sits at the low bend, so a run isolated without draining still holds a column of liquid above the joint.
+The isolation is proved at the vent rather than assumed from the valve position.
+"""
+
+[[doc]]
+slug = "conv-north-run-noise"
+source_type = "conversation"
+title = "Chat: noise from the north run"
+content = """
+The office asked about a hum from the north run that carries into the corridor on quiet mornings.
+Maintenance put it down to the strainer running partly blocked, which raises velocity through the bend, and cleaned it out.
+The hum went and the crew were asked to report it early if it returns.
+"""
+
+[[doc]]
+slug = "note-north-run-guard"
+source_type = "note"
+title = "Guard on the north run drive"
+content = """
+The guard over the north run drive is a two-piece cover that lifts off without disturbing the alignment brackets.
+It is refitted with all four fasteners rather than the two that hold it square, since the loose half rattles at speed.
+The guard is interlocked and the interlock is proved at every restart.
 """

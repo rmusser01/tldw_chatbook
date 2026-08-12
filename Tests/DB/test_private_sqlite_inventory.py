@@ -575,9 +575,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # to route a needed upgrade to the exclusive-lease path first. C40 is
         # the RAG hybrid keyword leg's read-only read of the live ChaChaNotes
         # database for its notes/conversation sub-legs (TASK-3996). C41 is
-        # the retained exact-v2 TTS migration source/backup boundary.
+        # the retained exact-v2 TTS migration source/backup boundary. C42 is
+        # the keyword leg's read-only read of the live Prompts database for
+        # its prompts sub-leg (TASK-15020/B2).
         f"C{number:02d}"
-        for number in range(1, 42)
+        for number in range(1, 43)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18)

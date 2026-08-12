@@ -15,7 +15,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Input, ListView, Select, Static
 
-from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane, _render_row
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
@@ -561,3 +561,32 @@ async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
         assert ("refresh_items_requested", None) in app.captured_messages, (
             "the click asks for the same reload the refresh button posts"
         )
+
+
+def test_render_row_snippet_prefers_content_preview_over_content():
+    """TASK-15464. `get_new_items`'s list rows no longer carry `content` at
+    all -- only `content_preview`, a cheap `substr` projection
+    (`SubscriptionsDB._LIST_ITEM_COLUMNS`). `_render_row`'s snippet must
+    read from a row shaped exactly like that (no `content` key whatsoever),
+    not merely from a hand-built test dict that happens to set both.
+    """
+    item = _item(1)
+    item.pop("content", None)
+    item["content_preview"] = "A preview snippet with enough words to render."
+
+    rendered = str(_render_row(item))
+
+    assert "A preview snippet with enough words to render." in rendered
+
+
+def test_render_row_snippet_falls_back_to_content_when_no_preview():
+    """Backward compatibility: a hand-built dict (every fixture in this
+    file, via `_item`) that never went through `get_new_items` at all sets
+    only `content`, not `content_preview` -- the snippet must still render.
+    """
+    item = _item(1)
+    assert "content_preview" not in item
+
+    rendered = str(_render_row(item))
+
+    assert item["content"] in rendered

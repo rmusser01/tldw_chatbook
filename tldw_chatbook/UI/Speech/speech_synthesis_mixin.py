@@ -308,7 +308,13 @@ class SpeechSynthesisMixin:
             or not revision_matches
         ):
             return "The selected provider catalog is stale; refresh models"
-        if not any(model.model_id == model_id for model in catalog.models):
+        # An OpenAI model outside the static official catalog is a pinned
+        # custom-endpoint id ("no catalog check", TASK-15421) — there is
+        # nothing to verify it against, and nothing can "disappear" from a
+        # static catalog, so the staleness copy would be false here.
+        if provider_id != "openai" and not any(
+            model.model_id == model_id for model in catalog.models
+        ):
             return "The selected model is no longer available; refresh models"
         clone_readiness = getattr(self, "_clone_setup_generation_error", None)
         if callable(clone_readiness):

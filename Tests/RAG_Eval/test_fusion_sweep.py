@@ -84,10 +84,35 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
             f"{label}: {len(entry.hybrid.errors)} query error(s) at the seam: "
             f"{entry.hybrid.errors}"
         )
-        assert entry.hybrid.runtime_backends == ("rag-hybrid",), (
-            f"{label}: expected every query to route to 'rag-hybrid', got "
-            f"{entry.hybrid.runtime_backends} — the fusion pass did not run "
-            "under hybrid at all"
+        # EVERY query, scoped included — and the scoped ones are now the
+        # sharpest part of this assertion. They used to be exempt: a scope
+        # diverted a hybrid profile to the semantic path (the engine's
+        # allowlist pushdown was semantic-only), so a hybrid pass legitimately
+        # recorded "rag-semantic" for them, and their cells were invariant
+        # across this whole matrix because no fusion knob was on their code
+        # path at all. TASK-15020/B1 ended both facts: scoped queries run the
+        # fused path, so the exemption is dead code, and their scores now MOVE
+        # with the fusion knobs like every other query's. Measured, at
+        # `alpha` 0.7: all seven shipped scoped targets are `fts_rank` 1, five
+        # of them FTS-ONLY (no vector rank at all) and reaching the top-10
+        # only because `rrf_k` is 5; the other two carry a vector rank as well
+        # (12 and 20, inside the over-fetched pool) and lead the list at
+        # `rrf_k=60` too. Scoped hybrid recall is 1.000 at 5 and 0.286 at 60 —
+        # so this class is fusion-SENSITIVE, but "FTS-only" is true of 5/7,
+        # not of the class.
+        backends = tuple(
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in entry.hybrid.queries
+                    if outcome.runtime_backend
+                }
+            )
+        )
+        assert backends == ("rag-hybrid",), (
+            f"{label}: expected every query to route to 'rag-hybrid', "
+            f"got {backends} — the fusion pass did not run under "
+            "hybrid at all (or a scope re-routed the queries carrying one)"
         )
         assert len(entry.hybrid.queries) == len(golden), (
             f"{label}: ran {len(entry.hybrid.queries)} of {len(golden)} queries"

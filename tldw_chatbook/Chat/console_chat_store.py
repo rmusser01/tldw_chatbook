@@ -1153,6 +1153,29 @@ class ConsoleChatStore:
         session.pending_attachments.clear()
         return session
 
+    def consume_pending_attachment(
+        self, session_id: str, attachment_id: str
+    ) -> bool:
+        """Remove only the currently staged attachment with the exact identity.
+
+        Args:
+            session_id: Native Console session ID.
+            attachment_id: Opaque process-local attachment identity.
+
+        Returns:
+            True when the exact attachment was removed; False when the
+            identity is no longer staged.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        pending = self._session_or_raise(session_id).pending_attachments
+        for index, attachment in enumerate(pending):
+            if attachment.attachment_id == attachment_id:
+                del pending[index]
+                return True
+        return False
+
     def pending_attachment(self, session_id: str) -> PendingAttachment | None:
         """Return the first staged attachment (legacy single accessor).
 
@@ -1569,6 +1592,116 @@ class ConsoleChatStore:
             self._persist_new_message_or_defer(session_id=session_id, message=message)
         self._bump_payload_revision(session_id)
         return message
+
+    def merge_persisted_generation_message(
+        self, session_id: str, message_id: str
+    ) -> ConsoleChatMessage | None:
+        """Idempotently merge one exact persisted PNG generation message.
+
+        This narrow remount-reconciliation seam reads through the persistence
+        adapter's declared database boundary and existing attachment/metadata
+        readers. It never rewrites persistence or mutates an existing message.
+
+        Args:
+            session_id: Native Console session receiving the restored message.
+            message_id: Exact durable generation-message ID to read.
+
+        Returns:
+            A snapshot of the existing or newly merged message, or None when
+            the durable row is missing or is not the expected one-PNG,
+            one-metadata-row generation shape.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        session = self._session_or_raise(session_id)
+        nodes = self._nodes_by_session[session_id]
+        for existing in nodes.values():
+            if existing.persisted_message_id == message_id:
+                return self._snapshot(existing)
+        if message_id in nodes or self.persistence is None:
+            return None
+        db = self.persistence.db
+        if db is None:
+            return None
+        read_message = getattr(db, "get_message_by_id", None)
+        read_attachments = getattr(
+            self.persistence, "get_attachments_for_messages", None
+        )
+        read_metadata = getattr(
+            self.persistence, "get_generation_metadata_for_messages", None
+        )
+        if not all(
+            callable(reader)
+            for reader in (read_message, read_attachments, read_metadata)
+        ):
+            return None
+
+        row = read_message(message_id)
+        if not isinstance(row, Mapping):
+            return None
+        if (
+            row.get("id") != message_id
+            or row.get("conversation_id") != session.persisted_conversation_id
+            or row.get("sender") != ConsoleMessageRole.ASSISTANT.value
+            or type(row.get("content")) is not str
+            or type(row.get("image_data")) is not bytes
+            or row.get("image_mime_type") != "image/png"
+        ):
+            return None
+        extra_by_message = read_attachments([message_id])
+        metadata_by_message = read_metadata([message_id])
+        if not isinstance(extra_by_message, Mapping) or not isinstance(
+            metadata_by_message, Mapping
+        ):
+            return None
+        if extra_by_message.get(message_id, []) != []:
+            return None
+        metadata_rows = metadata_by_message.get(message_id)
+        if (
+            not isinstance(metadata_rows, list)
+            or len(metadata_rows) != 1
+            or not isinstance(metadata_rows[0], Mapping)
+            or metadata_rows[0].get("position") != 0
+        ):
+            return None
+
+        image_data = row["image_data"]
+        metadata = GenerationVariantMeta.from_row(metadata_rows[0])
+        message = ConsoleChatMessage(
+            id=message_id,
+            persisted_message_id=message_id,
+            parent_message_id=row.get("parent_message_id"),
+            role=ConsoleMessageRole.ASSISTANT,
+            content=row["content"],
+            status="complete",
+            image_data=image_data,
+            image_mime_type="image/png",
+            attachments=(
+                MessageAttachment(
+                    data=image_data,
+                    mime_type="image/png",
+                    display_name="",
+                    position=0,
+                ),
+            ),
+            generation_metadata=(metadata,),
+        )
+        parent_native_id = next(
+            (
+                node.id
+                for node in nodes.values()
+                if node.persisted_message_id == message.parent_message_id
+            ),
+            None,
+        )
+        self._register_tree_node(
+            session_id, message, parent_native_id=parent_native_id
+        )
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        return self._snapshot(message)
 
     def append_video_message(
         self,
@@ -4269,18 +4402,20 @@ class ConsoleChatStore:
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
-            # Generation messages (Task 5) pin the DB row to the SAME id as
+            # Image/video generation messages pin the DB row to the SAME id as
             # the store's own native tree-node id: ``message.id`` is already
             # a globally-unique uuid4, and ``add_message`` accepts an
             # explicit id. This makes ``persisted_message_id == message.id``
-            # for generation messages specifically, so the narrow
-            # keep/append-variant ops -- which callers address by the
-            # store's native ``message_id`` -- can pass
-            # ``message.persisted_message_id`` straight through with no
-            # separate id-translation bookkeeping. Every other message kind
-            # keeps letting the DB assign its own id (unchanged).
+            # for generation messages specifically: image variant ops can
+            # address the durable row directly, and video files saved under
+            # the preallocated native id remain resolvable after reload.
+            # Every other message kind keeps letting the DB assign its own id.
             message_id=message.id
-            if message.generation_metadata or force_stable_message_id
+            if (
+                message.generation_metadata
+                or message.video_metadata is not None
+                or force_stable_message_id
+            )
             else None,
             parent_message_id=parent_persisted_id,
             feedback=message.feedback,

@@ -290,6 +290,7 @@ from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
     LibraryWorkspaceDepthState,
     build_library_workspace_depth_state,
+    library_item_context_handoff,
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
@@ -311,6 +312,7 @@ from ...Widgets.Library import (
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
+    LibraryNavigationRailHandle,
     LibraryPromptsListCanvas,
     LibraryRail,
     LibrarySearchRagPanel,
@@ -1565,6 +1567,12 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "back to Database"),
     )
 
+    LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "cancel reload"),
+    )
+
     #: task-2856 AC2: a detail/viewer surface (media viewer, note editor,
     #: prompt editor) -- Escape goes back to that surface's list.
     LIBRARY_DETAIL_BACK_SHORTCUTS = (
@@ -1652,8 +1660,12 @@ class LibraryScreen(BaseAppScreen):
     #: action, which exists only on the landing.
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
+            "library-rail-handle",
+            ("library-rail-open",),
+        ),
+        WorkbenchPaneTarget(
             "library-rail",
-            ("library-search-input",),
+            ("library-search-input", "library-rail-collapse"),
         ),
         WorkbenchPaneTarget(
             "library-canvas",
@@ -2896,6 +2908,7 @@ class LibraryScreen(BaseAppScreen):
         # explicit presentation input now so compact/wide utility grouping is
         # testable without coupling the canvas to terminal geometry.
         self._library_notes_compact: bool = False
+        self._library_rail_collapsed: bool = False
         self._library_notes_stage: Literal["rail", "notes"] = "rail"
         self._library_notes_explicit_stage_intent = False
         self._library_notes_pending_focus_identity: LibraryNotesFocusIdentity | None = (
@@ -3272,6 +3285,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             return self.LIBRARY_LIST_SHORTCUTS
         if self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if (
+                workspace is not None
+                and workspace.reload_confirmation_active
+            ):
+                return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
             return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
@@ -3585,6 +3604,10 @@ class LibraryScreen(BaseAppScreen):
             }
         )
 
+    def _library_notes_compact_workflow_active(self) -> bool:
+        """Return whether either Notes source owns compact canvas routing."""
+        return self._library_notes_workflow_active() or self._file_notes_active()
+
     def _library_notes_focus_region(
         self,
     ) -> Literal["", "navigator", "editor", "preview", "context", "create", "sync"]:
@@ -3640,6 +3663,13 @@ class LibraryScreen(BaseAppScreen):
             return f"create-template:{template_key}"
 
         widget_id = focused.id or ""
+        if widget_id and self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if workspace is not None and self._library_notes_widget_is_within(
+                focused,
+                workspace,
+            ):
+                return f"file-notes:{widget_id}"
         direct_roles = {
             "library-notes-filter": "filter",
             "library-note-title": "title",
@@ -3824,6 +3854,15 @@ class LibraryScreen(BaseAppScreen):
                 "create": "#library-notes-create-back",
                 "sync": "#library-notes-sync-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
+        elif role.startswith("file-notes:"):
+            widget_id = role.removeprefix("file-notes:")
+            workspace = self._library_file_notes_workspace
+            if workspace is None or not widget_id:
+                return None
+            try:
+                return workspace.query_one(f"#{widget_id}", Widget)
+            except (NoMatches, QueryError):
+                return None
         if selector is not None:
             try:
                 return self.query_one(selector, Widget)
@@ -4052,7 +4091,7 @@ class LibraryScreen(BaseAppScreen):
             return "notes"
         if identity.stage == "rail":
             return "rail"
-        if identity.stage == "notes" and self._library_notes_workflow_active():
+        if identity.stage == "notes" and self._library_notes_compact_workflow_active():
             return "notes"
         if self._library_notes_focus_region() in {
             "editor",
@@ -4067,7 +4106,8 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope single-stage behavior to Library entry and active Notes routes."""
         return (
-            self._library_notes_stage == "rail" or self._library_notes_workflow_active()
+            self._library_notes_stage == "rail"
+            or self._library_notes_compact_workflow_active()
         )
 
     def _apply_library_notes_stage_visibility(self) -> None:
@@ -4076,6 +4116,7 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             shell = self.query_one("#library-shell-grid", Widget)
+            rail_handle = self.query_one("#library-rail-handle", Widget)
             rail = self.query_one("#library-rail", Widget)
             canvas = self.query_one("#library-canvas", Widget)
         except (NoMatches, QueryError):
@@ -4096,12 +4137,26 @@ class LibraryScreen(BaseAppScreen):
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
-        rail_display = not single_stage or self._library_notes_stage == "rail"
+        manually_collapsed = (
+            self._library_rail_collapsed and not self._library_notes_compact
+        )
+        rail_display = (
+            not single_stage or self._library_notes_stage == "rail"
+        ) and not manually_collapsed
         canvas_display = not single_stage or self._library_notes_stage == "notes"
+        handle_display = manually_collapsed
+        if rail_handle.display != handle_display:
+            rail_handle.display = handle_display
         if rail.display != rail_display:
             rail.display = rail_display
         if canvas.display != canvas_display:
             canvas.display = canvas_display
+        try:
+            collapse = rail.query_one("#library-rail-collapse", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            collapse.display = not self._library_notes_compact
 
     def _transition_library_notes_presentation(
         self,
@@ -4404,6 +4459,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_last_user_focus,
             self._library_notes_interaction_focus,
             self._library_notes_last_presented_focus,
+            self._library_notes_responsive_focus_memory,
         ):
             if (
                 cached is not None
@@ -7650,6 +7706,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
         with shell_grid:
+            rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
+            rail_handle.styles.height = "100%"
+            rail_handle.display = (
+                self._library_rail_collapsed and not self._library_notes_compact
+            )
+            yield rail_handle
             rail = LibraryRail(
                 shell,
                 preferences,
@@ -7661,7 +7723,12 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-workbench-pane",
             )
             rail.styles.height = "100%"
-            rail.display = not single_notes_stage or self._library_notes_stage == "rail"
+            rail.display = (
+                (not single_notes_stage or self._library_notes_stage == "rail")
+                and not (
+                    self._library_rail_collapsed and not self._library_notes_compact
+                )
+            )
             yield rail
             canvas_host = Vertical(
                 id="library-canvas", classes="destination-workbench-pane"
@@ -11814,6 +11881,32 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             pass
 
+    def _set_library_rail_collapsed(self, collapsed: bool) -> None:
+        """Toggle wide Library navigation in place without rebuilding state."""
+        self._library_rail_collapsed = collapsed
+        self._apply_library_notes_stage_visibility()
+        if not self.is_mounted or self._library_notes_compact:
+            return
+        selector = "#library-rail-open" if collapsed else "#library-search-input"
+        try:
+            target = self.query_one(selector)
+        except (NoMatches, QueryError):
+            return
+        self.set_focus(target, scroll_visible=False)
+        self.call_after_refresh(target.focus)
+
+    @on(Button.Pressed, "#library-rail-collapse")
+    def _collapse_library_rail(self, event: Button.Pressed) -> None:
+        """Collapse the wide navigation rail to its keyboard-reachable handle."""
+        event.stop()
+        self._set_library_rail_collapsed(True)
+
+    @on(Button.Pressed, "#library-rail-open")
+    def _expand_library_rail(self, event: Button.Pressed) -> None:
+        """Expand Library navigation and return focus to its search field."""
+        event.stop()
+        self._set_library_rail_collapsed(False)
+
     @on(Button.Pressed, "#library-ingest-top-button")
     async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:
         """Jump from the rail-top Ingest button to the Ingest media canvas."""
@@ -11861,12 +11954,27 @@ class LibraryScreen(BaseAppScreen):
         # must follow this same transition or Escape works unadvertised.
         self._register_footer_shortcuts()
         self.refresh(recompose=True)
+        # The production app can recompose Library after the initial mount-time
+        # responsive callback. Measure again once the Files canvas owns its
+        # final shell geometry so a compact terminal cannot retain stale wide
+        # presentation state from startup.
+        self.call_after_refresh(self._update_library_notes_responsive_state)
 
     @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
         """Return to Database Notes only after the File Notes leave guard."""
         event.stop()
         await self._return_to_library_database_notes()
+
+    @on(LibraryFileNotesWorkspace.ReloadConfirmationChanged)
+    def _handle_file_notes_reload_confirmation_changed(
+        self,
+        event: LibraryFileNotesWorkspace.ReloadConfirmationChanged,
+    ) -> None:
+        """Keep footer and F1 help truthful for the inline decision state."""
+        event.stop()
+        if event.control is self._library_file_notes_workspace:
+            self._register_footer_shortcuts()
 
     async def _return_to_library_database_notes(self) -> None:
         """Leave File Notes and return to the Database Notes view.
@@ -11901,6 +12009,10 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to ``_file_notes_active()``, so it only
         ever runs while Files mode genuinely owns the Notes canvas.
         """
+        workspace = self._library_file_notes_workspace
+        if workspace is not None and workspace.cancel_reload_confirmation():
+            self._register_footer_shortcuts()
+            return
         await self._return_to_library_database_notes()
 
     @on(Button.Pressed, ".library-rail-row")
@@ -25780,9 +25892,18 @@ class LibraryScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        if not workspace_state.context_handoff_enabled:
+        # Single-item action: gate on THIS conversation's own workspace
+        # eligibility, not the aggregate blocked-count — one foreign item
+        # elsewhere in the Library must not veto an eligible conversation
+        # (TASK-15423). Bulk staging keeps the aggregate gate.
+        item_eligible, item_reason = library_item_context_handoff(
+            workspace_state,
+            item_type=payload.item_type,
+            item_id=str(payload.source_id or ""),
+        )
+        if not item_eligible:
             if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
+                notify(item_reason, severity="warning")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None
@@ -25828,9 +25949,16 @@ class LibraryScreen(BaseAppScreen):
                     "Open a media item before using it in Console.", severity="warning"
                 )
             return
-        if not workspace_state.context_handoff_enabled:
+        # Single-item action: same per-item gate as the conversation
+        # handoff above (TASK-15423).
+        item_eligible, item_reason = library_item_context_handoff(
+            workspace_state,
+            item_type=payload.item_type,
+            item_id=str(payload.source_id or ""),
+        )
+        if not item_eligible:
             if callable(notify):
-                notify(workspace_state.context_handoff_tooltip, severity="warning")
+                notify(item_reason, severity="warning")
             return
         open_chat_with_handoff = getattr(
             self.app_instance, "open_chat_with_handoff", None

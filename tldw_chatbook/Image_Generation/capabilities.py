@@ -27,7 +27,7 @@ _DEFAULT_REFERENCE_IMAGE_SUPPORT: dict[str, set[str]] = {
 #: this set and does not grant capability through the functions below for
 #: any backend outside it. Extending reference-image support to another
 #: backend means adding its id here, not repurposing the per-model map.
-REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini"})
+REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"comfyui", "fal", "gemini"})
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ class ReferenceImageCapability:
 
     supported: bool
     reason: str | None = None
+    required: bool = False
 
 
 def _normalize_key(value: str | None) -> str:
@@ -131,7 +132,7 @@ def resolve_backend_reference_image_capability(
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
     if backend_key not in REFERENCE_IMAGE_CAPABLE_BACKENDS:
         return ReferenceImageCapability(supported=False, reason="unsupported_backend")
-    return ReferenceImageCapability(supported=True)
+    return ReferenceImageCapability(supported=True, required=backend_key == "comfyui")
 
 
 def resolve_reference_image_capability(
@@ -156,7 +157,7 @@ def resolve_reference_image_capability(
     if not backend_key:
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
     if backend_key in REFERENCE_IMAGE_CAPABLE_BACKENDS:
-        return ReferenceImageCapability(supported=True)
+        return ReferenceImageCapability(supported=True, required=backend_key == "comfyui")
 
     model_key = _normalize_key(model)
     if not model_key:

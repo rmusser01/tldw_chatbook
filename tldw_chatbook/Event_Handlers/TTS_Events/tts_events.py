@@ -37,7 +37,9 @@ from tldw_chatbook.TTS import (
     TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
+from tldw_chatbook.TTS.base_backends import TTSBackendConnectionError
 from tldw_chatbook.TTS.character_request_resolver import TTSVoiceRefusalDomain
+from tldw_chatbook.TTS.legacy_bridge import UnknownLegacyModelError
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
     TTSOperationError,
@@ -2345,6 +2347,15 @@ class TTSEventHandler:
             return error.code
         if isinstance(error, _TTSResponseContractError):
             return "audio_response_invalid"
+        if isinstance(error, UnknownLegacyModelError):
+            # An id the compatibility bridge cannot route is a model
+            # configuration problem; the generic bucket's "retry" framing
+            # hid that for weeks of TASK-15420's window (TASK-15422).
+            return "model_invalid"
+        if isinstance(error, TTSBackendConnectionError):
+            # Reachability, not configuration — this must precede the
+            # generic ValueError bucket it subclasses (TASK-15530).
+            return "connection_unavailable"
         if isinstance(error, ValueError):
             return "configuration_invalid"
         return "generation_failed"
@@ -2380,6 +2391,16 @@ class TTSEventHandler:
         if isinstance(error, _TTSResponseContractError):
             return (
                 "The TTS service returned invalid audio; check provider compatibility"
+            )
+        if isinstance(error, UnknownLegacyModelError):
+            return (
+                "The selected TTS model is not available for this provider; "
+                "check the model in STTS Settings"
+            )
+        if isinstance(error, TTSBackendConnectionError):
+            return (
+                "Unable to reach the TTS server; check that it is running "
+                "and the Base URL in STTS Settings"
             )
         if isinstance(error, ValueError):
             return "TTS is not configured; open STTS Settings"

@@ -63,6 +63,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectValue,
     controls_from_catalog,
     controls_from_profile_preset,
+    pinned_no_catalog_check_option,
     preset_has_no_catalog_check,
     profile_availability_from_catalog,
     provider_options,
@@ -802,6 +803,51 @@ class SpeechCatalogMixin:
         self._set_provider_status(f"{display_name} settings changed; refresh models")
         self._sync_generate_enabled()
 
+    def _seeded_axis_value(self, axis: str, provider_id: str) -> str | None:
+        """Return the pane's seeded value for one axis, provider-guarded.
+
+        The host pane is seeded with the user's saved global/Studio axis
+        selection (`axis_values` for the session, `axis_defaults` for the
+        persisted default — see `_seed_axis_defaults`, which already applies
+        exact-mode-only and absence discipline). Legacy providers must
+        consult that seed before substituting the hardcoded catalog default,
+        or a saved exact custom selection (a custom OpenAI-compatible
+        endpoint's model/voice, TASK-15421) is silently replaced with
+        `tts-1`/`alloy`.
+
+        The seed is honoured only when it was saved for this provider —
+        axis values are scoped to the provider they were saved with, and
+        applying an OpenAI model name to another provider would mislabel
+        it as that provider's default.
+
+        Deliberately reads ``axis_defaults`` ONLY, never ``axis_values``:
+        the defaults are written once at construction from the saved
+        configuration, while the session values are mirrored from every
+        Select change — after a provider switch they transiently pair the
+        new provider id with the previous provider's still-displayed model
+        and voice, which would let stale carryover masquerade as a saved
+        custom selection. In-session explicit choices are already carried
+        by the per-provider control snapshots, not by this seed.
+
+        Args:
+            axis: The axis control id, e.g. ``"tts-model-select"``.
+            provider_id: Provider whose catalog is being applied.
+
+        Returns:
+            The saved default, or ``None`` when absent, blank, or saved
+            for a different provider. Hosts without axis defaults return
+            ``None``.
+        """
+        source = getattr(self, "axis_defaults", None)
+        if not isinstance(source, dict):
+            return None
+        if source.get("tts-provider-select") != provider_id:
+            return None
+        seeded = source.get(axis)
+        if isinstance(seeded, str) and seeded:
+            return seeded
+        return None
+
     def _apply_catalog(
         self,
         provider_id: str,
@@ -833,7 +879,10 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
+                    selected_model = (
+                        self._seeded_axis_value("tts-model-select", provider_id)
+                        or LEGACY_DEFAULT_MODELS.get(provider_id)
+                    )
             selected_voice = snapshot.get("voice_id")
             if selected_voice is None:
                 if provider_id == AUDIO_CPP_PROVIDER_ID:
@@ -848,11 +897,47 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+                    selected_voice = (
+                        self._seeded_axis_value("tts-voice-select", provider_id)
+                        or LEGACY_DEFAULT_VOICES.get(provider_id)
+                    )
             selected_format = snapshot.get("response_format")
             if selected_format is None:
                 selected_format = self._cli_setting("app_tts", "default_format", None)
             speed = self._snapshot_speed(snapshot)
+            if provider_id == "openai":
+                # A custom (non-catalog) OpenAI id is pinned downstream
+                # (TASK-15421), so stale cross-provider carryover must be
+                # laundered HERE: on a provider switch the transient control
+                # snapshot can record the previous provider's still-displayed
+                # values under this provider's key, and the first-catalog
+                # fallback that used to clean those up no longer runs for
+                # openai. The only legitimate custom id is the provider-
+                # guarded seed — the playground offers no free-text entry.
+                catalog_model_ids = {model.model_id for model in catalog.models}
+                if (
+                    isinstance(selected_model, str)
+                    and selected_model not in catalog_model_ids
+                    and selected_model
+                    != self._seeded_axis_value("tts-model-select", provider_id)
+                ):
+                    selected_model = self._seeded_axis_value(
+                        "tts-model-select", provider_id
+                    ) or LEGACY_DEFAULT_MODELS.get(provider_id)
+                catalog_voice_ids = {
+                    voice
+                    for model in catalog.models
+                    for voice in model.voices
+                }
+                if (
+                    isinstance(selected_voice, str)
+                    and selected_voice not in catalog_voice_ids
+                    and selected_voice
+                    != self._seeded_axis_value("tts-voice-select", provider_id)
+                ):
+                    selected_voice = self._seeded_axis_value(
+                        "tts-voice-select", provider_id
+                    ) or LEGACY_DEFAULT_VOICES.get(provider_id)
         pending_voice = self._pending_voice_selections.get(provider_id)
         if pending_voice is not None and preset is None:
             selected_voice = pending_voice
@@ -910,6 +995,19 @@ class SpeechCatalogMixin:
                 speed=speed,
             )
         if voice_choices is not None:
+            # This display-label projection must not clobber a custom voice
+            # `controls_from_catalog` pinned for a custom OpenAI-compatible
+            # endpoint (TASK-15421) -- carry the pin across the swap.
+            if (
+                provider_id == "openai"
+                and isinstance(controls.selected_voice_id, str)
+                and controls.selected_voice_id
+                not in {value for _label, value in voice_choices}
+            ):
+                voice_choices = (
+                    *voice_choices,
+                    pinned_no_catalog_check_option(controls.selected_voice_id),
+                )
             controls = replace(controls, voice_options=voice_choices)
         if preset is None and voice_discovery_pending and pending_voice is not None:
             model_changed = (

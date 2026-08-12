@@ -429,6 +429,14 @@ class SearchConfig:
     # through `CharactersRAGDB` (whose constructor runs schema work); only
     # set this to point the keyword leg at a specific file (e.g. tests).
     chachanotes_db_path: Optional[Path] = None
+    # Explicit override for the keyword (FTS5) leg's Prompts database path --
+    # the source of the prompts sub-leg (TASK-15020/B2). None (the default)
+    # means "resolve via tldw_chatbook.config.get_prompts_db_path()", the
+    # single authoritative resolver, exactly as the two paths above defer to
+    # theirs. The engine opens this file READ-ONLY and never through
+    # `PromptsDatabase` (whose constructor runs schema work); only set this to
+    # point the keyword leg at a specific file (e.g. tests).
+    prompts_db_path: Optional[Path] = None
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False

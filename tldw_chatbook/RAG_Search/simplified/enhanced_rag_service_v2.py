@@ -10,12 +10,13 @@ This extends the Phase 1 enhanced RAG service with:
 import asyncio
 import time
 from dataclasses import replace
-from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from typing import Any, Collection, Dict, List, Literal, Optional, Tuple, Union
 
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .enhanced_rag_service import EnhancedRAGService
+from .rag_service import MetadataAllowlist
 from .config import RAGConfig
 from .vector_store import SearchResult, SearchResultWithCitations
 from ..reranker import create_reranker_from_config
@@ -212,7 +213,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         rerank: Optional[bool] = None,
         user_id: Optional[str] = None,
         *,
-        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
@@ -227,8 +228,10 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold: Minimum score
             rerank: Override reranking setting
             user_id: User ID for experiment tracking
-            metadata_allowlist: Metadata key -> allowed values, forwarded to
-                ``RAGService.search`` for store-level scoping. See
+            metadata_allowlist: Metadata key -> allowed values (one mapping,
+                or a sequence of them), forwarded to ``RAGService.search``
+                for leg-level scoping -- since TASK-15020/B1 that is the
+                vector store AND the FTS sub-legs on a hybrid search. See
                 ``RAGService.search`` for semantics. This subclass is the
                 one actually instantiated at runtime, so it must accept and
                 forward this kwarg itself rather than relying on it merely

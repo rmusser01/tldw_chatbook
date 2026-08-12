@@ -9,6 +9,89 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A "slow-accept listener" does not delay TCP connect() — it delays accept()
+
+**TASK-15473, 2026-08-11.** Writing an evidence test that the event loop stays
+responsive during a non-blocking socket probe, the task's own brief suggested "a
+slow-accept listener" as the portable way to simulate an unresponsive server. Timed
+directly before writing the test: a real `socket.listen()`ing server that never calls
+`accept()` still let a client's `socket.create_connection()` complete in ~7ms. TCP's
+three-way handshake completes at the OS kernel level as soon as a connection is
+queued in the listen backlog — independent of whether the application ever calls
+`accept()`. A "slow-accept" listener therefore cannot be used to create connect-side
+delay; it only delays whatever happens *after* the client tries to read/write, which
+this probe (connect-then-immediately-close, no data exchange) never does.
+
+What actually produced a real, mutation-verified delay: connecting to a private,
+non-routed address (`10.255.255.1`) that neither answers the SYN nor sends back an
+ICMP unreachable — a genuine kernel-level "black hole" — measured to hang for the
+full requested timeout in this sandbox (no immediate "network unreachable"). The
+resulting test caught a real regression: reverting the probe to a blocking
+`socket.create_connection` call inside the coroutine dropped a 5ms-period heartbeat
+task from ~44 ticks to 0 during the same ~0.25s window.
+
+**What to do.** Before trusting "slow accept" (or similar accept-side framing) to
+simulate a connect-side timeout in a test, time it directly — a bound-and-listening
+socket with a deliberately delayed `accept()` will not slow down a bare `connect()`
+on any common OS. For a genuine connect-timeout test, either use a real black-hole
+address (accepting the environment-dependence, verify empirically first) or
+mutation-test whatever mechanism you do use against the blocking equivalent it's
+supposed to replace — the ~44-vs-0 heartbeat contrast is what proved this test was
+not vacuous.
+
+---
+
+## Style probes are not render evidence — capture the frame
+
+**TASK-15421 AC3, 2026-08-11.** The Studio exact-ID input's typed text
+vanished while focused in the live TUI. The hunt fixated on border rules for
+hours because every probe asked `styles.border` — which was empty, correctly,
+in both the live-matching harness and run_test — so the harness appeared to
+CONTRADICT the live app and the divergence got recorded as an unexplained
+live-vs-run_test cascade anomaly. There was no divergence: the reset-tier
+accessibility rule `*:focus { outline: solid }` paints the outline OVER the
+widget's outermost rendered lines (its own comment warns of this), and on a
+height-1 widget that line IS the only content line. The obscuring reproduced
+in run_test all along; no probe ever looked at a rendered frame. One
+`export_screenshot()` assertion (`assert "studio-model" in frame`) found in
+minutes what specificity analysis could not, and now pins the fix in
+`Tests/UI/test_speech_live_render_defects.py` — a file whose own docstring
+already teaches a version of this lesson ("the tests asserted the things a
+test naturally reaches for ... none of which is what was wrong").
+
+**What to do.** When the defect is "the user cannot SEE something," the
+oracle must be the rendered frame, not computed styles: in run_test that
+means `app.export_screenshot()` (the SVG carries every glyph as text, so a
+plain `in` assertion works) or the compositor strips the existing UI tests
+use — NOT `App.export_text()`, which does not exist in this repo's Textual
+(8.2.7; the probe that first tried it died on AttributeError) — and live it
+means the tmux `capture-pane` text. `styles.border`, `styles.height`, and
+`region` all report the widget's own properties and are blind to anything
+painted over it — outlines, overlays, tooltips, sibling z-order.
+Before declaring a live-vs-harness divergence, confirm both sides were asked
+the SAME question at the same oracle level; here the "divergence" was one
+side being read at the style level and the other at the pixel level.
+
+---
+
+## Preserve the visible set across a reorder, not its former first row
+
+**TASK-15455, 2026-08-11.** Console transcript windowing initially preserved a
+lazy window across refreshes by finding the first previously visible message id
+that still existed in the new ordered list. That was correct for append-only
+streaming and session-local deletes, but wrong for branch/path reorder: moving a
+later visible message ahead of that chosen id put it into the newly computed
+hidden prefix. The focused windowing tests were all green. The pre-existing
+signature-cache reorder contract caught the missing mounted row.
+
+**What to do.** When a windowed projection accepts a reordered full list,
+preserve the minimum new index of every surviving previously visible item (plus
+any explicit selection handoff), not the new index of one former boundary item.
+Include an order-sensitive DOM assertion in the reachable regression set; cache
+counts alone prove reuse, not that every reused row stayed visible.
+
+---
+
 ## A fix proven at one layer can be unreachable through the product path
 
 **TASK-15420, 2026-08-11.** TASK-2260 (2026-08-04) shipped custom-endpoint
@@ -2792,3 +2875,298 @@ or *unchanged by this task*, treat it as a hypothesis until a test executes it. 
 that would go red if it were false — and prefer probing with a recording double over reading
 the call path, because the two failures above were both found by a probe and missed by a read.
 A dismissal is a claim about behavior, and behavior is the one thing reading cannot establish.
+---
+
+## A mechanism sentence is an ORACLE — read your prose against your own tables (TASK-15020, 2026-08-11)
+
+**Incident, twice in one arc, and the second time the prose had already
+shipped.**
+
+1. **Paper arithmetic the code refutes by 1 ULP.** Task 6 measured the RAG
+   eval's scoped category flipping 0.000 -> 1.000 and wrote the mechanism
+   into `golden.toml`, `README.md` and a test comment: the FTS-only row
+   "exactly ties" the semantic leg's rank 9, so the tie-break convention
+   decides placement. False as the shipped code evaluates it.
+   `reciprocal_rank_fusion` computes `(1.0 - alpha) * fts_rrf`, and
+   `1.0 - 0.7` is `0.30000000000000004`, so the FTS-only row scores exactly
+   `0.05` against the semantic row's `0.7/14 = 0.049999999999999996` — a
+   **strict win by 6.94e-18**. The tie-break never runs. The paper form
+   `0.3 * (1/6)` IS bit-identical to the semantic value, which is where the
+   phantom tie came from. The *same arc's predecessor* (the weighting arc)
+   had already learned a 1-ULP lesson; it recurred one arc later, in prose.
+2. **A claim contradicted by a table in the same document.** The same
+   section said the class is "FTS-only" and would read 0.000 at the old
+   `rrf_k=60`. Re-running the counterfactual gave **0.286**: two of the
+   seven targets sit at vector rank 12 and 20, inside the over-fetched
+   pool, and reach rank 1 at `rrf_k=60`. The author's own rank vector
+   `(3,4,9,9,9,9,9)` could never have come from FTS-only arithmetic — the
+   contradiction was already printed above the sentence.
+3. **A filed task pointing its own fix at the wrong lever.** Task 7 filed
+   TASK-15400 blaming the keyword leg's silence on function words in an
+   implicit-AND MATCH. Measured across all 60 golden queries: a
+   stopword-trimmed AND rescues **1 of 40**; OR-of-tokens rescues **34**.
+   The dominant cause is AND-strictness over CONTENT words — visible in the
+   author's own token table, in the same report, unread against the
+   author's own prose. A filed task is an oracle for whoever implements it,
+   and as filed it would have sent them at a 1-in-40 lever.
+
+**What to do.** Treat any sentence asserting a MECHANISM — in a docstring,
+a fixture comment, a README, a test comment, or a filed task's description
+— as an assertion that must be checked against the running system, at the
+same standard as an `assert`. Specifically: never state a numeric mechanism
+in paper arithmetic; **read the provenance the engine already records**
+(here, `metadata["hybrid_fusion"]` carried `fts_rank`, `vector_rank` and
+the fused scores all along). And before shipping an explanation, read it
+back against the tables in your own document — in all three incidents the
+refuting data was already on the page. Distinct from the stale-prose trap
+(see "Retuning a numeric constant obliges you to grep its LITERAL VALUES"):
+that prose went stale, this prose was wrong when written.
+
+---
+
+## A declared divergence no test can distinguish from its own removal is a comment, not a decision (TASK-15020, 2026-08-11)
+
+**Incident.** Task 8 made the Library RAG window's depth follow the active
+profile, and deliberately kept one difference from the Console seam that
+now shares its resolution: the window clamps a >50 profile down to
+`LIBRARY_RAG_TOP_K_MAX`, while Console stays uncapped. It was stated in the
+report, in the code comment, and covered by a test — of the *clamped* arm
+only. The reviewer mutated the SHARED seam to clamp unconditionally
+(`min(value, LIBRARY_RAG_TOP_K_MAX)` in `library_rag_profile_top_k`),
+erasing the divergence outright. **199 tests stayed green.** A difference
+the author had chosen on purpose could be deleted by anyone, at any time,
+with the whole suite agreeing. The fix was one test asserting BOTH arms
+together — profile 100 gives Console 100 and the window 50 — after which
+the reviewer's exact mutation reds precisely that test (1 failed / 153
+passed).
+
+**What to do.** When you deliberately make two call sites behave
+differently, the pin is not "test the interesting arm" — it is **one test
+that asserts the pair**, so the assertion states the DIFFERENCE rather than
+one of its sides. Then mutate toward *sameness* (make both arms agree) and
+confirm red; the usual mutation habit of breaking the guarded behaviour
+misses this class entirely, because unifying two arms breaks neither arm's
+own test. Applies to any intentional asymmetry: a clamp on one path, a
+stricter timeout for one caller, a feature gated in one surface and not
+another. Sibling of "Mutation-test every guard you add" and "A guard test
+must be PROVEN to discriminate", with the twist that here the thing left
+unpinned was a DESIGN DECISION, not a behaviour.
+## Holding ONE database instance turns an intermittent schema-cache race into a permanent one (TASK-15463, 2026-08-11)
+
+Caching `SubscriptionsDB` instead of rebuilding it per service call (a ~52-statement
+`executescript` per call, ~85x the cost of a held instance) made two Watchlists UI tests
+fail deterministically with `sqlite3.OperationalError: no such table: subscription_items`
+— on a table that `sqlite_master`, queried microseconds later on the SAME connection,
+listed. An immediate retry of the identical UPDATE succeeded.
+
+A timestamped probe over `SubscriptionsDB.__init__` / `_get_connection` explained it:
+
+```
+0.0614  INIT app instance      (main thread)
+0.4502  INIT second instance   (FTS-backfill worker thread) -- _initialize_schema
+0.4511  CONN opened on the app instance, by an asyncio.to_thread worker   <-- inside that window
+0.6884  second instance's _initialize_schema finishes (238 ms)
+3.0311  that worker's UPDATE: "no such table: subscription_items"
+```
+
+A connection opened while another connection is rewriting the schema caches a view without
+the tables being rewritten. With a database rebuilt per call, that view lived for one call
+and the next call built a fresh connection — so the defect surfaced only as an
+*intermittent* flake, already documented in `Tests/UI/test_watchlists_inspector.py` as
+"self-healed on an immediate retry". Hold the instance and the poisoned connection lives as
+long as the thread does: every write that lands on it fails.
+
+The fix was to remove the second `_initialize_schema` (the FTS-backfill worker now shares
+the app's one instance — thread-local connections are exactly what makes sharing the
+*instance* safe), not to add a retry.
+
+**What to do.** Before caching any long-lived DB handle, find every OTHER construction of
+that DB class against the same file — each one re-runs schema setup, and any connection
+opened during it can be born stale. And treat a documented "it self-heals on retry" flake
+as a live bug with a shortened fuse: it is one held connection away from being permanent.
+Probing the mechanism cost ~20 minutes (init/connection timeline + one retry inside the
+failing call); guessing at "sqlite locking" would have cost far more and fixed nothing.
+
+## A "we tried this and it broke X" comment is dated evidence, not a standing constraint (TASK-15454, 2026-08-11)
+
+`ConsoleWorkspaceContextTray.sync_state` carried a long, careful comment (TASK-251,
+July) explaining that the obvious `if state == self.state: return` guard had been
+implemented, had broken click targeting on grouped browser rows, and had been
+withdrawn — naming the two tests that failed. A separate test pinned the
+unconditional recompose so nobody could quietly reintroduce it. Every downstream
+comment in the file, in `chat_screen.py`, and in two test modules repeated the
+conclusion: "an equality guard here is unsafe".
+
+Re-guarding it started by reproducing that: apply the naive guard, run the two named
+tests. **Both passed.** Widening to the whole 309-test `test_console_native_chat_flow.py`
+plus `test_console_rail_sections.py` produced only the two tick-gating pins (which pin
+the unconditional recompose itself) and one failure that also fails at HEAD. The
+regression had been dissolved by later, unrelated work — most plausibly TASK-1900's
+non-echoing search input and TASK-1191's collapse of the fit-pass from three deferred
+hops to one.
+
+Two things follow, and the second matters more than the first:
+
+1. **Re-run the witness before designing around it.** Fifteen minutes of `git log -S`
+   plus two test invocations turned "this is forbidden" into "this was forbidden in
+   July, for a reason that no longer exists". Without that, the natural move is to
+   design elaborately around a constraint that is not there — or, worse, to accept the
+   comment and skip the work entirely.
+2. **A dissolved regression is not a licence to do the naive thing.** The comment's
+   *diagnosis* outlived its symptom, and it was the valuable part: state equality
+   answers "does this widget REMEMBER this state", which is a different question from
+   "is this widget SHOWING it". Those two came apart once and can come apart again.
+   The guard that shipped therefore checks the second question directly — `compose()`
+   records the row ids/keys it built; the guard compares that against the rows read
+   back out of the live DOM — and both directions are mutation-tested (`return state
+   == self.state` reds the safety tests; `return False` reds the skip tests).
+
+**What to do.** Treat every "deliberately reverted / do not reintroduce" comment as an
+experiment with a date on it. Re-run its named witnesses first; record the result in
+the task either way. Then keep the diagnosis even when the symptom is gone.
+## A synthetic test config lets tests pin states no user can reach (TASK-15270, 2026-08-11)
+
+**The trap.** A test-app factory that hands the app a small hand-written config is not a
+neutral simplification. Every default the real config file carries is *absent*, so the
+code under test takes fallback branches, and assertions written against those branches
+look like product contracts while pinning states the shipped template never produces.
+
+**What happened.** `Tests/UI/app_factory._build_test_app` patched `load_settings` to a
+three-key dict. `ChatScreen._provider_readiness_app_config` re-sources from
+`load_settings()` only when the snapshot it was handed carries the sections a real load
+always emits (`_CONSOLE_LIVE_CONFIG_MARKER_SECTIONS`: `general`, `logging`) — a
+deliberate guard so an injected test config is never overwritten by the developer's real
+one. The synthetic dict carried neither marker and no `[chat_defaults]`/`[console]`
+section, so every mounted Console test read a `ConsoleTurnExecutionContext` frozen at
+defaults. `test_send_proceeds_when_auto_retrieve_fails` was green for two months without
+once calling the exploding backend it existed to exercise (task-15210).
+
+Sourcing the factory's config from the real (per-test sandboxed) `load_settings()` turned
+**31 green tests red across 6,016**, and the interesting part is *why* — almost none were
+product regressions:
+
+- **Arranged through a seam production does not read.** `console_image_view.
+  _chat_images_config` prefers the raw TOML nested under `COMPREHENSIVE_CONFIG_RAW`
+  whenever the snapshot has it. Four avatar tests set `app_config["chat"]` instead, which
+  the shipping app would have ignored — they were pinning the fallback shape.
+- **Passing on a fallback the template removes.** Three llama.cpp URL tests reached that
+  branch only via `provider_config_key(...) or "llama_cpp"`; the template ships
+  `[chat_defaults] provider = "OpenAI"`, so the fallback never fires for a real user.
+- **Absence as arrangement.** Two "cli config fallback" tests asserted `"library" not in
+  app_config` rather than arranging the absence they needed.
+- **Copy for an unreachable state.** Several first-run/UAT replays assert "Choose
+  provider" — the branch for *no provider selected*. A genuinely fresh install has
+  `provider = "OpenAI"` and no key, so the product says "Set up provider". The tests
+  described a clean run no user has.
+
+**What to do.** Give the test app the same config source the app uses, sandboxed per
+test (the root conftest already re-points `TLDW_CONFIG_PATH`/`HOME`/`XDG_*`), so what a
+test persists is what the app reads. And when a test needs a state — no provider, no
+`[library]` section, a feature off — **arrange it explicitly**; a state you inherited
+from an empty fixture is a state you never chose, and the day the fixture gets honest you
+cannot tell which of your assertions were ever real.
+
+---
+
+## A cancellation flag does not make check-and-commit atomic
+
+**TASK-3401.20, 2026-08-10.** The first generated-video teardown fix checked a
+screen-owned cancellation flag before publishing a managed file. Review found a
+real gap between that check and the filesystem commit: unmount could win in the
+middle, close the staged stream, and still leave a committed file without durable
+message metadata. A second version shielded `asyncio.to_thread()`, but cancellation
+of the awaiting coroutine did not stop the executor thread; releasing ownership in
+the async `finally` could still close bytes the thread was using. Timing-only tests
+missed both defects because they never proved which side had reached lock
+acquisition or the final commit boundary.
+
+**What to do.** Make the state transition linearizable: share one lock across the
+final active check and commit, and cancel under that same lock. When blocking work
+runs through `asyncio.to_thread()`, retain an explicit executor task and keep resource
+ownership until that task actually finishes; coroutine cancellation alone is not
+completion. Put durable commit-winning metadata finalization inside the shielded
+unit, but leave stale-screen UI refresh outside it and normally cancellable. Tests
+must use events or instrumented locks to force both cancel-wins and commit-wins
+orders, including cancellation after commit but before metadata append; a sleep and
+an assertion that “nothing happened yet” are not evidence of ordering.
+
+## Returning from a Textual handler does not make its detached child cancellation-safe
+
+**TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation
+inside the real `Button.Pressed` handler. That kept the screen's MessagePump occupied,
+so the visible Stop press could not run. Moving the operation into an app-owned task
+fixed Stop responsiveness, but the old “outer cancellation drains success” test kept
+passing without ever cancelling anything: it awaited the now-immediate handler return,
+then released and awaited the detached operation normally. Directly cancelling the
+actual operation task exposed the gap—its `asyncio.to_thread()` runner continued while
+the owning coroutine removed the registry entry before durable settlement. App
+shutdown had the same problem because Textual did not drain arbitrary tasks created
+with `asyncio.create_task()`.
+
+**What to do.** For a detached, app-owned operation, test and own cancellation at the
+detached task—not at a caller that has already returned. The owned task must shield the
+real runner, translate cancellation into the exact shared event, await the runner to
+settlement, and only then re-raise. The application shutdown path must explicitly
+cancel and drain those registered tasks before tearing down screens or persistence.
+Use barriers to prove both success-wins (durable append exactly once) and
+cancellation-wins (no card), and mutation-check that the test fails if shielding,
+event propagation, or shutdown draining is removed.
+
+---
+
+## Keyboard focus does not prove a nested compact control is visible (TASK-15506, 2026-08-11)
+
+**Incident.** TASK-15506 moved File Notes push provenance into a collapsed
+`Collapsible` inside the push workflow's `VerticalScroll`. At 40x20, expanding
+the disclosure and pressing Tab moved focus to the nested Endpoint details
+button, so a focus-only regression passed. The button was still absent from
+`Screen._compositor.visible_widgets`: Textual had scrolled only far enough to
+show the disclosure's earlier content, leaving the focused action below the
+fixed footer. A normal non-animated `scroll_visible()` call still stopped
+short. Scrolling the exact focused descendant with `force=True` and
+`immediate=True` brought it into the compositor deterministically.
+
+**What to do.** For controls nested inside disclosures within a compact scroll
+owner, assert both `has_focus` and compositor visibility. If framework focus
+navigation leaves the control outside the viewport, handle descendant focus
+at the narrow owning component and call `scroll_visible(animate=False,
+force=True, immediate=True)` on the exact control. Do not infer reachability
+from focus state or a nonzero layout region alone.
+
+## An "indexed" query can still scan the table the index exists to avoid — and the plan assertion can miss it (TASK-15469, 2026-08-11)
+
+TASK-15469 replaced a `metadata LIKE '%active_dictionaries%'` full scan of
+`conversations` with a lookup over a trigger-maintained index table. The new query
+joined the index table to `conversations`, and the test asserted
+`"SCAN conversations" not in plan`. It passed. It proved nothing:
+
+* The query aliases the table (`conversations AS conversation`), and
+  `EXPLAIN QUERY PLAN` prints the **alias**, so the plan said `SCAN conversation` —
+  which the assertion's literal `"SCAN conversations"` never matches. The test would
+  have passed with a plan made entirely of full scans.
+* And there really was one. SQLite's planner chose `conversations` as the outer loop
+  of the second branch (`SCAN conversation` + a covering-index probe per row): a full
+  scan of the very table the index was built to stop reading. Only the FIRST branch
+  used the new index; nothing in the assertion covered the second.
+
+It surfaced from a **timing** arm, not from the plan test: on a 10,000-conversation
+DB, "used-by for a dictionary attached to nothing" measured 2.07 ms when it should
+have been unmeasurable. `CROSS JOIN` (which pins the left table as the outer loop and
+disables that particular join reordering) took the same arm to 0.00 ms and the whole
+click's DB work from 7.8 ms to 0.54 ms. The plan test now asserts on the alias prefix,
+asserts `conversations` is reached only by `SEARCH ... USING INDEX
+sqlite_autoindex_conversations_1`, and asserts the plan is non-empty.
+
+One more planner subtlety worth knowing: this project never runs `ANALYZE`, so the
+planner works from default row-count estimates and reliably prefers the index. Running
+`ANALYZE` on a small dev database flips it back to `SCAN` on the tiny index table —
+so a plan captured on a hand-seeded 50-row fixture with `ANALYZE` is not the plan
+production runs.
+
+**What to do.** When the claim is "no full-table scan", (1) grep the plan for the
+identifier the query actually uses — the alias, not the table name — and assert
+positively on what SHOULD happen (`SEARCH ... USING INDEX <name>`), not only
+negatively on what should not; (2) assert the plan is non-empty, or an empty result
+satisfies every "not in" assertion; (3) check EVERY branch of a compound query; and
+(4) keep one timing arm whose expected value is ~zero (a lookup with no hits) — a
+scan cannot hide from that, and it is what caught this one.

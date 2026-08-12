@@ -4011,10 +4011,10 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
     ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` when the active RAG profile can't
     be read (broken/absent profile), so a manual chip run must never raise
     inside a send just because profile resolution failed. Patches
-    ``resolve_active_rag_config`` itself (what the helper actually reads,
-    imported lazily inside it) rather than the helper, so this exercises the
-    real try/except fallback path end to end -- not a mock standing in for
-    it.
+    ``resolve_active_rag_top_k`` itself (what the helper actually reads,
+    imported lazily inside the shared Library seam it delegates to since
+    TASK-15020/B3) rather than the helper, so this exercises the real
+    try/except fallback path end to end -- not a mock standing in for it.
     """
     from tldw_chatbook.RAG_Search.simplified import active_config
 
@@ -4022,7 +4022,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
         raise RuntimeError("simulated: active RAG profile unresolvable")
 
     monkeypatch.setattr(
-        active_config, "resolve_active_rag_config", _raise_profile_unavailable
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
     )
 
     app = _build_test_app()

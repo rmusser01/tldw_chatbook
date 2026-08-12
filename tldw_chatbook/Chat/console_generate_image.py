@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from loguru import logger
 
@@ -46,10 +47,18 @@ from tldw_chatbook.Media_Creation.image_generation_service import (
     ImageGenerationService,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+
 GENERATION_MARKER_PREFIX = "[image] "
 """Prefix identifying a generation card's content marker in a message row."""
 
 _MARKER_PROMPT_MAX_CHARS = 80
+
+_EFFECTIVE_PARAM_KEYS = frozenset(
+    {"operation", "workflow_key", "width", "height", "steps", "sampler", "format"}
+)
+_JSON_SCALAR_TYPES = (str, int, float, bool)
 
 GENERATE_IMAGE_USAGE_TEXT = "Usage: /generate-image [:backend] <prompt>"
 """Status text for a ``/generate-image`` invocation with nothing to work with:
@@ -1004,6 +1013,8 @@ def run_generation_batch(
     height: int | None = None,
     steps: int | None = None,
     cfg_scale: float | None = None,
+    reference_image: ResolvedReferenceImage | None = None,
+    cancel_event: threading.Event | None = None,
     generate: Callable[[Any], Any] | None = None,
     build: Callable[..., Any] | None = None,
 ) -> BatchResult:
@@ -1040,6 +1051,8 @@ def run_generation_batch(
         height: Optional image height, threaded into every `build` call.
         steps: Optional sampling steps, threaded into every `build` call.
         cfg_scale: Optional CFG scale, threaded into every `build` call.
+        reference_image: Optional resolved source image, preserved by identity.
+        cancel_event: Optional caller-owned cancellation event, preserved by identity.
         generate: Blocking single-request entry point. Defaults to
             ``Image_Generation.worker.run_generation``, imported lazily.
         build: Request builder. Defaults to
@@ -1049,6 +1062,14 @@ def run_generation_batch(
         A `BatchResult` with every successful variant's
         ``(data, mime_type, meta)`` plus every failure's error string.
     """
+    from tldw_chatbook.Image_Generation.exceptions import (
+        ImageGenerationCancelled,
+        ImageGenerationError,
+    )
+
+    if backend == "comfyui" and count != 1:
+        raise ImageGenerationError("ComfyUI image edits require exactly one result.")
+
     if generate is None or build is None:
         from tldw_chatbook.Image_Generation import worker as _worker
 
@@ -1071,8 +1092,12 @@ def run_generation_batch(
                 height=height,
                 steps=steps,
                 cfg_scale=cfg_scale,
+                reference_image=reference_image,
+                cancel_event=cancel_event,
             )
             result = generate(request)
+        except ImageGenerationCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - collected per-variant, never aborts the batch
             errors.append(str(exc))
             continue
@@ -1084,6 +1109,19 @@ def run_generation_batch(
         # predate these fields entirely.
         resolved_seed = getattr(result, "resolved_seed", None)
         resolved_model = getattr(result, "resolved_model", None)
+        raw_effective_params = getattr(result, "effective_params", None)
+        if raw_effective_params is None:
+            effective_params: dict[str, Any] = {}
+        else:
+            if not isinstance(raw_effective_params, Mapping):
+                raise ImageGenerationError("Invalid effective image metadata.")
+            effective_params = {}
+            for key, value in raw_effective_params.items():
+                if type(key) is not str or key not in _EFFECTIVE_PARAM_KEYS:
+                    raise ImageGenerationError("Invalid effective image metadata.")
+                if value is not None and type(value) not in _JSON_SCALAR_TYPES:
+                    raise ImageGenerationError("Invalid effective image metadata.")
+                effective_params[key] = value
         meta = GenerationVariantMeta(
             prompt=prompt,
             negative_prompt=negative_prompt or "",
@@ -1091,7 +1129,7 @@ def run_generation_batch(
             model=resolved_model,
             seed=resolved_seed if resolved_seed is not None else variant_seed,
             style=style_name,
-            params={},
+            params=effective_params,
         )
         successes.append((result.content, result.content_type, meta))
     return BatchResult(successes=successes, errors=errors)

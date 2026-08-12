@@ -11,7 +11,10 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
-from tldw_chatbook.TTS.base_backends import APITTSBackend
+from tldw_chatbook.TTS.base_backends import (
+    APITTSBackend,
+    TTSBackendConnectionError,
+)
 from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
@@ -321,7 +324,7 @@ class OpenAITTSBackend(APITTSBackend):
         except httpx.RequestError:
             # Log without exposing connection details
             logger.error("OpenAITTSBackend: Network request failed")
-            raise ValueError(
+            raise TTSBackendConnectionError(
                 "Unable to connect to TTS service. Please check your internet connection."
             )
 

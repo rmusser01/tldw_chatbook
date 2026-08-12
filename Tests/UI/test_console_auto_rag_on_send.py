@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Static
 
+from Tests.fixtures.required_doubles import exploding_double
 from Tests.UI.test_console_dictionary_send_integration import (
     _CapturingGateway,
     _final_user_content,
@@ -368,14 +369,18 @@ async def test_retrieval_requests_the_active_profile_top_k(monkeypatch):
 
 
 def test_profile_top_k_reads_the_active_rag_config(monkeypatch):
-    """The helper's source of truth is the resolved active profile."""
+    """The helper's source of truth is the resolved active profile.
+
+    TASK-15020/B3 moved the read onto `resolve_active_rag_top_k` -- the
+    depth-only resolution shared with the Library window, which reads the
+    same profile without building (and torch-importing) the whole config.
+    So this patches THAT function, which is what the helper now actually
+    reads; `Tests/RAG/test_active_config_resolution.py` pins that the two
+    resolutions report the same number.
+    """
     from tldw_chatbook.RAG_Search.simplified import active_config
 
-    monkeypatch.setattr(
-        active_config,
-        "resolve_active_rag_config",
-        lambda: SimpleNamespace(search=SimpleNamespace(default_top_k=11)),
-    )
+    monkeypatch.setattr(active_config, "resolve_active_rag_top_k", lambda: 11)
 
     assert chat_screen_module._console_library_rag_profile_top_k() == 11
 
@@ -491,7 +496,10 @@ async def test_retrieval_exception_sends_without_evidence(monkeypatch):
     monkeypatch.setattr(
         chat_screen_module,
         "run_library_rag_search",
-        AsyncMock(side_effect=RuntimeError("backend exploded")),
+        exploding_double(
+            RuntimeError("backend exploded"),
+            reason="the raising retrieval seam must actually be reached",
+        ),
     )
     screen = _auto_rag_screen(service=_RecordingRagService(_rows(2)))
 
@@ -580,11 +588,26 @@ async def test_happy_path_stages_then_send_consumes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_send_proceeds_when_auto_retrieve_fails(monkeypatch):
-    """Retrieval failure is never a send blocker."""
+    """Retrieval failure is never a send blocker.
+
+    The exploding double is registered (task-15270): this test was green for
+    two months while retrieval never fired at all, asserting only that an
+    ordinary send works (task-15210). A never-called double is now a failure
+    on its own, so the same silent degradation cannot recur.
+    """
     _enable_auto_retrieve()
     _patch_scope(monkeypatch)
     app = _use_disk_config(_build_test_app())
-    exploding_search = AsyncMock(side_effect=RuntimeError("backend exploded"))
+    # Both guards are wanted here, and they cover different gaps:
+    # ``exploding_double`` registers itself so a never-called failure
+    # double fails the test even if nobody remembers to assert it
+    # (task-15270), while the explicit ``await_count`` below states the
+    # claim at the assertion site (task-15210). Bound to a name so the
+    # registered double IS the one asserted on.
+    exploding_search = exploding_double(
+        RuntimeError("backend exploded"),
+        reason="the send must be shown surviving a retrieval failure",
+    )
     monkeypatch.setattr(
         chat_screen_module, "run_library_rag_search", exploding_search
     )

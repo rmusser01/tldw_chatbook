@@ -41,7 +41,10 @@ from tldw_chatbook.Chat.console_visual_benchmark import (
     visual_default_enablement_ready,
 )
 from tldw_chatbook.Chat.console_visual_transcript import (
+    EVALUATION_RENDERER_PROFILES,
+    PRODUCTION_RENDERER_PROFILE_ID,
     render_visual_transcript,
+    resolve_evaluation_renderer_profile,
     visual_transcript_source_text,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -378,6 +381,67 @@ class VisualCompactionSupportMatrix:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class VisualRendererGeometryEvidence:
+    """Content-free local geometry evidence for one renderer profile."""
+
+    profile_id: str
+    renderer_version: str
+    summarized_prefix_digest: str
+    width: int
+    height: int
+    page_count: int
+    page_hashes: tuple[str, ...]
+    raw_32px_patches_per_page: int
+    raw_32px_patches_total: int
+    provider_token_savings_measured: Literal[False] = False
+    provider_token_reduction_ratio: None = None
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (self.profile_id, self.renderer_version)
+        ):
+            raise ValueError("Renderer geometry identities are required.")
+        if not _is_sha256(self.summarized_prefix_digest):
+            raise ValueError("Renderer geometry prefix digest must be SHA-256.")
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in (self.width, self.height)
+        ):
+            raise ValueError("Renderer geometry dimensions must be positive.")
+        if (
+            isinstance(self.page_count, bool)
+            or not isinstance(self.page_count, int)
+            or self.page_count <= 0
+            or self.page_count != len(self.page_hashes)
+        ):
+            raise ValueError("Renderer geometry page count and hashes must agree.")
+        if not all(_is_sha256(page_hash) for page_hash in self.page_hashes):
+            raise ValueError("Renderer geometry page hashes must be SHA-256.")
+        expected_per_page = math.ceil(self.width / 32) * math.ceil(self.height / 32)
+        if self.raw_32px_patches_per_page != expected_per_page:
+            raise ValueError("Renderer raw patch count must derive from dimensions.")
+        if self.raw_32px_patches_total != expected_per_page * self.page_count:
+            raise ValueError("Renderer total raw patch count must derive from pages.")
+        if (
+            self.provider_token_savings_measured is not False
+            or self.provider_token_reduction_ratio is not None
+        ):
+            raise ValueError(
+                "Local renderer geometry cannot claim measured provider-token savings."
+            )
+
+    def to_json(self) -> str:
+        """Serialize the content-free geometry evidence as stable JSON.
+
+        Returns:
+            Pretty-printed JSON with deterministic key ordering.
+        """
+
+        return json.dumps(asdict(self), indent=2, sort_keys=True, ensure_ascii=False)
+
+
 class VisualEvaluationGateway(Protocol):
     def prepare_chat_request(
         self,
@@ -510,6 +574,56 @@ def build_visual_support_matrix(
     )
 
 
+def build_visual_renderer_geometry_evidence(
+    corpus: VisualEvaluationCorpus,
+) -> tuple[VisualRendererGeometryEvidence, ...]:
+    """Render every closed evaluator profile and report content-free geometry.
+
+    Args:
+        corpus: Synthetic evaluation corpus whose durable units will be rendered.
+
+    Returns:
+        Geometry-only evidence for every registered evaluation renderer profile.
+
+    Raises:
+        TypeError: If ``corpus`` is not a visual evaluation corpus.
+        ValueError: If a renderer produces inconsistent page geometry.
+    """
+
+    if not isinstance(corpus, VisualEvaluationCorpus):
+        raise TypeError("corpus must be a VisualEvaluationCorpus.")
+    selected_messages = tuple(
+        message for unit in corpus.units for message in unit.messages
+    )
+    digest = prefix_digest(selected_messages)
+    reports: list[VisualRendererGeometryEvidence] = []
+    for profile in EVALUATION_RENDERER_PROFILES:
+        artifact = render_visual_transcript(
+            corpus.units,
+            summarized_prefix_digest=digest,
+            renderer_profile=profile,
+        )
+        width = artifact.pages[0].width
+        height = artifact.pages[0].height
+        if any(page.width != width or page.height != height for page in artifact.pages):
+            raise ValueError("A renderer profile must use one geometry for every page.")
+        patches_per_page = math.ceil(width / 32) * math.ceil(height / 32)
+        reports.append(
+            VisualRendererGeometryEvidence(
+                profile_id=profile.profile_id,
+                renderer_version=artifact.renderer_version,
+                summarized_prefix_digest=artifact.summarized_prefix_digest,
+                width=width,
+                height=height,
+                page_count=artifact.page_count,
+                page_hashes=tuple(page.png_sha256 for page in artifact.pages),
+                raw_32px_patches_per_page=patches_per_page,
+                raw_32px_patches_total=patches_per_page * artifact.page_count,
+            )
+        )
+    return tuple(reports)
+
+
 def load_visual_support_matrix(path: str | Path) -> VisualCompactionSupportMatrix:
     """Load and strictly validate one persisted content-free support matrix."""
 
@@ -563,6 +677,7 @@ async def evaluate_visual_compaction_model(
     vision_available: bool,
     max_images: int,
     max_output_tokens: int = 4096,
+    renderer_profile_id: str = PRODUCTION_RENDERER_PROFILE_ID,
 ) -> VisualModelEvaluationReport:
     """Run paired text and visual requests through the production gateway seam."""
 
@@ -576,6 +691,7 @@ async def evaluate_visual_compaction_model(
         raise ValueError("The selected provider model has no image capacity.")
     if not 1 <= max_output_tokens <= 16_384:
         raise ValueError("max_output_tokens must be between 1 and 16384.")
+    renderer_profile = resolve_evaluation_renderer_profile(renderer_profile_id)
 
     selected_messages = tuple(
         message for unit in corpus.units for message in unit.messages
@@ -585,6 +701,7 @@ async def evaluate_visual_compaction_model(
         corpus.units,
         summarized_prefix_digest=prefix_digest(selected_messages),
         max_pages=max_images,
+        renderer_profile=renderer_profile,
     )
     render_latency_ms = max(0, round((time.perf_counter() - render_started) * 1000))
     request_resolution = replace(
@@ -1155,7 +1272,9 @@ __all__ = [
     "VisualEvaluationProbe",
     "VisualCompactionSupportMatrix",
     "VisualModelEvaluationReport",
+    "VisualRendererGeometryEvidence",
     "VisualRepresentationEvaluation",
+    "build_visual_renderer_geometry_evidence",
     "build_visual_support_matrix",
     "evaluate_visual_compaction_model",
     "load_visual_evaluation_corpus",

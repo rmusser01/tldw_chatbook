@@ -193,6 +193,8 @@ def _load_video_generation_section() -> tuple[dict, dict[str, str]]:
     id to where its secret was resolved from.
     """
     raw = _read_video_generation_toml()
+    if not isinstance(raw, dict):
+        raw = {}
     _warn_unknown_top_level_keys(raw)
     flat: dict = {}
     for k in _GLOBAL_KEYS:
@@ -200,11 +202,16 @@ def _load_video_generation_section() -> tuple[dict, dict[str, str]]:
             flat[k] = raw[k]
     for (backend, toml_key), flat_field in _NON_SECRET.items():
         sub = raw.get(backend) or {}
+        if not isinstance(sub, dict):
+            sub = {}
         if toml_key in sub:
             flat[flat_field] = sub[toml_key]
     key_sources: dict[str, str] = {backend: "missing" for backend in _BACKEND_NAMES}
     for backend in _SECRETS:
-        field_name, value, source = _resolve_secret(backend, raw.get(backend) or {})
+        sub = raw.get(backend) or {}
+        if not isinstance(sub, dict):
+            sub = {}
+        field_name, value, source = _resolve_secret(backend, sub)
         key_sources[backend] = source
         if value:
             flat[field_name] = value

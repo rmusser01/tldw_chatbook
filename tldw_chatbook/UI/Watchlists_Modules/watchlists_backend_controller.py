@@ -301,6 +301,45 @@ class WatchlistsBackendController:
         )
         return str(result)
 
+    async def get_item_content(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        item_id: Any,
+    ) -> str | None:
+        """Read one content item's full body text from the active backend.
+
+        TASK-15464 counterpart to `get_item_status` above -- same shape,
+        except the return is `Optional[str]` rather than coerced to `str`:
+        `None` is a real, non-exceptional answer here (see
+        `SubscriptionsDB.get_item_content`'s docstring), not an absence to
+        paper over.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced or bare.
+
+        Returns:
+            The stored content, or `None` if no row has this id or its
+            content is itself NULL.
+
+        Raises:
+            ValueError: If no scope service is configured.
+            NotImplementedError: If the active backend exposes no
+                single-item content read.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        method = getattr(self.scope_service, "get_item_content", None)
+        if not callable(method):
+            raise NotImplementedError(
+                "Item content reads are not supported by the current backend."
+            )
+        return await self._maybe_await(
+            method(runtime_backend=backend, item_id=item_id)
+        )
+
     async def update_item_status(
         self,
         *,

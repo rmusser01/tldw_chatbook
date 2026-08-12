@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Optional, Sequence
+from functools import partial
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from loguru import logger
 
@@ -51,6 +53,133 @@ class ConsoleCacheState(str, Enum):
     NONE = "none"
     WARM = "warm"
     EXPIRED = "expired"
+
+
+#
+#######################################################################################################################
+#
+# Token-estimate memo (task-15451)
+#
+
+
+#: Entry ceiling for :class:`TokenEstimateCache`. Generous on purpose: past
+#: this size a single pass over a longer transcript would evict its own
+#: earlier rows and degrade to the uncached cost (never to a WRONG cost), so
+#: the cap is set well above any realistic Console transcript rather than
+#: tuned for memory. Entries hold the caller's OWN row strings -- the store
+#: already owns those objects -- so a live entry costs a tuple, not a copy.
+TOKEN_ESTIMATE_CACHE_MAX_ENTRIES = 4096
+
+
+class TokenEstimateCache:
+    """Verified memo for local token estimates over transcript rows (task-15451).
+
+    ``_estimate_tokens_locally`` is a per-character Python loop whenever no
+    tokenizer is installed (tiktoken is not a base dependency -- task-2526),
+    so re-estimating an unchanged transcript on every Console sync tick cost
+    O(transcript chars) on the event loop five times a second. This memo
+    makes a repeat pass O(rows).
+
+    Correctness does not depend on the KEY. Every hit is verified against
+    the full signature of the estimate -- ``(model, provider, rows)``, where
+    ``rows`` is a tuple of ``(role, content)`` pairs -- so a key that
+    collides, or is reused by a row whose text changed, misses and
+    recomputes. The key only determines the hit RATE. That is why this can
+    be reasoned about locally: there is no invalidation protocol to get
+    wrong, and no way for a stale estimate to be served.
+
+    Tuple comparison short-circuits on identity per element, so the common
+    case (the store hands back the same ``str`` objects pass after pass --
+    ``dataclasses.replace`` shares the reference) costs pointer compares;
+    a rebuilt-but-equal string (the staged-evidence pseudo-row, joined
+    afresh every pass) costs one C-level ``memcmp``.
+
+    Not thread-safe: it is owned by, and only ever touched from, the UI
+    thread that builds the chip state.
+    """
+
+    def __init__(self, *, max_entries: int = TOKEN_ESTIMATE_CACHE_MAX_ENTRIES) -> None:
+        self._entries: "OrderedDict[Any, tuple[tuple[Any, ...], int]]" = OrderedDict()
+        self._max_entries = max(1, int(max_entries))
+
+    def estimate(
+        self,
+        key: Any,
+        signature: tuple[Any, ...],
+        compute: Callable[[], int],
+    ) -> int:
+        """Return the memoized estimate for ``signature``, computing on a miss.
+
+        Args:
+            key: Cache slot. Any hashable; a message id for a transcript row.
+                Collisions only cost a recompute, never a wrong answer.
+            signature: Everything the estimate depends on -- by convention
+                ``(model, provider, rows)`` built by
+                :func:`token_estimate_signature`. Compared for equality
+                before any hit is served.
+            compute: Called on a miss. Deliberately a callback rather than a
+                hard-wired estimator call so each call site keeps its own
+                estimator reference (and stays interceptable by its own
+                tests).
+
+        Returns:
+            The estimated token count for ``signature``.
+        """
+        entry = self._entries.get(key)
+        if entry is not None and entry[0] == signature:
+            self._entries.move_to_end(key)
+            return entry[1]
+        value = compute()
+        self._entries[key] = (signature, value)
+        self._entries.move_to_end(key)
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+        return value
+
+    def clear(self) -> None:
+        """Drop every entry (nothing depends on this for correctness)."""
+        self._entries.clear()
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+def token_estimate_signature(
+    rows: Sequence[tuple[Any, Any]],
+    model: str,
+    provider: str,
+) -> tuple[Any, ...]:
+    """Build a :class:`TokenEstimateCache` signature for ``rows``.
+
+    Args:
+        rows: ``(role, content)`` pairs exactly as they will be handed to
+            the estimator.
+        model: Model name the estimate is for (selects the tokenizer).
+        provider: Normalized provider key (selects the chars-floor ratio).
+
+    Returns:
+        A comparison tuple. Only equality is ever taken on it, never a
+        hash, so row content that is unhashable still compares correctly.
+    """
+    return (model, provider, tuple(rows))
+
+
+def _estimate_row_tokens(role: Any, content: Any, model: str, provider: str) -> int:
+    """Estimate one transcript row's tokens.
+
+    The single call shared by :func:`build_cost_snapshot`'s cached and
+    uncached paths, so the two can never drift apart.
+    """
+    return _estimate_tokens_locally(
+        [{"role": role, "content": content}], model, provider
+    )
+
+
+#
+#######################################################################################################################
+#
+# Enums / dataclasses (continued)
+#
 
 
 @dataclass(frozen=True)
@@ -450,6 +579,7 @@ def build_cost_snapshot(
     provider: str,
     model: Optional[str],
     fleet_tokens: int = 0,
+    estimate_cache: Optional[TokenEstimateCache] = None,
 ) -> ConsoleCostSnapshot:
     """Sum dollar/token totals across a Console session's transcript rows.
 
@@ -493,6 +623,14 @@ def build_cost_snapshot(
             but never dollars). Defaults to 0, byte-identical to this
             function's pre-Task-5 behavior for every caller that doesn't
             pass it.
+        estimate_cache: task-15451 -- optional :class:`TokenEstimateCache`
+            memoizing the per-row local estimates, so a caller polling this
+            on a timer (the Console cost chip, 5x/s while a run is active)
+            stops re-tokenizing rows whose text has not changed. Every hit
+            is verified against the row's own ``(model, provider, role,
+            content)``, so passing one can only change how LONG this takes,
+            never what it returns. ``None`` (the default) estimates every
+            row on every call, exactly as before.
 
     Returns:
         A :class:`ConsoleCostSnapshot`. Never raises -- an unexpected
@@ -507,7 +645,7 @@ def build_cost_snapshot(
         total_tokens = 0
         row_count = 0
 
-        for message in messages:
+        for index, message in enumerate(messages):
             usage = getattr(message, "usage", None)
 
             if isinstance(usage, ProviderUsage):
@@ -525,9 +663,26 @@ def build_cost_snapshot(
                 continue
             role = getattr(message, "role", "") or ""
 
-            estimated_tokens = _estimate_tokens_locally(
-                [{"role": role, "content": content}], model or "", provider_key
-            )
+            if estimate_cache is None:
+                estimated_tokens = _estimate_row_tokens(
+                    role, content, model or "", provider_key
+                )
+            else:
+                # Cache slot: the row's own id when it has one. The staged-
+                # evidence pseudo-row (`console_prompted_evidence_text`) has
+                # none, so it falls back to its position -- stable across
+                # passes, and wrong only in the harmless direction: a hit is
+                # still verified against the row's text before it is served.
+                row_id = getattr(message, "id", None)
+                estimated_tokens = estimate_cache.estimate(
+                    row_id if isinstance(row_id, str) and row_id else ("#row", index),
+                    token_estimate_signature(
+                        ((role, content),), model or "", provider_key
+                    ),
+                    partial(
+                        _estimate_row_tokens, role, content, model or "", provider_key
+                    ),
+                )
             total_tokens += estimated_tokens
             row_count += 1
             has_estimated = True

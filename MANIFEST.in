@@ -11,6 +11,7 @@ include requirements.txt
 recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml
 recursive-include tldw_chatbook/Chunking/templates *.json
 recursive-include tldw_chatbook/Evals/config *.yaml
+recursive-include tldw_chatbook/Image_Generation/workflows *.json
 recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
 include tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql

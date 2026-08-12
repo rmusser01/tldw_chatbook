@@ -66,7 +66,7 @@ import time
 import uuid
 import traceback
 from copy import deepcopy
-from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
 from textual.widget import Widget
 
 #
@@ -174,6 +174,9 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
+)
+from tldw_chatbook.Chat.console_image_edit_operations import (
+    ImageEditOperationRegistry,
 )
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
@@ -405,7 +408,13 @@ from .UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
-from .UI.Navigation.screen_registry import resolve_screen_target, screen_load_error
+from .UI.Navigation.screen_registry import (
+    ScreenRoute,
+    registered_screen_aliases,
+    registered_screen_routes,
+    resolve_screen_target,
+    screen_load_error,
+)
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
@@ -604,6 +613,23 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# task-15472: after first paint, warm the lazy screen-module import cache from
+# a background thread so the FIRST click to each tab doesn't pay for a
+# synchronous, UI-thread `import_module` inside the FIFO-locked navigation
+# worker (`UI/Navigation/screen_registry.py`'s `load_screen_class`) --
+# chat_screen.py is ~20k lines, library_screen.py ~26k, settings_screen.py
+# ~19k (Docs/Design/2026-08-11-input-latency-audit.md). Scheduled slightly
+# after the other 0.1s deferred-startup timers (footer status, audio
+# services) so it is strictly the lowest-priority background task: nothing
+# depends on it finishing, it only warms a cache.
+DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
+
+# Chat/Library/Settings are the three screens the audit measured as
+# multi-thousand-line modules -- import them first so a thread that gets cut
+# short (app quit shortly after startup) still banked the highest-value work
+# before spending time on the rest of the registry.
+SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
 
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
@@ -4526,6 +4552,20 @@ class LibraryIngestQueueMixin:
 
 
 # --- Main App ---
+def _build_generated_video_store():
+    from tldw_chatbook.Video_Generation.video_store import VideoStore
+
+    store = VideoStore()
+    try:
+        store.enforce_retention()
+    except Exception as exc:
+        logger.warning(
+            "Generated-video startup retention failed (error_type={}).",
+            type(exc).__name__,
+        )
+    return store
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -4735,6 +4775,9 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.console_image_edit_operations = ImageEditOperationRegistry()
+        self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
         # same "detect at __init__, stash, notify once mounted" shape)
@@ -4959,6 +5002,7 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
@@ -5980,10 +6024,32 @@ class TldwCli(
 
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
+        # task-15463: ONE SubscriptionsDB for this whole wiring. `db_factory`
+        # used to be `lambda: SubscriptionsDB(...)`, and `LocalWatchlistsService.
+        # _db()` called it on every service method -- so nearly every watchlists
+        # read rebuilt the database object, paying a ~52-statement schema
+        # `executescript` plus migration probes each time (3.4 ms against
+        # 0.04 ms on a held instance; 35 ms for the first build; five-plus per
+        # screen refresh). The same instance is handed to the projections, the
+        # scheduled-check handler and the bundle service below, which already
+        # shared one eager instance among themselves.
+        #
+        # Safe to share across threads: `SubscriptionsDB` connections are
+        # thread-local (`DB/Subscriptions_DB.py`'s `conn` property), so each
+        # `asyncio.to_thread` worker that touches this instance opens its own
+        # connection to the same file. `db_factory` stays a callable because it
+        # is the injectable seam tests repoint (`Tests/UI/
+        # test_watchlists_inspector.py`).
+        subscriptions_db = SubscriptionsDB(
+            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
+        )
+        # Held on the app so the FTS-backfill worker can reuse it instead of
+        # constructing a second one -- see `_backfill_subscription_items_fts`,
+        # where a concurrent second `_initialize_schema` was measured
+        # poisoning a live connection's schema view.
+        self.subscriptions_db = subscriptions_db
         self.local_watchlists_service = LocalWatchlistsService(
-            db_factory=lambda: SubscriptionsDB(
-                get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-            )
+            db_factory=lambda: subscriptions_db
         )
         try:
             self.server_watchlists_service = ServerWatchlistsService.from_config(
@@ -6032,9 +6098,9 @@ class TldwCli(
         )
         server_client = SchedulingServerClient(self.server_notifications_service)
 
-        subscriptions_db = SubscriptionsDB(
-            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
-        )
+        # `subscriptions_db` is the single instance built at the top of this
+        # method (task-15463); it used to be constructed here, separately from
+        # the service's own per-call construction.
         watchlist_projection = WatchlistProjection(subscriptions_db)
 
         # `briefing_projection` is built here, BEFORE `SchedulingService`, so
@@ -6699,14 +6765,43 @@ class TldwCli(
         """Worker body: index subscription_items rows that predate the FTS
         index (task-688). Started from ``on_mount`` via
         ``run_worker(thread=True)`` so a large backlog never blocks app
-        startup or screen mount. Builds its own ``SubscriptionsDB`` instance
-        rather than reusing one built on another thread, since SQLite
-        connections in this codebase are thread-local and not shared.
+        startup or screen mount.
+
+        Uses the app's single ``SubscriptionsDB`` (task-15463). It used to
+        construct its own, on the theory that a thread-local connection
+        cannot be shared -- but thread-locality is exactly what makes sharing
+        the INSTANCE safe: this worker thread gets its own connection from it.
+        Constructing a second instance re-ran ``_initialize_schema`` -- a
+        ~52-statement ``executescript`` plus migrations, measured at 238 ms --
+        on a worker thread *while the app was already serving screens*, and
+        any connection opened during that window cached a schema view without
+        the tables it was rewriting. That is not theoretical: with per-call
+        database construction it showed up as the intermittent
+        ``OperationalError: no such table: subscription_items`` documented in
+        ``Tests/UI/test_watchlists_inspector.py``, self-healing on retry
+        because the next call built a new connection; against a held instance
+        the poisoned connection survives, and the write that lands on it just
+        fails. One instance, one schema initialization, no window.
+
+        ``close()`` below stays, and what it does is worth stating exactly.
+        ``SubscriptionsDB.close`` closes only the CALLING thread's connection
+        and clears that thread's slot. This body runs on a **pooled** thread
+        (Textual's thread workers run on asyncio's default executor, which is
+        shared with every ``asyncio.to_thread`` hop in the app), so the
+        connection it closes belongs to a pool thread that will later serve
+        other watchlists work on this same shared instance. That is safe for
+        exactly one reason: the ``conn`` property re-opens lazily, so the next
+        hop scheduled onto that thread gets a fresh connection instead of a
+        closed one. It is not safe to "improve" this into a close of the
+        instance itself.
         """
         db = None
         db_path = get_subscriptions_db_path()
         try:
-            db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
+            db = getattr(self, "subscriptions_db", None)
+            if db is None:
+                # Only a harness that skipped service wiring gets here.
+                db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
             backfill_subscription_items_fts(db)
         except FTSBackfillError as exc:
             logger.opt(exception=True).error(
@@ -7121,36 +7216,16 @@ class TldwCli(
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
 
-        # The app logs via loguru; the persistent handler is stdlib-only.
-        # Bridge loguru records into the stdlib root logger so the Logs
-        # screen's buffer sees the application's own logging (without this,
-        # only stdlib-logging modules ever appear there).
-        if not hasattr(self, "_loguru_bridge_installed"):
-            self._loguru_bridge_installed = True
-
-            def _loguru_to_stdlib(message) -> None:
-                record = message.record
-                logging.getLogger(record["name"]).handle(
-                    logging.LogRecord(
-                        name=record["name"],
-                        level=record["level"].no,
-                        pathname=getattr(record["file"], "path", ""),
-                        lineno=record["line"],
-                        msg=str(message).rstrip("\n"),
-                        args=(),
-                        exc_info=record["exception"],
-                        created=record["time"].timestamp(),
-                    )
-                )
-
-            try:
-                from loguru import logger as _loguru
-
-                _loguru.add(_loguru_to_stdlib, level=0, format="{message}")
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Failed to install loguru->stdlib bridge for Logs screen"
-                )
+        # The app logs via loguru and the persistent handler is stdlib-only,
+        # but NO bridge is installed here: `Logging_Config._setup_logging`
+        # already forwards every loguru record into stdlib logging
+        # (`_forward_loguru_to_standard`, level TRACE, diagnose=False per
+        # task-2119), and it runs before this method on every boot path —
+        # either early at process start or via `configure_application_
+        # logging` in `_setup_logging`. A second sink here made every loguru
+        # record reach the root logger twice, so the Logs screen showed each
+        # application log line — and counted each error — twice
+        # (TASK-15422).
 
         # Initialize current log widget reference
         self._current_log_widget = None
@@ -8109,6 +8184,26 @@ class TldwCli(
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+            # The Console transcript's action row renders from the screen's
+            # `_console_speaking_message_id`, not from a legacy widget — on
+            # failure it must be cleared too, or the row keeps "⏹ Stop
+            # speech" with no speech to stop (TASK-15422).
+            for screen in reversed(tuple(getattr(self, "screen_stack", ()))):
+                if (
+                    getattr(screen, "_console_speaking_message_id", None)
+                    == event.message_id
+                ):
+                    screen._console_speaking_message_id = None
+                    sync = getattr(screen, "_sync_native_console_chat_ui", None)
+                    if callable(sync):
+                        try:
+                            await sync()
+                        except Exception:
+                            self.loguru_logger.error(
+                                "Console speak-state resync failed after a "
+                                "TTS error"
+                            )
+                    break
             if event.global_override_token is not None:
                 self.run_worker(
                     self._offer_tts_global_override(event.global_override_token),
@@ -9236,6 +9331,10 @@ class TldwCli(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
         )
+        self.set_timer(
+            DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
+            self._schedule_screen_preimport,
+        )
         self.schedule_media_cleanup()
         coordinator = getattr(
             self,
@@ -9391,6 +9490,130 @@ class TldwCli(
 
         self._schedule_tts_initialization()
         self._schedule_stts_initialization()
+
+    def _screen_preimport_enabled(self) -> bool:
+        """Whether the background screen-module pre-importer should run.
+
+        On by default. Off under pytest (``PYTEST_CURRENT_TEST`` -- the same
+        signal ``Utils/optional_deps.py`` and ``Metrics/metrics_logger.py``
+        already gate background/eager behavior on) so the test suite's many
+        ``app.run_test()`` instances don't each spin up an extra
+        background-import thread for a mechanism most tests never look at.
+        ``TLDW_SCREEN_PREIMPORT`` overrides in either direction: ``"0"``/
+        ``"false"`` forces it off even outside pytest, ``"1"``/``"true"``
+        forces it on even under pytest -- used by this feature's own tests to
+        exercise the real scheduling path rather than only the worker method.
+        """
+        override = os.environ.get("TLDW_SCREEN_PREIMPORT")
+        if override is not None:
+            return override.strip().lower() not in ("", "0", "false", "no")
+        return "PYTEST_CURRENT_TEST" not in os.environ
+
+    def _screen_preimport_route_order(self) -> tuple[ScreenRoute, ...]:
+        """Ordered, module-deduplicated routes for the background pre-importer.
+
+        Several canonical route ids share one module (``"ccp"``/``"personas"``
+        both target ``personas_screen.PersonasScreen``, ``"tools_settings"``/
+        ``"mcp"`` both target ``mcp_screen.MCPScreen``) -- importing each
+        module once is enough, a second ``import_module`` call for the same
+        name is just a dict lookup, but there's no reason to schedule the
+        redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
+        library/settings, the audit's three multi-thousand-line modules) go
+        first; the rest of the registry follows in stable sorted order.
+
+        Route ids that are ALSO a key in the alias table are skipped: at real
+        navigation time, ``_lookup_route()`` resolves the alias to a
+        *different* canonical route before ever reaching this dict entry
+        (e.g. ``"customize"`` -> the ``settings`` route; ``_SCREEN_ROUTES
+        ["customize"]``, pointing at a ``customize_screen`` module that no
+        longer exists, is unreachable dead metadata kept for history). Task-
+        15472 review round 1: pre-importing it anyway logged a "Screen route
+        unavailable: customize: No module named ..." warning on every single
+        boot -- a route no click can ever reach should not be attempted.
+        """
+        shadowed_route_ids = set(registered_screen_aliases())
+        routes_by_id = {route.screen_name: route for route in registered_screen_routes()}
+        ordered: list[ScreenRoute] = []
+        seen_modules: set[str] = set()
+
+        def _consider(route: ScreenRoute | None) -> None:
+            if route is None or route.screen_name in shadowed_route_ids:
+                return
+            if route.module_path in seen_modules:
+                return
+            ordered.append(route)
+            seen_modules.add(route.module_path)
+
+        for route_id in SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS:
+            _consider(routes_by_id.get(route_id))
+        for route in registered_screen_routes():
+            _consider(route)
+        return tuple(ordered)
+
+    def _preimport_screens(self, routes: Iterable[ScreenRoute]) -> None:
+        """Warm ``sys.modules`` for ``routes``, one route at a time.
+
+        Runs on a background thread (see ``_schedule_screen_preimport``),
+        never the asyncio loop -- ``import_module`` is CPU-bound (bytecode
+        compile/exec for chat_screen.py's ~20k lines and friends) and would
+        stall UI responsiveness if it ran inline on the event loop. Python's
+        import system serializes concurrent imports of the same module
+        through its own per-module lock, and a completed import is cached in
+        ``sys.modules``, so this is safe to race against a real navigation's
+        own ``import_module`` call: nothing is ever imported twice for real,
+        and a route the user never visits just cost one idle-thread import
+        that would otherwise have happened on their first click to it.
+
+        Each route calls ``ScreenRoute.load_screen_class()`` -- the exact
+        method the real navigation path calls -- wrapped in its own
+        ``try/except Exception``. ``load_screen_class()`` already swallows
+        ``ImportError``/``AttributeError`` and logs a warning; the broader
+        catch here is belt-and-suspenders so one screen module raising
+        something stranger at import time can't kill the thread or block the
+        remaining routes. Either way a failed import is never cached in
+        ``sys.modules`` (CPython evicts a partially-initialized module on
+        import failure), so a pre-import attempt that fails changes nothing
+        about what a real navigation to that route does next: it fails again,
+        identically (AC #3).
+
+        Args:
+            routes: The routes to pre-import, in order. Factored out of
+                ``_preimport_heavy_screens`` so tests can target one or two
+                routes directly instead of the whole registry.
+        """
+        for route in routes:
+            try:
+                route.load_screen_class()
+            except Exception as exc:
+                self.loguru_logger.debug(
+                    "Screen pre-import failed for "
+                    f"{route.screen_name!r} (non-fatal, nav-time behavior "
+                    f"unaffected): {type(exc).__name__}: {exc}"
+                )
+
+    def _preimport_heavy_screens(self) -> None:
+        """Warm ``sys.modules`` for every registered screen route.
+
+        See ``_preimport_screens`` for the per-route mechanics; this just
+        supplies the full, priority-ordered route list.
+        """
+        self._preimport_screens(self._screen_preimport_route_order())
+
+    def _schedule_screen_preimport(self) -> None:
+        """Start the background screen-module pre-importer, at most once."""
+        if not self._screen_preimport_enabled():
+            return
+        if self._shutting_down:
+            return
+        if self._screen_preimport_thread is not None:
+            return
+        thread = threading.Thread(
+            target=self._preimport_heavy_screens,
+            name="tldw-screen-preimport",
+            daemon=True,
+        )
+        self._screen_preimport_thread = thread
+        thread.start()
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
@@ -9567,8 +9790,24 @@ class TldwCli(
             self._file_notes_session_owner_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_image_edits(self) -> None:
+        """Cancel and settle app-owned H3 edits exactly once before teardown."""
+        task = self._console_image_edit_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                self.console_image_edit_operations.shutdown(),
+                name="shutdown_console_image_edits",
+            )
+            self._console_image_edit_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_app_owned_lifecycles(self) -> None:
+        """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_console_image_edits()
+        await self._shutdown_file_notes_session_owner()
+
     async def _shutdown(self) -> None:
-        """Settle File Notes Git before Textual closes screens and replicas."""
+        """Settle app-owned durable work before Textual closes screens."""
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
         shutdown_task = asyncio.current_task()
@@ -9577,7 +9816,7 @@ class TldwCli(
         )
         while True:
             try:
-                await self._shutdown_file_notes_session_owner()
+                await self._shutdown_app_owned_lifecycles()
             except asyncio.CancelledError as error:
                 next_cancellation_requests = (
                     shutdown_task.cancelling() if shutdown_task is not None else 0
@@ -9602,7 +9841,7 @@ class TldwCli(
         if shutdown_error is not None:
             if owner_error is not None:
                 shutdown_error.add_note(
-                    "File Notes session owner shutdown also failed before "
+                    "App-owned lifecycle shutdown also failed before "
                     "Textual screen teardown"
                 )
             if cancellation is not None:
@@ -9614,7 +9853,7 @@ class TldwCli(
             if cancellation is not None:
                 owner_error.add_note(
                     "Application shutdown cancellation was delayed while "
-                    "preserving the owner shutdown failure"
+                    "preserving the lifecycle shutdown failure"
                 )
             raise owner_error
         if cancellation is not None:
@@ -9675,10 +9914,10 @@ class TldwCli(
         except Exception:
             pass
         try:
-            await self._shutdown_file_notes_session_owner()
+            await self._shutdown_app_owned_lifecycles()
         except Exception as error:
             self.loguru_logger.warning(
-                "File Notes session owner fallback shutdown failed "
+                "App-owned lifecycle fallback shutdown failed "
                 f"type={type(error).__name__}"
             )
         self._ui_ready = False

@@ -738,3 +738,77 @@ line's bytes. Never treat "the captured line changed" as evidence about focus wh
 widget renders anything time-varying. And prefer `Shift+Tab` when the target sits near
 the end of a scrollable container — walking forward from the top scrolls the target out
 of the very capture you are reading.
+## PNG compression is not image-token compression (TASK-15482 / TASK-15505, 2026-08-11)
+
+**Incident.** The first valid raw-context visual-compaction run sent two
+deterministic PNG pages to GPT-5.6 Terra and used 2,909 input tokens versus
+1,060 for the text control. The PNGs were compact on disk, but the provider
+charged 174.4% more input. TASK-15505 then traced the geometry: the renderer
+drew each page on a 512x512 logical canvas and mechanically enlarged it to
+1024x1024 before dispatch. Current OpenAI image-input documentation says
+GPT-5.6 omitted/auto detail preserves original dimensions and meters 32x32
+patches, so the enlargement changed each page from 256 raw patches to 1,024
+without adding transcript content.
+
+**What to do.** For image-context optimizations, record the exact dispatched
+dimensions, detail setting, model family, and provider-reported usage. Treat
+local byte size and raw patch geometry as diagnostics only, never as measured
+token savings. Remove redundant geometry in an evaluation-only renderer first,
+then run the same downstream quality gate before changing production; smaller
+text can reduce recall even when its patch count is lower.
+## `extra="allow"` on a request model says nothing about the server (task-3309)
+
+**Incident.** The Library forwarded per-type ingest options to the server by
+name, relying on `MediaIngestJobSubmitRequest`'s `extra="allow"`. That was read,
+for months, as "the server accepts these". It does not mean that — it only means
+the *client* will serialize them onto the wire. The receiving endpoint binds
+each form field with an explicit `Form(...)` and never reads `request.form()`,
+so FastAPI discarded every undeclared field silently and answered `200`.
+Nineteen fields were in that state: a user could set OCR language, speaker
+diarization, timestamps or VAD in server mode and nothing at all happened, with
+a successful-looking job to show for it.
+
+**Why nothing caught it.** Two of the repo's own tests asserted the broken
+names travelled verbatim (`assert kwargs["pdf_engine"] == "docling"`), which
+converted the silent drop into a requirement. Every one of them passed.
+
+**The check that works.** Ask the *running server* what it declares —
+`/openapi.json` enumerates the endpoint's form fields — and assert that every
+field the client puts on the wire is in that set. Capture the list as a fixture
+with its provenance so the assertion is against a real server of a known
+version, not against a hand-written list that drifts the same way the code did.
+
+**Widen it past the obvious loop.** The first version of the guard checked only
+the per-type options loop and passed. The nineteenth field,
+`force_regenerate_embeddings`, was named in the *service method's own signature*
+and sent on every submission. Check what reaches the request, not what one
+code path contributes to it.
+
+**"No server equivalent" is a claim about the whole server, and it needs the
+whole server to back it.** The first version of this fix labelled eleven fields
+"no server equivalent" on the strength of one endpoint's schema. The owner
+pushed back -- "the server should have full support" -- and was right. Checked
+against the server *source*, two of them (`transcription_provider`,
+`translate_to_english`) are real capabilities of the transcription core that its
+HTTP API simply does not expose; two more are server-side config rather than
+request fields; one is accepted on a different endpoint; and two were not
+missing at all -- they are accepted by the web endpoint that the client already
+routes to correctly. Only four were genuine absences. The behaviour (do not send
+them here) was right either way, but the *reason* attached to each one is what a
+reader acts on later, and four of the seven wrong reasons pointed at the wrong
+repo to fix. Compare endpoint surfaces before concluding a capability is
+missing: `/media/add` turned out to be a strict subset of
+`/media/ingest/jobs`, so "the client is on the wrong endpoint" was also wrong.
+
+**A blocked live call is not a blocked verification.** Real submissions were
+impossible here (the instance rejected the configured API key, and its key is
+env-only on the server process). That did not weaken the finding: a field the
+endpoint never binds cannot take effect, whatever a submission would have
+shown. Reach for the server's own contract before concluding a live check is
+unavailable.
+
+**Postscript: the key existed.** The live check was called impossible because
+`~/.config/tldw_cli/config.toml` held a stale key the server rejected. The real
+one was in the server repo's own `Config_Files/.env` all along. Before
+recording a live check as blocked on credentials, look in the server repo -- the
+running process was started from it.

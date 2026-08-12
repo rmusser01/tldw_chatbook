@@ -41,6 +41,8 @@ VALID_TABLES = {
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",
+        "conversation_dictionary_attachments",
+        "conversation_dictionary_unresolved",
         "conversation_keywords",
         "conversation_local_marks",
         "conversation_world_books",

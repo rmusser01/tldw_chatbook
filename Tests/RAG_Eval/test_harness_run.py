@@ -45,15 +45,27 @@ EXPECTED_BACKEND = {
 
 
 def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
-    from Tests.RAG_Eval.harness.goldenset import NEGATIVE_CATEGORY, load_fixtures
+    from Tests.RAG_Eval.harness.goldenset import (
+        NEGATIVE_CATEGORY,
+        SCOPED_CATEGORY,
+        load_fixtures,
+    )
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
     from Tests.RAG_Eval.harness.runner import MODES, run_eval
 
     corpus, golden = load_fixtures()
     category_counts = Counter(query.category for query in golden)
+    # Cells: every category except negatives (which have nothing to score).
+    # Averaged: that set minus scoped, which is measured in its own cell but
+    # kept out of the cross-mode overall row — a scoped query is asked over
+    # its 100-document scope, not over the corpus, so it is a different task
+    # rather than the same task under a different mode (see `runner`'s module
+    # docstring).
     scored_categories = sorted(set(category_counts) - {NEGATIVE_CATEGORY})
     scored_total = sum(
-        count for name, count in category_counts.items() if name != NEGATIVE_CATEGORY
+        count
+        for name, count in category_counts.items()
+        if name not in (NEGATIVE_CATEGORY, SCOPED_CATEGORY)
     )
 
     runtime = build_eval_runtime(corpus, tmp_path)
@@ -89,11 +101,29 @@ def test_three_mode_eval_run_over_the_real_fixtures(tmp_path, capsys):
         assert len(mode_report.queries) == len(golden), (
             f"{mode}: ran {len(mode_report.queries)} of {len(golden)} queries"
         )
-        assert mode_report.runtime_backends == (EXPECTED_BACKEND[mode],), (
+        # EVERY query, scoped included. This used to exempt the scoped
+        # category, because a scope diverted the hybrid profile to the
+        # semantic path (the engine's allowlist pushdown was semantic-only),
+        # so hybrid's recorded backends legitimately included "rag-semantic"
+        # — by design, not by a failed config flip. TASK-15020/B1 removed the
+        # divert: a scoped query now routes exactly as its mode says, so the
+        # exemption was dead code and dropping it makes this assertion the
+        # check that the divert has not come back.
+        backends = tuple(
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in mode_report.queries
+                    if outcome.runtime_backend
+                }
+            )
+        )
+        assert backends == (EXPECTED_BACKEND[mode],), (
             f"{mode}: expected every query to route to "
-            f"{EXPECTED_BACKEND[mode]!r}, got {mode_report.runtime_backends} — "
-            "the per-mode config flip did not take effect (or a stale cached "
-            "result was reused across modes)"
+            f"{EXPECTED_BACKEND[mode]!r}, got {backends} — "
+            "the per-mode config flip did not take effect, a stale cached "
+            "result was reused across modes, or a scope is once again "
+            "re-routing the queries that carry one"
         )
 
         # Every non-negative category is present and complete: a category

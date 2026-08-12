@@ -3,6 +3,7 @@
 import dataclasses
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from tldw_chatbook.Chat import console_generate_image as module
@@ -34,6 +35,11 @@ from tldw_chatbook.Chat.console_generate_image import (
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_template,
+)
+from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageGenerationCancelled,
+    ImageGenerationError,
 )
 
 
@@ -199,6 +205,152 @@ class _Res:
         self.content = b
         self.content_type = "image/png"
         self.bytes_len = len(b)
+
+
+class _EffectiveRes(_Res):
+    def __init__(self, b, *, content_type="image/png", effective_params=None):
+        super().__init__(b)
+        self.content_type = content_type
+        self.effective_params = effective_params
+
+
+def test_comfyui_batch_requires_exactly_one_before_request_construction():
+    built = []
+
+    with pytest.raises(ImageGenerationError):
+        run_generation_batch(
+            backend="comfyui",
+            prompt="p",
+            negative_prompt=None,
+            seed=None,
+            count=2,
+            build=lambda **kwargs: built.append(kwargs),
+            generate=lambda _request: _Res(b"img"),
+        )
+
+    assert built == []
+
+
+def test_batch_threads_exact_reference_and_cancel_event_to_build_and_generation():
+    cancel_event = threading.Event()
+    reference = ResolvedReferenceImage(
+        file_id="opaque",
+        filename=None,
+        mime_type="image/png",
+        width=1,
+        height=1,
+        bytes_len=3,
+        content=b"png",
+        temp_path=None,
+    )
+    captured = []
+
+    def build_fn(**kwargs):
+        captured.append(kwargs)
+        return SimpleNamespace(
+            seed=kwargs["seed"],
+            reference_image=kwargs["reference_image"],
+            cancel_event=kwargs["cancel_event"],
+        )
+
+    def gen(request):
+        assert request.reference_image is reference
+        assert request.cancel_event is cancel_event
+        return _Res(b"img")
+
+    out = run_generation_batch(
+        backend="comfyui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=1,
+        reference_image=reference,
+        cancel_event=cancel_event,
+        build=build_fn,
+        generate=gen,
+    )
+
+    assert len(out.successes) == 1
+    assert captured[0]["reference_image"] is reference
+    assert captured[0]["cancel_event"] is cancel_event
+
+
+def test_batch_reraises_typed_cancellation_instead_of_collecting_it():
+    with pytest.raises(ImageGenerationCancelled):
+        run_generation_batch(
+            backend="comfyui",
+            prompt="p",
+            negative_prompt=None,
+            seed=None,
+            count=1,
+            build=lambda **kwargs: kwargs,
+            generate=lambda _request: (_ for _ in ()).throw(
+                ImageGenerationCancelled()
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "effective_params",
+    [
+        {"unknown": "value"},
+        {"operation": ["edit"]},
+        {"steps": object()},
+    ],
+)
+def test_batch_rejects_unknown_or_nonscalar_effective_metadata(effective_params):
+    with pytest.raises(ImageGenerationError):
+        run_generation_batch(
+            backend="comfyui",
+            prompt="p",
+            negative_prompt=None,
+            seed=None,
+            count=1,
+            generate=lambda _request: _EffectiveRes(
+                b"img", effective_params=effective_params
+            ),
+        )
+
+
+def test_batch_allows_only_closed_scalar_effective_metadata_and_result_mime():
+    params = {
+        "operation": "edit",
+        "workflow_key": "minimax_h3_image_edit",
+        "width": 1,
+        "height": 2,
+        "steps": 3,
+        "sampler": "euler",
+        "format": "jpeg",
+    }
+
+    out = run_generation_batch(
+        backend="comfyui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=1,
+        generate=lambda _request: _EffectiveRes(
+            b"img", content_type="image/png", effective_params=params
+        ),
+    )
+
+    data, mime_type, meta = out.successes[0]
+    assert data == b"img"
+    assert mime_type == "image/png"
+    assert meta.params == params
+    assert meta.params is not params
+
+
+def test_batch_existing_result_without_effective_params_keeps_empty_metadata():
+    out = run_generation_batch(
+        backend="swarmui",
+        prompt="p",
+        negative_prompt=None,
+        seed=None,
+        count=1,
+        generate=lambda _request: _Res(b"img"),
+    )
+    assert out.successes[0][2].params == {}
 
 
 def test_batch_all_succeed():

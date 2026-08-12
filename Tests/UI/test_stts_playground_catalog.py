@@ -248,6 +248,121 @@ def test_legacy_controls_preserve_format_voice_and_speed_support() -> None:
     assert controls.generation_allowed is True
 
 
+def test_openai_custom_exact_model_and_voice_are_pinned_and_generation_allowed() -> (
+    None
+):
+    """Saved custom OpenAI names must survive catalog resolution.
+
+    Custom OpenAI-compatible endpoints (TASK-2260) define their own model
+    and voice names; the catalog cannot verify them, so they are pinned as
+    honest "(no catalog check)" options instead of being silently replaced
+    with the first official entry (TASK-15421).
+    """
+    catalog = _catalog(
+        provider_id="openai",
+        models=(
+            _model(
+                model_id="tts-1",
+                display_name="TTS-1 (Standard)",
+                formats=("mp3", "wav"),
+                voices=("alloy", "nova"),
+                server_default=False,
+            ),
+        ),
+    )
+
+    controls = controls_from_catalog(
+        catalog,
+        selected_model_id="pocket-tts-model",
+        selected_voice_id="pocket-voice",
+        discovered_voices=None,
+        selected_format="wav",
+        speed=1.0,
+    )
+
+    assert (
+        "pocket-tts-model (no catalog check)",
+        "pocket-tts-model",
+    ) in controls.model_options
+    assert controls.selected_model_id == "pocket-tts-model"
+    assert (
+        "pocket-voice (no catalog check)",
+        "pocket-voice",
+    ) in controls.voice_options
+    assert controls.selected_voice_id == "pocket-voice"
+    assert controls.selection_changed is False
+    assert controls.format_options == ("mp3", "wav")
+    assert controls.selected_format == "wav"
+    assert controls.generation_allowed is True
+
+
+def test_openai_custom_voice_is_pinned_alongside_a_catalog_model() -> None:
+    """A custom voice pins even when the model is an official catalog one."""
+    catalog = _catalog(
+        provider_id="openai",
+        models=(
+            _model(
+                model_id="tts-1",
+                display_name="TTS-1 (Standard)",
+                formats=("mp3", "wav"),
+                voices=("alloy", "nova"),
+                server_default=False,
+            ),
+        ),
+    )
+
+    controls = controls_from_catalog(
+        catalog,
+        selected_model_id="tts-1",
+        selected_voice_id="pocket-voice",
+        discovered_voices=None,
+        selected_format="mp3",
+        speed=1.0,
+    )
+
+    assert controls.selected_model_id == "tts-1"
+    assert (
+        "pocket-voice (no catalog check)",
+        "pocket-voice",
+    ) in controls.voice_options
+    assert controls.selected_voice_id == "pocket-voice"
+    assert controls.selection_changed is False
+    assert controls.generation_allowed is True
+
+
+def test_non_openai_legacy_custom_model_still_falls_back_to_the_catalog() -> None:
+    """The pin is scoped to OpenAI, the one provider with custom endpoints.
+
+    Other legacy providers keep the existing first-catalog-entry fallback;
+    their model ids are fixed by the local engine, not by a server the
+    user pointed the app at.
+    """
+    catalog = _catalog(
+        provider_id="elevenlabs",
+        models=(
+            _model(
+                model_id="eleven_multilingual_v2",
+                display_name="Eleven Multilingual v2 (Default)",
+                formats=("mp3",),
+                voices=("Rachel",),
+                server_default=False,
+            ),
+        ),
+    )
+
+    controls = controls_from_catalog(
+        catalog,
+        selected_model_id="no-such-model",
+        selected_voice_id="Rachel",
+        discovered_voices=None,
+        selected_format="mp3",
+        speed=1.0,
+    )
+
+    assert controls.selected_model_id == "eleven_multilingual_v2"
+    assert controls.selection_changed is True
+
+
 def test_remote_model_and_voice_labels_remain_plain_unparsed_strings() -> None:
     unsafe_model = "[bold red]model[/]"
     unsafe_voice = "<script>alert(1)</script>"

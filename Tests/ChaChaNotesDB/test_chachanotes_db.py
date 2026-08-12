@@ -377,6 +377,33 @@ class TestCharacterCards:
         }
         assert added_card_names == {card_data1["name"], card_data2["name"]}
 
+    def test_list_character_cards_excludes_image_by_default(
+        self, db_instance: CharactersRAGDB
+    ):
+        """task-15474: list/picker reads must not fetch the `image` BLOB
+        column by default -- it drags up to `limit` raw images through
+        SQLite/Python for callers that only render name/description rows."""
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes" * 100
+        card_id = db_instance.add_character_card(
+            {"name": "Imaged Default List", "image": image_bytes}
+        )
+        cards = db_instance.list_character_cards(limit=100)
+        assert cards
+        for card in cards:
+            assert "image" not in card
+        assert any(c["id"] == card_id for c in cards)
+
+    def test_list_character_cards_include_image_true_round_trips(
+        self, db_instance: CharactersRAGDB
+    ):
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes" * 100
+        card_id = db_instance.add_character_card(
+            {"name": "Imaged Include List", "image": image_bytes}
+        )
+        cards = db_instance.list_character_cards(limit=100, include_image=True)
+        card = next(c for c in cards if c["id"] == card_id)
+        assert card["image"] == image_bytes
+
     def test_update_character_card(
         self, db_instance: CharactersRAGDB, sample_card: dict
     ):

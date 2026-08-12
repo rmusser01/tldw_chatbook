@@ -256,8 +256,11 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
 
     # A3's "top_k" claim is only accurate for keyword mode's per-source
     # fan-out; rag mode drops the "per source" suffix outright.
-    assert results_heading_text(rag_state) == "Evidence · top 5"
-    assert results_heading_text(search_state) == "Evidence · top 5 per source"
+    # TASK-15020/B3: the depth itself is the active RAG profile's
+    # `search.default_top_k` (15 on the shipped default profile), not the
+    # old hardcoded 5.
+    assert results_heading_text(rag_state) == "Evidence · top 15"
+    assert results_heading_text(search_state) == "Evidence · top 15 per source"
 
     rag_children = library_rag_results_body_children(rag_state)
     coverage_statics = [
@@ -271,8 +274,20 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
         str(coverage_statics[0].renderable)
         == "Semantic search found nothing from: Notes."
     )
-    # It renders directly under the heading -- the first body child.
-    assert rag_children[0] is coverage_statics[0]
+    # It renders above the evidence cards, directly under the "N results
+    # for 'query'." headline task-2859 item 10 added between it and the
+    # Evidence heading (this assertion read `rag_children[0]` until that
+    # headline landed, and has been failing on dev ever since -- the
+    # ordering it was written to pin is "ahead of every row card", which is
+    # what it now says).
+    count_lines = [
+        child
+        for child in rag_children
+        if getattr(child, "id", None) == "library-rag-results-count-line"
+    ]
+    assert len(count_lines) == 1
+    assert rag_children[0] is count_lines[0]
+    assert rag_children[1] is coverage_statics[0]
 
     # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
     # coverage claim to make) -> no widget mounted at all.
@@ -1949,7 +1964,11 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
                 "query": query,
                 "scope": ("notes", "media", "conversations"),
                 "mode": "search",
-                "top_k": 5,
+                # TASK-15020/B3: the run's depth is the active RAG profile's
+                # `default_top_k` (15 on the shipped default profile) --
+                # the window used to ask for 5 no matter what the profile
+                # said, which is what this pins end to end.
+                "top_k": 15,
                 "include_citations": True,
             }
         ]
@@ -2017,7 +2036,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         visible_text = _visible_text(screen)
         # Scout item 3: the semantic leg is one merged query, not a
         # per-source fan-out -- the heading must not claim "per source".
-        assert "Evidence · top 5" in visible_text
+        assert "Evidence · top 15" in visible_text
         assert "per source" not in visible_text
         assert (
             "Semantic search found nothing from: Notes, Conversations."
@@ -2062,7 +2081,7 @@ async def test_library_search_rag_keyword_mode_never_renders_coverage_note() -> 
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
         visible_text = _visible_text(screen)
-        assert "Evidence · top 5 per source" in visible_text
+        assert "Evidence · top 15 per source" in visible_text
         assert not screen.query("#library-rag-coverage-note")
 
 

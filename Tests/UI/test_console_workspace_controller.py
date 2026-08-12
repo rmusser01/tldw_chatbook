@@ -94,8 +94,24 @@ async def test_search_debounce_mirrors_query_and_bumps_token_and_timer():
 
 
 @pytest.mark.asyncio
-async def test_search_debounce_empty_query_clears_state_synchronously():
-    """Clearing the search box resets workspace search state with no pending timer."""
+async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_search():
+    """Emptying the search box clears the query and abandons the old search.
+
+    TASK-15454 renamed this from `..._clears_state_synchronously` and dropped
+    its "no pending timer" assertion. Backspacing to empty is a keystroke like
+    any other, and the clear it triggered ran the same full derivation chain
+    (workspace records + labels, one membership SELECT per workspace, starred
+    ids, then a 3-instance tray recompose) synchronously on the event loop --
+    so it is now debounced with the rest. The pending timer that assertion
+    forbade was really a proxy for "no stale search survives", and that is
+    asserted directly below instead: the timer that does fire carries the
+    EMPTY query, and the debounced callback re-checks the token/query before
+    doing anything, so the superseded "alpha" search can never run.
+
+    (The "Clear" button is a separate path and still clears immediately --
+    see the `console-workspace-conversation-search-clear` branch in
+    `on_button_pressed`, unchanged.)
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -108,12 +124,24 @@ async def test_search_debounce_empty_query_clears_state_synchronously():
         _set_workspace_search(console, "alpha")
         await pilot.pause()
         assert console._console_workspace_conversation_query == "alpha"
+        stale_token = console._console_workspace_conversation_search_token
 
         _set_workspace_search(console, "")
         await pilot.pause()
 
+        # The query mirror moves at once; only the DB work waits.
         assert console._console_workspace_conversation_query == ""
-        assert console._console_workspace_conversation_search_timer is None
+        assert console._console_conversation_browser_query == ""
+        assert console._console_workspace_conversation_search_token > stale_token
+
+        # A superseded callback cannot revive the old search.
+        console._start_console_conversation_browser_search("alpha", stale_token)
+        assert console._console_conversation_browser_query == ""
+
+        await pilot.pause(0.35)
+        assert console._console_conversation_browser_rows == ()
+        assert console._console_conversation_browser_total is None
+        assert console._console_conversation_browser_error == ""
 
 
 @pytest.mark.asyncio

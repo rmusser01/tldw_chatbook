@@ -175,11 +175,28 @@ async def console_screen_with_character():
         yield screen
 
 
+def _set_chat_images_setting(app, key: str, value) -> None:
+    """Set a `[chat.images]` value where the shipping app actually reads it.
+
+    task-15270. These tests used to assign ``app.app_config["chat"]``
+    wholesale, which only worked against the old three-key test config:
+    `console_image_view._chat_images_config` prefers the RAW TOML nested
+    under ``COMPREHENSIVE_CONFIG_RAW`` whenever the snapshot carries it --
+    and every real `load_settings()` snapshot does -- falling back to the top
+    level only when it does not. So the same edit in the shipping app would
+    have been ignored, and these tests were pinning the fallback shape rather
+    than the one a user has. Write both, raw nest first.
+    """
+    raw = app.app_config.setdefault("COMPREHENSIVE_CONFIG_RAW", {})
+    raw.setdefault("chat", {}).setdefault("images", {})[key] = value
+    app.app_config.setdefault("chat", {}).setdefault("images", {})[key] = value
+
+
 @pytest_asyncio.fixture
 async def console_screen_avatar_off():
     """Mounted Console screen with ``chat.images.show_character_avatar`` off."""
     app = _build_test_app()
-    app.app_config["chat"] = {"images": {"show_character_avatar": False}}
+    _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -264,7 +281,7 @@ async def console_screen_with_db_avatar_off(avatar_db):
     """
     app = _build_test_app()
     app.chachanotes_db = avatar_db
-    app.app_config["chat"] = {"images": {"show_character_avatar": False}}
+    _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -437,13 +454,13 @@ async def test_refresh_repopulates_after_config_toggle_off_then_on(console_scree
     assert screen._active_character_avatar is not None
 
     # (2) toggle off: clears the cache AND invalidates the scope guard
-    app.app_config["chat"] = {"images": {"show_character_avatar": False}}
+    _set_chat_images_setting(app, "show_character_avatar", False)
     await screen._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is None
     assert screen._last_console_avatar_scope is None  # guard invalidated
 
     # (3) toggle back on, SAME character: must repopulate (was stuck empty pre-fix)
-    app.app_config["chat"] = {"images": {"show_character_avatar": True}}
+    _set_chat_images_setting(app, "show_character_avatar", True)
     await screen._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar.get("character_id") == char_id
@@ -580,7 +597,7 @@ async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, m
     )
     controller.store.append_stream_chunk(message.id, "partial reply")
 
-    app.app_config["chat"] = {"images": {"react_character_expressions": False}}
+    _set_chat_images_setting(app, "react_character_expressions", False)
     # Even though the raw status is "streaming", react-off must pin idle.
     # (resolve_console_expression_state honors react_enabled=False internally.)
     await screen._refresh_active_character_avatar_if_scope_changed()

@@ -1023,6 +1023,22 @@ Input.speech-setting-control {
     padding: 0 1;
 }
 
+/* The forms-wide `Input:focus` rule re-adds a border at higher specificity
+ * than the border-none class rule above, and the reset-tier `*:focus`
+ * accessibility outline paints OVER the widget's outermost rendered lines
+ * (its own comment warns of exactly this) — on a height-1 row that line IS
+ * the only content line, so focusing the field replaced the typed value
+ * with the outline's box characters (TASK-15421 AC3). Opt out of both and
+ * show focus with the content-safe tint instead — the same opt-out +
+ * recolour pattern the reset comment prescribes (TASK-1160's DataTable
+ * precedent). */
+Input.speech-setting-control:focus {
+    border: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
 .speech-settings-group {
     height: auto;
     border: none;

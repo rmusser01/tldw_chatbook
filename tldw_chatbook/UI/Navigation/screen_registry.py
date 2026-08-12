@@ -243,6 +243,25 @@ def registered_screen_route_ids() -> tuple[str, ...]:
     return tuple(sorted(_SCREEN_ROUTES))
 
 
+def registered_screen_routes() -> tuple[ScreenRoute, ...]:
+    """Return every registered canonical ``ScreenRoute`` without importing.
+
+    Unlike ``registered_screen_route_ids()`` (ids only), this exposes the
+    route metadata itself -- notably ``module_path`` -- so a caller can
+    dedupe routes that share one module (e.g. ``"ccp"``/``"personas"`` both
+    target ``personas_screen.PersonasScreen``, ``"tools_settings"``/``"mcp"``
+    both target ``mcp_screen.MCPScreen``) or call ``load_screen_class()``
+    directly. Used by the app's background screen-module pre-importer
+    (task-15472) to warm ``sys.modules`` after first paint.
+
+    Returns:
+        Route objects sorted by ``screen_name`` for a stable, deterministic
+        iteration order.
+    """
+
+    return tuple(_SCREEN_ROUTES[route_id] for route_id in sorted(_SCREEN_ROUTES))
+
+
 def registered_screen_aliases() -> tuple[str, ...]:
     """Return screen route aliases without loading screen classes.
 

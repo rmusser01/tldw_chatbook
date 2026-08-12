@@ -163,7 +163,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 34  # Deterministic visual-compaction representation policy (TASK-14914).
+    _CURRENT_SCHEMA_VERSION = 35  # Conversation<->dictionary attachment index (TASK-15469).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4832,6 +4832,54 @@ UPDATE db_schema_version
                 f"Migration from V33 to V34 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v34_to_v35(self, conn: sqlite3.Connection) -> None:
+        """Add the derived conversation<->dictionary attachment index.
+
+        Replaces the ``metadata LIKE '%active_dictionaries%'`` full scan behind
+        "which conversations use this dictionary?" with two trigger-maintained
+        tables plus a backfill (TASK-15469). Local-only derived state: no sync
+        columns and no sync_log triggers -- see the migration file's header for
+        the full rationale, including why the index resolves only unambiguous
+        JSON integers and defers every other shape to the Python predicate.
+        """
+        if self._get_db_version(conn) != 34:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V34→V35] Migration requires schema version 34"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v34_to_v35_conversation_dictionary_attachments.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        cursor.execute(pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Conversation dictionary attachment migration contains "
+                        "incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 35:
+                    raise SchemaError(
+                        "Conversation dictionary attachment schema version "
+                        "verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V34 to V35 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4996,6 +5044,7 @@ UPDATE db_schema_version
                     31: self._migrate_from_v31_to_v32,
                     32: self._migrate_from_v32_to_v33,
                     33: self._migrate_from_v33_to_v34,
+                    34: self._migrate_from_v34_to_v35,
                 }
 
                 if current_db_version == 0:
@@ -5182,13 +5231,76 @@ UPDATE db_schema_version
 
     _CHARACTER_CARD_JSON_FIELDS = ["alternate_greetings", "tags", "extensions"]
 
+    # task-15474: explicit column projection for list/picker reads, excluding
+    # `image` (a BLOB, sometimes multi-MB). Mirrors the `character_cards`
+    # CREATE TABLE column order (schema section near the top of this file)
+    # minus `image` -- if a future migration adds a character_cards column,
+    # add it here too, or list/picker rows will silently omit it (detail
+    # fetches like `get_character_card_by_id` still `SELECT *` and are
+    # unaffected). See `_character_card_select_columns`.
+    _CHARACTER_CARD_LIST_COLUMNS: Tuple[str, ...] = (
+        "id",
+        "name",
+        "description",
+        "personality",
+        "scenario",
+        "system_prompt",
+        "post_history_instructions",
+        "first_message",
+        "message_example",
+        "creator_notes",
+        "alternate_greetings",
+        "tags",
+        "creator",
+        "character_version",
+        "extensions",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    )
+
+    @classmethod
+    def _character_card_select_columns(
+        cls, *, include_image: bool, alias: str = ""
+    ) -> str:
+        """Render a `character_cards` SELECT column list.
+
+        Args:
+            include_image: If True, select every column (`*`/`<alias>.*`),
+                including the `image` BLOB. If False (the default for
+                list/picker reads), select the explicit image-free column
+                list.
+            alias: Optional table alias (e.g. "cc") to prefix each column
+                (or the `*`) with, for queries that join against
+                `character_cards`.
+
+        Returns:
+            A column-list string suitable for interpolation into a SELECT
+            clause.
+        """
+        if include_image:
+            return f"{alias}.*" if alias else "*"
+        prefix = f"{alias}." if alias else ""
+        return ", ".join(f"{prefix}{col}" for col in cls._CHARACTER_CARD_LIST_COLUMNS)
+
     # P3a: whitelist of UI sort keys → exact ORDER BY clauses. The ONLY dynamic
     # SQL fragment; search_term/tag are always bound parameters. "relevance"
     # is valid only in the search (FTS) branch.
+    #
+    # `{a}` is filled in with a `cc.` alias prefix (search branch) or "" (plain
+    # browse) by `_resolve_sort_clause`. This is required, not cosmetic
+    # (task-15474): `character_cards_fts` also has a `name` column, so once
+    # the search branch's SELECT stops being the `cc.*` wildcard (the
+    # image-free column-list projection lists `cc.<col>` explicitly), SQLite
+    # resolves a bare `ORDER BY name` against *both* joined tables and raises
+    # "ambiguous column name: name" -- `cc.*` wildcard expansion is exempt
+    # from that ambiguity check, but an explicit `cc.name` column list is not.
     _CHARACTER_SORT_CLAUSES = {
-        "name_asc": "ORDER BY name COLLATE NOCASE ASC",
-        "modified_desc": "ORDER BY last_modified DESC, name COLLATE NOCASE ASC",
-        "created_desc": "ORDER BY created_at DESC, name COLLATE NOCASE ASC",
+        "name_asc": "ORDER BY {a}name COLLATE NOCASE ASC",
+        "modified_desc": "ORDER BY {a}last_modified DESC, {a}name COLLATE NOCASE ASC",
+        "created_desc": "ORDER BY {a}created_at DESC, {a}name COLLATE NOCASE ASC",
         "relevance": "ORDER BY rank",
     }
 
@@ -5610,7 +5722,7 @@ UPDATE db_schema_version
             raise
 
     def list_character_cards(
-        self, limit: int = 100, offset: int = 0
+        self, limit: int = 100, offset: int = 0, *, include_image: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Lists character cards, ordered by name.
@@ -5621,16 +5733,25 @@ UPDATE db_schema_version
         Args:
             limit: The maximum number of cards to return. Defaults to 100.
             offset: The number of cards to skip before starting to return. Defaults to 0.
+            include_image: If True, include the `image` BLOB column. Defaults
+                to False -- most callers of this method are list/picker
+                surfaces (name/description dropdowns, exports, ID lookups)
+                that never touch `image`; dragging up to `limit` raw BLOBs
+                through SQLite/Python on every call is wasted work for them
+                (task-15474). Callers that genuinely need the image (e.g. a
+                bulk export that re-embeds it) should pass `include_image=True`.
 
         Returns:
             A list of dictionaries, each representing a character card.
-            The list may be empty if no cards are found.
+            The list may be empty if no cards are found. When `include_image`
+            is False, returned dicts have no `image` key.
 
         Raises:
             CharactersRAGDBError: For database errors during listing.
         """
         start_time = time.time()
-        query = "SELECT * FROM character_cards WHERE deleted = 0 ORDER BY name LIMIT ? OFFSET ?"
+        columns = self._character_card_select_columns(include_image=include_image)
+        query = f"SELECT {columns} FROM character_cards WHERE deleted = 0 ORDER BY name LIMIT ? OFFSET ?"
         try:
             cursor = self.execute_query(query, (limit, offset))
             rows = cursor.fetchall()
@@ -5684,7 +5805,10 @@ UPDATE db_schema_version
         clause = self._CHARACTER_SORT_CLAUSES.get(order_by)
         if clause is None or (order_by == "relevance" and not searching):
             clause = self._CHARACTER_SORT_CLAUSES["name_asc"]
-        return clause
+        # See the `{a}` note on _CHARACTER_SORT_CLAUSES: only the search
+        # branch joins in a second table with overlapping column names, so
+        # only it needs the `cc.` qualifier.
+        return clause.format(a="cc." if searching else "")
 
     def list_character_cards_page(
         self,
@@ -5694,6 +5818,7 @@ UPDATE db_schema_version
         order_by: str = "name_asc",
         search_term: str | None = None,
         tag: str | None = None,
+        include_image: bool = False,
     ) -> List[Dict[str, Any]]:
         """Paged, sortable, tag- and search-filterable character list.
 
@@ -5705,10 +5830,16 @@ UPDATE db_schema_version
             search_term: FTS5 MATCH query (already prefix-wrapped by the caller,
                 e.g. ``'"dragon"*'``) or None for a browse query.
             tag: Exact tag membership filter, or None.
+            include_image: If True, include the `image` BLOB column. Defaults
+                to False -- this is the Library/personas paging backend and
+                every current caller renders name/description/tags rows, not
+                avatars (task-15474). Pass True for a caller that genuinely
+                needs the image on a page of results.
 
         Returns:
             Deserialized character-card dicts for the page. Never raises on
-            NULL/invalid tags (json_each is json-valid-guarded).
+            NULL/invalid tags (json_each is json-valid-guarded). When
+            `include_image` is False, returned dicts have no `image` key.
         """
         searching = bool(search_term)
         sort_clause = self._resolve_sort_clause(order_by, searching=searching)
@@ -5716,14 +5847,18 @@ UPDATE db_schema_version
         where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
         alias = "cc" if searching else "character_cards"
         if searching:
+            columns = self._character_card_select_columns(
+                include_image=include_image, alias="cc"
+            )
             head = (
-                "SELECT cc.* FROM character_cards_fts fts "
+                f"SELECT {columns} FROM character_cards_fts fts "
                 "JOIN character_cards cc ON fts.rowid = cc.id"
             )
             where.insert(0, "fts.character_cards_fts MATCH ?")
             params.append(search_term)
         else:
-            head = "SELECT * FROM character_cards"
+            columns = self._character_card_select_columns(include_image=include_image)
+            head = f"SELECT {columns} FROM character_cards"
         if tag is not None:
             where.append(
                 f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
@@ -5917,10 +6052,17 @@ UPDATE db_schema_version
                 where_params = [character_id, expected_version]
                 final_params = tuple(params_for_set_clause + where_params)
 
-                logger.debug(
-                    f"Executing SINGLE character update query: {final_update_query}"
+                # Lazy + BLOB-safe: `image` is in updatable_direct_fields, so
+                # final_params can carry a multi-MB raw BLOB on every single
+                # character-card save. Match the module's opt(lazy=True) +
+                # preview_params pattern (see :3014-3028 and DB/sql_logging.py)
+                # so nothing is built unless a sink actually admits DEBUG, and
+                # even then the BLOB is summarized by length only.
+                logger.opt(lazy=True).debug(
+                    "Executing SINGLE character update query: {} | Params: {}",
+                    lambda: final_update_query,
+                    lambda: preview_params(final_params),
                 )
-                logger.debug(f"Params: {final_params}")
 
                 cursor = conn.execute(final_update_query, final_params)
                 logger.debug(f"Character Update executed, rowcount: {cursor.rowcount}")

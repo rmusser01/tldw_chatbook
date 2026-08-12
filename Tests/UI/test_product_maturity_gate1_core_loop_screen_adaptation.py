@@ -21,7 +21,10 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -218,7 +221,16 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert "Console" in text
         assert "Conversation" in text
         assert "Sources" in text
-        assert "Choose provider" in text or "Open Settings" in text
+        # Any of the three provider-recovery affordances counts; which one
+        # shows depends on config state. With the real test config
+        # (task-15270) a fresh profile has `[chat_defaults] provider =
+        # "OpenAI"` and no key, so the label is the configure-key one --
+        # asserted through the product constant rather than a copy of it.
+        assert (
+            "Choose provider" in text
+            or "Open Settings" in text
+            or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
+        )
         assert "Inspector" in text
 
 

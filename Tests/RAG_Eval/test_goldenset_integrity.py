@@ -25,6 +25,7 @@ by keyword matching for a token-shape reason either.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import tomllib
 from collections import Counter
@@ -36,6 +37,9 @@ from Tests.RAG_Eval.harness.goldenset import (
     CORPUS_PATH,
     GOLDEN_PATH,
     NEGATIVE_CATEGORY,
+    REQUIRED_CATEGORIES,
+    SCOPEABLE_SOURCE_TYPES,
+    SCOPED_CATEGORY,
     SOURCE_TYPES,
     CorpusDoc,
     GoldenQuery,
@@ -151,22 +155,49 @@ def by_slug(corpus: list[CorpusDoc]) -> dict[str, CorpusDoc]:
 
 
 def _valid_corpus() -> list[CorpusDoc]:
-    """Minimal inline corpus covering all three source types."""
+    """Minimal inline corpus covering every source type.
+
+    Including ``prompt``, which `validate` requires like any other: a prompt
+    document has no writer behind it, but a corpus that declares the type and
+    ships none of them would leave the prompt category unmeasurable.
+    """
     return [
         CorpusDoc("n1", "note", "Note one", "Alpha beta. Gamma delta. Epsilon zeta."),
         CorpusDoc("m1", "media", "Media one", "Eta theta. Iota kappa. Lambda mu."),
         CorpusDoc("c1", "conversation", "Chat one", "Nu xi. Omicron pi. Rho sigma."),
+        CorpusDoc("p1", "prompt", "Prompt one", "Tau upsilon. Phi chi. Psi omega."),
     ]
 
 
 def _valid_golden() -> list[GoldenQuery]:
-    """Minimal inline golden set covering all four categories."""
+    """Minimal inline golden set covering every REQUIRED category.
+
+    The first four entries keep their positions: several tests below replace
+    ``golden[0]``/``[1]``/``[3]`` to plant a defect, so the P2ab categories
+    are appended rather than interleaved.
+    """
     return [
         GoldenQuery("q-kw", "alpha beta", "keyword", ("n1",)),
         GoldenQuery("q-pr", "eta theta", "paraphrase", ("m1",)),
         GoldenQuery("q-vm", "nu xi", "vocabulary_mismatch", ("c1",)),
         GoldenQuery("q-neg", "nothing here", "negative", ()),
+        GoldenQuery("q-sc", "alpha beta", "scoped", ("n1",), scope_slugs=("n1",)),
+        GoldenQuery("q-ng", "gamma but never delta", "negation", ("n1",)),
+        GoldenQuery("q-pm", "a saved prompt for something", "prompt", ("p1",)),
     ]
+
+
+def _scoped_query(
+    query_id: str = "q-sc",
+    *,
+    category: str = SCOPED_CATEGORY,
+    relevant: tuple[str, ...] = ("n1",),
+    scope: tuple[str, ...] | None = ("n1", "m1"),
+) -> GoldenQuery:
+    """A scoped golden query, with every rule-relevant part parameterized."""
+    return GoldenQuery(
+        query_id, "alpha beta", category, relevant, scope_slugs=scope
+    )
 
 
 def _defects(corpus: list[CorpusDoc], golden: list[GoldenQuery]) -> str:
@@ -238,32 +269,84 @@ def test_real_fixtures_validate_clean(corpus, golden):
 
 def test_corpus_composition_matches_the_planned_design(corpus):
     counts = Counter(doc.source_type for doc in corpus)
-    # 45 short + 3 long multi-chunk targets + 1 vector-blind keyword target
-    # (TASK-3994 AC #2: hybrid's *rescue* needed a document the vector leg
-    # alone ranks outside the top-k; nothing in the original 48 qualified,
-    # because semantic recall@10 was 1.000 across the whole golden set).
-    assert len(corpus) == 49
-    assert counts["note"] == 15
-    assert counts["media"] == 20
-    assert counts["conversation"] == 14
-    # The brief's floors, asserted independently of the exact numbers above so
-    # a future addition cannot quietly drop a source type below them.
-    assert counts["note"] >= 12
-    assert counts["media"] >= 18
-    assert counts["conversation"] >= 12
+    # 49 from P1 (45 short + 3 long multi-chunk targets + the vector-blind
+    # keyword target of TASK-3994 AC #2) + 123 from the P2ab scale-up:
+    #   32  the scoped collection (24 pool + 8 estate targets)
+    #   18  the negation families (12 norm-assertions + 6 exceptions)
+    #   10  the acronym family (6 targets + 4 acronym-noise decoys)
+    #   19  the compositional family (6 answers + 13 single-conjunct decoys)
+    #    6  prompt fixtures (no writer, no index — invisible by design)
+    #   14  general distractors
+    #   24  anchor dilution (the documents the probe asked for: a class whose
+    #       target is the corpus's only document on its subject measures the
+    #       corpus's sparseness, not the pipeline)
+    # The acronym and compositional families kept their documents after their
+    # queries were rejected — as distractors, which is what a family whose
+    # class proved unfailable is good for.
+    assert len(corpus) == 172
+    assert counts["note"] == 76
+    assert counts["media"] == 59
+    assert counts["conversation"] == 31
+    assert counts["prompt"] == 6
+    assert sum(counts.values()) == len(corpus), "a source type escaped the count"
+    # Floors, asserted independently of the exact numbers above so a future
+    # addition cannot quietly drop a source type below what its report cells
+    # need. Prompts are floored at the number their golden queries target.
+    assert counts["note"] >= 60
+    assert counts["media"] >= 45
+    assert counts["conversation"] >= 25
+    assert counts["prompt"] >= 5
 
 
 def test_golden_set_category_quotas(golden):
     counts = Counter(query.category for query in golden)
-    # 44 original + kw-plant-maintenance-record, the vector-blind keyword
-    # case added for TASK-3994 AC #2 (see the corpus section of that name;
-    # it is the only query on this set semantic mode does not answer).
-    assert len(golden) == 45
+    # 45 from P1 + 15 admitted by the P2ab probe: 7 scoped, 3 negation,
+    # 5 prompt. The fail-first classes' quotas are floors set FROM the probe
+    # (a quota set before the measurement would have been a target to hit,
+    # and hitting it would have meant force-fitting fixtures the pipeline
+    # actually answers):
+    #   scoped   >= 6  the spec's hard floor; 7 admitted of 8 probed
+    #   prompt   >= 4  the spec's hard floor; 5 admitted of 5 (structural)
+    #   negation >= 3  what the class yielded (3 of 6 probed); the other
+    #                  three are recorded as measured non-failures in
+    #                  golden.toml rather than deleted
+    assert len(golden) == 60
     assert counts["keyword"] >= 10
     assert counts["paraphrase"] >= 10
     assert counts["vocabulary_mismatch"] >= 8
     assert counts["negative"] >= 6
-    assert set(counts) == set(CATEGORIES)
+    assert counts["scoped"] >= 6
+    assert counts["prompt"] >= 4
+    assert counts["negation"] >= 3
+    # Two-sided: no category outside the declared vocabulary may appear, and
+    # every REQUIRED category must be present. Both directions are now the
+    # same set — `scoped` stopped being exempt when its fixtures landed.
+    assert set(counts) <= set(CATEGORIES)
+    assert set(REQUIRED_CATEGORIES) <= set(counts)
+
+
+def test_every_declared_category_is_required_and_populated(golden):
+    """The replacement for the pre-fixture sentinel.
+
+    Task 2 shipped the scope schema against a corpus with no scoped
+    fixtures, so `scoped` was declared-but-exempt and a sentinel test pinned
+    that state. The exemption is gone: every declared category now has
+    fixtures, so `REQUIRED_CATEGORIES` is the whole vocabulary and a
+    category that loses its queries fails the validator instead of quietly
+    vanishing from the report.
+
+    The direction that still needs saying: a category must not be declared
+    ahead of its fixtures again. `compositional` and `acronym` were probed
+    and admitted nothing, and they are absent from `CATEGORIES` for exactly
+    that reason — an empty cell in the per-capability report is
+    indistinguishable from an unmeasured one.
+    """
+    assert set(REQUIRED_CATEGORIES) == set(CATEGORIES)
+    assert SCOPED_CATEGORY in REQUIRED_CATEGORIES
+    present = {query.category for query in golden}
+    assert present == set(CATEGORIES), (
+        f"declared but unpopulated: {sorted(set(CATEGORIES) - present)}"
+    )
 
 
 def test_loaded_records_are_frozen(corpus, golden):
@@ -369,6 +452,31 @@ def test_the_bare_word_will_appears_nowhere_in_the_corpus(corpus):
     assert offenders == set()
 
 
+#: The three P1 categories whose targets must cover media, notes AND
+#: conversations. They are authored to succeed, so their spread is a choice
+#: the author makes; the four-seam keyword mode is measured per source type,
+#: and a category that never targets a conversation leaves that seam
+#: unmeasured for it.
+_ALL_TYPE_SPANNING_CATEGORIES: tuple[str, ...] = (
+    "keyword",
+    "paraphrase",
+    "vocabulary_mismatch",
+)
+
+#: What the P2ab categories are allowed to span instead, and why. These are
+#: NOT weaker versions of the rule above — each is a construction limit:
+#:   scoped   a scope can only name media and notes (conversations are
+#:            outside the scope vocabulary, rag_scope spec D5)
+#:   prompt   a prompt query can only target a prompt document
+#:   negation the class's admitted set is whatever the probe admitted; it
+#:            spans two source types today and the floor says two, so a
+#:            future admission cannot quietly collapse it to one
+_P2AB_SPREAD_RULES: dict[str, set[str]] = {
+    SCOPED_CATEGORY: {"media", "note"},
+    "prompt": {"prompt"},
+}
+
+
 def test_each_capability_group_spans_all_three_source_types(golden, by_slug):
     """Per-mode per-category report cells must not be empty for a source type
     — the four-seam keyword mode is measured per type."""
@@ -378,22 +486,64 @@ def test_each_capability_group_spans_all_three_source_types(golden, by_slug):
             continue
         for slug in query.relevant_slugs:
             spread.setdefault(query.category, set()).add(by_slug[slug].source_type)
-    assert spread == {
-        "keyword": set(SOURCE_TYPES),
-        "paraphrase": set(SOURCE_TYPES),
-        "vocabulary_mismatch": set(SOURCE_TYPES),
-    }
+
+    three = {"media", "note", "conversation"}
+    assert {
+        category: types
+        for category, types in spread.items()
+        if category in _ALL_TYPE_SPANNING_CATEGORIES
+    } == {category: three for category in _ALL_TYPE_SPANNING_CATEGORIES}
+
+    for category, allowed in _P2AB_SPREAD_RULES.items():
+        assert spread[category] <= allowed, (
+            f"{category}: targets a source type its construction cannot "
+            f"reach ({sorted(spread[category] - allowed)})"
+        )
+    assert spread[SCOPED_CATEGORY] == _P2AB_SPREAD_RULES[SCOPED_CATEGORY], (
+        "the scoped class must exercise BOTH scopeable source types: a scope "
+        "with one type never exercises the per-type allowlist split"
+    )
+    assert len(spread["negation"]) >= 2, (
+        "the negation class has collapsed to a single source type"
+    )
 
 
 def test_corpus_carries_distractors_that_are_nobody_s_answer(corpus, golden):
     referenced = {slug for query in golden for slug in query.relevant_slugs}
     distractors = {doc.slug for doc in corpus} - referenced
-    assert len(distractors) >= 10
+    # Raised from 10 with the P2ab scale-up. Two thirds of the corpus is
+    # now nobody's answer, which is the point: at 49 documents a top-10 was
+    # a fifth of everything and every recall number was flattered by it.
+    assert len(distractors) >= 60
 
 
 def test_multi_target_queries_exist_so_recall_can_discriminate(golden):
     multi = [q.id for q in golden if len(q.relevant_slugs) > 1]
     assert len(multi) >= 2
+
+
+def test_the_word_plant_appears_only_in_the_vector_blind_target(corpus):
+    """`kw-plant-maintenance-record` rests on ONE token being corpus-unique.
+
+    "plant" is the only stem that resolves that query to
+    `note-saltmarsh-hide` (maintenance and record are everywhere), so a new
+    document writing "the plant room" — the single most natural phrase in a
+    corpus of site-maintenance prose — silently destroys the fixture the
+    whole fusion-weighting arc was measured on.
+
+    The general uniqueness test below would catch it, but only by reporting
+    that one query "owns no unique token", which reads as a golden-set
+    problem rather than as "somebody wrote a normal English word". This one
+    names the actual dependency. It has already fired once during the P2ab
+    scale-up, on "gaps are planted up with hawthorn".
+    """
+    offenders = {
+        doc.slug
+        for doc in corpus
+        if doc.slug != "note-saltmarsh-hide"
+        and re.search(r"\bplant\w*\b", f"{doc.title} {doc.content}", re.IGNORECASE)
+    }
+    assert offenders == set()
 
 
 #: Long documents and the rare identifier planted throughout each one.
@@ -460,6 +610,314 @@ def test_long_documents_really_split_and_repeat_their_identifier(by_slug):
         )
 
 
+# --------------------------------------------------------------------------
+# the fail-first classes (P2ab): the admission protocol, and the two
+# construction properties the probe measured against
+# --------------------------------------------------------------------------
+
+#: Categories admitted by measured failure rather than by authoring intent.
+#: Each of their fixtures must carry the probe's own `# admitted:` line.
+FAIL_FIRST_CATEGORIES: tuple[str, ...] = (SCOPED_CATEGORY, "negation", "prompt")
+
+#: `# admitted: 2026-08-10 hybrid=miss semantic=miss plain=1`
+_ADMISSION_RE = re.compile(
+    r"^# admitted: \d{4}-\d{2}-\d{2} "
+    r"hybrid=(?:miss|\d+) semantic=(?:miss|\d+) plain=(?:miss|\d+)$"
+)
+
+
+def _query_blocks() -> list[tuple[str, str]]:
+    """Every `[[query]]` block in golden.toml with the comments above it.
+
+    Returns:
+        ``(preamble, block)`` pairs in file order, where ``preamble`` is the
+        raw text between the previous block and this one.
+    """
+    segments = GOLDEN_PATH.read_text(encoding="utf-8").split("[[query]]")
+    return list(zip(segments[:-1], segments[1:]))
+
+
+def _field(block: str, name: str) -> str:
+    match = re.search(rf'^{name} = "([^"]*)"', block, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _trailing_comments(preamble: str) -> list[str]:
+    lines: list[str] = []
+    for line in reversed(preamble.strip("\n").split("\n")):
+        if line.startswith("#"):
+            lines.append(line)
+        else:
+            break
+    return lines
+
+
+def test_every_fail_first_fixture_carries_its_admission_comment():
+    """THE admission protocol, as a test rather than as a convention.
+
+    A fail-first fixture is only worth its cell if today's pipeline was
+    MEASURED to fail it; the `# admitted:` line is that measurement's
+    receipt, produced by `fixture_probe.admission_comment` and pasted above
+    the fixture. Without it, a fixture that was merely *assumed* hard is
+    indistinguishable from one that was probed — and "assumed hard" is
+    exactly how P1's categories ended up at the ceiling.
+
+    The shape is checked too, not just the prefix: a comment that has lost
+    its ranks records that somebody looked, not what they saw.
+    """
+    missing: list[str] = []
+    malformed: list[str] = []
+    checked = 0
+    for preamble, block in _query_blocks():
+        if _field(block, "category") not in FAIL_FIRST_CATEGORIES:
+            continue
+        checked += 1
+        comments = _trailing_comments(preamble)
+        admissions = [line for line in comments if line.startswith("# admitted:")]
+        if not admissions:
+            missing.append(_field(block, "id"))
+        elif not any(_ADMISSION_RE.match(line) for line in admissions):
+            malformed.append(f"{_field(block, 'id')}: {admissions[0]!r}")
+    assert checked >= 15, f"only {checked} fail-first fixtures found in the file"
+    assert missing == []
+    assert malformed == []
+
+
+def test_scoped_queries_are_uniquely_resolvable_by_the_keyword_path_in_scope(
+    golden, by_slug
+):
+    """Each scoped query's terms co-occur in exactly ONE in-scope document.
+
+    This is what makes a scoped fixture a measurement rather than a wish.
+    The keyword path is AND-of-terms with plural widening
+    (`library_fts_query.build_fts_match_query` — the app's own expansion is
+    imported here so the guard tracks the real matcher), so a scoped target
+    is reachable by keyword only while the query's whole term set occurs
+    together in it and nowhere else in the scope. Break that and the fixture
+    stops being "findable in principle": the scoped cell would then be
+    measuring a query nothing can answer, and the later scope-aware-hybrid
+    flip would have nothing to flip to.
+    """
+    from tldw_chatbook.Library.library_fts_query import expand_keyword_term
+
+    words_by_slug = {
+        slug: set(re.findall(r"[a-z0-9]+", f"{doc.title} {doc.content}".lower()))
+        for slug, doc in by_slug.items()
+    }
+    wrong: dict[str, list[str]] = {}
+    for query in golden:
+        if query.category != SCOPED_CATEGORY:
+            continue
+        terms = query.query.lower().split()
+        hits = sorted(
+            slug
+            for slug in query.scope_slugs or ()
+            if all(
+                any(variant.lower() in words_by_slug[slug] for variant in expand_keyword_term(term))
+                for term in terms
+            )
+        )
+        if hits != sorted(query.relevant_slugs):
+            wrong[query.id] = hits
+    assert wrong == {}
+
+
+#: The scope every scoped fixture runs under, as shipped. Pinned exactly,
+#: not floored — see `test_the_shared_scoped_scope_is_the_size_its_own_
+#: measurement_requires` for why a floor is the wrong shape here.
+SHIPPED_SCOPE_SIZE = 100
+
+
+def _scoped_scopes(golden) -> dict[str, tuple[str, ...]]:
+    return {
+        query.id: tuple(query.scope_slugs or ())
+        for query in golden
+        if query.category == SCOPED_CATEGORY
+    }
+
+
+def test_every_scoped_fixture_carries_the_same_scope(golden):
+    """One scope, seven fixtures — asserted, because TOML cannot share a list.
+
+    The scoped fixtures all run under the same collection ("every document
+    the P2ab scale-up added that a scope can name"), and TOML has no way to
+    say that once: the slug list is pasted into each fixture. Seven copies of
+    a hundred slugs is seven chances to diverge, and a diverged scope is
+    invisible in the report — each cell would simply be measured against a
+    different haystack, which is the "plausible numbers that mean something
+    else" failure in its purest form.
+
+    This is the single definition. An intentional change to the collection
+    has to change every copy identically, which is exactly the friction that
+    makes it a decision rather than an edit.
+    """
+    scopes = _scoped_scopes(golden)
+    assert len(scopes) >= 6, f"only {len(scopes)} scoped fixtures found"
+    distinct = set(scopes.values())
+    assert len(distinct) == 1, (
+        "scoped fixtures no longer share one scope; the diverging ids are "
+        f"{sorted(scopes)} with {len(distinct)} distinct slug lists"
+    )
+
+
+def test_the_shared_scoped_scope_is_the_size_its_own_measurement_requires(golden):
+    """The scope size is a MEASURED parameter of the fixture, not a minimum.
+
+    Lever data, from authoring (candidates probed against the shipped
+    corpus, k=10, admission = target misses top-10 in hybrid AND semantic):
+
+        scope size    scoped candidates that failed
+             32                  1 of 8
+             80                  6 of 8
+            100                  7 of 8   <- shipped
+
+    and, re-measured at review against the SHIPPED seven fixtures, a scope
+    trimmed to 40 documents leaves only 4 of 7 failing
+    (`sc-storm-overflow-record` surfaces at rank 7, `sc-sample-point-sign` at
+    9, `sc-duty-board-notice` at 5). A floor of 40 would therefore have
+    passed a corpus whose scoped before-number had silently risen from 0.000
+    to roughly 0.43 — and the scope-aware-hybrid task would then have
+    measured a flip that had mostly already happened.
+
+    So the size is pinned exactly. A scope is only a measurement while a
+    top-10 can exclude something from it; shrinking this list is not a
+    tidy-up, it is a change to the instrument, and the only correct response
+    to this test failing is to re-probe every scoped fixture and rewrite its
+    `# admitted:` line with what the new scope actually produces.
+    """
+    scopes = _scoped_scopes(golden)
+    sizes = {query_id: len(scope) for query_id, scope in scopes.items()}
+    assert set(sizes.values()) == {SHIPPED_SCOPE_SIZE}, (
+        f"scoped scope sizes are {sorted(set(sizes.values()))}, not "
+        f"{SHIPPED_SCOPE_SIZE}: at 40 documents only 4 of these 7 fixtures "
+        "still fail, so a trimmed scope reports a before-number that is not "
+        "0.000 while every other test stays green (see this test's docstring)"
+    )
+
+
+#: SHA-256 over the shared scope's membership — the COMPOSITION pin that the
+#: size pin above cannot be. Regenerate it only alongside a re-probe of every
+#: scoped fixture: `_scope_digest(next(iter(_scoped_scopes(golden).values())))`.
+SHIPPED_SCOPE_SHA256 = (
+    "9678a923e4c32be3643452dd223867f3355f1f2fd78e95a2e0e77336072fc54a"
+)
+
+
+def _scope_digest(scope: tuple[str, ...]) -> str:
+    """Order-independent digest of a scope's membership.
+
+    Sorted, because the slug order inside the TOML list is formatting: a
+    reflowed list is the same haystack and must not red the pin. Then
+    length-delimited per slug, the `baseline_io._fixture_digest` idiom, so a
+    character moved from the end of one slug to the start of the next is not
+    hashed as no change at all.
+    """
+    digest = hashlib.sha256()
+    for slug in sorted(scope):
+        digest.update(f"{len(slug)}:".encode("ascii"))
+        digest.update(slug.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def test_the_shared_scoped_scope_is_the_composition_it_was_measured_on(golden):
+    """WHICH hundred documents, not how many.
+
+    The two tests above pin identity (all seven scopes agree) and cardinality
+    (all seven are exactly 100). Together they still admit a mutation that
+    changes what these fixtures measure: swap a slug for another corpus slug
+    in all seven lists at once, and the scopes stay identical to each other,
+    stay 100 long, and every guard stays green — while the haystack each
+    scoped cell is scored against has silently changed. That gap was found by
+    review during the fail-first authoring pass and is what this pin closes.
+
+    It matters because the scoped class is authored ON its haystack: each
+    fixture was admitted by probing it against THESE hundred documents (the
+    `# admitted:` line in `golden.toml` records the run), and the class's
+    whole claim — keyword-findable in scope, invisible to the vector leg — is
+    a claim about which documents are competing. Swap the competition and the
+    claim is untested, at unchanged numbers.
+
+    The correct response to this failing is never to regenerate the constant.
+    It is to re-probe every scoped fixture against the new collection and
+    rewrite its `# admitted:` line with what the new scope actually produces —
+    then regenerate the constant, because the instrument really did change.
+    """
+    scopes = _scoped_scopes(golden)
+    digests = {query_id: _scope_digest(scope) for query_id, scope in scopes.items()}
+    assert set(digests.values()) == {SHIPPED_SCOPE_SHA256}, (
+        "the scoped fixtures' shared scope is no longer the collection these "
+        "fixtures were probed against: digests "
+        f"{sorted(set(digests.values()))} != {SHIPPED_SCOPE_SHA256!r}. Same "
+        "size and same list in all seven files is not the same haystack (see "
+        "this test's docstring)."
+    )
+
+
+def test_negation_queries_carry_a_cue_their_target_never_uses(golden, by_slug):
+    """The mechanism of the negation class, pinned.
+
+    A negation query names the norm ("the standard mains supply") and asks
+    for the exception. It is hard for exactly one reason: the cue is carried
+    by the documents asserting the norm and is ABSENT from the target, so
+    the keyword paths cannot reach the target and the vector leg is pulled
+    toward the norm. Write the cue into the exception document and the
+    keyword path answers the query immediately; delete the norm documents
+    and there is nothing for the query to be wrong about.
+    """
+    stems_by_slug = {slug: _doc_stems(doc) for slug, doc in by_slug.items()}
+    weak: dict[str, str] = {}
+    for query in golden:
+        if query.category != "negation":
+            continue
+        target_stems: set[str] = set()
+        for slug in query.relevant_slugs:
+            target_stems |= stems_by_slug[slug]
+        cues = {
+            stem: sum(1 for stems in stems_by_slug.values() if stem in stems)
+            for stem in _content_stems(query.query) - target_stems
+        }
+        strong = {stem: count for stem, count in cues.items() if count >= 5}
+        if not strong:
+            weak[query.id] = (
+                f"no cue absent from the target and present in >=5 documents; "
+                f"candidates: {cues}"
+            )
+    assert weak == {}
+
+
+def test_prompt_fixtures_are_the_source_type_the_vector_index_never_holds(
+    golden, by_slug
+):
+    """The prompt class measures the KEYWORD leg alone, by construction.
+
+    DISCLOSED UPDATE (2026-08-11, TASK-15020/B2). This test used to be
+    "the source type nothing can write": prompts had no writer, so the
+    class's 0.000 was total absence. B2 shipped the writer and the engine's
+    prompts sub-leg, so the queries are now answered — through the FTS leg
+    only, because nothing indexes prompts semantically. The coupling worth
+    pinning is therefore the surviving one: the prompt queries target only
+    prompt documents, and `prompt` is exactly the source type ingestion
+    writes-but-never-indexes. Without this, a prompt cell reading 0.000 in
+    the semantic column would be read as a retrieval defect instead of as
+    the structural fact it is.
+    """
+    from Tests.RAG_Eval.harness.ingest import UNINDEXED_SOURCE_TYPES
+
+    assert set(UNINDEXED_SOURCE_TYPES) == {"prompt"}
+    assert set(UNINDEXED_SOURCE_TYPES) < set(SOURCE_TYPES)
+
+    for query in golden:
+        targets = {by_slug[slug].source_type for slug in query.relevant_slugs}
+        if query.category == "prompt":
+            assert targets == {"prompt"}, f"{query.id}: targets {sorted(targets)}"
+        else:
+            assert "prompt" not in targets, (
+                f"{query.id} ({query.category}) targets a prompt document, which "
+                "the semantic leg cannot reach — its cell would blame retrieval "
+                "for a missing index"
+            )
+
+
 def test_fixture_files_parse_as_plain_toml_with_the_documented_shape():
     """Guards the file-level contract independently of the loader, so a
     loader bug cannot mask a fixture that no longer matches the schema."""
@@ -470,8 +928,12 @@ def test_fixture_files_parse_as_plain_toml_with_the_documented_shape():
     assert {key for doc in raw_corpus["doc"] for key in doc} == {
         "slug", "source_type", "title", "content",
     }
-    assert {key for query in raw_golden["query"] for key in query} == {
-        "id", "query", "category", "relevant_slugs",
+    golden_keys = {key for query in raw_golden["query"] for key in query}
+    assert {"id", "query", "category", "relevant_slugs"} <= golden_keys
+    # `scope_slugs` is optional (scoped queries only), so it is permitted but
+    # not required; nothing else may appear.
+    assert golden_keys <= {
+        "id", "query", "category", "relevant_slugs", "scope_slugs",
     }
 
 
@@ -595,6 +1057,119 @@ def test_every_defect_is_reported_in_one_error_not_just_the_first():
 
 
 # --------------------------------------------------------------------------
+# validator: the scoped category and its `scope_slugs`
+#
+# A scoped query measures retrieval *under a restriction*, so its scope is
+# part of the measurement, not decoration. Every rule below turns a scope
+# defect into a loud failure instead of a plausible number: a scope on the
+# wrong category silently measures nothing, a missing scope makes a "scoped"
+# cell unscoped, and a target outside its own scope scores 0.0 forever and
+# reads as a retrieval regression.
+# --------------------------------------------------------------------------
+
+
+def test_a_valid_scoped_query_is_accepted():
+    """A second scoped query, scoping BOTH scopeable source types.
+
+    The minimal set already carries a single-type scope; this one exercises
+    the union case, which is the shape `build_semantic_allowlists` returns
+    one entry per type for.
+    """
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-two-types"))
+    assert validate(_valid_corpus(), golden) is None
+
+
+def test_scope_slugs_on_a_non_scoped_category_is_reported():
+    """Only the scoped category may carry a scope.
+
+    A `scope_slugs` on a keyword query would be silently ignored by the
+    runner (it scopes by category), so the query would measure unscoped
+    retrieval while its fixture claims otherwise.
+    """
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-kw-scoped", category="keyword"))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-kw-scoped'" in message
+    assert "scope_slugs" in message
+    assert "scoped" in message
+
+
+def test_a_scoped_query_without_scope_slugs_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-none", scope=None))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-none'" in message
+    assert "scope_slugs" in message
+
+
+def test_an_empty_scope_slugs_list_is_reported():
+    """Empty is not "unscoped": `EffectiveScope` has no scoped-with-nothing
+    state, so an empty scope would resolve to a plain unscoped search."""
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-empty", scope=()))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-empty'" in message
+    assert "scope_slugs" in message
+
+
+def test_unknown_scope_slug_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-ghost", scope=("n1", "ghost-doc")))
+    message = _defects(_valid_corpus(), golden)
+    assert "unknown scope_slug" in message
+    assert "'ghost-doc'" in message
+    assert "'q-sc-ghost'" in message
+
+
+def test_repeated_scope_slug_in_one_query_is_reported():
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-dup", scope=("n1", "n1")))
+    message = _defects(_valid_corpus(), golden)
+    assert "repeats scope_slug" in message
+    assert "'n1'" in message
+
+
+def test_a_scope_slug_naming_an_unscopeable_source_type_is_reported():
+    """Conversations are outside the scope vocabulary (rag_scope spec D5).
+
+    Scoping one would build an allowlist the seam cannot honour, and the
+    query would quietly measure something else.
+    """
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-conv", relevant=("c1",), scope=("c1",)))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-conv'" in message
+    assert "'c1'" in message
+    assert "source_type" in message
+
+
+def test_a_scoped_querys_targets_must_lie_inside_its_own_scope():
+    """The defect that costs a whole category: a target outside the scope is
+    unreachable *by construction*, so the cell reports 0.0 recall forever and
+    reads as a retrieval regression rather than as a broken fixture."""
+    golden = _valid_golden()
+    golden.append(_scoped_query("q-sc-outside", relevant=("c1",), scope=("n1", "m1")))
+    message = _defects(_valid_corpus(), golden)
+    assert "'q-sc-outside'" in message
+    assert "'c1'" in message
+    assert "scope" in message
+
+
+def test_the_scopeable_source_types_match_the_apps_scope_vocabulary():
+    """Drift guard: the harness's notion of "scopeable" is the app's.
+
+    `SCOPEABLE_SOURCE_TYPES` is stated locally so the always-on fixture
+    module stays stdlib-only, which only stays honest while it agrees with
+    `rag_scope`'s own vocabulary.
+    """
+    from tldw_chatbook.Chat.rag_scope import _KNOWN_SOURCE_TYPES
+
+    assert set(SCOPEABLE_SOURCE_TYPES) == set(_KNOWN_SOURCE_TYPES)
+    assert set(SCOPEABLE_SOURCE_TYPES) < set(SOURCE_TYPES)
+
+
+# --------------------------------------------------------------------------
 # loaders: structural defects
 # --------------------------------------------------------------------------
 
@@ -679,6 +1254,60 @@ relevant_slugs = ["n1", 3]
         load_golden(path)
     message = str(excinfo.value)
     assert "relevant_slugs" in message
+    assert len(excinfo.value.defects) >= 2
+
+
+def test_load_golden_reads_scope_slugs_and_defaults_to_none(tmp_path):
+    """The loader must *accept* the key (it is not an unknown key) and must
+    distinguish "absent" from "present but empty"; the validator, not the
+    loader, decides which categories may carry it."""
+    path = _write_toml(
+        tmp_path,
+        "golden.toml",
+        """
+[[query]]
+id = "q1"
+query = "alpha"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = ["n1", " m1 "]
+
+[[query]]
+id = "q2"
+query = "beta"
+category = "keyword"
+relevant_slugs = ["n1"]
+""",
+    )
+    queries = load_golden(path)
+    assert queries[0].scope_slugs == ("n1", "m1")
+    assert queries[1].scope_slugs is None
+
+
+def test_load_golden_rejects_bad_scope_slugs(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        "golden.toml",
+        """
+[[query]]
+id = "q1"
+query = "alpha"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = "n1"
+
+[[query]]
+id = "q2"
+query = "beta"
+category = "scoped"
+relevant_slugs = ["n1"]
+scope_slugs = ["n1", 3]
+""",
+    )
+    with pytest.raises(GoldenSetError) as excinfo:
+        load_golden(path)
+    message = str(excinfo.value)
+    assert "scope_slugs" in message
     assert len(excinfo.value.defects) >= 2
 
 

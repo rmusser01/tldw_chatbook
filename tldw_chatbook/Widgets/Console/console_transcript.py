@@ -11,7 +11,7 @@ from typing import Any, Iterable, Literal, Mapping
 from loguru import logger
 from PIL import Image as PILImage
 from rich_pixels import Pixels
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
@@ -73,6 +73,12 @@ CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 #: (``UI/Chat_Modules/chat_log_pruning.py`` on feat/toad-ui-improvements).
 DEFAULT_PRUNE_HIGH_WATERMARK = 20000
 DEFAULT_PRUNE_LOW_WATERMARK = 12000
+#: TASK-15455: long resumes render only a buffered tail before Markdown is
+#: parsed.  The effective budget also scales with the mounted viewport; these
+#: floors keep a useful scroll buffer when layout has not settled yet.
+DEFAULT_INITIAL_WINDOW_LINES = 144
+DEFAULT_SCROLLBACK_CHUNK_LINES = 96
+SCROLLBACK_HYDRATION_THRESHOLD = 2
 #: task-2154.16 (FB-01): a failed assistant row with no partial content used
 #: to render as the bare token ``[failed]``. It now shows this placeholder
 #: (dimmed) with the state carried by a separate dim status line. Same copy
@@ -753,6 +759,95 @@ def _assistant_markdown_body(
     return message.content
 
 
+#: TASK-15456. A line that -- with <=3 leading spaces, per CommonMark's fence
+#: indentation rule -- opens or closes a fenced code block: a run of 3+
+#: backticks or tildes, optionally followed by trailing content (an info
+#: string on an opening line; nothing but whitespace on a closing line).
+_FENCE_DELIMITER_LINE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _console_markdown_body_ends_in_open_fence(body: str) -> bool:
+    """Return True only when ``body`` is confidently known to end inside an
+    open (unclosed) top-level Markdown code fence.
+
+    Deliberately conservative: this tracks fence-delimiter parity line by
+    line rather than running a real Markdown parse, so it can be called on
+    every streamed delta without itself becoming the cost it exists to
+    avoid. It mirrors just the CommonMark rules that matter for staying
+    confident:
+
+    - An opening line is <=3 leading spaces of ```` ``` ```` / ``~~~`` (3+
+      repeats), optionally followed by an info string. A backtick-fenced
+      info string may not itself contain a backtick (CommonMark); a line
+      like ``` ```some`code` ``` therefore never opens a fence here --
+      ambiguous stays "not open", the safe direction (see below).
+    - A closing line is <=3 leading spaces of the SAME delimiter character,
+      a run length >= the opening run, followed by nothing but trailing
+      whitespace.
+    - Anything else while a fence is open just stays inside it, regardless
+      of what it contains (mismatched-delimiter or shorter-run lines can't
+      close a real fence either).
+
+    This does not track blockquote/list-item indentation contexts, so a
+    fence nested inside one can be mis-scored. That is safe in both
+    directions for the caller (a streaming-append throttle): scoring "open"
+    when a real parse would say "closed" only delays a flush (content is
+    still applied in full, just later); scoring "closed" when a real parse
+    would say "open" only skips an optimization opportunity (falls back to
+    the unthrottled append, today's behavior). Neither ever drops or
+    reorders content -- the throttle that consumes this always applies the
+    complete accumulated text on flush, and (fix round 1, TASK-15456) every
+    path that can end a message's active streaming --
+    ``_append_or_defer_body_delta`` seeing a non-"streaming" status, AND
+    ``sync_message``'s no-new-body-text fast path -- flushes any buffered
+    text unconditionally, without consulting this function at all. So a
+    false "open" verdict here is now purely a *delayed-highlight* risk, not
+    a drop risk, regardless of how this scan is wrong.
+
+    Known cost: this rescans the *entire* ``body`` on every call that needs
+    a decision (``_append_or_defer_body_delta`` passes ``self._body_text``,
+    not just the new delta), so it is O(body length) per streamed tick, not
+    O(delta). For a single assistant reply that stays well under a few
+    hundred KB (the normal case) this is negligible next to the Pygments
+    cost it exists to avoid, but it is a real, unbounded-with-message-size
+    cost worth knowing about, not a free check.
+    """
+    fence_char: str | None = None
+    fence_len = 0
+    for line in body.split("\n"):
+        match = _FENCE_DELIMITER_LINE_RE.match(line)
+        if not match:
+            continue
+        run, rest = match.groups()
+        char = run[0]
+        if fence_char is None:
+            if char == "`" and "`" in rest:
+                # Not a valid opening fence line (backtick info strings
+                # can't contain backticks) -- ordinary text, ignore it.
+                continue
+            fence_char = char
+            fence_len = len(run)
+            continue
+        if char == fence_char and len(run) >= fence_len and not rest.strip():
+            fence_char = None
+            fence_len = 0
+    return fence_char is not None
+
+
+#: TASK-15456. While an assistant reply is streaming inside an open code
+#: fence, batch appends for up to this many seconds before flushing to the
+#: Markdown widget instead of calling ``Markdown.append()`` (and therefore
+#: re-running Pygments over the whole fence-so-far, textual/widgets/
+#: _markdown.py:895-901) on every 0.2s sync tick. A wall-clock deadline
+#: (rather than a tick counter) keeps the bound meaningful even if a slow
+#: model pauses mid-fence between chunks: it depends only on how long
+#: content has sat unflushed, not on how many sync ticks happened to land
+#: while it did. Total Pygments work across a stream scales down by
+#: roughly (this many seconds / 0.2s sync interval) -- see the task's
+#: Implementation Notes for the derivation.
+_FENCE_APPEND_DEFER_SECONDS = 1.0
+
+
 def _assistant_markdown_header(
     message: ConsoleChatMessage,
     presentation: ConsoleMessagePresentation | None = None,
@@ -915,6 +1010,11 @@ class ConsoleMarkdownMessage(Vertical):
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
         self._body_text = _assistant_markdown_body(message, self._presentation)
+        # TASK-15456: text appended to ``self._body_text`` above but not yet
+        # handed to the Markdown widget (deferred while streaming inside an
+        # open fence), plus the monotonic deadline by which it must flush.
+        self._pending_fence_delta = ""
+        self._fence_defer_deadline: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -973,12 +1073,86 @@ class ConsoleMarkdownMessage(Vertical):
         footer.display = footer_content is not None
         new_body = _assistant_markdown_body(message, presentation)
         if new_body == self._body_text:
+            # TASK-15456 fix round 1: a status-only change (Stop, a
+            # length-cutoff, a failure -- all routine mid-open-fence exits
+            # from "streaming") reaches this fast path with an UNCHANGED
+            # body, because the reconciler calls sync_message whenever the
+            # row signature changes and status is part of that signature.
+            # `self._body_text` already mirrors the true full content (it
+            # advances immediately in the growth branch below, even when
+            # the corresponding widget append was deferred) -- so this is
+            # the only place a still-buffered fence-interior tail can ever
+            # reach the widget once the message stops growing. Returning
+            # here without checking would strand that text permanently.
+            if self._pending_fence_delta and message.status != "streaming":
+                self._flush_pending_fence_delta(markdown)
             return
         if new_body.startswith(self._body_text):
-            markdown.append(new_body[len(self._body_text) :])
+            delta = new_body[len(self._body_text) :]
+            self._body_text = new_body
+            self._append_or_defer_body_delta(markdown, delta, message)
         else:
+            # Non-append edit (variant switch, retry, DB-resume rebind): the
+            # prior diff base no longer applies, so any deferred fence
+            # buffer is void too -- markdown.update(new_body) below replaces
+            # the widget's content wholesale, so the (now-irrelevant, would
+            # have been superseded anyway) pending text is safe to discard
+            # rather than flush.
+            self._pending_fence_delta = ""
+            self._fence_defer_deadline = None
             markdown.update(new_body)
-        self._body_text = new_body
+            self._body_text = new_body
+
+    def _flush_pending_fence_delta(self, markdown: Markdown) -> None:
+        """Hand any buffered fence-interior text to the widget and clear state.
+
+        The single place that actually calls ``Markdown.append()`` for
+        deferred text, used both by a deadline/status-driven flush inside
+        ``_append_or_defer_body_delta`` and by ``sync_message``'s terminal-
+        status fast path above -- so there is exactly one flush
+        implementation for the "hand over the complete buffered text"
+        invariant to hold against.
+        """
+        pending = self._pending_fence_delta
+        self._pending_fence_delta = ""
+        self._fence_defer_deadline = None
+        if pending:
+            markdown.append(pending)
+
+    def _append_or_defer_body_delta(
+        self, markdown: Markdown, delta: str, message: ConsoleChatMessage
+    ) -> None:
+        """Apply a streamed body delta, throttling fence-interior Pygments work.
+
+        TASK-15456: ``Markdown.append()`` is cheap for ordinary prose growth
+        (Textual only re-parses from the last completed top-level block), so
+        that path is untouched -- this only changes behavior while the body
+        currently ends inside an open code fence during active streaming,
+        where every ``append()`` re-runs Pygments over the whole
+        fence-so-far. In that state, deltas are buffered instead of applied
+        immediately, for up to ``_FENCE_APPEND_DEFER_SECONDS``, bounding
+        both the buffered memory and the visible staleness window. Every
+        branch below still ends by handing the widget the *complete*
+        buffered text -- append-order and final content are unaffected, only
+        the number of Markdown/Pygments passes changes. A buffer started
+        here can also be flushed later from ``sync_message``'s terminal-
+        status fast path (see ``_flush_pending_fence_delta``) if the message
+        stops growing before this function runs again.
+        """
+        self._pending_fence_delta += delta
+        now = monotonic()
+        deadline_due = (
+            self._fence_defer_deadline is not None and now >= self._fence_defer_deadline
+        )
+        if (
+            message.status == "streaming"
+            and not deadline_due
+            and _console_markdown_body_ends_in_open_fence(self._body_text)
+        ):
+            if self._fence_defer_deadline is None:
+                self._fence_defer_deadline = now + _FENCE_APPEND_DEFER_SECONDS
+            return
+        self._flush_pending_fence_delta(markdown)
 
     @on(Markdown.LinkClicked)
     def _open_link(self, event: Markdown.LinkClicked) -> None:
@@ -1477,6 +1651,11 @@ class ConsoleTranscript(VerticalScroll):
         #: and the reconciliation stale-key path owns their removal.
         self._pruned_message_ids: set[str] = set()
         self._prune_check_scheduled = False
+        #: TASK-15455: scrollback hydration is coalesced separately from the
+        #: existing height-prune pass.  Both mutate the same contiguous hidden
+        #: prefix, but only hydration removes ids from it.
+        self._scrollback_hydration_scheduled = False
+        self._hydrating_scrollback = False
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -1604,6 +1783,169 @@ class ConsoleTranscript(VerticalScroll):
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
 
+    @on(events.MouseScrollUp)
+    def _hydrate_scrollback_on_boundary_wheel(
+        self, _event: events.MouseScrollUp
+    ) -> None:
+        """Notice an upward wheel gesture that cannot change ``scroll_y``."""
+        if self.scroll_y <= SCROLLBACK_HYDRATION_THRESHOLD:
+            self._schedule_scrollback_hydration()
+
+    def action_page_up(self) -> None:
+        """Page upward and hydrate when the current window is already at y=0."""
+        at_boundary = self.scroll_y <= SCROLLBACK_HYDRATION_THRESHOLD
+        super().action_page_up()
+        if at_boundary:
+            self._schedule_scrollback_hydration()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Hydrate the previous window when a detached reader reaches the top."""
+        super().watch_scroll_y(old_value, new_value)
+        if (
+            new_value <= old_value
+            and new_value <= SCROLLBACK_HYDRATION_THRESHOLD
+        ):
+            self._schedule_scrollback_hydration()
+
+    def _window_viewport_height(self) -> int:
+        """Return a stable viewport height for line-budget calculations."""
+        return max(1, int(self.size.height or 24))
+
+    def _initial_window_line_budget(self) -> int:
+        """Return the tail-first render budget in estimated terminal lines."""
+        return max(
+            DEFAULT_INITIAL_WINDOW_LINES,
+            self._window_viewport_height() * 6,
+        )
+
+    def _scrollback_chunk_line_budget(self) -> int:
+        """Return the amount of earlier history prepended per boundary request."""
+        return max(
+            DEFAULT_SCROLLBACK_CHUNK_LINES,
+            self._window_viewport_height() * 4,
+        )
+
+    def _estimated_message_lines(self, message: ConsoleChatMessage) -> int:
+        """Cheaply estimate a message's rendered height without parsing Markdown."""
+        content = (
+            message.variants.current.content
+            if message.variants is not None
+            else message.content
+        )
+        content_width = max(20, int(self.size.width or 80) - 4)
+        wrapped_lines = 0
+        for line in content.splitlines() or ("",):
+            wrapped_lines += max(1, (len(line) + content_width - 1) // content_width)
+        # One separator and one speaker/status line are the stable minimum
+        # around every message body.  Rich/Textual may wrap differently, so
+        # watermarks remain the authoritative post-layout bound.
+        return wrapped_lines + 2
+
+    def _turn_aligned_start(self, messages: list[ConsoleChatMessage], start: int) -> int:
+        """Move a window boundary back to the nearest user turn."""
+        start = max(0, min(start, len(messages)))
+        while start > 0 and (
+            start >= len(messages)
+            or messages[start].role != ConsoleMessageRole.USER
+        ):
+            start -= 1
+        return start
+
+    def _tail_window_start(
+        self,
+        messages: list[ConsoleChatMessage],
+        *,
+        end: int | None = None,
+        line_budget: int,
+    ) -> int:
+        """Return the earliest message in a bounded tail slice."""
+        end = len(messages) if end is None else max(0, min(end, len(messages)))
+        if end == 0:
+            return 0
+        used = 0
+        start = end
+        while start > 0 and used < line_budget:
+            start -= 1
+            used += self._estimated_message_lines(messages[start])
+        return self._turn_aligned_start(messages, start)
+
+    def _first_visible_message_index(self) -> int:
+        """Return the contiguous window start in the complete message list."""
+        for index, message in enumerate(self._messages):
+            if message.id not in self._pruned_message_ids:
+                return index
+        return len(self._messages)
+
+    def _set_hidden_prefix(self, start: int) -> None:
+        """Replace the view-only hidden set with one contiguous prefix."""
+        start = max(0, min(start, len(self._messages)))
+        self._pruned_message_ids = {
+            message.id for message in self._messages[:start]
+        }
+
+    def _schedule_scrollback_hydration(self) -> None:
+        """Coalesce one lazy prepend after explicit detached upward scrolling."""
+        if (
+            self._scrollback_hydration_scheduled
+            or self._hydrating_scrollback
+            or not self.is_mounted
+            or self._is_following_tail()
+            or self._first_visible_message_index() <= 0
+        ):
+            return
+        self._scrollback_hydration_scheduled = True
+        self.call_later(self._hydrate_scrollback)
+
+    async def _hydrate_scrollback(self) -> None:
+        """Prepend one earlier chunk while keeping the current content fixed."""
+        self._scrollback_hydration_scheduled = False
+        if (
+            self._hydrating_scrollback
+            or not self.is_mounted
+            or self._is_following_tail()
+        ):
+            return
+        current_start = self._first_visible_message_index()
+        if current_start <= 0:
+            return
+        next_start = self._tail_window_start(
+            self._messages,
+            end=current_start,
+            line_budget=self._scrollback_chunk_line_budget(),
+        )
+        if next_start >= current_start:
+            next_start = current_start - 1
+
+        previous_height = self.virtual_size.height
+        previous_scroll_y = float(self.scroll_y)
+        self._hydrating_scrollback = True
+        self._set_hidden_prefix(next_start)
+        try:
+            async with self._refresh_lock:
+                await self._reconcile_rows(self._transcript_rows())
+        except Exception:
+            self._hydrating_scrollback = False
+            raise
+
+        def _restore_reader() -> None:
+            try:
+                if not self.is_mounted:
+                    return
+                added_height = max(0, self.virtual_size.height - previous_height)
+                # Use Textual's internal switch only to avoid treating this
+                # compensating scroll as a fresh user gesture.  The public
+                # scroll_to() always calls release_anchor() first.
+                self._scroll_to(
+                    y=previous_scroll_y + added_height,
+                    animate=False,
+                    release_anchor=False,
+                )
+                self._schedule_prune_check()
+            finally:
+                self._hydrating_scrollback = False
+
+        self.call_after_refresh(_restore_reader)
+
     def set_presentation_context(
         self,
         context: ConsolePresentationContext,
@@ -1640,6 +1982,11 @@ class ConsoleTranscript(VerticalScroll):
                 cache entries for messages no longer present are pruned here
                 (delete correctness for the TASK-259 per-message cache).
         """
+        previous_visible_ids = [
+            message.id
+            for message in self._messages
+            if message.id not in self._pruned_message_ids
+        ]
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
         # Expansion is per message id, so ids that left the transcript (a
@@ -1647,9 +1994,26 @@ class ConsoleTranscript(VerticalScroll):
         # set grows for the life of the widget and a recycled id would come
         # back already expanded.
         self._expanded_tool_output_ids &= message_ids
-        # TASK-1365: same lifecycle for the prune window -- a session switch
-        # re-renders from scratch, and a deleted message must not linger here.
-        self._pruned_message_ids &= message_ids
+        # TASK-15455: preserve the current contiguous window across streaming
+        # updates by anchoring it to the first still-present visible id.  A
+        # disjoint session switch has no such id and starts from a bounded tail
+        # before any Markdown signature/widget is built.
+        index_by_id = {
+            message.id: index for index, message in enumerate(self._messages)
+        }
+        preserved_indices = [
+            index_by_id[message_id]
+            for message_id in previous_visible_ids
+            if message_id in index_by_id
+        ]
+        preserved_start = min(preserved_indices) if preserved_indices else None
+        if preserved_start is None:
+            window_start = self._tail_window_start(
+                self._messages,
+                line_budget=self._initial_window_line_budget(),
+            )
+        else:
+            window_start = preserved_start
         new_user_send = any(
             message.id not in self._seen_message_ids
             and message.role == ConsoleMessageRole.USER
@@ -1681,7 +2045,17 @@ class ConsoleTranscript(VerticalScroll):
             and self.pending_selection_id in message_ids
         ):
             self.selected_message_id = self.pending_selection_id
+            pending_index = index_by_id[self.pending_selection_id]
+            if pending_index < window_start:
+                # Branch sibling handoff: the replacement id may sit exactly
+                # where the old window boundary id disappeared.  Keep the new
+                # selected row in the window rather than mounting a disjoint
+                # orphan or clearing a valid selection.
+                window_start = self._turn_aligned_start(
+                    self._messages, pending_index
+                )
             self.pending_selection_id = None
+        self._set_hidden_prefix(window_start)
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
         for stale_id in [
@@ -1999,8 +2373,19 @@ class ConsoleTranscript(VerticalScroll):
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
-        if message_id not in {message.id for message in self._messages}:
+        index_by_id = {
+            message.id: index for index, message in enumerate(self._messages)
+        }
+        if message_id not in index_by_id:
             return
+        selected_index = index_by_id[message_id]
+        if selected_index < self._first_visible_message_index():
+            # Keep the public pre-windowing contract: callers may select any
+            # message in the complete transcript model.  Reveal the contiguous
+            # prefix through that turn before mounting its action row.
+            self._set_hidden_prefix(
+                self._turn_aligned_start(self._messages, selected_index)
+            )
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
@@ -2453,59 +2838,96 @@ class ConsoleTranscript(VerticalScroll):
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
 
+        removals: list[Widget] = []
         for stale_key in [
             key for key in self._row_widgets if key not in desired_key_set
         ]:
-            stale_widget = self._row_widgets.pop(stale_key)
+            removals.append(self._row_widgets.pop(stale_key))
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
-            await stale_widget.remove()
 
-        previous_widget: Widget | None = None
-        for index, row in enumerate(rows):
+        replacements: dict[str, Widget] = {}
+        for row in rows:
+            widget = self._row_widgets.get(row.key)
+            if widget is None or self._row_signatures.get(row.key) == row.signature:
+                continue
+            updated_widget = self._update_row_widget(widget, row)
+            if updated_widget is widget:
+                self._row_signatures[row.key] = row.signature
+                continue
+            removals.append(widget)
+            replacements[row.key] = updated_widget
+            self._row_widgets.pop(row.key, None)
+            self._row_signatures.pop(row.key, None)
+
+        # Textual's remove_children() prunes all supplied direct children in
+        # one DOM operation.  A session swap therefore has one await instead
+        # of two awaits per message (rule + body).
+        if removals:
+            await self.remove_children(removals)
+
+        pending_widgets: list[Widget] = []
+        pending_rows: list[_TranscriptRow] = []
+
+        async def _mount_pending(*, before: Widget | None) -> bool:
+            """Mount one contiguous missing run and validate attachment."""
+            if not pending_widgets:
+                return True
             if self._closing or self._pruning or not self.is_attached:
-                # This instance is being removed (a parent recompose/session
-                # surface swap can prune the transcript between this loop's
-                # awaits). Widget.mount() silently no-ops while pruning, so
-                # continuing would record detached widgets in the row maps
-                # and then crash in move_child. The replacement instance
-                # composes fresh state; abandon this pass.
+                for pending_row in pending_rows:
+                    self._row_widgets.pop(pending_row.key, None)
+                    self._row_signatures.pop(pending_row.key, None)
+                return False
+            if before is None:
+                await self.mount(*pending_widgets)
+            else:
+                await self.mount(*pending_widgets, before=before)
+            if any(widget.parent is not self for widget in pending_widgets):
+                for pending_row in pending_rows:
+                    self._row_widgets.pop(pending_row.key, None)
+                    self._row_signatures.pop(pending_row.key, None)
+                return False
+            pending_widgets.clear()
+            pending_rows.clear()
+            return True
+
+        for row in rows:
+            if self._closing or self._pruning or not self.is_attached:
                 return
             widget = self._row_widgets.get(row.key)
-            row_was_mounted = False
+            if widget is not None:
+                if not await _mount_pending(before=widget):
+                    return
+                continue
+            widget = replacements.pop(row.key, None)
             if widget is None:
                 widget = self._build_row_widget(row, track=True)
-                if previous_widget is None:
-                    await self.mount(widget, before=0 if self.children else None)
-                else:
-                    await self.mount(widget, after=previous_widget)
-                row_was_mounted = True
-                self._row_widgets[row.key] = widget
-                self._row_signatures[row.key] = row.signature
-            elif self._row_signatures.get(row.key) != row.signature:
-                updated_widget = self._update_row_widget(widget, row)
-                if updated_widget is widget:
-                    self._row_signatures[row.key] = row.signature
-                else:
-                    await widget.remove()
-                    widget = updated_widget
-                    if previous_widget is None:
-                        await self.mount(widget, before=0 if self.children else None)
-                    else:
-                        await self.mount(widget, after=previous_widget)
-                    row_was_mounted = True
-                    self._row_widgets[row.key] = widget
-                    self._row_signatures[row.key] = row.signature
+            self._row_widgets[row.key] = widget
+            self._row_signatures[row.key] = row.signature
+            pending_widgets.append(widget)
+            pending_rows.append(row)
 
-            if row_was_mounted and widget.parent is not self:
-                # Version-proof backstop for the pruning check above:
-                # mount() completed without attaching (it no-ops while the
-                # container is being removed). Drop the phantom map entries
-                # and abandon the pass instead of poisoning later moves.
-                self._row_widgets.pop(row.key, None)
-                self._row_signatures.pop(row.key, None)
+        if pending_widgets:
+            try:
+                pill = self.query_one(
+                    "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+                )
+            except NoMatches:
+                pill = None
+            if not await _mount_pending(before=pill):
                 return
-            if not row_was_mounted:
+        # Preserve the reorder contract for branch changes after the batched
+        # mount/remove work above. TASK-15453 established that move_child is
+        # costly, so only move rows that are not already at their target index.
+        # Read children fresh on every iteration because an earlier move can
+        # shift the remaining indices.
+        previous_widget: Widget | None = None
+        for index, row in enumerate(rows):
+            widget = self._row_widgets[row.key]
+            already_in_position = (
+                index < len(self.children) and self.children[index] is widget
+            )
+            if not already_in_position:
                 if previous_widget is None:
                     self.move_child(widget, before=0)
                 else:

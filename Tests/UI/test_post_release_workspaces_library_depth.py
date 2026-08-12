@@ -577,3 +577,86 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         assert float(rail.scroll_y) > 0, (
             "rail scroll reset to top after the create-workspace recompose"
         )
+
+
+@pytest.mark.asyncio
+async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate() -> (
+    None
+):
+    """TASK-15423: an eligible conversation hands off despite a blocked row.
+
+    The single-item actions used the aggregate `context_handoff_enabled`
+    (`blocked_count == 0` across ALL visible rows), so one
+    foreign-workspace item anywhere in the Library blocked "Open in
+    Console" for every conversation — including fully eligible ones the
+    same session had handed off before the foreign item appeared.
+    """
+    from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "Workspace B research note", "id": "note-cross"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Workspace A chat", "id": "chat-local"}]
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-a", name="Workspace A"
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-b", name="Workspace B"
+    )
+    app.workspace_registry_service.set_active_workspace("workspace-a")
+    app.workspace_registry_service.link_membership(
+        "workspace-b",
+        item_type="note",
+        item_id="note-cross",
+        title="Workspace B research note",
+    )
+    app.workspace_registry_service.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-local",
+        title="Workspace A chat",
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        state = screen._library_workspace_depth_state(refresh=True)
+        for _ in range(100):
+            if state.source_rows:
+                break
+            await pilot.pause(0.05)
+            state = screen._library_workspace_depth_state(refresh=True)
+        assert state.source_rows, "library sources never loaded into the depth state"
+        assert state.context_handoff_enabled is False, (
+            "the seed must keep the aggregate gate closed for this test "
+            "to prove per-item gating"
+        )
+
+        payload = ChatHandoffPayload(
+            source="library",
+            item_type="conversation",
+            title="Workspace A chat",
+            body="Conversation: Workspace A chat",
+            source_id="chat-local",
+        )
+        screen._selected_conversation_handoff_payload = lambda: payload
+        staged: list = []
+        app.open_chat_with_handoff = (
+            lambda p, action_label="": staged.append((p, action_label))
+        )
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen._open_selected_conversation_handoff()
+
+        assert staged, (
+            "the eligible conversation must hand off; it was blocked by "
+            f"the aggregate gate instead: {notifications}"
+        )
+        assert staged[0][0] is payload

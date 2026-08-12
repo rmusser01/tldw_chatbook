@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
+from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 from textual.css.query import NoMatches
 from textual.widgets import Input
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -18,8 +26,35 @@ from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_store import VideoStore
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+
+
+def _video_retention_config(**overrides) -> SimpleNamespace:
+    values = {
+        "retention": "session",
+        "retention_ttl_hours": 24,
+        "max_store_mb": 2048,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.fixture(autouse=True)
+def isolated_video_store(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    data_root = tmp_path / "user-data"
+    config = _video_retention_config()
+    monkeypatch.setattr(
+        "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
+        lambda: data_root,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+        lambda: config,
+    )
+    return data_root / "generated_videos", config
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,10 +132,138 @@ def _chat_handoff(title: str) -> ChatHandoffPayload:
     )
 
 
+def test_video_retention_runs_during_app_construction_once(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_video_store,
+) -> None:
+    video_root, _ = isolated_video_store
+    prior_store = VideoStore()
+    prior_path = prior_store.save("prior-message", "prior-media", b"prior-video")
+    real_enforce_retention = VideoStore.enforce_retention
+    retention_calls: list[VideoStore] = []
+
+    def enforce_retention_spy(self: VideoStore):
+        retention_calls.append(self)
+        return real_enforce_retention(self)
+
+    monkeypatch.setattr(VideoStore, "enforce_retention", enforce_retention_spy)
+
+    app = _production_app(monkeypatch)
+
+    assert retention_calls == [app.generated_video_store]
+    assert not prior_path.exists()
+    assert app.generated_video_store.root == video_root
+
+
+def test_next_app_startup_applies_session_retention_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_app = _production_app(monkeypatch)
+    metadata = VideoGenerationMetadata(
+        name="session-media",
+        prompt="session video",
+        backend="test-backend",
+    )
+    message = ConsoleChatMessage(
+        id="session-message",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[video] session-media",
+        video_metadata=metadata,
+    )
+    current_path = first_app.generated_video_store.save(
+        message.id,
+        metadata.name,
+        b"current-video",
+    )
+
+    second_app = _production_app(monkeypatch)
+
+    assert second_app.generated_video_store is not first_app.generated_video_store
+    assert not current_path.exists()
+    specs = ChatScreen(second_app)._build_video_card_specs([message])
+    assert specs[message.id].status == "expired"
+
+
+def test_next_app_startup_keeps_fresh_ttl_video_and_removes_stale(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_video_store,
+) -> None:
+    _, config = isolated_video_store
+    config.retention = "ttl"
+    config.retention_ttl_hours = 1
+    first_app = _production_app(monkeypatch)
+    fresh_path = first_app.generated_video_store.save(
+        "fresh-message",
+        "fresh-media",
+        b"fresh-video",
+    )
+    stale_path = first_app.generated_video_store.save(
+        "stale-message",
+        "stale-media",
+        b"stale-video",
+    )
+    stale_time = time.time() - 3700
+    os.utime(stale_path, (stale_time, stale_time))
+
+    second_app = _production_app(monkeypatch)
+
+    assert fresh_path.exists()
+    assert not stale_path.exists()
+    assert (
+        second_app.generated_video_store.resolve("fresh-message", "fresh-media")
+        == fresh_path
+    )
+
+
+def test_video_retention_startup_failure_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_path = "/private/generated-videos/customer-42"
+    private_message_id = "private-message-id-771"
+    private_media_name = "private-media-name-882.mp4"
+    retention_calls: list[VideoStore] = []
+
+    def fail_retention(self: VideoStore):
+        retention_calls.append(self)
+        raise RuntimeError(
+            f"{private_path} {private_message_id} {private_media_name}"
+        )
+
+    monkeypatch.setattr(VideoStore, "enforce_retention", fail_retention)
+    diagnostics: list[str] = []
+    sink_id = logger.add(diagnostics.append, level="WARNING", format="{message}")
+    try:
+        app = _production_app(monkeypatch)
+    finally:
+        logger.remove(sink_id)
+
+    assert retention_calls == [app.generated_video_store]
+    assert isinstance(app.generated_video_store, VideoStore)
+    diagnostic = "".join(diagnostics)
+    assert "Generated-video startup retention failed (error_type=RuntimeError)." in diagnostic
+    assert private_path not in diagnostic
+    assert private_message_id not in diagnostic
+    assert private_media_name not in diagnostic
+
+    first_screen = ChatScreen(app)
+    second_screen = ChatScreen(app)
+    assert first_screen._ensure_console_video_store() is app.generated_video_store
+    assert second_screen._ensure_console_video_store() is app.generated_video_store
+    assert retention_calls == [app.generated_video_store]
+
+
 @pytest.mark.asyncio
 async def test_registered_chat_route_uses_only_native_console_and_restores_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    real_enforce_retention = VideoStore.enforce_retention
+    retention_calls: list[VideoStore] = []
+
+    def enforce_retention_spy(self: VideoStore):
+        retention_calls.append(self)
+        return real_enforce_retention(self)
+
+    monkeypatch.setattr(VideoStore, "enforce_retention", enforce_retention_spy)
     app = _production_app(monkeypatch)
     draft = "TASK-649 native Console snapshot"
 
@@ -118,6 +281,26 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             assert not hasattr(chat, "chat_window")
             with pytest.raises(NoMatches):
                 chat.query_one("#chat-window")
+
+            message_id = "current-run-video"
+            metadata = VideoGenerationMetadata(
+                name="current-run-clip",
+                prompt="current run",
+                backend="comfyui",
+            )
+            stored = app.generated_video_store.save(
+                message_id,
+                metadata.name,
+                b"current-run-bytes",
+            )
+            message = ConsoleChatMessage(
+                id=message_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="[video] current-run-clip",
+                video_metadata=metadata,
+            )
+            assert chat._ensure_console_video_store() is app.generated_video_store
+            assert chat._build_video_card_specs([message])[message_id].status == "ready"
 
             composer.load_draft(draft)
             await pilot.click("#console-composer-collapse")
@@ -144,6 +327,16 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 ConsoleComposerBar,
             )
             assert restored_composer.draft_text() == draft
+            assert restored_chat is not chat
+            assert (
+                restored_chat._ensure_console_video_store()
+                is app.generated_video_store
+            )
+            spec = restored_chat._build_video_card_specs([message])[message_id]
+            assert spec.status == "ready"
+            assert spec.file_path == str(stored)
+            assert stored.read_bytes() == b"current-run-bytes"
+            assert retention_calls == [app.generated_video_store]
             assert not hasattr(restored_chat, "chat_window")
             with pytest.raises(NoMatches):
                 restored_chat.query_one("#chat-window")

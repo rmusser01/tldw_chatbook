@@ -19,6 +19,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.worker import Worker
@@ -28,6 +29,10 @@ from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
+    library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_service import (
     DiscoveryResult,
@@ -39,6 +44,11 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     RetainedCommitOperation,
     RetainedPushOperation,
     coalesce_session_changes,
+)
+from tldw_chatbook.Notes.file_notes_conflict_compare import (
+    ConflictComparison,
+    ConflictSide,
+    build_conflict_comparison,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitOutcome,
@@ -66,6 +76,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionTransitionKind,
 )
 from tldw_chatbook.Notes.file_notes_service import (
+    LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
     FileNotesService,
     OpenedFileNote,
@@ -105,7 +116,37 @@ _UNSET = object()
 _SESSION_GIT_MUTATION_BUSY = (
     "Git operation in progress; structural actions are busy."
 )
-_TreeData = tuple[Literal["file", "folder", "deleted"], str]
+FILE_TREE_BATCH_SIZE = 100
+
+
+@dataclass(frozen=True, slots=True)
+class _FolderNodeData:
+    """One lazily materialized navigator folder."""
+
+    relative_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DeletedFolderData:
+    """The virtual Recently deleted folder."""
+
+
+@dataclass(frozen=True, slots=True)
+class _TreePageData:
+    """Cursor for one bounded navigator or search-result batch."""
+
+    source: Literal["files", "deleted", "search"]
+    folder_key: str
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _FolderItem:
+    """One pure folder-index child awaiting Textual materialization."""
+
+    kind: Literal["file", "folder", "deleted"]
+    label: str
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +186,32 @@ class _PushBindingKey:
     binding: SessionBinding
     generation: int
     candidate: PushCandidateProjection
+
+
+@dataclass(frozen=True, slots=True)
+class _ReloadConfirmation:
+    """Exact editor and disk identities captured before destructive reload."""
+
+    service: FileNotesService
+    binding: SessionBinding
+    root_generation: int
+    session_key: str
+    opened: OpenedFileNote
+    save_state: Literal["conflict", "error"]
+    disk_content_hash: str
+    opener_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ConflictCompareRequest:
+    """Exact editor identity captured before reading the latest disk side."""
+
+    service: FileNotesService
+    binding: SessionBinding
+    root_generation: int
+    session_key: str
+    opened: OpenedFileNote
+    draft: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,8 +428,138 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
         self.dismiss(None)
 
 
+class FileNotesConflictCompareDialog(ModalScreen[None]):
+    """Show one immutable, bounded Base/Draft/Disk comparison."""
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    FileNotesConflictCompareDialog {
+        align: center middle;
+    }
+
+    #file-notes-conflict-dialog {
+        width: 110;
+        max-width: 95%;
+        height: 90%;
+        min-height: 16;
+        max-height: 95%;
+        border: round $warning;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-conflict-title {
+        height: 1;
+        color: $warning;
+        text-style: bold;
+    }
+
+    #file-notes-conflict-path,
+    #file-notes-conflict-help {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    #file-notes-conflict-summary {
+        height: 7;
+        min-height: 4;
+        margin-top: 1;
+    }
+
+    #file-notes-conflict-diff {
+        height: 1fr;
+        min-height: 4;
+        margin-top: 1;
+    }
+
+    #file-notes-conflict-close {
+        width: auto;
+        height: 1;
+        min-height: 1;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        relative_path: str,
+        comparison: ConflictComparison,
+    ) -> None:
+        """Initialize an immutable conflict comparison.
+
+        Args:
+            relative_path: Literal note path owning the conflict.
+            comparison: Precomputed bounded comparison payload.
+        """
+        super().__init__(id="file-notes-conflict-dialog-screen")
+        self._relative_path = relative_path
+        self._comparison = comparison
+
+    def compose(self) -> ComposeResult:
+        """Compose labeled read-only side identities and diffs.
+
+        Returns:
+            The widgets that make up the comparison dialog.
+        """
+        with Vertical(id="file-notes-conflict-dialog"):
+            yield Static(
+                "Compare conflict",
+                id="file-notes-conflict-title",
+                markup=False,
+            )
+            yield Static(
+                self._relative_path,
+                id="file-notes-conflict-path",
+                markup=False,
+            )
+            yield Static(
+                (
+                    "Base is the editor baseline. Draft is the current editor. "
+                    "Disk is the latest captured file state. Comparing does not "
+                    "resolve the conflict."
+                ),
+                id="file-notes-conflict-help",
+                markup=False,
+            )
+            summary = TextArea(
+                self._comparison.summary_text,
+                id="file-notes-conflict-summary",
+                read_only=True,
+                soft_wrap=True,
+            )
+            summary.tooltip = "Base, Draft, and Disk identities"
+            yield summary
+            diff = TextArea(
+                self._comparison.diff_text,
+                id="file-notes-conflict-diff",
+                read_only=True,
+                soft_wrap=False,
+            )
+            diff.tooltip = "Base to Draft and Base to Disk unified comparisons"
+            yield diff
+            yield Button("Close", id="file-notes-conflict-close", compact=True)
+
+    def on_mount(self) -> None:
+        """Focus the comparison output for immediate keyboard reading."""
+        self.query_one("#file-notes-conflict-diff", TextArea).focus()
+
+    @on(Button.Pressed, "#file-notes-conflict-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+
 class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
+
+    class ReloadConfirmationChanged(Message):
+        """Announce whether the destructive reload confirmation is active."""
+
+        def __init__(self, active: bool) -> None:
+            super().__init__()
+            self.active = active
 
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
@@ -403,8 +600,17 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow: hidden hidden;
     }
 
-    #file-notes-root-status.-warning {
-        color: $warning;
+    #file-notes-root-status.-warning,
+    #file-notes-root-status.-offline,
+    #file-notes-save-status.-conflict {
+        color: $text;
+        background: $warning 14%;
+        text-style: bold;
+    }
+
+    #file-notes-save-status.-error {
+        color: $text;
+        background: $error 14%;
         text-style: bold;
     }
 
@@ -455,10 +661,37 @@ class LibraryFileNotesWorkspace(Vertical):
         padding-left: 1;
     }
 
+    #file-notes-search-row,
+    #file-notes-path-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    .file-notes-field-label {
+        height: 3;
+        min-height: 3;
+        color: $text-muted;
+        text-style: bold;
+        content-align: left middle;
+        padding-right: 1;
+        text-wrap: nowrap;
+    }
+
+    #file-notes-search-label {
+        width: 8;
+        min-width: 8;
+    }
+
+    #file-notes-path-label {
+        width: 17;
+        min-width: 17;
+    }
+
+    #file-notes-search,
+    #file-notes-path {
+        width: 1fr;
     }
 
     #file-notes-tree,
@@ -469,6 +702,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     #file-notes-breadcrumb,
     #file-notes-save-status,
+    #file-notes-preview-status,
     #file-notes-action-status {
         height: auto;
         min-height: 1;
@@ -479,8 +713,52 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-save-status,
+    #file-notes-preview-status,
     #file-notes-action-status {
         color: $text-muted;
+    }
+
+    #file-notes-preview-status {
+        max-height: 3;
+        text-wrap: wrap;
+        overflow: hidden hidden;
+    }
+
+    #file-notes-reload-confirm-copy {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $warning;
+        text-style: bold;
+        text-wrap: wrap;
+    }
+
+    #file-notes-reload-confirm-copy,
+    #file-notes-reload-confirm-actions {
+        display: none;
+    }
+
+    #file-notes-resolution-copy {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $warning;
+        text-style: bold;
+        text-wrap: wrap;
+    }
+
+    #file-notes-resolution-copy,
+    #file-notes-resolution-actions {
+        display: none;
+    }
+
+    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path-row {
+        display: none;
+    }
+
+    #file-notes-reload-confirm {
+        color: $error;
+        text-style: bold;
     }
 
     #file-notes-editor {
@@ -536,13 +814,53 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0;
     }
 
+    #file-notes-delete-spacer {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+    }
+
     LibraryFileNotesWorkspace.-stack-editor-actions
-    #file-notes-delete.-confirm-delete {
+    #file-notes-delete-spacer {
+        display: none;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-delete {
         column-span: 2;
+        width: 1fr;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-save-copy {
         column-span: 2;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-maintenance-toggle {
+        column-span: 2;
+    }
+
+    LibraryFileNotesWorkspace.-single-editor-actions .file-notes-toolbar {
+        grid-size: 1;
+        grid-columns: 1fr;
+    }
+
+    LibraryFileNotesWorkspace.-single-editor-actions #file-notes-delete,
+    LibraryFileNotesWorkspace.-single-editor-actions #file-notes-save-copy,
+    LibraryFileNotesWorkspace.-single-editor-actions
+    #file-notes-maintenance-toggle {
+        column-span: 1;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-resolution-actions {
+        grid-size: 1;
+        grid-columns: 1fr;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-resolution-actions Button {
+        width: 1fr;
+        padding: 0;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
@@ -622,12 +940,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
+        self._folder_children: dict[str, tuple[_FolderItem, ...]] = {}
+        self._search_paths: tuple[str, ...] = ()
+        self._restore_expanded_folders: set[str] = set()
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
+        self._reload_confirmation: _ReloadConfirmation | None = None
+        self._conflict_resolution_active = False
         self._delete_confirmation_path = ""
         self._search_generation = 0
         self._search_query = ""
@@ -750,6 +1073,16 @@ class LibraryFileNotesWorkspace(Vertical):
         return self._save_state
 
     @property
+    def reload_confirmation_active(self) -> bool:
+        """Return whether destructive conflict reload awaits a decision."""
+        return self._reload_confirmation is not None
+
+    @property
+    def conflict_resolution_active(self) -> bool:
+        """Return whether the bounded conflict choices are disclosed."""
+        return self._conflict_resolution_active
+
+    @property
     def leave_allowed(self) -> bool:
         """Return whether the retained draft can be left without a flush."""
         binding = self._session_binding
@@ -793,6 +1126,38 @@ class LibraryFileNotesWorkspace(Vertical):
         """Return whether the editor pane is currently displayed."""
         return self.query_one("#file-notes-editor-pane").display
 
+    def _path_field_label_copy(self) -> str:
+        """Describe the action context currently represented by the path field."""
+        if self._conflict_resolution_active:
+            return "New note path"
+        if self._selected_deleted_path:
+            return "Restore path"
+        if self._opened is not None:
+            return "New / move path"
+        return "New path"
+
+    @staticmethod
+    def _large_file_preview_copy(opened: OpenedFileNote) -> str:
+        """Describe an exact-size preview without implying editable content."""
+        return (
+            f"Read-only excerpt: first {LARGE_FILE_EXCERPT_CHARS:,} body "
+            f"characters. Exact size: {opened.character_count:,} characters · "
+            f"{opened.size:,} bytes."
+        )
+
+    def _sync_large_file_preview(self) -> None:
+        """Render or hide the retained large-file preview disclosure."""
+        if not self._active or not self.is_mounted:
+            return
+        status = self.query_one("#file-notes-preview-status", Static)
+        opened = self._opened
+        if opened is None or not opened.is_excerpt:
+            status.update("")
+            status.display = False
+            return
+        status.update(self._large_file_preview_copy(opened))
+        status.display = True
+
     def compose(self) -> ComposeResult:
         # LIB-19: Database mode, Files mode (this surface), and the Sync
         # sub-canvas are three folder-notes concepts never related to each
@@ -825,11 +1190,18 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         with Horizontal(id="file-notes-body"):
             with Vertical(id="file-notes-navigator"):
-                yield Input(
-                    placeholder="Search file contents…",
-                    id="file-notes-search",
-                    value=self._search_query,
-                )
+                with Horizontal(id="file-notes-search-row"):
+                    yield Static(
+                        "Search",
+                        id="file-notes-search-label",
+                        classes="file-notes-field-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        placeholder="File contents…",
+                        id="file-notes-search",
+                        value=self._search_query,
+                    )
                 yield Tree[object]("Files", id="file-notes-tree")
                 search_results = Tree[object](
                     "Search results",
@@ -861,29 +1233,54 @@ class LibraryFileNotesWorkspace(Vertical):
                     id="file-notes-save-status",
                     markup=False,
                 )
-                yield Input(
-                    placeholder="relative/path.md",
-                    id="file-notes-path",
-                    value=self._selected_deleted_path or self._current_path,
+                preview_status = Static(
+                    "",
+                    id="file-notes-preview-status",
+                    markup=False,
                 )
+                preview_status.display = False
+                yield preview_status
+                with Horizontal(id="file-notes-path-row"):
+                    yield Static(
+                        self._path_field_label_copy(),
+                        id="file-notes-path-label",
+                        classes="file-notes-field-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        placeholder="relative/path.md",
+                        id="file-notes-path",
+                        value=self._selected_deleted_path or self._current_path,
+                    )
                 yield self._editor_widget
                 with Horizontal(
                     id="file-notes-file-actions",
                     classes="file-notes-toolbar",
                 ):
                     yield Button("New", id="file-notes-new", compact=True)
-                    yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
+                    yield Button(
+                        "Compare",
+                        id="file-notes-compare",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Resolve conflict",
+                        id="file-notes-resolve-conflict",
+                        compact=True,
+                    )
                     yield Button(
                         "Save draft as copy",
                         id="file-notes-save-copy",
                         compact=True,
                     )
                     yield Button(
-                        "Maintenance",
+                        "More file actions",
                         id="file-notes-maintenance-toggle",
                         compact=True,
                     )
+                    yield Static("", id="file-notes-delete-spacer")
+                    yield Button("Delete", id="file-notes-delete", compact=True)
                 with Horizontal(
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
@@ -892,6 +1289,68 @@ class LibraryFileNotesWorkspace(Vertical):
                     yield Button("Protect", id="file-notes-protect", compact=True)
                     yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
+                yield Static(
+                    (
+                        "Choose a safe next step. No option overwrites the disk "
+                        "file."
+                    ),
+                    id="file-notes-resolution-copy",
+                    markup=False,
+                )
+                with Horizontal(
+                    id="file-notes-resolution-actions",
+                    classes="file-notes-toolbar",
+                ):
+                    keep = Button(
+                        "Keep editing",
+                        id="file-notes-resolution-keep",
+                        compact=True,
+                    )
+                    keep.tooltip = "Close these choices and leave the conflict open"
+                    yield keep
+                    save_new = Button(
+                        "Save draft as new note",
+                        id="file-notes-resolution-save-new",
+                        compact=True,
+                    )
+                    save_new.tooltip = (
+                        "Write the complete draft to the New note path without "
+                        "replacing an existing file"
+                    )
+                    yield save_new
+                    discard = Button(
+                        "Discard draft and load disk",
+                        id="file-notes-resolution-discard",
+                        compact=True,
+                    )
+                    discard.tooltip = (
+                        "Open a separate confirmation before replacing the editor "
+                        "with the current disk file"
+                    )
+                    yield discard
+                yield Static(
+                    (
+                        self._reload_confirmation_copy()
+                        if self.reload_confirmation_active
+                        else ""
+                    ),
+                    id="file-notes-reload-confirm-copy",
+                    markup=False,
+                )
+                with Horizontal(
+                    id="file-notes-reload-confirm-actions",
+                    classes="file-notes-toolbar",
+                ):
+                    yield Button(
+                        "Cancel",
+                        id="file-notes-reload-cancel",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Discard draft and load disk",
+                        id="file-notes-reload-confirm",
+                        compact=True,
+                    )
                 yield Static("", id="file-notes-action-status", markup=False)
 
     def on_mount(self) -> None:
@@ -909,6 +1368,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"Recently deleted: {self._selected_deleted_path}"
             )
         self._set_save_state(self._save_state, self._save_detail)
+        self._sync_large_file_preview()
         self._set_action_status(self._action_detail)
         self._update_root_surface()
         self._sync_navigator_mode()
@@ -1211,9 +1671,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._service = service
                 self._clear_open_document()
                 self._initialized = True
-                if persistence_warning:
-                    self._runtime_warning = persistence_warning
-                self._apply_scan(result, deleted)
+                self._apply_scan(
+                    result,
+                    deleted,
+                    additional_warning=persistence_warning,
+                )
 
             # Atomic file replacement is the point of no return. There is
             # deliberately no await between observing it and synchronously
@@ -1251,20 +1713,32 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         result: ScanResult,
         deleted: tuple[str, ...],
+        *,
+        additional_warning: str = "",
     ) -> bool:
-        self._adopt_scan_state(result, deleted)
+        self._adopt_scan_state(
+            result,
+            deleted,
+            additional_warning=additional_warning,
+        )
         return self._render_scan_state()
 
     def _adopt_scan_state(
         self,
         result: ScanResult,
         deleted: tuple[str, ...],
+        *,
+        additional_warning: str = "",
     ) -> None:
         """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
-        self._runtime_warning = result.replica_warning or ""
+        self._runtime_warning = "; ".join(
+            warning
+            for warning in (result.replica_warning, additional_warning)
+            if warning
+        )
 
     def _render_projection(
         self,
@@ -1341,14 +1815,16 @@ class LibraryFileNotesWorkspace(Vertical):
             status.update(self._root_status_summary)
             status.set_class(True, "-empty-root")
             status.set_class(False, "-warning")
+            status.set_class(False, "-offline")
             body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
             return
         status.set_class(False, "-empty-root")
-        status.set_class(bool(self._runtime_warning), "-warning")
         is_offline = self._root_offline if offline is None else offline
+        status.set_class(bool(self._runtime_warning), "-warning")
+        status.set_class(is_offline is True, "-offline")
         state = (
             "Checking"
             if is_offline is None
@@ -1359,7 +1835,11 @@ class LibraryFileNotesWorkspace(Vertical):
             detail = f"{detail} · {self._runtime_warning}"
         self._root_status_detail = detail
         folder_name = self._root.name or self._root.anchor or str(self._root)
-        display_state = "Warning" if self._runtime_warning else state
+        display_state = (
+            "Offline · Warning"
+            if is_offline is True and self._runtime_warning
+            else ("Warning" if self._runtime_warning else state)
+        )
         self._root_status_summary = (
             f"{display_state} · Local folder: {folder_name}"
         )
@@ -1406,7 +1886,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Show one retained navigator surface without remounting its peers."""
         if not self._active or not self.is_mounted:
             return
-        search = self.query_one("#file-notes-search", Input)
+        search_row = self.query_one("#file-notes-search-row")
         tree = self.query_one("#file-notes-tree", Tree)
         results = self.query_one("#file-notes-search-results", Tree)
         entry = self.query_one("#file-notes-session-changes", Button)
@@ -1416,7 +1896,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         git_visible = self._navigator_mode == "git"
         panel.display = git_visible
-        search.display = not git_visible
+        search_row.display = not git_visible
         entry.display = not git_visible
         tree.display = not git_visible and self._navigator_mode == "files"
         results.display = not git_visible and self._navigator_mode == "search"
@@ -1450,6 +1930,69 @@ class LibraryFileNotesWorkspace(Vertical):
             toolbar.refresh(layout=True)
         self._schedule_editor_action_layout()
 
+    @staticmethod
+    def _reload_confirmation_copy() -> str:
+        """Return complete destructive reload copy."""
+        return (
+            "Discard the draft in the editor and load the current disk version? "
+            "This cannot be undone."
+        )
+
+    def _reload_confirmation_is_current(
+        self,
+        confirmation: _ReloadConfirmation,
+    ) -> bool:
+        """Validate every retained identity before destructive replacement."""
+        return (
+            self._active
+            and self.is_mounted
+            and self._service is confirmation.service
+            and self._root_generation == confirmation.root_generation
+            and self._session_binding == confirmation.binding
+            and self._session_owner.current_binding() == confirmation.binding
+            and self._opened is confirmation.opened
+            and self._current_path == confirmation.opened.relative_path
+            and self._session_key == confirmation.session_key
+            and self._save_state == confirmation.save_state
+        )
+
+    def _set_reload_confirmation(
+        self,
+        confirmation: _ReloadConfirmation,
+    ) -> None:
+        """Show the retained inline decision and focus the safe default."""
+        was_active = self.reload_confirmation_active
+        self._reload_confirmation = confirmation
+        if self._active and self.is_mounted:
+            self.query_one("#file-notes-reload-confirm-copy", Static).update(
+                self._reload_confirmation_copy()
+            )
+            self._update_controls()
+            cancel = self.query_one("#file-notes-reload-cancel", Button)
+            self.call_after_refresh(cancel.focus)
+        if not was_active:
+            self.post_message(self.ReloadConfirmationChanged(True))
+
+    def _dismiss_reload_confirmation(self, *, focus_opener: bool) -> bool:
+        """Close a pending reload decision without changing editor content."""
+        confirmation = self._reload_confirmation
+        if confirmation is None:
+            return False
+        self._reload_confirmation = None
+        if self._active and self.is_mounted:
+            self.query_one("#file-notes-reload-confirm-copy", Static).update("")
+            self._update_controls()
+            if focus_opener:
+                opener = self.query_one(f"#{confirmation.opener_id}", Button)
+                if opener.display and not opener.disabled:
+                    self.call_after_refresh(opener.focus)
+        self.post_message(self.ReloadConfirmationChanged(False))
+        return True
+
+    def cancel_reload_confirmation(self) -> bool:
+        """Cancel destructive reload and restore focus to its opener."""
+        return self._dismiss_reload_confirmation(focus_opener=True)
+
     def _sync_editor_action_layout(self) -> None:
         """Stack current editor actions only when their labels need the space."""
         self._editor_action_layout_sync_scheduled = False
@@ -1461,7 +2004,8 @@ class LibraryFileNotesWorkspace(Vertical):
         available_width = pane.content_region.width
         if available_width <= 0:
             return
-        needs_stack = any(
+        single_column = available_width <= 40
+        needs_stack = single_column or any(
             toolbar.display
             and sum(
                 cell_len(str(button.label)) + 4
@@ -1472,6 +2016,11 @@ class LibraryFileNotesWorkspace(Vertical):
             for toolbar in pane.query(".file-notes-toolbar")
         )
         self.set_class(needs_stack, "-stack-editor-actions")
+        self.set_class(single_column, "-single-editor-actions")
+        delete = self.query_one("#file-notes-delete", Button)
+        self.query_one("#file-notes-delete-spacer", Static).display = (
+            delete.display and not needs_stack
+        )
 
     def _rebuild_tree(self) -> None:
         if not self._active or not self.is_mounted:
@@ -1481,61 +2030,148 @@ class LibraryFileNotesWorkspace(Vertical):
 
         def remember_expanded(node: Any) -> None:
             data = node.data
-            if (
-                node.is_expanded
-                and isinstance(data, tuple)
-                and len(data) == 2
-                and data[0] == "folder"
-            ):
-                expanded_folders.add(data[1])
+            if node.is_expanded and isinstance(data, _FolderNodeData):
+                expanded_folders.add(data.relative_path)
             for child in node.children:
                 remember_expanded(child)
 
         for child in tree.root.children:
             remember_expanded(child)
+        self._folder_children = self._build_folder_index(tuple(self._entries))
+        self._restore_expanded_folders = expanded_folders
         root_label = self._root.name if self._root is not None else "Files"
         tree.reset(Text(root_label or "Files"))
-        folder_nodes: dict[str, Any] = {"": tree.root}
-        for relative_path in sorted(self._entries):
-            parts = PurePosixPath(relative_path).parts
-            parent_key = ""
-            parent = tree.root
-            for part in parts[:-1]:
-                key = f"{parent_key}/{part}".lstrip("/")
-                node = folder_nodes.get(key)
-                if node is None:
-                    node = parent.add(
-                        Text(part),
-                        data=("folder", key),
-                        expand=key in expanded_folders,
-                    )
-                    folder_nodes[key] = node
-                parent = node
-                parent_key = key
-            parent.add_leaf(
-                Text(parts[-1]),
-                data=("file", relative_path),
-            )
+        self._append_tree_page(
+            tree.root,
+            _TreePageData("files", "", 0),
+        )
         if self._deleted_paths:
             deleted = tree.root.add(
                 Text("Recently deleted"),
-                data=("folder", "recently-deleted"),
-                expand=True,
+                data=_DeletedFolderData(),
             )
-            for relative_path in self._deleted_paths:
-                deleted.add_leaf(
-                    Text(relative_path),
-                    data=("deleted", relative_path),
-                )
+            self._populate_folder_node(deleted)
+            deleted.expand()
         tree.root.expand()
+
+    @staticmethod
+    def _build_folder_index(
+        relative_paths: tuple[str, ...],
+    ) -> dict[str, tuple[_FolderItem, ...]]:
+        """Build a pure path index without constructing Textual nodes."""
+        children: dict[str, dict[str, _FolderItem]] = {"": {}}
+        for relative_path in sorted(relative_paths):
+            parts = PurePosixPath(relative_path).parts
+            parent_key = ""
+            for part in parts[:-1]:
+                key = f"{parent_key}/{part}".lstrip("/")
+                children.setdefault(parent_key, {})[part] = _FolderItem(
+                    "folder",
+                    part,
+                    key,
+                )
+                children.setdefault(key, {})
+                parent_key = key
+            children.setdefault(parent_key, {})[parts[-1]] = _FolderItem(
+                "file",
+                parts[-1],
+                relative_path,
+            )
+        return {
+            folder: tuple(
+                sorted(
+                    items.values(),
+                    key=lambda item: (
+                        item.kind != "folder",
+                        item.label.casefold(),
+                        item.label,
+                    ),
+                )
+            )
+            for folder, items in children.items()
+        }
+
+    def _page_items(self, page: _TreePageData) -> tuple[_FolderItem, ...]:
+        """Return the immutable source rows represented by one page cursor."""
+        if page.source == "files":
+            return self._folder_children.get(page.folder_key, ())
+        if page.source == "deleted":
+            return tuple(
+                _FolderItem("deleted", path, path) for path in self._deleted_paths
+            )
+        return tuple(_FolderItem("file", path, path) for path in self._search_paths)
+
+    def _append_tree_page(
+        self,
+        parent: Any,
+        page: _TreePageData,
+        *,
+        page_node: Any | None = None,
+    ) -> Any | None:
+        """Materialize at most one fixed batch before an optional cursor row."""
+        items = self._page_items(page)
+        end = min(page.offset + FILE_TREE_BATCH_SIZE, len(items))
+        last_node: Any | None = None
+        for item in items[page.offset:end]:
+            if item.kind == "folder":
+                last_node = parent.add(
+                    Text(item.label),
+                    data=_FolderNodeData(item.value),
+                    before=page_node,
+                    allow_expand=True,
+                )
+                if item.value in self._restore_expanded_folders:
+                    self.call_later(self._restore_folder_expansion, last_node)
+            else:
+                last_node = parent.add_leaf(
+                    Text(item.label),
+                    data=(item.kind, item.value),
+                    before=page_node,
+                )
+
+        remaining = len(items) - end
+        if remaining > 0:
+            next_page = _TreePageData(page.source, page.folder_key, end)
+            label = Text(f"Load more ({remaining:,} remaining)")
+            if page_node is None:
+                parent.add_leaf(label, data=next_page)
+            else:
+                page_node.data = next_page
+                page_node.set_label(label)
+        elif page_node is not None:
+            page_node.remove()
+        return last_node
+
+    def _restore_folder_expansion(self, node: Any) -> None:
+        """Restore one expanded level in its own message-loop callback."""
+        if not self._active or not self.is_mounted:
+            return
+        self._populate_folder_node(node)
+        node.expand()
+
+    def _populate_folder_node(self, node: Any) -> None:
+        """Populate the first bounded batch for an expanded empty folder."""
+        if node.children:
+            return
+        data = node.data
+        if isinstance(data, _FolderNodeData):
+            page = _TreePageData("files", data.relative_path, 0)
+        elif isinstance(data, _DeletedFolderData):
+            page = _TreePageData("deleted", "", 0)
+        else:
+            return
+        self._append_tree_page(node, page)
 
     def _rebuild_search_results(self, paths: tuple[str, ...]) -> None:
         if not self._active or not self.is_mounted:
             return
         results = self.query_one("#file-notes-search-results", Tree)
+        self._search_paths = paths
         results.reset(Text("Search results"))
-        for path in paths:
-            results.root.add_leaf(Text(path), data=("file", path))
+        self._append_tree_page(
+            results.root,
+            _TreePageData("search", "", 0),
+        )
         results.root.expand()
 
     def _refresh_active_search(self) -> None:
@@ -3198,11 +3834,16 @@ class LibraryFileNotesWorkspace(Vertical):
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
         self._save_detail = detail
+        if state != "conflict":
+            self._conflict_resolution_active = False
         if self._active and self.is_mounted:
             label = _SAVE_STATE_COPY[state]
             if detail:
                 label = f"{label}; {detail}"
-            self.query_one("#file-notes-save-status", Static).update(label)
+            status = self.query_one("#file-notes-save-status", Static)
+            status.set_class(state == "conflict", "-conflict")
+            status.set_class(state == "error", "-error")
+            status.update(label)
             self._update_controls()
 
     def _set_action_status(self, text: str) -> None:
@@ -3255,6 +3896,7 @@ class LibraryFileNotesWorkspace(Vertical):
             or self._path_transitioning
             or self._opened is None
             or not self._opened.editable
+            or self.reload_confirmation_active
             or leased
         )
 
@@ -3404,6 +4046,9 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
+        self.query_one("#file-notes-path-label", Static).update(
+            self._path_field_label_copy()
+        )
         transitioning = self._root_transitioning or self._path_transitioning
         binding = self._session_binding
         mutation_active = (
@@ -3420,6 +4065,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-move",
                 "file-notes-delete",
                 "file-notes-restore",
+                "file-notes-compare",
+                "file-notes-resolve-conflict",
+                "file-notes-resolution-keep",
+                "file-notes-resolution-save-new",
+                "file-notes-resolution-discard",
                 "file-notes-protect",
                 "file-notes-reload",
                 "file-notes-save-copy",
@@ -3442,10 +4092,42 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
         )
-        self.query_one("#file-notes-save-copy", Button).disabled = (
+        self.query_one("#file-notes-compare", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._save_state == "conflict"
+        )
+        self.query_one("#file-notes-resolve-conflict", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._save_state == "conflict"
+        )
+        for selector in (
+            "resolution-keep",
+            "resolution-save-new",
+            "resolution-discard",
+        ):
+            self.query_one(f"#file-notes-{selector}", Button).disabled = not (
+                structurally_available
+                and self._save_state == "conflict"
+                and self._conflict_resolution_active
+            )
+        copy_button = self.query_one("#file-notes-save-copy", Button)
+        exact_export = self._opened is not None and self._opened.is_excerpt
+        copy_label = "Export exact copy" if exact_export else "Save draft as copy"
+        disabled_prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        if str(copy_button.label).removeprefix(disabled_prefix) != copy_label:
+            copy_button.label = copy_label
+            copy_button.refresh(layout=True)
+            if copy_button.parent is not None:
+                copy_button.parent.refresh(layout=True)
+        copy_button.disabled = (
             not has_document
             or not structurally_available
-            or self._save_state not in {"dirty", "conflict", "error"}
+            or (
+                not exact_export
+                and self._save_state not in {"dirty", "conflict", "error"}
+            )
         )
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
@@ -3467,21 +4149,39 @@ class LibraryFileNotesWorkspace(Vertical):
             protect.refresh(layout=True)
             if protect.parent is not None:
                 protect.parent.refresh(layout=True)
+        reload_button = self.query_one("#file-notes-reload", Button)
+        reload_label = (
+            "Discard draft and reload"
+            if self._save_state in {"conflict", "error"}
+            else "Reload"
+        )
+        if str(reload_button.label) != reload_label:
+            reload_button.label = reload_label
+            reload_button.refresh(layout=True)
+            if reload_button.parent is not None:
+                reload_button.parent.refresh(layout=True)
         self._sync_editor_action_visibility()
+        self.query_one("#file-notes-reload-cancel", Button).disabled = (
+            not self.reload_confirmation_active
+        )
+        self.query_one("#file-notes-reload-confirm", Button).disabled = (
+            not self.reload_confirmation_active or not structurally_available
+        )
         busy_reason = ""
         if transitioning:
             busy_reason = (
                 "File operation in progress; editor actions are temporarily "
-                "unavailable."
+                "unavailable. Wait for it to finish."
             )
         elif mutation_active:
             busy_reason = (
                 "Git operation in progress; editor actions are temporarily "
-                "unavailable."
+                "unavailable. Wait for it to finish."
             )
         self.query_one("#file-notes-action-status", Static).update(
             busy_reason or self._action_detail
         )
+        self._sync_editor_action_disabled_presentation()
         self._schedule_editor_action_layout()
         self.query_one("#file-notes-search", Input).disabled = transitioning
         self.query_one("#file-notes-path", Input).disabled = (
@@ -3496,21 +4196,53 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_editor_read_only()
         self._git_panel_widget.set_mutating(mutation_active)
 
+    def _sync_editor_action_disabled_presentation(self) -> None:
+        """Keep every disabled editor action readable and visibly inert."""
+        prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        for button in self.query(".file-notes-toolbar Button"):
+            label = str(button.label)
+            base_label = label.removeprefix(prefix)
+            rendered_label = library_disabled_action_label(
+                base_label,
+                button.disabled,
+            )
+            if label != rendered_label:
+                button.label = rendered_label
+
     def _sync_editor_action_visibility(self) -> None:
         """Disclose only editor actions relevant to the retained state."""
+        confirming_reload = self.reload_confirmation_active
+        resolving_conflict = (
+            self._conflict_resolution_active
+            and self._save_state == "conflict"
+            and self._opened is not None
+        )
+        self.set_class(confirming_reload, "-reload-confirming")
+        self.set_class(resolving_conflict, "-resolving-conflict")
         has_service = self._service is not None
         has_document = self._opened is not None
         has_deleted = has_service and bool(self._selected_deleted_path)
         visibility = {
-            "file-notes-new": has_service,
+            "file-notes-new": has_service and not resolving_conflict,
             "file-notes-move": has_document,
-            "file-notes-delete": has_document,
+            "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
+            "file-notes-compare": (
+                has_document and self._save_state == "conflict"
+            ),
+            "file-notes-resolve-conflict": (
+                has_document
+                and self._save_state == "conflict"
+                and not resolving_conflict
+            ),
             "file-notes-protect": has_document,
             "file-notes-reload": has_document,
             "file-notes-save-copy": (
                 has_document
-                and self._save_state in {"dirty", "conflict", "error"}
+                and (
+                    (self._opened is not None and self._opened.is_excerpt)
+                    or self._save_state in {"dirty", "error"}
+                )
             ),
             "file-notes-refresh": has_service,
         }
@@ -3523,24 +4255,60 @@ class LibraryFileNotesWorkspace(Vertical):
         maintenance_available = any(
             visibility[action_id] for action_id in maintenance_ids
         )
-        visibility["file-notes-maintenance-toggle"] = maintenance_available
+        visibility["file-notes-maintenance-toggle"] = (
+            maintenance_available and not resolving_conflict
+        )
         focused = self.app.focused
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
                 displayed = displayed and self._maintenance_expanded
+            displayed = displayed and not confirming_reload
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
             button.display = displayed
+        self.query_one("#file-notes-delete-spacer", Static).display = (
+            visibility["file-notes-delete"]
+            and not self.has_class("-stack-editor-actions")
+        )
 
         maintenance_toggle = self.query_one(
             "#file-notes-maintenance-toggle", Button
         )
         maintenance_toggle.label = (
-            "Hide actions" if self._maintenance_expanded else "Maintenance"
+            "Hide file actions"
+            if self._maintenance_expanded
+            else "More file actions"
         )
         maintenance = self.query_one("#file-notes-maintenance-actions")
-        maintenance.display = maintenance_available and self._maintenance_expanded
+        maintenance.display = (
+            maintenance_available
+            and self._maintenance_expanded
+            and not resolving_conflict
+            and not confirming_reload
+        )
+        resolution_copy = self.query_one(
+            "#file-notes-resolution-copy",
+            Static,
+        )
+        resolution_actions = self.query_one("#file-notes-resolution-actions")
+        show_resolution = resolving_conflict and not confirming_reload
+        resolution_copy.display = show_resolution
+        resolution_actions.display = show_resolution
+        for button in resolution_actions.query(Button):
+            button.display = show_resolution
+        confirmation_copy = self.query_one(
+            "#file-notes-reload-confirm-copy",
+            Static,
+        )
+        confirmation_actions = self.query_one(
+            "#file-notes-reload-confirm-actions"
+        )
+        confirmation_copy.display = confirming_reload
+        confirmation_actions.display = confirming_reload
+        for button in confirmation_actions.query(Button):
+            button.display = confirming_reload
+            button.disabled = not confirming_reload
 
         for toolbar in self.query(".file-notes-toolbar"):
             toolbar.set_class(
@@ -3554,6 +4322,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     f"#{self._editor_action_focus_target}",
                     "#file-notes-restore",
                     "#file-notes-new",
+                    "#file-notes-resolve-conflict",
+                    "#file-notes-compare",
                     "#file-notes-maintenance-toggle",
                     "#file-notes-refresh",
                 )
@@ -3741,6 +4511,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _apply_opened_document(self, opened: OpenedFileNote) -> None:
         if not self._active:
             return
+        self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = opened
         self._current_path = opened.relative_path
         self._selected_deleted_path = ""
@@ -3750,6 +4521,7 @@ class LibraryFileNotesWorkspace(Vertical):
         with editor.prevent(TextArea.Changed):
             editor.load_text(opened.body)
         self._sync_editor_read_only()
+        self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
         if opened.editable:
@@ -3766,6 +4538,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_controls()
 
     def _clear_open_document(self, *, keep_restore_path: bool = False) -> None:
+        self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = None
         self._current_path = ""
         self._session_key = ""
@@ -3780,6 +4553,7 @@ class LibraryFileNotesWorkspace(Vertical):
         with editor.prevent(TextArea.Changed):
             editor.load_text("")
         self._sync_editor_read_only()
+        self._sync_large_file_preview()
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
@@ -4025,7 +4799,11 @@ class LibraryFileNotesWorkspace(Vertical):
         return self._apply_scan(result, deleted)
 
     def _operation_error(self, action: str, result: OperationResult) -> None:
-        detail = result.message or result.status
+        detail = (
+            "destination already exists"
+            if result.status == "exists"
+            else result.message or result.status
+        )
         self._set_action_status(f"{action} failed: {detail}")
         if self._opened is not None and result.status in {"conflict", "missing"}:
             self._set_save_state("conflict", detail)
@@ -4100,6 +4878,7 @@ class LibraryFileNotesWorkspace(Vertical):
             else:
                 self._navigator_mode = "files"
             self._sync_navigator_mode()
+            self._search_paths = ()
             results.reset(Text("Search results"))
             return
         if self._navigator_mode == "git":
@@ -4136,9 +4915,35 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._rebuild_search_results(tuple(paths))
 
+    @on(Tree.NodeExpanded, "#file-notes-tree")
+    def _tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:
+        """Materialize one folder level only when the user expands it."""
+        self._populate_folder_node(event.node)
+
     @on(Tree.NodeSelected)
     async def _tree_node_selected(self, event: Tree.NodeSelected[object]) -> None:
         data = event.node.data
+        if isinstance(data, _TreePageData):
+            event.stop()
+            parent = event.node.parent
+            if parent is None:
+                return
+            last_node = self._append_tree_page(
+                parent,
+                data,
+                page_node=event.node,
+            )
+            if event.node.parent is None and last_node is not None:
+                tree = self.query_one(
+                    (
+                        "#file-notes-search-results"
+                        if data.source == "search"
+                        else "#file-notes-tree"
+                    ),
+                    Tree,
+                )
+                tree.move_cursor(last_node)
+            return
         if not isinstance(data, tuple) or len(data) != 2:
             return
         kind, relative_path = data
@@ -5504,6 +6309,43 @@ class LibraryFileNotesWorkspace(Vertical):
         self._schedule_editor_action_layout()
         self.call_after_refresh(toggle.focus)
 
+    def _set_conflict_resolution(
+        self,
+        active: bool,
+        *,
+        focus_opener: bool = False,
+    ) -> None:
+        """Project the bounded conflict choices without resolving any side."""
+        self._conflict_resolution_active = bool(
+            active
+            and self._opened is not None
+            and self._save_state == "conflict"
+        )
+        self._update_controls()
+        if not self._active or not self.is_mounted:
+            return
+        if self._conflict_resolution_active:
+            keep = self.query_one("#file-notes-resolution-keep", Button)
+            self.screen.set_focus(keep)
+            self.call_after_refresh(partial(self.screen.set_focus, keep))
+        elif focus_opener:
+            opener = self.query_one("#file-notes-resolve-conflict", Button)
+            if opener.display and not opener.disabled:
+                self.screen.set_focus(opener)
+                self.call_after_refresh(partial(self.screen.set_focus, opener))
+
+    @on(Button.Pressed, "#file-notes-resolve-conflict")
+    def _open_conflict_resolution(self, event: Button.Pressed) -> None:
+        """Disclose the safe conflict choices and focus their safe default."""
+        event.stop()
+        self._set_conflict_resolution(True)
+
+    @on(Button.Pressed, "#file-notes-resolution-keep")
+    def _keep_editing_conflict(self, event: Button.Pressed) -> None:
+        """Close the choices while preserving every conflict side unchanged."""
+        event.stop()
+        self._set_conflict_resolution(False, focus_opener=True)
+
     @on(Button.Pressed, "#file-notes-delete")
     async def _delete_file(self, event: Button.Pressed) -> None:
         event.stop()
@@ -5512,7 +6354,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if self._delete_confirmation_path != opened.relative_path:
             self._set_delete_confirmation(opened.relative_path)
-            self._set_action_status("Click Delete again to confirm.")
+            self._set_action_status("Activate Delete again to confirm.")
             return
         if not await self.flush_pending_work():
             return
@@ -5596,8 +6438,64 @@ class LibraryFileNotesWorkspace(Vertical):
         event.stop()
         opened = self._opened
         service = self._service
-        generation = self._root_generation
         if service is None or opened is None:
+            return
+        if self._save_state in {"conflict", "error"}:
+            binding = self._session_binding
+            session_key = self._session_key
+            state = self._save_state
+            if (
+                binding is None
+                or binding != self._session_owner.current_binding()
+                or state not in {"conflict", "error"}
+            ):
+                self._set_action_status(
+                    "Reload stopped: the active File Notes root changed. "
+                    "Draft preserved; review the current file before trying again."
+                )
+                return
+            confirmation: _ReloadConfirmation | None = None
+            with self._hold_path_transition() as transition:
+                if transition is None:
+                    return
+                service, generation = transition
+                try:
+                    disk_snapshot = await asyncio.to_thread(
+                        service.open_file,
+                        opened.relative_path,
+                    )
+                except FileNotFoundError:
+                    self._set_action_status(
+                        f"Reload stopped: {opened.relative_path} is no longer "
+                        "available on disk. Draft preserved; restore the file or "
+                        "save the draft as a copy."
+                    )
+                    return
+                except (OSError, ValueError) as error:
+                    self._set_action_status(
+                        f"Reload stopped: {opened.relative_path} could not be read "
+                        f"from disk ({error}). Draft preserved; check the folder "
+                        "and try again."
+                    )
+                    return
+                confirmation = _ReloadConfirmation(
+                    service=service,
+                    binding=binding,
+                    root_generation=generation,
+                    session_key=session_key,
+                    opened=opened,
+                    save_state=state,
+                    disk_content_hash=disk_snapshot.content_hash,
+                    opener_id=event.button.id or "file-notes-reload",
+                )
+                if not self._reload_confirmation_is_current(confirmation):
+                    self._set_action_status(
+                        "Reload stopped: the active root, file, or editing session "
+                        "changed. Draft preserved; review the current file before "
+                        "trying again."
+                    )
+                    return
+            self._set_reload_confirmation(confirmation)
             return
         if self._save_state == "dirty" and not await self.flush_pending_work():
             return
@@ -5623,25 +6521,267 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             self._apply_opened_document(reloaded)
 
+    def _conflict_compare_request_is_current(
+        self,
+        request: _ConflictCompareRequest,
+    ) -> bool:
+        """Validate the exact editor identity before publishing comparison."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._service is not request.service
+            or self._root_generation != request.root_generation
+            or self._session_binding != request.binding
+            or self._session_owner.current_binding() != request.binding
+            or self._opened is not request.opened
+            or self._current_path != request.opened.relative_path
+            or self._session_key != request.session_key
+            or self._save_state != "conflict"
+        ):
+            return False
+        return self.query_one("#file-notes-editor", TextArea).text == request.draft
+
+    @staticmethod
+    def _build_conflict_comparison(
+        opened: OpenedFileNote,
+        draft: str,
+        disk: OpenedFileNote | None,
+        disk_error: str = "",
+    ) -> ConflictComparison:
+        """Build the immutable comparison away from the UI loop.
+
+        Args:
+            opened: Exact editor baseline retained by the current session.
+            draft: Exact current editor body.
+            disk: Latest readable disk snapshot, when present.
+            disk_error: Bounded read failure detail when disk is unreadable.
+
+        Returns:
+            A bounded display payload for the comparison modal.
+        """
+        disk_side = (
+            ConflictSide.from_text("Disk", disk.body)
+            if disk is not None
+            else (
+                ConflictSide.unreadable(disk_error)
+                if disk_error
+                else ConflictSide.absent()
+            )
+        )
+        return build_conflict_comparison(
+            ConflictSide.from_text("Base", opened.body),
+            ConflictSide.from_text("Draft", draft),
+            disk_side,
+        )
+
+    @on(Button.Pressed, "#file-notes-compare")
+    async def _compare_conflict(self, event: Button.Pressed) -> None:
+        """Capture and show Base, Draft, and latest Disk without resolving."""
+        event.stop()
+        opened = self._opened
+        service = self._service
+        binding = self._session_binding
+        if (
+            opened is None
+            or service is None
+            or binding is None
+            or self._save_state != "conflict"
+        ):
+            return
+        request = _ConflictCompareRequest(
+            service=service,
+            binding=binding,
+            root_generation=self._root_generation,
+            session_key=self._session_key,
+            opened=opened,
+            draft=self.query_one("#file-notes-editor", TextArea).text,
+        )
+        disk: OpenedFileNote | None = None
+        disk_error = ""
+        try:
+            disk = await asyncio.to_thread(
+                service.open_file,
+                opened.relative_path,
+            )
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as error:
+            disk_error = str(error)
+        if not self._conflict_compare_request_is_current(request):
+            self._set_action_status(
+                "Compare stopped: the active root, file, draft, or editing "
+                "session changed. Draft preserved; open Compare again."
+            )
+            return
+        comparison = await asyncio.to_thread(
+            self._build_conflict_comparison,
+            opened,
+            request.draft,
+            disk,
+            disk_error,
+        )
+        if not self._conflict_compare_request_is_current(request):
+            self._set_action_status(
+                "Compare stopped: the active root, file, draft, or editing "
+                "session changed. Draft preserved; open Compare again."
+            )
+            return
+        opener = event.button
+
+        def restore_opener(_: None = None) -> None:
+            if opener.is_mounted and opener.display and not opener.disabled:
+                opener.focus()
+
+        await self.app.push_screen(
+            FileNotesConflictCompareDialog(
+                opened.relative_path,
+                comparison,
+            ),
+            callback=restore_opener,
+        )
+
+    @on(Button.Pressed, "#file-notes-reload-cancel")
+    def _cancel_reload(self, event: Button.Pressed) -> None:
+        """Preserve the draft and return focus to the destructive opener."""
+        event.stop()
+        self.cancel_reload_confirmation()
+
+    @on(Button.Pressed, "#file-notes-resolution-discard")
+    async def _discard_conflict_draft(self, event: Button.Pressed) -> None:
+        """Route the destructive choice through the existing confirmation."""
+        await self._reload_file(event)
+
+    @on(Button.Pressed, "#file-notes-reload-confirm")
+    async def _confirm_reload(self, event: Button.Pressed) -> None:
+        """Revalidate every identity before intentionally loading disk bytes."""
+        event.stop()
+        confirmation = self._reload_confirmation
+        if confirmation is None:
+            return
+        if not self._reload_confirmation_is_current(confirmation):
+            self._dismiss_reload_confirmation(focus_opener=True)
+            self._set_action_status(
+                "Reload stopped: the active root, file, or editing session changed. "
+                "Draft preserved; review the current file before trying again."
+            )
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                self._set_action_status(
+                    "Reload is temporarily unavailable. Draft preserved; cancel or "
+                    "try again after the active file operation finishes."
+                )
+                return
+            service, generation = transition
+            if (
+                service is not confirmation.service
+                or generation != confirmation.root_generation
+            ):
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    "Reload stopped: the active File Notes root changed. Draft "
+                    "preserved; review the current file before trying again."
+                )
+                return
+            try:
+                reloaded = await asyncio.to_thread(
+                    service.open_file,
+                    confirmation.opened.relative_path,
+                )
+            except FileNotFoundError:
+                if self._reload_confirmation is confirmation:
+                    self._dismiss_reload_confirmation(focus_opener=True)
+                    self._set_action_status(
+                        f"Reload stopped: {confirmation.opened.relative_path} is no "
+                        "longer available on disk. Draft preserved; restore the file "
+                        "or save the draft as a copy."
+                    )
+                return
+            except (OSError, ValueError) as error:
+                if self._reload_confirmation is confirmation:
+                    self._dismiss_reload_confirmation(focus_opener=True)
+                    self._set_action_status(
+                        f"Reload stopped: {confirmation.opened.relative_path} could "
+                        f"not be read from disk ({error}). Draft preserved; check "
+                        "the folder and try again."
+                    )
+                return
+            if self._reload_confirmation is not confirmation:
+                return
+            if (
+                self._path_result_is_stale(service, generation)
+                or not self._reload_confirmation_is_current(confirmation)
+            ):
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    "Reload stopped: the active root, file, or editing session "
+                    "changed. Draft preserved; review the current file before "
+                    "trying again."
+                )
+                return
+            if reloaded.content_hash != confirmation.disk_content_hash:
+                self._dismiss_reload_confirmation(focus_opener=True)
+                self._set_action_status(
+                    f"Reload stopped: {confirmation.opened.relative_path} changed "
+                    "again on disk. Draft preserved; activate Discard draft and "
+                    "reload again to review the latest disk version."
+                )
+                return
+            self._dismiss_reload_confirmation(focus_opener=False)
+            self._apply_opened_document(reloaded)
+
+    async def _save_editor_copy(self, action: str) -> bool:
+        """Run the shared exact, validated, no-clobber editor-copy path."""
+        opened = self._opened
+        service = self._service
+        if service is None or opened is None:
+            return False
+        destination = self._validated_path_input(action)
+        if destination is None:
+            return False
+        if opened.is_excerpt:
+            await self._complete_path_action(
+                action,
+                destination,
+                service.export_exact_file,
+                opened,
+                destination,
+            )
+        else:
+            body = self.query_one("#file-notes-editor", TextArea).text
+            await self._complete_path_action(
+                action,
+                destination,
+                service.save_copy,
+                opened,
+                body,
+                destination,
+            )
+        return (
+            self._opened is not None
+            and self._current_path == destination
+            and self._save_state == "saved"
+        )
+
     @on(Button.Pressed, "#file-notes-save-copy")
     async def _save_copy(self, event: Button.Pressed) -> None:
         event.stop()
         opened = self._opened
-        service = self._service
-        if service is None or opened is None:
+        if opened is None:
             return
-        destination = self._validated_path_input("Save draft as copy")
-        if destination is None:
-            return
-        body = self.query_one("#file-notes-editor", TextArea).text
-        await self._complete_path_action(
-            "Save draft as copy",
-            destination,
-            service.save_copy,
-            opened,
-            body,
-            destination,
-        )
+        action = "Export exact copy" if opened.is_excerpt else "Save draft as copy"
+        await self._save_editor_copy(action)
+
+    @on(Button.Pressed, "#file-notes-resolution-save-new")
+    async def _save_conflict_draft_as_new_note(
+        self,
+        event: Button.Pressed,
+    ) -> None:
+        """Save the retained draft through the existing no-clobber copy path."""
+        event.stop()
+        if await self._save_editor_copy("Save draft as new note"):
+            editor = self.query_one("#file-notes-editor", TextArea)
+            self.call_after_refresh(editor.focus)
 
     @on(Button.Pressed, "#file-notes-refresh")
     async def _refresh_pressed(self, event: Button.Pressed) -> None:

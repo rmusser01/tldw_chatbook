@@ -214,6 +214,118 @@ def server_ingest_refusal(source: str) -> str | None:
     return None
 
 
+#: Client option name -> the form field the server actually declares.
+#:
+#: task-3309, measured against a live server (its own ``/openapi.json`` plus
+#: ``get_add_media_form`` in the server source). The ingest-jobs endpoint binds
+#: every field explicitly with ``Form(...)`` and never reads ``request.form()``,
+#: so a multipart field it does not declare is discarded in silence -- no error,
+#: no warning, and a 200 back. Eighteen of the names this module used to forward
+#: verbatim were in exactly that position: the user set OCR language, speaker
+#: diarization or timestamps in server mode and nothing whatsoever happened.
+#:
+#: These seven are pure spelling differences with an identical meaning on both
+#: sides, so they are translated rather than dropped. Each client name maps to
+#: at most one server field across every type group, which is why this can be a
+#: flat table instead of a per-group one.
+SERVER_FIELD_ALIASES: dict[str, str] = {
+    "pdf_engine": "pdf_parsing_engine",
+    "ocr": "enable_ocr",
+    "ocr_language": "ocr_lang",
+    "diarization": "diarize",
+    "timestamps": "timestamp_option",
+    "vad_filter": "vad_use",
+    "language": "transcription_language",
+}
+
+#: Client options the ingest-jobs endpoint will not accept, and why.
+#:
+#: task-3309. The first pass through this called these "no server equivalent",
+#: which was wrong and in a way that matters: for several of them the server
+#: CAN do the thing, it just does not take the instruction on this endpoint.
+#: Checked against the server source, not only its OpenAPI:
+#:
+#: * ``transcription_provider`` and ``translate_to_english`` are real
+#:   capabilities of the server's transcription core
+#:   (``transcribe_audio(transcription_provider=...)``, and ``task="translate"``
+#:   in ``stt_provider_adapter``) that no media endpoint surfaces. Those are
+#:   gaps in the server's HTTP API, worth raising there rather than writing off
+#:   here.
+#: * ``transcription_precision`` and ``transcription_model_dir`` map to
+#:   server-side *configuration* (faster-whisper ``compute_type``, the model
+#:   directory), not to anything a request may set per-import.
+#: * ``extraction_method`` exists on ``/media/process-ebooks`` but not on
+#:   ingest-jobs, so it is reachable on the server -- just not down this route.
+#: * ``cookies_file`` is a genuine shape mismatch: the server's ``cookies`` is a
+#:   cookie STRING, the canvas collects a PATH to a cookies.txt, so forwarding
+#:   the path under that name would put a filename where a cookie header
+#:   belongs.
+#: * ``encoding``, ``include_toc`` and ``processing_method`` have no counterpart
+#:   in the server's media path at all.
+#:
+#: Note what is deliberately NOT here: ``scrape_method`` and ``max_pages``. They
+#: ARE accepted -- by ``/media/ingest-web-content`` -- and the web group never
+#: reaches this builder anyway (it raises ``ServerIngestUnsupported`` and routes
+#: through ``build_web_clip_kwargs``, which already sends both).
+SERVER_UNSUPPORTED_OPTIONS: dict[str, str] = {
+    "cookies_file": (
+        "the server takes a cookie string, not a path to a cookies.txt"
+    ),
+    "encoding": "the server has no text-encoding override for ingestion",
+    "extraction_method": (
+        "the server accepts this on its process-ebooks endpoint, but not on "
+        "the ingest-jobs API this import uses"
+    ),
+    "include_toc": "the server has no table-of-contents option for ingestion",
+    "processing_method": (
+        "the server has no document processing-method option for ingestion"
+    ),
+    "transcription_model_dir": (
+        "the server resolves its own model directory from its configuration"
+    ),
+    "transcription_precision": (
+        "the server sets transcription precision in its own configuration"
+    ),
+    "transcription_provider": (
+        "the server's transcription core supports this but its API does not "
+        "expose it"
+    ),
+    "translate_to_english": (
+        "the server's transcription core supports this but its API does not "
+        "expose it"
+    ),
+}
+
+
+def server_unsupported_options(
+    source: str, options: Mapping[str, Any]
+) -> tuple[tuple[str, str], ...]:
+    """Return the options set for ``source`` this submission will not carry.
+
+    Args:
+        source: The file path or URL being submitted.
+        options: The canvas's per-type option snapshot, keyed by type group.
+
+    Returns:
+        ``(option name, reason)`` pairs, sorted by name, for options the user
+        set to something other than their falsy default that the ingest-jobs
+        endpoint will not accept. Empty when the submission loses nothing. The
+        reason is included because "unsupported" covers three different
+        situations -- a server-side config, a capability its API does not
+        expose, and a genuine absence -- and a user deciding whether to import
+        locally instead needs to know which one they hit.
+    """
+    group = get_type_group(source)
+    group_options = options.get(group) or {}
+    return tuple(
+        sorted(
+            (name, SERVER_UNSUPPORTED_OPTIONS[name])
+            for name, value in group_options.items()
+            if name in SERVER_UNSUPPORTED_OPTIONS and value not in (None, "", False)
+        )
+    )
+
+
 def _coerce_int(value: Any, fallback: int) -> int:
     """Return ``value`` as an int, falling back rather than raising.
 
@@ -324,6 +436,15 @@ def build_server_ingest_kwargs(
             "chunk_overlap",
         }:
             continue
-        kwargs[name] = value
+        # task-3309: the endpoint binds its form fields explicitly and never
+        # reads the raw form, so anything it does not declare is dropped in
+        # silence and answered with a 200. Translate the names that differ only
+        # in spelling, and do not send the ones with no server equivalent at
+        # all -- `server_unsupported_options` is what reports those, so the
+        # loss is stated instead of inferred from a job that quietly ignored
+        # half its settings.
+        if name in SERVER_UNSUPPORTED_OPTIONS:
+            continue
+        kwargs[SERVER_FIELD_ALIASES.get(name, name)] = value
 
     return kwargs

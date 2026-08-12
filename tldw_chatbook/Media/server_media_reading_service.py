@@ -1421,9 +1421,25 @@ class ServerMediaReadingService:
             chunk_overlap=chunk_overlap,
             perform_chunking=perform_chunking,
             generate_embeddings=generate_embeddings,
-            force_regenerate_embeddings=force_regenerate_embeddings,
             **options,
         )
+        # task-3309: `force_regenerate_embeddings` is NOT one of the form
+        # fields the ingest-jobs endpoint declares. The endpoint binds each
+        # field with an explicit `Form(...)` and never reads the raw form, so
+        # sending it achieved nothing except making the request look like it
+        # carried the instruction. It is dropped here instead, and a caller who
+        # actually asked for it is told, rather than being handed a 200 that
+        # silently ignored the request.
+        if force_regenerate_embeddings:
+            # Deferred like the schema import above: this module stays
+            # import-light on purpose.
+            from loguru import logger
+
+            logger.warning(
+                "force_regenerate_embeddings was requested but this server's "
+                "ingest-jobs endpoint does not accept it; the import will run "
+                "without forcing embedding regeneration."
+            )
         return await self._require_client().submit_media_ingest_jobs(
             request_data, file_paths=file_paths
         )

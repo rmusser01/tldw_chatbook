@@ -99,3 +99,56 @@ async def test_nothing_reports_progress_before_anything_starts():
             assert not widget.display or widget.has_class("hidden"), (
                 f"{widget_id} is reporting progress before anything started"
             )
+
+
+class _StudioPrefsHarness(App[None]):
+    """The Studio TTS Preferences pane under the real app bundle."""
+
+    CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
+
+    def compose(self) -> ComposeResult:
+        """Mount the real Studio preferences pane.
+
+        Returns:
+            A ``ComposeResult`` yielding one ``SpeechSettingsPane``.
+        """
+        from tldw_chatbook.UI.Speech.speech_settings_pane import (
+            SpeechSettingsPane,
+        )
+
+        yield SpeechSettingsPane()
+
+
+@pytest.mark.asyncio
+async def test_focused_exact_model_input_shows_its_text_under_the_real_css():
+    """Typed text must stay visible while the exact-ID input is focused.
+
+    The defect (TASK-15421 AC3): the bundle's global accessibility rule
+    ``*:focus {{ outline: solid $ds-focus-accent }}`` paints the outline
+    OVER the widget's outermost rendered lines (its own comment warns of
+    exactly this), and a height-1 input's outermost line IS its only
+    content line — so focusing the field replaced the typed value with
+    box-drawing characters. `styles.border` probes stayed clean throughout
+    (the border rules were a red herring); only a rendered frame shows it,
+    which is why this lives in the only-a-live-run-exposed file.
+    """
+    from textual.widgets import Select
+
+    app = _StudioPrefsHarness()
+    async with app.run_test(size=(235, 52)) as pilot:
+        for _ in range(30):
+            await pilot.pause(0.02)
+        app.query_one("#studio-tts-model-mode", Select).value = "exact"
+        for _ in range(10):
+            await pilot.pause(0.02)
+        field = app.query_one("#studio-tts-model-id")
+        field.focus()
+        field.insert_text_at_cursor("studio-model")
+        for _ in range(10):
+            await pilot.pause(0.02)
+        assert app.focused is field, "the exact-ID input never took focus"
+        frame = app.export_screenshot()
+
+    assert "studio-model" in frame, (
+        "the focused exact-ID input's typed text is painted over"
+    )

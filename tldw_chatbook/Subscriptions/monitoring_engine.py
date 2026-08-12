@@ -9,6 +9,7 @@
 # - Content extraction
 #
 # Imports
+import asyncio
 import hashlib
 import json
 import re
@@ -44,6 +45,7 @@ from ..DB.Subscriptions_DB import (
     SubscriptionError,
 )
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from .db_offload import run_db_off_loop
 from .item_persist import (
     CONTENT_FORMAT_DIFF,
     CONTENT_FORMAT_TEXT,
@@ -840,13 +842,23 @@ class FeedMonitor:
 
         response.raise_for_status()
 
-        # Parse feed based on type
+        # Parse feed based on type.
+        #
+        # task-15463: the parse runs under `asyncio.to_thread`, the fetch above
+        # does not. A scheduled check is dispatched straight onto the event
+        # loop, and `ET.fromstring` (or `json.loads`) over a whole feed body is
+        # synchronous CPU work that froze the UI for its duration -- while the
+        # fetch either side of it was already non-blocking async httpx and
+        # needs no help. Nothing here touches sqlite, so the thread hop is
+        # unconditional: unlike the database hops in this module it has no
+        # in-memory-connection hazard to respect.
         content_type = response.headers.get("content-type", "").lower()
 
         if "json" in content_type or subscription["type"] == "json_feed":
-            return self._parse_json_feed(response.text)
-        else:
-            return self._parse_xml_feed(response.text, subscription["type"])
+            return await asyncio.to_thread(self._parse_json_feed, response.text)
+        return await asyncio.to_thread(
+            self._parse_xml_feed, response.text, subscription["type"]
+        )
 
     def _parse_xml_feed(self, content: str, feed_type: str) -> List[Dict[str, Any]]:
         """
@@ -1223,19 +1235,13 @@ class URLMonitor:
             # either ORDER BY (or either `url` predicate) and you must change
             # the other in the same commit; diverge them and this SELECT reads
             # a pruned row -- i.e. re-baselines, or diffs against stale text.
-            cursor = self.db.conn.cursor()
-            cursor.execute(
-                """
-                SELECT content_hash, extracted_content, extraction_fingerprint
-                FROM url_snapshots
-                WHERE subscription_id = ? AND url = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT 1
-            """,
-                (subscription_id, url),
+            # task-15463: the read hops to a worker thread (`run_db_off_loop`),
+            # like every other sqlite call on the scheduled-check path. The row
+            # is materialized by `fetchone` inside the hop, so what comes back
+            # is plain data, not a live cursor.
+            previous = await run_db_off_loop(
+                self.db, self._select_latest_snapshot, subscription_id, url
             )
-
-            previous = cursor.fetchone()
 
             if not previous:
                 # First check - store baseline
@@ -1419,6 +1425,26 @@ class URLMonitor:
             breaker.record_failure()
             raise
 
+    def _select_latest_snapshot(self, subscription_id: int, url: str) -> Any:
+        """The newest snapshot for one (subscription, url), or ``None``.
+
+        Extracted only so `check_url`'s baseline read can take a
+        `run_db_off_loop` hop (task-15463); the query, including its
+        TASK-1393 ordering pact with `_store_snapshot`'s prune, is unchanged.
+        """
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT content_hash, extracted_content, extraction_fingerprint
+            FROM url_snapshots
+            WHERE subscription_id = ? AND url = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """,
+            (subscription_id, url),
+        )
+        return cursor.fetchone()
+
     async def _fetch_url_content(self, subscription: Dict[str, Any]) -> Dict[str, Any]:
         """
         Fetch content from a URL.
@@ -1531,6 +1557,29 @@ class URLMonitor:
         if not content_hash:
             content_hash = ContentExtractor.calculate_content_hash(content["text"])
 
+        # task-15463: the whole INSERT+prune transaction takes one worker-thread
+        # hop, so the commit boundary the TASK-1393 comment below relies on is
+        # untouched -- both statements are still inside one `db.transaction()`,
+        # just not on the event loop.
+        await run_db_off_loop(
+            self.db,
+            self._write_snapshot,
+            subscription_id,
+            url,
+            content,
+            content_hash,
+            fingerprint,
+        )
+
+    def _write_snapshot(
+        self,
+        subscription_id: int,
+        url: str,
+        content: Dict[str, Any],
+        content_hash: str,
+        fingerprint: Optional[str],
+    ) -> None:
+        """Insert one snapshot and prune this URL's older ones, in one commit."""
         with self.db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(

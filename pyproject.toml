@@ -481,6 +481,7 @@ exclude = [
 # Include runtime chunking templates and evaluator defaults
 "tldw_chatbook.Chunking" = ["templates/*.json"]
 "tldw_chatbook.Evals" = ["config/*.yaml"]
+"tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
 "tldw_chatbook.DB" = [
     "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
