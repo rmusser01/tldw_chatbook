@@ -22,6 +22,7 @@ from textual.widgets import (
 )
 from textual.css.query import QueryError
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import on
@@ -179,6 +180,12 @@ class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
 class AudioBookGenerationWidget(Widget):
     """AudioBook/Podcast Generation widget"""
 
+    # How long to wait after the last keystroke in the content-preview paste
+    # box before running chapter detection (task-15478). Detection walks the
+    # full pasted text with ChapterDetector.detect_chapters and pops a notify
+    # toast, so it must not run on every TextArea.Changed message.
+    _CHAPTER_DETECT_DEBOUNCE_SECONDS = 1.0
+
     DEFAULT_CSS = """
     AudioBookGenerationWidget {
         height: 100%;
@@ -213,6 +220,7 @@ class AudioBookGenerationWidget(Widget):
         self.content_text = ""
         self.detected_chapters = []
         self.generated_audiobook_path = None
+        self._chapter_detect_debounce_timer: Optional[Timer] = None
 
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI.
@@ -345,6 +353,12 @@ class AudioBookGenerationWidget(Widget):
         # Delay initialization to ensure widgets are ready
         self.set_timer(0.1, self._initialize_audiobook_defaults)
 
+    def on_unmount(self) -> None:
+        """Cancel any pending debounced chapter detection."""
+        if self._chapter_detect_debounce_timer is not None:
+            self._chapter_detect_debounce_timer.stop()
+            self._chapter_detect_debounce_timer = None
+
     def _initialize_audiobook_defaults(self) -> None:
         """Initialize default values after widgets are ready"""
         try:
@@ -454,9 +468,11 @@ class AudioBookGenerationWidget(Widget):
             )
             content_preview.disabled = False
 
-            # Detect chapters if enabled
-            if self.query_one("#auto-chapters-switch", Switch).value:
-                self._detect_chapters()
+            # Auto-detect chapters. This used to be gated by an
+            # "#auto-chapters-switch" that no longer exists in the composed UI
+            # (task-15478) -- it defaulted to on and there is currently no
+            # control to turn it off, so a one-shot import always detects.
+            self._detect_chapters()
 
             self.app.notify(
                 f"Imported {len(content)} characters from {Path(path).name}",
@@ -509,9 +525,9 @@ class AudioBookGenerationWidget(Widget):
                     content_preview.load_text(preview_text)
                     content_preview.disabled = False
 
-                    # Detect chapters if enabled
-                    if self.query_one("#auto-chapters-switch", Switch).value:
-                        self._detect_chapters()
+                    # Auto-detect chapters (see task-15478: the switch that
+                    # used to gate this is gone from the composed UI).
+                    self._detect_chapters()
 
                     self.app.notify(
                         f"Imported {len(selected_ids)} note(s)", severity="information"
@@ -593,10 +609,10 @@ class AudioBookGenerationWidget(Widget):
                     content_preview.load_text(preview_text)
                     content_preview.disabled = False
 
-                    # Auto-detect chapters might not be suitable for conversations
-                    # but run it if enabled
-                    if self.query_one("#auto-chapters-switch", Switch).value:
-                        self._detect_chapters()
+                    # Auto-detect chapters might not be suitable for
+                    # conversations, but run it anyway (see task-15478: the
+                    # switch that used to gate this is gone from the UI).
+                    self._detect_chapters()
 
                     self.app.notify(
                         f"Imported conversation with {len(messages)} messages",
@@ -626,12 +642,34 @@ class AudioBookGenerationWidget(Widget):
         """Handle text area content changes"""
         if event.text_area.id == "content-preview":
             self.content_text = event.text_area.text
-            # Detect chapters if auto-detect is enabled
-            if (
-                self.query_one("#auto-chapters-switch", Switch).value
-                and self.content_text
-            ):
-                self._detect_chapters()
+            self._queue_debounced_chapter_detection()
+
+    def _queue_debounced_chapter_detection(self) -> None:
+        """Debounce chapter detection while the user is still typing/pasting.
+
+        `_detect_chapters()` walks the entire `content_text` with
+        `ChapterDetector.detect_chapters` and pops a notify toast, so running
+        it synchronously from `TextArea.Changed` -- which fires once per
+        keystroke -- is unacceptable (task-15478; this replaced a since
+        removed "#auto-chapters-switch" guard). Instead, (re)arm a timer on
+        every change and only run detection once the input goes quiet.
+        """
+        if self._chapter_detect_debounce_timer is not None:
+            self._chapter_detect_debounce_timer.stop()
+            self._chapter_detect_debounce_timer = None
+
+        if not self.content_text:
+            return
+
+        self._chapter_detect_debounce_timer = self.set_timer(
+            self._CHAPTER_DETECT_DEBOUNCE_SECONDS,
+            self._run_debounced_chapter_detection,
+        )
+
+    def _run_debounced_chapter_detection(self) -> None:
+        """Timer callback: run detection once, then clear the timer handle."""
+        self._chapter_detect_debounce_timer = None
+        self._detect_chapters()
 
     def on_chapter_edit_event(self, event) -> None:
         """Handle chapter edit events from the chapter editor"""
