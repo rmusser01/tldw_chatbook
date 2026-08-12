@@ -17,9 +17,9 @@ _LIBC = ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
 
 
-@dataclass(slots=True, repr=False)
+@dataclass(frozen=True, slots=True, repr=False)
 class ParentAuthority:
-    """Mutable exact parent metadata advanced only by owned removals."""
+    """Immutable exact parent metadata pinned before namespace mutation."""
 
     identity: os.stat_result
 
@@ -34,6 +34,24 @@ def _same_parent(current: os.stat_result, expected: os.stat_result) -> bool:
         and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
         and current.st_uid == expected.st_uid
         and current.st_nlink == expected.st_nlink
+        and stat.S_ISDIR(current.st_mode)
+        and current.st_uid == os.geteuid()
+        and stat.S_IMODE(current.st_mode) == 0o700
+    )
+
+
+def _same_parent_with_link_delta(
+    current: os.stat_result,
+    expected: os.stat_result,
+    *,
+    link_delta: int,
+) -> bool:
+    return (
+        private_paths._same_identity(current, expected)
+        and stat.S_IFMT(current.st_mode) == stat.S_IFMT(expected.st_mode)
+        and stat.S_IMODE(current.st_mode) == stat.S_IMODE(expected.st_mode)
+        and current.st_uid == expected.st_uid
+        and current.st_nlink == expected.st_nlink + link_delta
         and stat.S_ISDIR(current.st_mode)
         and current.st_uid == os.geteuid()
         and stat.S_IMODE(current.st_mode) == 0o700
@@ -141,8 +159,29 @@ def move_exact_noreplace(
             pass
         else:
             raise ValueError
-        _rename_noreplace(parent_fd, source.name, destination.name)
-        moved = True
+        deferred: BaseException | None = None
+        try:
+            _rename_noreplace(parent_fd, source.name, destination.name)
+            moved = True
+        except BaseException as error:
+            # A control-flow signal can arrive immediately after the atomic
+            # syscall.  Prove that exact transition before deferring it.
+            transitioned: os.stat_result | None = None
+            try:
+                transitioned = os.stat(
+                    destination.name, dir_fd=parent_fd, follow_symlinks=False
+                )
+                os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if transitioned is not None and private_paths._same_identity(
+                    transitioned, opened
+                ):
+                    moved = True
+                    deferred = error
+                else:
+                    raise error
+            else:
+                raise error
         current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
         if (
             not private_paths._same_identity(current, opened)
@@ -163,6 +202,8 @@ def move_exact_noreplace(
                 raise ValueError
         finally:
             os.close(reopened)
+        if deferred is not None:
+            raise deferred
         return current
     except BaseException:
         if moved:
@@ -185,60 +226,174 @@ def remove_exact(
     file_identity: os.stat_result,
     allowed_links: frozenset[int] = frozenset({1}),
 ) -> None:
-    """Quarantine then remove the exact inode, preserving a swapped source."""
+    """Quarantine and wipe exact bytes, retaining one safe zero tombstone."""
 
     holding = path.with_name(f".{path.name}.migration-hold")
+    deferred: BaseException | None = None
     try:
-        moved = move_exact_noreplace(
+        move_exact_noreplace(
             path,
             holding,
             parent_authority=parent_authority,
             file_identity=file_identity,
             allowed_links=allowed_links,
         )
-    except FileNotFoundError:
-        parent_fd = _open_parent(holding, parent_authority)
-        try:
-            moved = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
-            if (
-                not private_paths._same_identity(moved, file_identity)
-                or not _valid_file(moved, links=allowed_links)
-                or not _sidecars_absent(parent_fd, holding.name)
-            ):
-                raise ValueError
-        finally:
-            os.close(parent_fd)
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            deferred = error
     parent_fd = _open_parent(holding, parent_authority)
+    file_fd = -1
     try:
+        file_fd = os.open(
+            holding.name,
+            os.O_RDWR
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(file_fd)
         current = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
-        if not private_paths._same_identity(current, moved) or not _valid_file(
-            current, links=allowed_links
+        if (
+            not private_paths._same_identity(opened, file_identity)
+            or not private_paths._same_identity(current, file_identity)
+            or not _valid_file(opened, links=allowed_links)
+            or not _valid_file(current, links=allowed_links)
+            or not _sidecars_absent(parent_fd, holding.name)
         ):
             raise ValueError
-        os.unlink(holding.name, dir_fd=parent_fd)
+        for operation in (lambda: os.ftruncate(file_fd, 0), lambda: os.fsync(file_fd)):
+            while True:
+                try:
+                    operation()
+                    break
+                except BaseException as error:
+                    if isinstance(error, Exception):
+                        raise
+                    if deferred is None:
+                        deferred = error
+        settled = os.fstat(file_fd)
+        current = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            settled.st_size != 0
+            or current.st_size != 0
+            or not private_paths._same_identity(settled, file_identity)
+            or not private_paths._same_identity(current, file_identity)
+            or not _valid_file(settled, links=allowed_links)
+            or not _valid_file(current, links=allowed_links)
+        ):
+            raise ValueError
         os.fsync(parent_fd)
-        # Only this exact owned removal may advance link metadata. Confirm the
-        # lexical parent and pinned directory still agree before retaining it.
+        reopened = _open_parent(path, parent_authority)
+        try:
+            try:
+                os.stat(path.name, dir_fd=reopened, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                # A substitution at the disposed logical leaf is foreign even
+                # after the exact quarantined bytes have been safely wiped.
+                raise ValueError
+        finally:
+            os.close(reopened)
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(parent_fd)
+    if deferred is not None:
+        raise deferred
+    # Exact holding evidence plus source absence proved the transition even
+    # when the syscall wrapper reported an error after mutating the namespace.
+
+
+def open_new_or_reused_private_file(
+    path: Path,
+    *,
+    parent_authority: ParentAuthority,
+) -> tuple[int, int, os.stat_result, ParentAuthority]:
+    """Open a new private file, reusing only its exact zero tombstone."""
+
+    holding = path.with_name(f".{path.name}.migration-hold")
+    parent_fd = _open_parent(path, parent_authority)
+    file_fd = -1
+    created = False
+    try:
+        try:
+            holding_fd = os.open(
+                holding.name,
+                os.O_RDWR
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            holding_fd = -1
+        if holding_fd >= 0:
+            try:
+                held = os.fstat(holding_fd)
+                entry = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+                if (
+                    held.st_size != 0
+                    or entry.st_size != 0
+                    or not private_paths._same_identity(held, entry)
+                    or not _valid_file(held, links=frozenset({1}))
+                    or not _valid_file(entry, links=frozenset({1}))
+                    or not _sidecars_absent(parent_fd, holding.name)
+                ):
+                    raise ValueError
+                _rename_noreplace(parent_fd, holding.name, path.name)
+                file_fd = holding_fd
+                holding_fd = -1
+                os.fsync(parent_fd)
+            finally:
+                if holding_fd >= 0:
+                    os.close(holding_fd)
+        else:
+            file_fd = os.open(
+                path.name,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=parent_fd,
+            )
+            created = True
+        opened = os.fstat(file_fd)
+        entry = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not private_paths._same_identity(opened, entry)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(entry, links=frozenset({1}))
+            or opened.st_size != 0
+            or entry.st_size != 0
+        ):
+            raise ValueError
         current_parent = os.fstat(parent_fd)
-        reopened_fd, _leaf = private_paths._open_verified_parent(
+        reopened, _leaf = private_paths._open_verified_parent(
             path,
             missing_leaf_allowed=True,
         )
         try:
-            reopened_parent = os.fstat(reopened_fd)
-            if (
-                not private_paths._same_identity(reopened_parent, current_parent)
-                or stat.S_IMODE(reopened_parent.st_mode)
-                != stat.S_IMODE(current_parent.st_mode)
-                or reopened_parent.st_uid != current_parent.st_uid
-                or reopened_parent.st_nlink != current_parent.st_nlink
-            ):
+            reopened_parent = os.fstat(reopened)
+            link_delta = 1 if created and sys.platform == "darwin" else 0
+            if not _same_parent_with_link_delta(
+                current_parent,
+                parent_authority.identity,
+                link_delta=link_delta,
+            ) or not _same_parent(reopened_parent, current_parent):
                 raise ValueError
-            parent_authority.identity = current_parent
         finally:
-            os.close(reopened_fd)
-    finally:
+            os.close(reopened)
+        return parent_fd, file_fd, opened, ParentAuthority(current_parent)
+    except BaseException:
+        if file_fd >= 0:
+            os.close(file_fd)
         os.close(parent_fd)
+        raise
 
 
-__all__ = ["ParentAuthority", "move_exact_noreplace", "remove_exact"]
+__all__ = [
+    "ParentAuthority",
+    "move_exact_noreplace",
+    "open_new_or_reused_private_file",
+    "remove_exact",
+]

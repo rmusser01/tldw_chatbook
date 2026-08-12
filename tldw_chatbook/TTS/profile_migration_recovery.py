@@ -487,6 +487,15 @@ def _rollback(
                     selected,
                     target,
                 )
+                if private_paths._same_identity(candidate.identity, target.identity):
+                    _remove_exact(
+                        parent_fd,
+                        parent_identity,
+                        parent_authority,
+                        selected,
+                        candidate,
+                    )
+                    candidate = None
             target = None
         if item.row.had_prior:
             if target is not None and target.kind == "prior":

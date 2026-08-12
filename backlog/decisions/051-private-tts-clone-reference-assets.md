@@ -142,6 +142,20 @@ total storage failure that prevents completion or full restoration leaves the
 repository unavailable with all recovery files retained rather than making an
 impossible authority claim.
 
+POSIX does not provide an unlink-by-descriptor operation that can prove the
+removed directory entry still names a pinned inode on both macOS and Linux.
+Migration disposal therefore atomically moves each exact owned journal,
+candidate, or rollback leaf without replacement to a stable private holding
+leaf, truncates and fsyncs the pinned descriptor, and retains the exact `0600`
+owner-only zero-byte file as a non-sensitive tombstone. The finite recovery
+shape bounds these tombstones to one stable leaf for the journal plus one per
+candidate/rollback logical leaf (at most three slots), never one per attempt.
+They are ignored as recovery authority and may be reused only after exact
+inode, owner, mode, type, link-count, zero-length, parent, and sidecar checks.
+A foreign, substituted, or nonzero holding leaf is preserved and makes cleanup
+boundedly unavailable. This retained zero-byte state is required to avoid a
+racy pathname unlink; it does not weaken best-effort deletion of private bytes.
+
 A v2-or-older jump advances the private candidate through each supported
 migration and prepares validated v2 and v3 downgrade snapshots at their
 respective boundaries. Restore qualification follows the same rule, so a v3

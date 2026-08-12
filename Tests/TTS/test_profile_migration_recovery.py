@@ -616,13 +616,13 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
             recovery, "_validate_authoritative_targets", interrupt_validation
         )
     else:
-        real_unlink = namespace.os.unlink
+        real_ftruncate = namespace.os.ftruncate
         real_fsync = recovery.os.fsync
 
-        def interrupt_journal_unlink(*args: object, **kwargs: object) -> None:
+        def interrupt_journal_wipe(file_fd: int, length: int) -> None:
             nonlocal raised
-            real_unlink(*args, **kwargs)
-            if str(args[0]).endswith(".migration-hold") and not raised:
+            real_ftruncate(file_fd, length)
+            if not raised:
                 raised = True
                 raise cancellation
 
@@ -632,13 +632,9 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
             if raised and stat.S_ISDIR(os.fstat(file_fd).st_mode):
                 settlement_fsync_after_fault = True
 
-        monkeypatch.setattr(namespace.os, "unlink", interrupt_journal_unlink)
+        monkeypatch.setattr(namespace.os, "ftruncate", interrupt_journal_wipe)
         monkeypatch.setattr(recovery.os, "fsync", observe_settlement_fsync)
 
-    if fault_site == "journal_unlink":
-        with pytest.raises(ProfileRepositoryError, match="unavailable"):
-            recovery.recover_profile_migration_publication(active)
-        return
     with pytest.raises(asyncio.CancelledError) as caught:
         recovery.recover_profile_migration_publication(active)
 
@@ -647,6 +643,110 @@ def test_internal_control_flow_is_deferred_until_recovery_reconverges(
     assert not candidate.exists()
     assert not rollback.exists()
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
+    for tombstone in tmp_path.glob(".*.migration-hold"):
+        assert tombstone.read_bytes() == b""
+        assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
+
+
+def test_foreign_holding_leaf_is_preserved_and_recovery_fails_closed(
+    tmp_path: Path,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, _target, _rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+    holding = tmp_path / f".{candidate.name}.migration-hold"
+    foreign = b"foreign holding bytes"
+    holding.write_bytes(foreign)
+    holding.chmod(0o600)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert holding.read_bytes() == foreign
+    assert candidate.is_file()
+    assert journal.is_file()
+
+
+def test_foreign_holding_leaf_inserted_at_atomic_gap_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, _target, _rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
+    foreign = b"foreign atomic hold"
+    inserted = False
+
+    def occupy_hold(parent_fd: int, source: str, destination: str) -> None:
+        nonlocal inserted
+        if source == candidate.name and destination.endswith(".migration-hold"):
+            descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(descriptor, foreign)
+            finally:
+                os.close(descriptor)
+            inserted = True
+        real_rename(parent_fd, source, destination)
+
+    monkeypatch.setattr(namespace, "_rename_noreplace", occupy_hold)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert inserted
+    assert (tmp_path / f".{candidate.name}.migration-hold").read_bytes() == foreign
+    assert candidate.is_file()
+    assert journal.is_file()
+
+
+def test_foreign_child_inserted_after_exact_quarantine_dominates_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publication, recovery = _modules()
+    publication, active, artifacts, destinations = _publication_fixture(
+        tmp_path, slots=("active",)
+    )
+    candidate, _target, _rollback = _paths(artifacts[0], destinations[0])
+    journal = _write_journal(
+        publication, active, artifacts, destinations, phase="prepared"
+    )
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_rename = namespace._rename_noreplace
+    injected = False
+
+    def mutate_parent(parent_fd: int, source: str, destination: str) -> None:
+        nonlocal injected
+        real_rename(parent_fd, source, destination)
+        if source == candidate.name and not injected:
+            os.mkdir("foreign-child", 0o700, dir_fd=parent_fd)
+            injected = True
+
+    monkeypatch.setattr(namespace, "_rename_noreplace", mutate_parent)
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable"):
+        recovery.recover_profile_migration_publication(active)
+
+    assert injected
+    assert (tmp_path / "foreign-child").is_dir()
+    assert journal.is_file()
 
 
 def test_irrecoverable_failure_dominates_deferred_control_flow(

@@ -32,6 +32,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
 from tldw_chatbook.TTS.profile_migration_namespace import (
     ParentAuthority,
     move_exact_noreplace,
+    open_new_or_reused_private_file,
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
@@ -761,28 +762,26 @@ def _claim(
 
 
 def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
-    parent_fd, leaf = private_paths._open_verified_parent(
-        path,
-        missing_leaf_allowed=True,
-    )
+    selected, parent_identity = _prepare_parent(path)
+    parent_authority = ParentAuthority(parent_identity)
+    parent_fd = -1
     file_fd = -1
     identity: os.stat_result | None = None
     body_error: BaseException | None = None
     try:
-        parent_identity = os.fstat(parent_fd)
-        file_fd = os.open(
-            leaf,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-            dir_fd=parent_fd,
+        parent_fd, file_fd, identity, parent_authority = (
+            open_new_or_reused_private_file(
+                selected,
+                parent_authority=parent_authority,
+            )
         )
-        identity = os.fstat(file_fd)
+        parent_identity = parent_authority.identity
         offset = 0
         while offset < len(payload):
             offset += os.write(file_fd, payload[offset:])
         os.fsync(file_fd)
         identity = os.fstat(file_fd)
-        entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        entry = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
         if (
             not private_paths._same_identity(identity, entry)
             or not _valid_private_stat(identity)
@@ -798,19 +797,15 @@ def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
             os.close(file_fd)
         if body_error is not None and identity is not None:
             try:
-                current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-                if (
-                    private_paths._same_identity(current, identity)
-                    and private_paths._same_identity(
-                        os.fstat(parent_fd), parent_identity
-                    )
-                    and _valid_private_stat(current)
-                ):
-                    os.unlink(leaf, dir_fd=parent_fd)
-                    os.fsync(parent_fd)
+                remove_exact_namespace(
+                    selected,
+                    parent_authority=parent_authority,
+                    file_identity=identity,
+                )
             except BaseException:
                 pass
-        os.close(parent_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
     assert body_error is not None
     raise body_error
 

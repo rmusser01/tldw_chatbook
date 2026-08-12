@@ -353,6 +353,21 @@ identities. A small owner-private publication journal records the old/new
 identities before the point of no return; startup recovery completes or rolls
 back an interrupted multi-file publication before opening any store.
 
+Final migration cleanup is descriptor-bound. Because macOS/Linux POSIX APIs do
+not expose an exact-inode unlink-by-descriptor, cleanup atomically quarantines
+each exact journal/candidate/rollback leaf without replacement, wipes and
+fsyncs the pinned regular-file descriptor, and retains that exact owner-only
+`0600` zero-byte inode under one stable tombstone name per finite logical leaf.
+The tombstone set is bounded by the journal and the candidate/rollback leaves
+for the maximum three migration slots and does not grow on replay. Tombstones
+contain no profile or journal bytes, are never parsed as recovery authority,
+and are reusable only after exact parent/inode/type/uid/mode/link/zero-length
+and sidecar validation. A foreign, substituted, or nonzero occupant is never
+deleted or overwritten; cleanup fails closed with bounded unavailability.
+Race, cancellation, replay, foreign-holding, and initial-journal cleanup tests
+in `Tests/TTS/test_profile_migration_recovery.py` and
+`Tests/TTS/test_profile_migration_publication.py` enforce this protocol.
+
 The v3→v4 candidate transaction adds nullable recipe ID/revision fields with a
 both-null-or-both-valid invariant, preserves every existing value, and leaves
 both fields null. It never infers provenance from Settings or a recipe catalog.

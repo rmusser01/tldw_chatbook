@@ -935,29 +935,24 @@ def test_initial_journal_failure_removes_exact_partial_generation(
             ),
         ),
     )
-    real_open = module.os.open
     real_write = module.os.write
     real_fsync = module.os.fsync
     journal_fd = -1
     journal_file_fsynced = False
     failed = False
 
-    def tracked_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
-        nonlocal journal_fd
-        descriptor = real_open(path, flags, *args, **kwargs)
-        if str(path).endswith("migration-publication.json"):
-            journal_fd = descriptor
-        return descriptor
-
     def fault_write(file_fd: int, payload: bytes) -> int:
-        nonlocal failed
-        if boundary == "write" and file_fd == journal_fd and not failed:
+        nonlocal failed, journal_fd
+        journal_fd = file_fd
+        if boundary == "write" and not failed:
             failed = True
             raise OSError(errno.ENOSPC, "PRIVATE disk full")
         return real_write(file_fd, payload)
 
     def fault_fsync(file_fd: int) -> None:
-        nonlocal failed, journal_file_fsynced
+        nonlocal failed, journal_fd, journal_file_fsynced
+        if stat.S_ISREG(os.fstat(file_fd).st_mode):
+            journal_fd = file_fd
         if file_fd == journal_fd:
             if boundary == "file_fsync" and not failed:
                 failed = True
@@ -968,7 +963,6 @@ def test_initial_journal_failure_removes_exact_partial_generation(
             raise OSError(errno.ENOSPC, "PRIVATE directory fsync")
         real_fsync(file_fd)
 
-    monkeypatch.setattr(module.os, "open", tracked_open)
     monkeypatch.setattr(module.os, "write", fault_write)
     monkeypatch.setattr(module.os, "fsync", fault_fsync)
 
@@ -977,6 +971,61 @@ def test_initial_journal_failure_removes_exact_partial_generation(
 
     assert failed
     assert not tuple(tmp_path.glob("*.migration-publication.json"))
+    tombstone = tmp_path / f".{journal_path.name}.migration-hold"
+    assert tombstone.read_bytes() == b""
+    assert stat.S_IMODE(tombstone.stat().st_mode) == 0o600
+    tombstone_identity = tombstone.stat()
+
+    identity = module._write_new_journal(journal_path, payload)
+
+    assert journal_path.read_bytes() == payload
+    assert identity.file.st_ino == tombstone_identity.st_ino
+    assert not tombstone.exists()
+
+
+def test_initial_journal_cleanup_preserves_foreign_holding_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    journal_path = tmp_path / ".profiles.migration-publication.json"
+    payload = b"private partial journal bytes"
+    namespace = importlib.import_module("tldw_chatbook.TTS.profile_migration_namespace")
+    real_write = module.os.write
+    real_rename = namespace._rename_noreplace
+    foreign = b"foreign holding bytes"
+    failed = False
+
+    def partial_write(file_fd: int, value: bytes) -> int:
+        nonlocal failed
+        if not failed:
+            failed = True
+            real_write(file_fd, value[:5])
+            raise OSError(errno.ENOSPC, "PRIVATE write failure")
+        return real_write(file_fd, value)
+
+    def occupy_hold(parent_fd: int, source: str, destination: str) -> None:
+        if source == journal_path.name and destination.endswith(".migration-hold"):
+            descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(descriptor, foreign)
+            finally:
+                os.close(descriptor)
+        real_rename(parent_fd, source, destination)
+
+    monkeypatch.setattr(module.os, "write", partial_write)
+    monkeypatch.setattr(namespace, "_rename_noreplace", occupy_hold)
+
+    with pytest.raises(OSError, match="PRIVATE write failure"):
+        module._write_new_journal(journal_path, payload)
+
+    assert journal_path.read_bytes() == payload[:5]
+    assert (tmp_path / f".{journal_path.name}.migration-hold").read_bytes() == foreign
 
 
 @pytest.mark.parametrize("boundary", ["write", "file_fsync"])
