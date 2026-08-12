@@ -749,6 +749,9 @@ They prove:
   exact policy-required reasoning, the first complete call batch is persisted
   before execution, ambiguous restored `executing` calls never auto-run, and
   the data stays absent from visible/log/error/usage/human-export surfaces;
+- a K3 tool call followed by its final answer stores that final reasoning-only
+  round on the same assistant owner and replays it on the next K3 turn without
+  creating a duplicate visible assistant message;
 - repeated calls to the same function name remain valid while duplicate call
   IDs across an outbound history fail before I/O;
 - Z.ai works before and after its final native-provider registry entry.

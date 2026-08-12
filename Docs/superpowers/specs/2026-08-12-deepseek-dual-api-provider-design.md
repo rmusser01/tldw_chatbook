@@ -213,7 +213,8 @@ restored `executing` call is ambiguous and never auto-runs. Resume/takeover is
 explicit, reruns approvals, uses the pinned provider/model/mode/base, and
 resolves the current credential.
 
-DeepSeek's replay policy is intentionally stricter than Kimi/GLM. Every
+DeepSeek's replay policy is intentionally stricter than GLM and non-K3 Kimi
+families. Every
 retained tool-bearing round—assistant content, exact reasoning, call IDs/names/
 arguments, and exact paired results—is expanded into every later DeepSeek
 request while its owning visible turn remains in context. Tool-free private

@@ -195,12 +195,19 @@ For a complete assistant call batch:
    provider request.
 8. Add later assistant call batches as additional rounds under the same row.
 9. When the provider returns a final tool-free answer, update visible content
-   and mark the checkpoint `complete` in one transaction.
+   and mark the checkpoint `complete` in one transaction. For Kimi K3 this
+   transaction first appends the final response as a reasoning-only round whose
+   `assistant_content` exactly equals the visible final content. That private
+   round is the provider-history representation of the same assistant message,
+   not a second visible assistant row.
 
-For a Kimi K3 turn with no calls, commit final visible content plus the bounded
-reasoning-only complete checkpoint in one transaction. No call state or Resume
-action exists for that row; it is retained solely for K3's required historical
-Preserved Thinking replay.
+For a Kimi K3 turn with no calls, the same rule creates the sole reasoning-only
+round and commits it with final visible content. For a K3 turn with earlier
+tool rounds, it appends the post-tool final reasoning-only round after them.
+No call state or Resume action exists for a reasoning-only round; it is retained
+solely for K3's required historical Preserved Thinking replay. A mismatch
+between its assistant content and the row's visible content fails the atomic
+write.
 
 Review refusal is stored as a failed/result-bearing call because that exact
 string is sent back to the provider. Cancellation before dispatch leaves a
@@ -297,17 +304,28 @@ contain private continuation and cannot replace it for provider replay.
 ## Sync And Conflict Contract
 
 `provider_continuation_json` becomes part of the message's durable version and
-payload hash:
+payload hash. The transaction owner for portable intent is the ChaChaNotes
+database, not the separate Sync-v2 state database:
 
 - legacy message sync triggers include it in create/update/undelete payloads
   and watch it in the update predicate;
 - Sync v2 includes it inside the encrypted message payload, never routing
   metadata;
-- when sync is enabled, each checkpoint/content/call-state transaction also
-  writes its durable sync-outbox intent before commit; dispatch never depends
-  on remote acknowledgement, but it does not begin if that local intent fails;
+- the existing message sync trigger writes a complete versioned `sync_log` row
+  in the same SQLite transaction as each checkpoint/content/call-state change;
+  that ChaChaNotes row is the durable local intent source of truth;
+- when Sync v2 is configured, an idempotent reconciler projects each unbridged
+  message intent into the separate Sync-v2 outbox, keyed by message ID,
+  version, and payload hash; a durable bridge cursor/receipt may live in the
+  Sync-v2 repository, but the source `sync_log` row is retained until the
+  outbox write is durable;
+- dispatch never waits for remote acknowledgement, but before a provider tool
+  side effect it verifies the same-transaction `sync_log` intent exists and,
+  when Sync v2 is enabled, that a durable Sync-v2 repository is available; an
+  in-memory-only Sync-v2 fallback blocks start/resume with safe recovery copy;
 - a post-commit notifier/wakeup may fail or the process may crash, and startup/
-  ordinary reconciliation must still discover and send the durable intent;
+  ordinary reconciliation still discovers the ChaChaNotes intent and enqueues
+  it exactly once by the idempotency key;
 - restore applies visible content and continuation atomically;
 - field-level or round-level merge is forbidden.
 
@@ -424,6 +442,9 @@ permission validation succeeds.
 - Discard clears/tombstones with version/hash/outbox update and no execution;
 - crash after local commit but before notifier still leaves discoverable sync
   intent;
+- Sync-v2 in-memory-only fallback blocks pre-execution start/resume, while
+  durable reconciliation is idempotent across crashes before/after outbox
+  insertion and bridge-cursor update;
 - mutation checks remove the pre-dispatch write, result barrier, conflict hash,
   or private-history token count and must fail.
 

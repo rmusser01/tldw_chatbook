@@ -31,9 +31,10 @@ Thinking uses provider defaults unless the user selects `low`, `high`, or
 `max`. Compatibility aliases that add no distinct behavior are rejected locally.
 Thinking-mode requests omit unsupported sampling fields. Tool-bearing
 `reasoning_content` and paired tool history use ADR-063 checkpoints. DeepSeek's
-documented requirement is stricter than Kimi/GLM: completed tool-associated
-reasoning remains in later same-provider requests while its owning visible
-turn remains inside the context window.
+documented requirement is stricter than GLM and non-K3 Kimi families:
+completed tool-associated reasoning remains in later same-provider requests
+while its owning visible turn remains inside the context window. Kimi K3 has a
+separate broader always-on preserved-history policy under ADR-063.
 
 Responses requests use an exact allowlist and omit unsupported stateful or
 server-managed fields rather than relying on provider-side silent ignoring.

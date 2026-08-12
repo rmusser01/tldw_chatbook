@@ -52,12 +52,15 @@ pending calls require fresh approval.
 
 The continuation field follows its assistant branch/variant and participates
 in the same message version, hash, sync, deletion, and whole-record conflict
-contract as visible content. When sync is enabled, the local checkpoint and its
-durable outbox intent commit together before dispatch; remote acknowledgement
-is not required. Conflict resolution never merges continuation subfields or
-tool-call arrays. Sync provides portable state, not a distributed execution
-lock; remote takeover is explicit and never claims exactly-once execution
-across concurrently active devices.
+contract as visible content. The ChaChaNotes message transaction and its
+trigger-written `sync_log` row are the atomic durable local intent. An
+idempotent reconciler projects that row into the separate Sync-v2 outbox; the
+two databases are not described as one transaction. Tool execution fails
+closed when configured Sync v2 has only an in-memory repository, but remote
+acknowledgement is not required. Conflict resolution never merges continuation
+subfields or tool-call arrays. Sync provides portable state, not a distributed
+execution lock; remote takeover is explicit and never claims exactly-once
+execution across concurrently active devices.
 
 The field uses the same storage protection as message content. It is encrypted
 where Sync v2 encrypts message content and otherwise receives no additional
