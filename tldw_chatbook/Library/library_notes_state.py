@@ -398,6 +398,15 @@ class LibraryNoteCreateOutcome:
 
 
 @dataclass(frozen=True)
+class LibraryNoteDeleteReceipt:
+    """Recovery identity retained after one successful note deletion."""
+
+    note_id: str
+    title: str
+    expected_version: int
+
+
+@dataclass(frozen=True)
 class LibraryNotesListState:
     """Display state for the Library notes canvas's list view.
 
@@ -417,6 +426,7 @@ class LibraryNotesListState:
         sort_choices_visible: Whether direct sort choices are expanded.
         operation_status: Active Navigator transfer status, if any.
         operation_running: Whether Navigator actions must be gated.
+        delete_receipt: Most recently deleted note available to Undo.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -431,6 +441,7 @@ class LibraryNotesListState:
     sort_choices_visible: bool = False
     operation_status: str = ""
     operation_running: bool = False
+    delete_receipt: LibraryNoteDeleteReceipt | None = None
 
 
 @dataclass(frozen=True)
@@ -496,6 +507,7 @@ def build_library_notes_list_state(
     sort_choices_visible: bool = False,
     operation_status: str = "",
     operation_running: bool = False,
+    delete_receipt: LibraryNoteDeleteReceipt | None = None,
 ) -> LibraryNotesListState:
     """Build the Library notes canvas's list-view display state.
 
@@ -514,6 +526,7 @@ def build_library_notes_list_state(
             current UTC time.
         select_mode: Whether multi-select mode is active.
         selected_ids: The currently checked note ids.
+        delete_receipt: Optional recovery identity to render above the rows.
 
     Returns:
         The list view's display state.
@@ -557,6 +570,7 @@ def build_library_notes_list_state(
         sort_choices_visible=sort_choices_visible,
         operation_status=operation_status,
         operation_running=operation_running,
+        delete_receipt=delete_receipt,
     )
 
 

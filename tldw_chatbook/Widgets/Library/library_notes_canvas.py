@@ -361,6 +361,36 @@ class LibraryNotesCanvas(Vertical):
                     classes="library-canvas-action",
                     compact=True,
                 )
+        receipt = list_state.delete_receipt
+        if receipt is not None:
+            title = ellipsize_note_title_cells(
+                receipt.title or "Untitled", 18 if self.compact else 42
+            )
+            receipt_row = Horizontal(
+                id="library-notes-delete-receipt", classes="ds-toolbar"
+            )
+            receipt_row.styles.height = "auto"
+            with receipt_row:
+                yield Static(
+                    f"✓ deleted · {title}",
+                    id="library-notes-delete-receipt-copy",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
+                yield Button(
+                    "Undo",
+                    id="library-notes-delete-undo",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
+                )
+                yield Button(
+                    "Dismiss",
+                    id="library-notes-delete-receipt-dismiss",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
+                )
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
@@ -628,7 +658,7 @@ class LibraryNotesCanvas(Vertical):
 
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
-                "Delete this note? This cannot be undone from Library.",
+                "Delete this note? Undo will be available in the Notes list.",
                 id="library-note-delete-confirm-copy",
                 markup=False,
             )

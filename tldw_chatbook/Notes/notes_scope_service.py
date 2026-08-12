@@ -573,6 +573,77 @@ class NotesScopeService:
             version,
         )
 
+    async def restore_note(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        version: int,
+        user_id: Optional[str] = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
+    ) -> Mapping[str, Any]:
+        """Restore one deleted local note and return its fresh active record.
+
+        Restore is deliberately local-only: the Library receipt is backed by
+        the local ChaChaNotes tombstone contract. Runtime policy treats the
+        undelete as the same local mutation authority as an update rather than
+        introducing a parallel restore capability absent from the registry.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            note_id: Stable note identity to restore.
+            version: Version of the deleted row being restored.
+            user_id: Local Notes user identity.
+            sync_v2_profile: Optional sync-v2 routing metadata.
+
+        Returns:
+            Fresh active note record, including its restored version and tags.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+            ConflictError: If the note is missing, active, or stale.
+            RuntimeError: If restoration or the required read-back fails.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Note restore is currently supported for local notes only.")
+        self._enforce_policy(self._note_action_id(normalized_scope, "update"))
+        local_user_id = self._require_user_id(user_id)
+        restored = self.local_notes_service.restore_note(
+            local_user_id,
+            note_id,
+            version,
+        )
+        if not restored:
+            raise RuntimeError("The note could not be restored.")
+
+        detail = self.local_notes_service.get_note_by_id(local_user_id, note_id)
+        if not isinstance(detail, Mapping):
+            raise RuntimeError("The restored note could not be read back.")
+        record = dict(detail)
+        keywords = self.local_notes_service.get_keywords_for_note(
+            local_user_id, note_id
+        )
+        record["keywords"] = list(keywords or ())
+        entity_version = int(record.get("version") or (version + 1))
+        restored_keywords = [
+            str(keyword.get("keyword") or keyword.get("text") or "")
+            for keyword in record["keywords"]
+            if isinstance(keyword, Mapping)
+            and (keyword.get("keyword") or keyword.get("text"))
+        ]
+        self._enqueue_local_note_upsert(
+            sync_v2_profile=sync_v2_profile,
+            note_id=str(note_id),
+            title=str(record.get("title") or ""),
+            content=str(record.get("content") or ""),
+            status="active",
+            tag_ids=self._tag_ids_for_sync_v2(restored_keywords),
+            base_version=version,
+            entity_version=entity_version,
+        )
+        return record
+
     def _enqueue_local_note_upsert(
         self,
         *,
