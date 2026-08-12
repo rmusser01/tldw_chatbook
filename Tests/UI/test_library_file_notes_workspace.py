@@ -3240,7 +3240,8 @@ async def test_file_notes_production_shell_preserves_canvas_across_breakpoints(
             assert workspace.region.x >= 0
             assert workspace.region.right <= screen.size.width
             assert workspace.region.bottom <= screen.size.height
-            assert screen.focused is not None
+            assert screen.focused is editor, f"editor focus lost at {width}x{height}"
+            assert editor.has_focus
             assert screen.focused.visible
             assert canvas in screen.focused.ancestors_with_self
             if width < 120:

@@ -3657,6 +3657,13 @@ class LibraryScreen(BaseAppScreen):
             return f"create-template:{template_key}"
 
         widget_id = focused.id or ""
+        if widget_id and self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if workspace is not None and self._library_notes_widget_is_within(
+                focused,
+                workspace,
+            ):
+                return f"file-notes:{widget_id}"
         direct_roles = {
             "library-notes-filter": "filter",
             "library-note-title": "title",
@@ -3841,6 +3848,15 @@ class LibraryScreen(BaseAppScreen):
                 "create": "#library-notes-create-back",
                 "sync": "#library-notes-sync-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
+        elif role.startswith("file-notes:"):
+            widget_id = role.removeprefix("file-notes:")
+            workspace = self._library_file_notes_workspace
+            if workspace is None or not widget_id:
+                return None
+            try:
+                return workspace.query_one(f"#{widget_id}", Widget)
+            except (NoMatches, QueryError):
+                return None
         if selector is not None:
             try:
                 return self.query_one(selector, Widget)
@@ -4422,6 +4438,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_last_user_focus,
             self._library_notes_interaction_focus,
             self._library_notes_last_presented_focus,
+            self._library_notes_responsive_focus_memory,
         ):
             if (
                 cached is not None
