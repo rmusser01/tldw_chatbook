@@ -56,16 +56,19 @@ Primary references:
 
 - The general production base is `https://api.z.ai/api/paas/v4` and the
   documented generation route is `POST /paas/v4/chat/completions`.
-- The current Chat Completion reference defaults to `glm-5.1`. The model
-  catalog may expose later models, but `glm-5.1` is the embedded default for
-  this task.
+- The current Chat Completion reference defaults to `glm-5.2`, which is the
+  embedded default for this task. Historical GLM IDs remain selectable.
 - Streaming is SSE. The terminal chunk carries `finish_reason` and `usage`,
   followed by `[DONE]`; no `stream_options.include_usage` request is required.
 - Function tools use standard assistant `tool_calls` and paired tool-result
   messages. Z.ai documents `tool_choice="auto"` only for function tools.
-- `thinking.type` accepts `enabled` or `disabled`; `clear_thinking=true` is the
-  default and discards historical reasoning while keeping visible text, tool
-  calls, and tool results.
+- `thinking.type` accepts `enabled` or `disabled`. `clear_thinking=true` is the
+  general-chat default, while official interleaved-tool guidance requires
+  `clear_thinking=false` plus the complete unmodified `reasoning_content` for
+  an active agent/tool run.
+- `glm-5.2` accepts `reasoning_effort` values `none`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, and `max`; Z.ai documents provider-side mappings
+  for the lower and upper compatibility values.
 - `tool_stream` is optional and defaults false. This task does not enable it
   automatically; the parser accepts complete or fragmented standard tool-call
   deltas without changing provider behavior.
@@ -111,13 +114,13 @@ large independent functions in `LLM_API_Calls.py`, however:
 - Preserve the stable provider keys `moonshot` and `zai`, public handler names,
   dispatcher identities, saved histories, and metrics/error labels.
 - Default fresh/missing Moonshot models to `kimi-k3` and fresh/missing Z.ai
-  models to `glm-5.1` without overwriting explicit user selections.
+  models to `glm-5.2` without overwriting explicit user selections.
 - Support strict streaming and non-streaming text, tools, errors, terminal
   states, usage, retries, cancellation, and resource ownership.
 - Support existing Chatbook function tools through the ordinary Console agent
   runtime, including multiple calls and exact assistant/tool continuation.
-- Preserve Kimi `reasoning_content` only as bounded, invisible, call-scoped
-  active-run metadata when a tool continuation requires it.
+- Preserve Kimi and Z.ai `reasoning_content` only as bounded, invisible,
+  call-scoped active-run metadata when a tool continuation requires it.
 - Use canonical provider configuration, credential precedence, and endpoint
   normalization consistently in readiness, Console, direct adapters, and
   discovery.
@@ -136,6 +139,9 @@ large independent functions in `LLM_API_Calls.py`, however:
   registry, or Settings destination.
 - No durable reasoning-content persistence, conversation schema change,
   provider conversation ID, or server-side session ownership.
+- No complete preserved-thinking parity for ordinary Kimi or Z.ai multi-turn
+  chat. Reasoning is echoed only inside an active tool run; tool-free turns and
+  later unrelated chat turns discard it under the privacy boundary.
 - No automatic Z.ai `tool_stream` opt-in.
 - No complete implementation of Moonshot Flavored JSON Schema and no arbitrary
   vendor schema extensions. The strict common function schema and every
@@ -151,7 +157,7 @@ large independent functions in `LLM_API_Calls.py`, however:
 | Stable provider key | `moonshot` | `zai` |
 | Display identity | Moonshot AI, with Kimi guidance | Z.ai, with GLM guidance |
 | API route | `/chat/completions` | `/chat/completions` |
-| Default model | `kimi-k3` | `glm-5.1` |
+| Default model | `kimi-k3` | `glm-5.2` |
 | Credential env | `MOONSHOT_API_KEY` | `ZAI_API_KEY` |
 | Console/runtime | Existing shared path | Existing shared path |
 | Function tools | Existing Chatbook tools | Existing Chatbook tools |
@@ -252,7 +258,7 @@ Canonical durable owners remain:
 ```toml
 [providers]
 Moonshot = ["kimi-k3", "kimi-latest", "moonshot-v1-auto"]
-ZAI = ["glm-5.1", "glm-4.6", "glm-4.5"]
+ZAI = ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"]
 
 [api_settings.moonshot]
 api_key_env_var = "MOONSHOT_API_KEY"
@@ -266,7 +272,7 @@ streaming = true
 [api_settings.zai]
 api_key_env_var = "ZAI_API_KEY"
 api_base_url = "https://api.z.ai/api/paas/v4"
-model = "glm-5.1"
+model = "glm-5.2"
 timeout = 90
 retries = 3
 retry_delay = 5
@@ -282,23 +288,15 @@ Resolution for direct calls and Console uses one contract:
 2. Exact canonical `api_settings.<provider>` field.
 3. Credential environment variable named by canonical configuration, falling
    back to `MOONSHOT_API_KEY` or `ZAI_API_KEY`.
-4. Moonshot only: the existing exact `moonshot_api` legacy projection fills
-   a field that is absent from canonical configuration.
-5. Embedded provider default for non-secret fields.
+4. Embedded provider default for non-secret fields.
 
 Configured credentials outrank environment credentials, matching current
 readiness behavior. Every candidate key passes the shared placeholder/blank
 validator. A malformed exact canonical provider table blocks before any
-environment or legacy fallback is read. Settings and adapter errors name the
-canonical table and never expose a candidate credential.
-
-Legacy Moonshot behavior is deliberately narrow:
-
-- only the exact existing `moonshot_api` projection is read;
-- it fills missing fields but never overrides canonical fields;
-- Settings writes only `api_settings.moonshot`;
-- reading never mutates either source mapping;
-- no case-insensitive or general alias-table system is introduced.
+environment fallback is read. Settings and adapter errors name the canonical
+table and never expose a candidate credential. The old handler's injected
+`moonshot_api` runtime mapping has no durable config producer and is removed
+rather than promoted into a new legacy-config contract.
 
 `api_region` remains a compatibility fallback only when no canonical base URL
 is present. `international` selects `https://api.moonshot.ai/v1`; `china`
@@ -345,8 +343,8 @@ Builders deep-copy validated inputs and never repair/mutate caller history.
   for documented model families; unknown/unsupported parts fail rather than
   being stringified or silently dropped.
 - Assistant tool turns retain `content`, complete `tool_calls`, and the one
-  allowlisted hidden `reasoning_content` field when the Moonshot policy allows
-  it.
+  allowlisted hidden `reasoning_content` field when the active provider policy
+  allows it.
 - Tool rows require a nonblank `tool_call_id` and string content.
 - Every completed assistant call ID must be unique and matched by exactly one
   following tool-result row before the next unrelated conversational turn.
@@ -370,9 +368,11 @@ Only standard function tools are accepted:
 }
 ```
 
-Validation requires exact top-level `type`/`function`, a nonblank unique name,
-optional string description, and object-shaped parameters. Private top-level
-metadata and provider tool types are rejected. Inputs are copied before use.
+Validation requires exact top-level `type`/`function`, a unique function name
+matching `^[a-zA-Z0-9_-]{1,64}$`, a nonblank string description, and
+object-shaped parameters. This is the strict outbound intersection of the two
+providers' function contracts. Private top-level metadata and provider tool
+types are rejected. Inputs are copied before use.
 
 The supported JSON Schema surface is the strict common subset emitted by
 Chatbook's tool catalog. Every built-in/local/MCP tool shape made available to
@@ -436,10 +436,13 @@ Allowed request keys for the general Chat Completion slice are `model`,
 `max_tokens`, `tools`, `tool_choice`, `stop`, `response_format`, `request_id`,
 and the existing generic user identifier mapped to `user_id` when valid.
 
-- `thinking` defaults to provider behavior; when the adapter emits it,
-  `clear_thinking` is always true in this task.
-- The shared generic `reasoning_effort` is not sent for default `glm-5.1`; Z.ai
-  currently documents it only for GLM-5.2.
+- General/tool-free chat retains provider-default thinking and
+  `clear_thinking=true`. An active run that exposes Chatbook function tools
+  sends `thinking.clear_thinking=false` and preserves only the bounded
+  reasoning needed for that run's exact tool continuation.
+- Default `glm-5.2` accepts `reasoning_effort` values `none`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, and `max`. Other model families omit this field
+  unless their explicit curated policy documents support.
 - `tool_stream` stays absent/false unless a future explicit feature adds it.
 - Function `tool_choice` accepts absent or `auto` only.
 - Only function tools are admitted; retrieval/web-search schemas are rejected.
@@ -463,8 +466,11 @@ contract:
 }
 ```
 
-Text and tool calls may coexist. The adapter never drops either. Function
-arguments remain JSON strings for the existing native accumulator/parser.
+Text and tool calls may coexist. The adapter never drops either. Streaming
+function arguments arrive as string fragments. A Z.ai non-streaming response
+may contain either a bounded JSON object or JSON string; an object is encoded
+deterministically to a JSON string before entering the existing native
+accumulator/parser. Other scalar/container shapes fail locally.
 
 Moonshot valid finishes are `stop`, `tool_calls`, and `length`. Z.ai valid
 usable finishes include `stop`, `tool_calls`, and `length`; `sensitive`,
@@ -513,10 +519,11 @@ replay. Partial tool calls are never emitted to execution.
 ## Non-Streaming Contract
 
 Non-streaming JSON is read and validated inside the same owned response/session
-lifecycle. Status/connect/timeout/body-read retryable failures use one global
-attempt budget and close each failed response before the next attempt. A 200
-with invalid content encoding, invalid JSON, or invalid response shape becomes
-a typed redacted provider error.
+lifecycle. Connection/timeout failures before a response and explicit
+retryable status responses before their body is read use one global attempt
+budget and close each failed response before the next attempt. Once any 2xx
+response is received, its body-read/content-decoding/JSON/shape failure closes
+and fails without replay, because the paid POST may already have completed.
 
 No raw `requests`, urllib3, JSON, recursion, or cleanup exception escapes the
 provider boundary. Error causes/contexts containing response or credential data
@@ -557,10 +564,10 @@ budget handoff trusts only strict nonnegative integers.
 - Absent terminal usage after cancellation/failure is “unknown,” never a
   fabricated zero.
 
-## Ephemeral Kimi Reasoning Continuation
+## Ephemeral Provider Reasoning Continuation
 
-`reasoning_content` is a fixed allowlisted assistant field, not an open metadata
-bag.
+`reasoning_content` is a fixed allowlisted assistant field for Moonshot/Kimi
+and Z.ai/GLM active tool runs, not an open metadata bag.
 
 - It must be a string and is charged to the shared output/state limits.
 - Streaming fragments are accumulated invisibly; non-streaming values pass the
@@ -568,8 +575,8 @@ bag.
 - It is retained only when the same assistant turn contains complete function
   calls requiring continuation.
 - The resulting `ModelTurn.assistant_message` may carry the exact field into
-  `agent_runtime`'s in-memory message list. The next Moonshot request echoes the
-  complete assistant message before paired tool rows.
+  `agent_runtime`'s in-memory message list. The next same-provider request
+  echoes the complete assistant message before paired tool rows.
 - Each run/call owns its own metadata state; overlapping runs cannot see or
   overwrite one another.
 - Tool-free answers discard reasoning immediately.
@@ -577,9 +584,13 @@ bag.
 - It never reaches visible chunks, transcript messages, conversation metadata,
   run-log content, usage snapshots, error copies, or persistent logs.
 
-Z.ai uses `clear_thinking=true`; historical `reasoning_content` is therefore
-omitted. QwenCloud behavior remains governed by ADR-045 and does not gain Kimi
-preserved-thinking behavior through the shared parser.
+Moonshot/Kimi uses the field only for the immediate active tool continuation.
+This intentionally does not implement Kimi's broader complete-message replay
+for ordinary later chat turns. Z.ai emits `clear_thinking=false` only while the
+active run exposes tools and returns the exact field through its tool
+continuation; ordinary/tool-free chat uses `clear_thinking=true`. QwenCloud
+behavior remains governed by ADR-045 and does not gain preserved-thinking
+behavior through the shared parser.
 
 ## Native Continuation And Cancellation
 
@@ -606,7 +617,7 @@ owner. No API-mode selector is added.
 
 - Provider identities remain Moonshot and Z.ai; Kimi/GLM appear in descriptive
   labels/help only, not as new provider keys.
-- Fresh/missing model defaults show `kimi-k3` and `glm-5.1`.
+- Fresh/missing model defaults show `kimi-k3` and `glm-5.2`.
 - Existing explicit old models remain selected and editable.
 - Static lists add current models without deleting historical values; runtime
   discovery remains authoritative under ADR-020.
@@ -619,20 +630,23 @@ owner. No API-mode selector is added.
   reasoning controls.
 - Moonshot help describes international/China/custom bases and K3 reasoning.
 - Z.ai help distinguishes the general API from the coding-only endpoint and
-  states that historical reasoning is cleared in this scope.
+  explains call-scoped reasoning preservation for active function-tool runs.
 - Built-in provider tools are not shown as available Chatbook tools.
 
 The existing generic reasoning-profile control is used for Kimi K3 and accepts
-only `low`, `high`, or `max` there. Z.ai does not reinterpret that control for
-`glm-5.1`. No Z.ai thinking selector is added in this task.
+only `low`, `high`, or `max` there. For default `glm-5.2` it accepts the exact
+documented `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`
+values. No separate Z.ai thinking selector is added in this task.
 
 ## Model Discovery
 
 Both providers remain in the ADR-020 auto-refresh inventory:
 
-- authenticated `GET {normalized_base}/models`;
-- the same resolved canonical-over-legacy endpoint and credential contract as
-  chat;
+- Moonshot uses authenticated `GET {normalized_base}/models`;
+- Z.ai discovery remains best-effort because the current published OpenAPI
+  does not advertise `/paas/v4/models`; unsupported/failing refresh falls back
+  to configured and cached IDs without affecting chat readiness;
+- the same resolved canonical endpoint and credential contract as chat;
 - model IDs and timestamps only in the disk TTL cache;
 - capped selectors plus the uncapped searchable picker;
 - configured/cached fallback on failure;
@@ -641,7 +655,9 @@ Both providers remain in the ADR-020 auto-refresh inventory:
 A failed refresh preserves prior runtime/disk models and emits bounded provider
 status without response bodies, URLs containing sensitive components, or keys.
 Discovery does not change the active/saved model and does not infer capabilities
-from a newly discovered name.
+from a newly discovered name. The optional Z.ai live gate includes a bounded
+model-endpoint probe whose failure is reported as discovery unavailable, not a
+generation failure.
 
 ## Testing Strategy
 
@@ -654,7 +670,7 @@ the focused and surrounding regressions.
 - stable identities, dispatcher and parameter-map contracts;
 - default model owners and preservation of explicit historical selections;
 - exact credential/base/model precedence and source immutability;
-- malformed canonical/legacy tables in both insertion orders;
+- malformed canonical tables and invalid environment fallbacks;
 - endpoint normalization parity across readiness/chat/discovery;
 - provider/model-family allowlists, scalar/range/schema validation, and input
   copying;
@@ -671,6 +687,7 @@ the focused and surrounding regressions.
 - malformed/deep/oversized events and bounded/linear state;
 - invalid JSON/content encoding/body reads and typed redaction;
 - no stream retry after any body byte;
+- no non-streaming replay after a 2xx response has been received;
 - normal, error, cancellation, explicit/repeated close, and cleanup-failure
   lifecycle with exact once-only ownership;
 - strict usage and estimator fallback;
@@ -702,8 +719,8 @@ They prove:
 - terminal usage reaches Console signals and agent budget accounting;
 - partial-call cancellation after downstream parser observation executes zero
   tools and closes the live response exactly once;
-- Kimi reasoning reaches the immediate continuation byte-for-byte while absent
-  from store/log/error/usage surfaces;
+- Kimi and Z.ai reasoning reaches each provider's immediate continuation
+  byte-for-byte while absent from store/log/error/usage surfaces;
 - Z.ai works before and after its final native-provider registry entry.
 
 Local loopback fixtures prove application integration, not vendor availability.
@@ -743,7 +760,7 @@ README, Settings guide, and Console guide document:
 - exact supported parameter/reasoning/tool-choice subsets;
 - streaming/non-streaming usage behavior;
 - existing Chatbook function tools and built-in-tool exclusion;
-- ephemeral Kimi reasoning and Z.ai clear-thinking behavior;
+- ephemeral active-run Kimi/Z.ai reasoning and ordinary-chat clearing behavior;
 - model discovery/cache and unknown pricing behavior;
 - invalid config/endpoint recovery;
 - optional isolated live gates.

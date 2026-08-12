@@ -31,13 +31,14 @@ and persistence. Z.ai may enter `NATIVE_TOOLS_PROVIDERS` only after joined
 application tests prove the existing registry invariants. Moonshot's existing
 membership receives the same stronger proof.
 
-Kimi `reasoning_content` may cross the provider/gateway/agent boundary only as
-a fixed, bounded, string-valued, call-scoped field on the in-memory assistant
-tool-call message. It is retained solely for an active tool continuation and is
-never visible or durable. The interface is not an open provider-metadata bag.
-Z.ai uses `clear_thinking=true` and does not replay historical reasoning in this
-slice. ADR-045 continues to govern QwenCloud and is not changed by this
-exception.
+Kimi and Z.ai `reasoning_content` may cross the provider/gateway/agent boundary
+only as a fixed, bounded, string-valued, call-scoped field on the in-memory
+assistant tool-call message. It is retained solely for an active tool
+continuation and is never visible or durable. The interface is not an open
+provider-metadata bag. Z.ai uses `clear_thinking=false` only for that active
+tool run and `true` for ordinary chat. Broader Kimi/Z.ai preserved reasoning in
+unrelated multi-turn chat is deliberately out of scope. ADR-045 continues to
+govern QwenCloud and is not changed by this exception.
 
 QwenCloud Responses remains provider-specific. Its Chat-Completions parsing
 primitives may be extracted into the neutral layer only under complete
@@ -92,7 +93,8 @@ the narrow active-run reasoning handoff.
 - Only complete normalized function calls reach the executor.
 - Vendor built-in tools require a separate security/product decision.
 - Hidden reasoning is bounded, call-local, ephemeral, invisible, and excluded
-  from persistence/logs/errors/usage.
+  from persistence/logs/errors/usage; it is replayed only in the immediate
+  same-provider tool continuation.
 - Optional paid tests are doubly gated and profile-isolated; default tests make
   no paid calls.
 
@@ -105,8 +107,8 @@ the narrow active-run reasoning handoff.
 | Route both through the OpenAI provider/client | Leaks provider identity/configuration and cannot enforce Kimi/GLM model-family, thinking, finish, endpoint, and tool-choice rules. |
 | Migrate every compatible provider now | Excessively broad blast radius; local and dual-API providers have materially different compatibility requirements. |
 | Add a broad policy object with flags for every possible provider quirk | Speculative flexibility becomes a god object. Shared mechanics and provider-specific builders keep ownership explicit. |
-| Persist Kimi reasoning in conversation rows | Expands private data ownership, schema, export, deletion, and sync obligations merely to continue an active tool loop. In-memory call-scoped echo is sufficient. |
-| Drop Kimi reasoning like QwenCloud Chat | Can make official multi-step Kimi tool continuation invalid or degraded; Kimi gets a narrow privacy-reviewed active-run exception instead. |
+| Persist Kimi/Z.ai reasoning in conversation rows | Expands private data ownership, schema, export, deletion, and sync obligations merely to continue an active tool loop. In-memory call-scoped echo is sufficient. |
+| Drop provider reasoning like QwenCloud Chat | Can make official Kimi and Z.ai multi-step tool continuation invalid or degraded; both get the same narrow privacy-reviewed active-run exception instead. |
 | Enable Z.ai `tool_stream` automatically | Changes provider behavior without a user need; ordinary complete or fragmented tool-call parsing is sufficient. |
 | Add vendor built-in tools with function tools | Mixes provider-hosted execution and permissions with Chatbook's existing local/MCP policy and needs a separate decision. |
 
@@ -120,8 +122,9 @@ the narrow active-run reasoning handoff.
   contract tests rather than another transport rewrite.
 - Some duplication remains intentionally in non-migrated providers until their
   own parity evidence exists.
-- Kimi active tool runs carry additional in-memory private data; strict limits,
-  call scoping, and negative persistence/log tests are mandatory.
+- Kimi and Z.ai active tool runs carry additional in-memory private data;
+  strict limits, call scoping, and negative persistence/log tests are
+  mandatory.
 - No database migration or durable provider state is introduced.
 - Current default models change only for fresh/missing settings. Explicit saved
   models remain user-owned.
@@ -135,7 +138,7 @@ Adapter unit tests alone are insufficient. Verification must include:
 - QwenCloud before/after compatibility and mutation checks;
 - joined Console-to-loopback-HTTP tool continuation and partial-call
   cancellation for Moonshot and Z.ai;
-- negative tests proving Kimi reasoning never reaches durable or visible
+- negative tests proving Kimi/Z.ai reasoning never reaches durable or visible
   surfaces and concurrent runs do not cross-contaminate;
 - real Settings Pilot and model-catalog endpoint/cache tests;
 - optional paid provider tests only behind explicit gate plus credential.

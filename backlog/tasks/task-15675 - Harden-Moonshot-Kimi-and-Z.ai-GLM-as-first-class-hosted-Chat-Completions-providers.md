@@ -20,11 +20,11 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Moonshot and Z.ai preserve their stable provider identities and public handler compatibility while using the neutral hosted Chat-Completions boundary; unrelated providers do not change behavior.
-- [ ] #2 Fresh configuration defaults use kimi-k3 for Moonshot and glm-5.1 for Z.ai while existing explicit model selections and historical model IDs remain usable.
-- [ ] #3 Explicit arguments, canonical configuration, environment credentials, narrow legacy Moonshot fallback, and structural endpoint validation follow one documented fail-closed precedence contract without mutating source configuration or disclosing secrets.
+- [ ] #2 Fresh configuration defaults use kimi-k3 for Moonshot and glm-5.2 for Z.ai while existing explicit model selections and historical model IDs remain usable.
+- [ ] #3 Explicit arguments, canonical configuration, environment credentials, embedded defaults, and structural endpoint validation follow one documented fail-closed precedence contract without mutating source configuration or disclosing secrets.
 - [ ] #4 Streaming and non-streaming calls validate provider payloads, errors, finish states, usage, retry budgets, cancellation, resource ownership, and size/depth bounds consistently.
-- [ ] #5 Existing Chatbook function tools complete joined Console continuation for both providers; Kimi reasoning metadata is bounded, invisible, ephemeral, and call-scoped; Z.ai eligibility is enabled only after joined proof.
-- [ ] #6 Moonshot and Z.ai model discovery uses the same normalized endpoint and credential resolution as chat, preserves prior cache on failure, and never logs sensitive payloads.
+- [ ] #5 Existing Chatbook function tools complete joined Console continuation for both providers; Kimi and Z.ai reasoning metadata is bounded, invisible, ephemeral, and call-scoped; Z.ai eligibility is enabled only after joined proof.
+- [ ] #6 Moonshot and best-effort Z.ai model discovery use the same normalized endpoint and credential resolution as chat, preserve prior cache on failure, and never log sensitive payloads.
 - [ ] #7 Canonical Settings exposes actionable readiness, save, search/focus, endpoint, credential, model, and reasoning guidance without adding an API-mode selector or vendor built-in tools.
 - [ ] #8 QwenCloud Chat behavior remains unchanged after any shared parser extraction, proven by its complete contract suite and mutation checks.
 - [ ] #9 README and provider guides document current defaults, endpoints, exact supported controls, tool limitations, usage behavior, recovery, and optional isolated live verification.
