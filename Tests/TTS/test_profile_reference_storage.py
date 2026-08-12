@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
     ProfileMigrationBoundaryRequest,
+    ProfileMigrationBoundarySnapshot,
     step_profile_migration_candidate,
 )
 from tldw_chatbook.TTS.profile_reference_storage import (
@@ -155,8 +156,8 @@ def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
 
     result = step_profile_migration_candidate(
         connection,
-        boundary_sink=lambda borrowed, request: boundary_rows.append(
-            _candidate_reference_row(borrowed, request)
+        boundary_sink=lambda snapshot, request: boundary_rows.append(
+            _candidate_reference_row(snapshot, request)
         ),
     )
 
@@ -177,19 +178,24 @@ def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
 
 
 def _candidate_reference_row(
-    connection: sqlite3.Connection,
+    snapshot: ProfileMigrationBoundarySnapshot,
     request: ProfileMigrationBoundaryRequest,
 ) -> tuple[object, ...]:
     assert request == ProfileMigrationBoundaryRequest(
         ProfileMigrationBoundary.PRE_V4,
         3,
     )
-    return tuple(
-        connection.execute(
-            f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
-            (PROFILE_ID,),
-        ).fetchone()
-    )
+    destination = sqlite3.connect(":memory:")
+    try:
+        snapshot.backup_to(destination)
+        return tuple(
+            destination.execute(
+                f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (PROFILE_ID,),
+            ).fetchone()
+        )
+    finally:
+        destination.close()
 
 
 def test_v3_candidate_rejects_corrupt_reference_before_boundary(

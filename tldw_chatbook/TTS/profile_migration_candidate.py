@@ -35,8 +35,89 @@ class ProfileMigrationCandidateResult:
     boundaries: tuple[ProfileMigrationBoundaryRequest, ...]
 
 
+@dataclass(slots=True)
+class _SnapshotCapabilityState:
+    source: sqlite3.Connection
+    schema_version: int
+    used: bool = False
+
+
+_CAPABILITY_FACTORY_TOKEN = object()
+_CAPABILITY_STATES: dict[object, _SnapshotCapabilityState] = {}
+
+
+class ProfileMigrationBoundarySnapshot:
+    """Revocable single-use authority to copy one exact validated boundary."""
+
+    __slots__ = ("__key",)
+
+    def __init__(self, factory_token: object, key: object) -> None:
+        if factory_token is not _CAPABILITY_FACTORY_TOKEN:
+            raise ProfileRepositoryError("migration_failed")
+        self.__key = key
+
+    def __repr__(self) -> str:
+        return "ProfileMigrationBoundarySnapshot()"
+
+    def backup_to(self, destination: sqlite3.Connection) -> None:
+        """Copy the boundary into one caller-owned empty destination.
+
+        Args:
+            destination: Already-open empty private SQLite destination. The
+                caller retains ownership and must close and durably prepare it.
+
+        Raises:
+            ProfileRepositoryError: If authority is expired/used or the
+                destination is not an exact empty foreign connection.
+            BaseException: A control-flow signal preserved unchanged.
+        """
+
+        try:
+            state = _CAPABILITY_STATES.get(self.__key)
+            if state is None or state.used:
+                raise ValueError
+            state.used = True
+            if (
+                not isinstance(destination, sqlite3.Connection)
+                or destination is state.source
+                or destination.in_transaction
+            ):
+                raise ValueError
+            destination.row_factory = sqlite3.Row
+            destination.execute("PRAGMA foreign_keys = ON")
+            database_rows = list(destination.execute("PRAGMA database_list"))
+            version_row = destination.execute("PRAGMA user_version").fetchone()
+            objects_row = destination.execute(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'"
+            ).fetchone()
+            if (
+                len(database_rows) != 1
+                or database_rows[0][1] != "main"
+                or version_row is None
+                or len(version_row) != 1
+                or type(version_row[0]) is not int
+                or version_row[0] != 0
+                or objects_row is None
+                or len(objects_row) != 1
+                or type(objects_row[0]) is not int
+                or objects_row[0] != 0
+            ):
+                raise ValueError
+            state.source.backup(destination)
+            _profile_schema.validate_profile_store_version(
+                destination,
+                state.schema_version,
+            )
+        except ProfileRepositoryError:
+            raise ProfileRepositoryError("migration_failed") from None
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            raise ProfileRepositoryError("migration_failed") from None
+
+
 ProfileMigrationBoundarySink = Callable[
-    [sqlite3.Connection, ProfileMigrationBoundaryRequest], None
+    [ProfileMigrationBoundarySnapshot, ProfileMigrationBoundaryRequest], None
 ]
 
 
@@ -47,10 +128,11 @@ def step_profile_migration_candidate(
 ) -> ProfileMigrationCandidateResult:
     """Take ownership of and advance one already-open private candidate.
 
-    The connection is synchronously borrowed by ``boundary_sink`` only after
-    exact boundary validation and is always closed before this function
-    returns or raises. The sink may copy the candidate through SQLite's backup
-    API, but receives no path or private decoded values.
+    A narrow snapshot capability is synchronously borrowed by ``boundary_sink``
+    only after exact boundary validation. It can copy once into a caller-owned
+    empty destination, exposes no source connection or SQL API, and is revoked
+    when the callback returns or raises. The candidate is always closed before
+    this function returns or raises.
 
     Args:
         connection: Already-open private candidate connection. Ownership is
@@ -180,24 +262,23 @@ def _emit_boundary(
     request: ProfileMigrationBoundaryRequest,
     sink: ProfileMigrationBoundarySink,
 ) -> None:
-    connection.execute("PRAGMA query_only = ON")
+    key = object()
+    _CAPABILITY_STATES[key] = _SnapshotCapabilityState(
+        source=connection,
+        schema_version=request.schema_version,
+    )
+    capability = ProfileMigrationBoundarySnapshot(_CAPABILITY_FACTORY_TOKEN, key)
     body_error: BaseException | None = None
-    cleanup_error: BaseException | None = None
     try:
-        sink(connection, request)
+        sink(capability, request)
     except BaseException as error:
         body_error = error
-    try:
-        connection.execute("PRAGMA query_only = OFF")
-    except BaseException as error:
-        cleanup_error = error
-    for pending_error in (body_error, cleanup_error):
-        if pending_error is not None and not isinstance(pending_error, Exception):
-            raise pending_error
-    if body_error is not None:
+    finally:
+        _CAPABILITY_STATES.pop(key, None)
+    if body_error is not None and not isinstance(body_error, Exception):
         raise body_error
-    if cleanup_error is not None:
-        raise cleanup_error
+    if body_error is not None:
+        raise ProfileRepositoryError("migration_failed") from None
 
 
 def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
@@ -253,6 +334,7 @@ def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
 __all__ = [
     "ProfileMigrationBoundary",
     "ProfileMigrationBoundaryRequest",
+    "ProfileMigrationBoundarySnapshot",
     "ProfileMigrationCandidateResult",
     "ProfileMigrationBoundarySink",
     "step_profile_migration_candidate",

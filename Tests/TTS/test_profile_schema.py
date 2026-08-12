@@ -19,6 +19,7 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
     ProfileMigrationBoundaryRequest,
+    ProfileMigrationBoundarySnapshot,
     step_profile_migration_candidate,
 )
 from tldw_chatbook.TTS.profile_schema import (
@@ -234,8 +235,8 @@ def test_candidate_stepper_emits_exact_boundaries_in_version_order(
 
     result = step_profile_migration_candidate(
         connection,
-        boundary_sink=lambda borrowed, request: observed.append(
-            (request, borrowed.execute("PRAGMA user_version").fetchone()[0])
+        boundary_sink=lambda _snapshot, request: observed.append(
+            (request, request.schema_version)
         ),
     )
 
@@ -270,8 +271,8 @@ def test_candidate_boundaries_preserve_exact_source_and_intermediate_domain(
 
     step_profile_migration_candidate(
         connection,
-        boundary_sink=lambda borrowed, request: observations.append(
-            (request.kind, profile_schema._migration_domain_snapshot(borrowed))
+        boundary_sink=lambda snapshot, request: observations.append(
+            (request.kind, _snapshot_candidate_domain(snapshot))
         ),
     )
 
@@ -279,6 +280,17 @@ def test_candidate_boundaries_preserve_exact_source_and_intermediate_domain(
         (ProfileMigrationBoundary.PRE_V3, source_domain),
         (ProfileMigrationBoundary.PRE_V4, source_domain),
     ]
+
+
+def _snapshot_candidate_domain(
+    snapshot: ProfileMigrationBoundarySnapshot,
+) -> tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]]:
+    destination = sqlite3.connect(":memory:")
+    try:
+        snapshot.backup_to(destination)
+        return profile_schema._migration_domain_snapshot(destination)
+    finally:
+        destination.close()
 
 
 def test_candidate_boundary_failure_is_bounded_closes_and_does_not_continue(
@@ -289,7 +301,7 @@ def test_candidate_boundary_failure_is_bounded_closes_and_does_not_continue(
     calls: list[ProfileMigrationBoundary] = []
 
     def fail_boundary(
-        _borrowed: sqlite3.Connection,
+        _snapshot: ProfileMigrationBoundarySnapshot,
         request: ProfileMigrationBoundaryRequest,
     ) -> None:
         calls.append(request.kind)
@@ -311,17 +323,16 @@ def test_candidate_boundary_failure_is_bounded_closes_and_does_not_continue(
         reopened.close()
 
 
-def test_candidate_boundary_borrow_is_query_only(
+def test_candidate_boundary_capability_exposes_no_sql_mutation_api(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "candidate.sqlite3"
     connection = _build_candidate_version(path, 2)
 
-    def mutate_boundary(
-        borrowed: sqlite3.Connection,
-        _request: ProfileMigrationBoundaryRequest,
-    ) -> None:
-        borrowed.execute("UPDATE tts_generation_profiles SET revision = revision + 1")
+    def mutate_boundary(candidate_access: object, _request: object) -> None:
+        getattr(candidate_access, "execute")(
+            "UPDATE tts_generation_profiles SET revision = revision + 1"
+        )
 
     with _safe_error("migration_failed"):
         step_profile_migration_candidate(connection, boundary_sink=mutate_boundary)
@@ -337,6 +348,60 @@ def test_candidate_boundary_borrow_is_query_only(
         )
     finally:
         reopened.close()
+
+
+def test_candidate_boundary_cannot_disable_guard_and_commit_domain_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+
+    def mutate_boundary(
+        candidate_access: object,
+        _request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        execute = getattr(candidate_access, "execute")
+        execute("PRAGMA query_only = OFF")
+        execute("UPDATE tts_generation_profiles SET revision = revision + 1")
+        getattr(candidate_access, "commit")()
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection, boundary_sink=mutate_boundary)
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert (
+            reopened.execute("SELECT revision FROM tts_generation_profiles").fetchone()[
+                0
+            ]
+            == _profile().revision
+        )
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    "callback_error",
+    [ProfileRepositoryError("schema_unsupported"), RuntimeError("PRIVATE callback")],
+)
+def test_candidate_boundary_normalizes_every_ordinary_collaborator_error(
+    tmp_path: Path,
+    callback_error: Exception,
+) -> None:
+    path = tmp_path / "PRIVATE-candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+
+    def fail_callback(*_args: object) -> None:
+        raise callback_error
+
+    with _safe_error("migration_failed") as caught:
+        step_profile_migration_candidate(connection, boundary_sink=fail_callback)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert str(path) not in repr(caught.value)
+    assert str(callback_error) not in repr(caught.value)
 
 
 def test_candidate_post_step_validation_failure_rolls_back_and_stops_boundaries(
@@ -407,16 +472,20 @@ def test_candidate_boundary_borrow_cannot_outlive_candidate_ownership(
     tmp_path: Path,
 ) -> None:
     connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 3)
-    retained: list[sqlite3.Connection] = []
+    retained: list[ProfileMigrationBoundarySnapshot] = []
 
     step_profile_migration_candidate(
         connection,
-        boundary_sink=lambda borrowed, _request: retained.append(borrowed),
+        boundary_sink=lambda snapshot, _request: retained.append(snapshot),
     )
 
-    assert retained == [connection]
-    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        retained[0].execute("SELECT 1")
+    assert len(retained) == 1
+    destination = sqlite3.connect(":memory:")
+    try:
+        with _safe_error("migration_failed"):
+            retained[0].backup_to(destination)
+    finally:
+        destination.close()
 
 
 def test_candidate_boundary_value_is_immutable_and_payload_free() -> None:
@@ -428,6 +497,67 @@ def test_candidate_boundary_value_is_immutable_and_payload_free() -> None:
     assert "sqlite" not in repr(request).casefold()
     assert not hasattr(request, "connection")
     assert not hasattr(request, "path")
+
+    with _safe_error("migration_failed"):
+        ProfileMigrationBoundarySnapshot(object(), object())
+
+
+def test_candidate_boundary_snapshot_is_single_use_and_exact(
+    tmp_path: Path,
+) -> None:
+    connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 2)
+    expected_domain = profile_schema._migration_domain_snapshot(connection)
+    copied_domains: list[object] = []
+
+    def copy_boundary(
+        snapshot: ProfileMigrationBoundarySnapshot,
+        request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        assert not hasattr(snapshot, "execute")
+        assert not hasattr(snapshot, "commit")
+        assert not hasattr(snapshot, "source")
+        assert "sqlite" not in repr(snapshot).casefold()
+        destination = sqlite3.connect(":memory:")
+        replay = sqlite3.connect(":memory:")
+        try:
+            snapshot.backup_to(destination)
+            copied_domains.append(
+                (request.kind, profile_schema._migration_domain_snapshot(destination))
+            )
+            with _safe_error("migration_failed"):
+                snapshot.backup_to(replay)
+        finally:
+            replay.close()
+            destination.close()
+
+    step_profile_migration_candidate(connection, boundary_sink=copy_boundary)
+
+    assert copied_domains == [
+        (ProfileMigrationBoundary.PRE_V3, expected_domain),
+        (ProfileMigrationBoundary.PRE_V4, expected_domain),
+    ]
+
+
+def test_candidate_boundary_snapshot_rejects_populated_foreign_destination(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "candidate.sqlite3"
+    foreign_path = tmp_path / "foreign.sqlite3"
+    connection = _build_candidate_version(candidate_path, 2)
+    foreign = open_profile_store(foreign_path)
+    foreign_before = profile_schema._migration_domain_snapshot(foreign)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda snapshot, _request: snapshot.backup_to(foreign),
+        )
+
+    try:
+        assert foreign.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert profile_schema._migration_domain_snapshot(foreign) == foreign_before
+    finally:
+        foreign.close()
 
 
 def test_candidate_validates_source_boundaries_and_each_post_step_version(
