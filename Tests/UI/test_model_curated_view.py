@@ -413,3 +413,83 @@ def test_curated_view_does_not_import_acquisition_at_module_scope() -> None:
     assert findings == [], (
         f"model_curated_view.py imports acquisition/fetch at module scope: {findings}"
     )
+
+
+@pytest.mark.asyncio
+async def test_every_exact_parakeet_root_posts_use_from_disk_with_its_catalog_ref(
+    tmp_path: Path,
+) -> None:
+    """The disk action carries the immutable catalog ref, never parsed row copy."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        PARAKEET_PRECISIONS,
+        parakeet_descriptor,
+        parakeet_reference,
+        parakeet_source_map,
+        parakeet_vad_descriptor,
+        parakeet_vad_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        PARAKEET_V2_MODEL,
+        PARAKEET_V3_MODEL,
+    )
+
+    registry = CuratedRegistry()
+    source_map = parakeet_source_map()
+    expected = []
+    for model in (PARAKEET_V2_MODEL, PARAKEET_V3_MODEL):
+        for precision in PARAKEET_PRECISIONS:
+            reference = parakeet_reference(model, precision)
+            expected.append(reference)
+            registry.register(
+                parakeet_descriptor(model, precision),
+                sources=source_map[reference],
+            )
+    vad_reference = parakeet_vad_reference()
+    registry.register(
+        parakeet_vad_descriptor(),
+        sources=source_map[vad_reference],
+    )
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+
+    class _CapturingApp(App[None]):
+        def __init__(self) -> None:
+            self.requests: list[CuratedView.UseFromDiskRequested] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(CuratedView.UseFromDiskRequested)
+        def _capture(self, event: CuratedView.UseFromDiskRequested) -> None:
+            self.requests.append(event)
+
+    app = _CapturingApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        buttons = list(app.query(".curated-use-from-disk").results(Button))
+        assert [button.reference for button in buttons] == expected
+        for button in buttons:
+            button.press()
+            await pilot.pause()
+
+        assert [request.reference for request in app.requests] == expected
+        assert all(button.reference != vad_reference for button in buttons)
+
+
+@pytest.mark.asyncio
+async def test_non_parakeet_root_has_no_use_from_disk_action(tmp_path: Path) -> None:
+    descriptor = _descriptor(ArtifactRef("ordinary-model", "a" * 40, "int8"))
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: _registry_with(descriptor),
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        assert not app.query(".curated-use-from-disk")

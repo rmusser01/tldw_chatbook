@@ -13,7 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.Model_Artifacts.test_service import installed_root_and_dependency
+from Tests.Model_Artifacts.test_service import (
+    install_descriptor_payload,
+    installed_root_and_dependency,
+    single_file_descriptor,
+)
 from Tests.STT.executor_test_support import (
     device_retry_executor_worker,
     fake_executor_worker,
@@ -25,7 +29,14 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
 )
-from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
+from tldw_chatbook.Model_Artifacts import (
+    ArtifactInUseError,
+    ArtifactOperationLease,
+    ArtifactRef,
+    ArtifactRole,
+    LeaseMode,
+    ModelArtifactService,
+)
 from tldw_chatbook.STT.contracts import (
     BufferAudioSource,
     DeviceFailureOrigin,
@@ -64,6 +75,7 @@ from tldw_chatbook.STT.executor_worker import (
     _parakeet_provider,
     _ProviderLoadFailure,
     _run_executor_worker,
+    _validate_reuse,
 )
 
 
@@ -252,6 +264,114 @@ def test_managed_artifact_reference_is_validated() -> None:
 
     with pytest.raises(ValueError, match="managed_artifact_ref"):
         ExecutorRequest(**values, managed_artifact_ref=("parakeet-v2", "", "int8"))
+
+
+def test_external_request_accepts_exact_managed_dependencies() -> None:
+    snapshot = LocalSourceSnapshot(
+        token="private-snapshot-token",
+        paths=(Path("/private/models/encoder.onnx"),),
+        identities=((7, 11, 1024, 123456),),
+    )
+
+    request = ExecutorRequest(
+        generation=3,
+        attempt_id="external-parakeet",
+        job_id="job-external-parakeet",
+        source=FileAudioSource(Path("speech.wav")),
+        identity=_identity(closure_fingerprint=None),
+        options={},
+        local_source=snapshot,
+        managed_store_root=Path("store"),
+        managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
+    )
+
+    assert request.managed_artifact_ref is None
+    assert request.managed_dependency_refs == (("silero-vad", "vad-revision", "f32"),)
+
+
+def test_external_request_rejects_managed_root_and_dependency_without_store() -> None:
+    snapshot = LocalSourceSnapshot(
+        token="private-snapshot-token",
+        paths=(Path("/private/models/encoder.onnx"),),
+        identities=((7, 11, 1024, 123456),),
+    )
+    values = {
+        "generation": 3,
+        "attempt_id": "external-parakeet",
+        "job_id": "job-external-parakeet",
+        "source": FileAudioSource(Path("speech.wav")),
+        "identity": _identity(closure_fingerprint=None),
+        "options": {},
+        "local_source": snapshot,
+    }
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ExecutorRequest(
+            **values,
+            managed_store_root=Path("store"),
+            managed_artifact_ref=("parakeet-v2", "root-revision", "int8"),
+        )
+    with pytest.raises(ValueError, match="managed_store_root"):
+        ExecutorRequest(
+            **values,
+            managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ExecutorRequest(
+            **{**values, "local_source": None},
+            managed_store_root=Path("store"),
+            managed_artifact_ref=("parakeet-v2", "root-revision", "int8"),
+            managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
+        )
+
+
+def test_cpu_retry_preserves_managed_dependency_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Connection:
+        def __init__(self) -> None:
+            self.sent: list[ExecutorRequest] = []
+
+        def send(self, request: ExecutorRequest) -> None:
+            self.sent.append(request)
+
+    class _Cancellation:
+        def clear(self) -> None:
+            return None
+
+    dependency_refs = (("silero-vad", "vad-revision", "f32"),)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="cpu-retry-dependencies",
+        job_id="job-cpu-retry-dependencies",
+        source=FileAudioSource(Path("speech.wav")),
+        identity=_identity(
+            device=ExecutionDevice.METAL,
+            closure_fingerprint=None,
+            local_snapshot_token=None,
+        ),
+        options={},
+        managed_store_root=Path("store"),
+        managed_dependency_refs=dependency_refs,
+    )
+    callbacks = _Callbacks()
+    executor = LocalSTTExecutor()
+    connection = _Connection()
+    executor._active_request = request
+    executor._active_callbacks = callbacks  # type: ignore[assignment]
+    executor._busy = True
+    monkeypatch.setattr(executor, "_retire_idle_worker_locked", lambda: True)
+
+    def start_worker() -> None:
+        executor._worker_generation = 2
+        executor._connection = connection  # type: ignore[assignment]
+        executor._cancellation_event = _Cancellation()
+
+    monkeypatch.setattr(executor, "_start_worker_locked", start_worker)
+
+    executor._retry_on_cpu(request, callbacks)  # type: ignore[arg-type]
+
+    assert connection.sent[0].managed_dependency_refs == dependency_refs
 
 
 def test_worker_phase_is_restricted_to_worker_owned_transitions() -> None:
@@ -1387,6 +1507,39 @@ def _managed_request_values(
     return service, root, dependency, identity
 
 
+def _external_dependency_request(
+    tmp_path: Path,
+    dependency: object,
+    *,
+    attempt_id: str,
+) -> tuple[ExecutorRequest, Path]:
+    model = tmp_path / "external" / "encoder.onnx"
+    model.parent.mkdir(exist_ok=True)
+    model.write_bytes(b"external-model")
+    snapshot = snapshot_local_source((model,))
+    reference = dependency.reference
+    return (
+        ExecutorRequest(
+            generation=1,
+            attempt_id=attempt_id,
+            job_id=f"job-{attempt_id}",
+            source=FileAudioSource(tmp_path / "speech.wav"),
+            identity=_identity(
+                root_revision="catalog-revision",
+                closure_fingerprint=None,
+                local_snapshot_token=snapshot.token,
+            ),
+            options={},
+            local_source=snapshot,
+            managed_store_root=tmp_path / "store",
+            managed_dependency_refs=(
+                (reference.artifact_id, reference.revision, reference.variant),
+            ),
+        ),
+        model,
+    )
+
+
 def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
     tmp_path: Path,
 ) -> None:
@@ -1470,6 +1623,362 @@ def test_provider_builder_receives_the_full_verified_managed_handle(
         assert captured["is_cancelled"]() is False
     finally:
         resident.close()
+
+
+def test_external_runtime_holds_exact_vad_lease_across_reuse_and_close(
+    tmp_path: Path,
+) -> None:
+    service, _root, dependency = installed_root_and_dependency(tmp_path)
+    request, model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id="external-vad",
+    )
+    captured: dict[str, object] = {}
+
+    def builder(_request, model_root, handle, _is_cancelled):
+        captured.update(model_root=model_root, handle=handle)
+        return ProviderRuntime(runner=lambda *_args, **_kwargs: {}, close=lambda: None)
+
+    resident = _load_resident(request, builder, lambda: False)
+    try:
+        handle = captured["handle"]
+        assert captured["model_root"] == model.parent
+        assert handle.references == (dependency.reference,)
+        assert dict(handle.paths)[dependency.reference] == service.artifact_path(
+            dependency.reference
+        )
+        _validate_reuse(request, resident)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
+                dependency.reference
+            )
+    finally:
+        resident.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    (
+        ("delete", TranscriptionFailureCode.MODEL_NOT_INSTALLED),
+        ("corrupt", TranscriptionFailureCode.ARTIFACT_CORRUPT),
+    ),
+)
+def test_external_runtime_reverifies_vad_before_resident_reuse(
+    tmp_path: Path,
+    mutation: str,
+    expected_code: TranscriptionFailureCode,
+) -> None:
+    service, _root, dependency = installed_root_and_dependency(tmp_path)
+    request, _model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id="external-vad-first",
+    )
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    repaired = _Callbacks()
+    payload = service.artifact_path(dependency.reference) / dependency.files[0].path
+    try:
+        first_generation = executor.submit(
+            attempt_id="external-vad-first",
+            job_id="job-external-vad-first",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=first.on_result,
+            on_failure=first.on_failure,
+        )
+        _wait_for_terminal(first)
+        assert first.results
+
+        if mutation == "delete":
+            payload.unlink()
+        else:
+            payload.write_bytes(b"x" * dependency.files[0].size_bytes)
+
+        executor.submit(
+            attempt_id="external-vad-reuse",
+            job_id="job-external-vad-reuse",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=second.on_result,
+            on_failure=second.on_failure,
+        )
+        _wait_for_terminal(second)
+
+        assert second.results == []
+        assert second.failures[0].code is expected_code
+        assert str(tmp_path) not in repr(second.failures[0])
+        _wait_until(lambda: executor.resident_identity is None)
+
+        payload.write_bytes(b"dependency")
+        repaired_generation = executor.submit(
+            attempt_id="external-vad-repaired",
+            job_id="job-external-vad-repaired",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=request.managed_dependency_refs,
+            on_result=repaired.on_result,
+            on_failure=repaired.on_failure,
+        )
+        _wait_for_terminal(repaired)
+
+        assert repaired_generation > first_generation
+        assert repaired.results
+        assert repaired.failures == []
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
+def test_external_load_revalidates_model_after_acquiring_vad(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service, _root, dependency = installed_root_and_dependency(tmp_path)
+    request, model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id="external-mutated-before-load",
+    )
+    original = ModelArtifactService.acquire_dependencies
+
+    def acquire_then_mutate(service, references):
+        leased = original(service, references)
+        model.write_bytes(b"changed-after-vad-acquisition")
+        return leased
+
+    monkeypatch.setattr(
+        ModelArtifactService,
+        "acquire_dependencies",
+        acquire_then_mutate,
+    )
+
+    with pytest.raises(LocalSourceChangedError):
+        _load_resident(
+            request,
+            lambda *_args: (_ for _ in ()).throw(
+                AssertionError("native load must not see changed model bytes")
+            ),
+            lambda: False,
+        )
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected"),
+    (
+        ("missing", TranscriptionFailureCode.MODEL_NOT_INSTALLED),
+        ("corrupt", TranscriptionFailureCode.ARTIFACT_CORRUPT),
+        ("contended", TranscriptionFailureCode.PROVIDER_UNAVAILABLE),
+        ("wrong-role", TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE),
+    ),
+)
+def test_external_dependency_failure_keeps_stable_worker_taxonomy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    condition: str,
+    expected: TranscriptionFailureCode,
+) -> None:
+    import tldw_chatbook.Model_Artifacts as artifacts
+
+    service = ModelArtifactService(tmp_path / "store")
+    reference = ArtifactRef("silero-vad", f"{condition}-revision", "f32")
+    role = ArtifactRole.ROOT if condition == "wrong-role" else ArtifactRole.DEPENDENCY
+    dependency = single_file_descriptor(reference, role, b"dependency")
+    if condition != "missing":
+        install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+    if condition == "corrupt":
+        (service.artifact_path(reference) / dependency.files[0].path).write_bytes(
+            b"x" * dependency.files[0].size_bytes
+        )
+    lease = None
+    if condition == "contended":
+        lease = ArtifactOperationLease(
+            service.locks_path,
+            reference.lease_key(),
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=0.1,
+        )
+        lease.acquire()
+        monkeypatch.setattr(
+            artifacts,
+            "ModelArtifactService",
+            lambda root: ModelArtifactService(root, lease_timeout_seconds=0.01),
+        )
+    request, _model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id=f"external-{condition}",
+    )
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.commands = iter((request, ("close", 1)))
+            self.sent: list[object] = []
+
+        def send(self, value: object) -> None:
+            self.sent.append(value)
+
+        def recv(self) -> object:
+            return next(self.commands)
+
+        def close(self) -> None:
+            return None
+
+    class _Event:
+        def wait(self, _timeout: float) -> bool:
+            return True
+
+        def is_set(self) -> bool:
+            return False
+
+    connection = _Connection()
+    monkeypatch.setattr(
+        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+        lambda: SimpleNamespace(pid=1),
+    )
+    try:
+        _run_executor_worker(
+            connection,  # type: ignore[arg-type]
+            _Event(),
+            _Event(),
+            1,
+            str(tmp_path),
+            provider_builder=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("invalid dependency reached native load")
+            ),
+            parse_job=lambda *_args, **_kwargs: {},
+        )
+    finally:
+        if lease is not None:
+            lease.release()
+
+    failures = [item for item in connection.sent if type(item) is ExecutorFailure]
+    assert len(failures) == 1
+    failure = failures[0]
+    assert failure.code is expected
+    assert str(tmp_path) not in repr(failure)
+
+
+def test_dependency_reference_change_rejects_reuse_and_releases_old_lease(
+    tmp_path: Path,
+) -> None:
+    _service, _root, dependency = installed_root_and_dependency(tmp_path)
+    request, _model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id="external-first-dependency",
+    )
+    resident = _load_resident(
+        request,
+        lambda *_args: ProviderRuntime(
+            runner=lambda *_args, **_kwargs: {}, close=lambda: None
+        ),
+        lambda: False,
+    )
+    changed = ExecutorRequest(
+        generation=1,
+        attempt_id="external-changed-dependency",
+        job_id="job-external-changed-dependency",
+        source=request.source,
+        identity=request.identity,
+        options={},
+        local_source=request.local_source,
+    )
+    try:
+        with pytest.raises(LocalSourceChangedError):
+            _validate_reuse(changed, resident)
+    finally:
+        resident.close()
+
+    ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
+def test_executor_recycles_before_dispatch_when_external_vad_reference_changes(
+    tmp_path: Path,
+) -> None:
+    service, _root, first_dependency = installed_root_and_dependency(tmp_path)
+    second_reference = ArtifactRef("silero-vad", "replacement-vad-revision", "int8")
+    second_dependency = single_file_descriptor(
+        second_reference,
+        ArtifactRole.DEPENDENCY,
+        b"replacement-dependency",
+    )
+    install_descriptor_payload(
+        service,
+        tmp_path,
+        second_dependency,
+        b"replacement-dependency",
+    )
+    request, _model = _external_dependency_request(
+        tmp_path,
+        first_dependency,
+        attempt_id="first-vad",
+    )
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+
+    def submit(
+        attempt_id: str,
+        reference: ArtifactRef,
+        callbacks: _Callbacks,
+    ) -> int:
+        return executor.submit(
+            attempt_id=attempt_id,
+            job_id=f"job-{attempt_id}",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=(
+                (reference.artifact_id, reference.revision, reference.variant),
+            ),
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+
+    try:
+        first_generation = submit("first-vad", first_dependency.reference, first)
+        _wait_for_terminal(first)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
+                first_dependency.reference
+            )
+
+        second_generation = submit("second-vad", second_dependency.reference, second)
+        _wait_for_terminal(second)
+
+        assert second_generation > first_generation
+        assert second.results
+        assert second.failures == []
+        ModelArtifactService(tmp_path / "store").delete(first_dependency.reference)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
+                second_dependency.reference
+            )
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(second_dependency.reference)
 
 
 def test_provider_exception_after_cancellation_is_reported_as_cancelled() -> None:
@@ -1587,6 +2096,63 @@ def test_parakeet_provider_persists_normalized_managed_provenance(
         }
     ]
     assert provenance["batch_id"] == "batch-managed"
+
+
+def test_parakeet_provider_keeps_external_root_out_of_vad_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    dependency = ArtifactRef("silero-vad", "vad-revision", "f32")
+    model_root = tmp_path / "private-external-model"
+    vad_root = tmp_path / "managed-vad"
+    model_root.mkdir()
+    vad_root.mkdir()
+    model_file = model_root / "encoder.onnx"
+    model_file.write_bytes(b"model")
+    snapshot = snapshot_local_source((model_file,))
+    handle = SimpleNamespace(
+        references=(dependency,),
+        paths=((dependency, vad_root),),
+        lease_keys=(dependency.lease_key(),),
+    )
+    captured: dict[str, object] = {}
+
+    class _Runtime:
+        def close(self) -> None:
+            return None
+
+    def fake_load(**kwargs):
+        captured.update(kwargs)
+        return _Runtime()
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", fake_load)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-external",
+        job_id="job-external",
+        source=FileAudioSource(tmp_path / "speech.wav"),
+        identity=_identity(
+            root_revision="catalog-revision",
+            closure_fingerprint=None,
+            local_snapshot_token=snapshot.token,
+        ),
+        options={"language": "en"},
+        local_source=snapshot,
+        managed_store_root=tmp_path / "store",
+        managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
+    )
+
+    provider = _parakeet_provider(request, model_root, handle, lambda: False)
+
+    assert captured["model_root"] == model_root
+    assert captured["vad_root"] == vad_root
+    assert captured["artifact_root"] is None
+    assert captured["artifact_dependencies"] == (dependency.lease_key(),)
+    assert str(model_root) not in repr(captured["artifact_dependencies"])
+    provider.close()
 
 
 @pytest.mark.parametrize("suffix", (".wav", ".mp4"))

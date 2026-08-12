@@ -295,3 +295,46 @@ def test_parakeet_buffer_temp_file_is_removed_even_when_transcribe_raises(
         "the temp WAV survived a raise from transcribe() -- the finally "
         "cleanup did not run (or ran against the wrong path)"
     )
+
+
+def test_onnx_buffer_uses_injected_source_without_acquisition(
+    service_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tldw_chatbook.Local_Ingestion.parakeet_v2_artifact as artifact_module
+
+    dispatch = object()
+    source_calls: list[dict[str, object]] = []
+    dispatcher_calls: list[dict[str, object]] = []
+
+    class _Bridge:
+        config = {"default_provider": "parakeet-onnx"}
+
+    class _SourceService:
+        def resolve(self, key: object, **kwargs: object) -> object:
+            source_calls.append({"key": key, **kwargs})
+            return dispatch
+
+    class _Dispatcher:
+        def transcribe_buffer(self, **kwargs: object) -> dict[str, object]:
+            dispatcher_calls.append(kwargs)
+            return {"text": "local", "segments": [], "language": "en"}
+
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: _Bridge(),
+    )
+    monkeypatch.setattr(
+        artifact_module,
+        "run_parakeet_vad_provision",
+        lambda *_args, **_kwargs: pytest.fail("transcription must not provision VAD"),
+    )
+
+    result = service_module.TranscriptionService(
+        local_stt_dispatcher=_Dispatcher(),
+        parakeet_source_service=_SourceService(),
+    ).transcribe_buffer(b"\x00\x00", 16_000, provider="parakeet-onnx")
+
+    assert result["text"] == "local"
+    assert len(source_calls) == 1
+    assert len(dispatcher_calls) == 1

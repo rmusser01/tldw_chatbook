@@ -55,6 +55,7 @@ class _ResidentRuntime:
     local_snapshot_token: str | None
     managed_store_root: Path | None
     managed_artifact_ref: tuple[str, str, str] | None
+    managed_dependency_refs: tuple[tuple[str, str, str], ...]
     lease: Any | None = None
     reported: bool = False
 
@@ -205,11 +206,57 @@ def _failure_from_worker_exception(
     return _failure_from_exception(request, error)
 
 
+def _caused_by_missing_path(error: BaseException) -> bool:
+    cause = error.__cause__
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, (FileNotFoundError, NotADirectoryError)):
+            return True
+        cause = cause.__cause__
+    return False
+
+
+def _dependency_failure_code(error: BaseException) -> TranscriptionFailureCode:
+    from tldw_chatbook.Model_Artifacts import (
+        ArtifactDependencyError,
+        ArtifactIntegrityError,
+        ArtifactLeaseError,
+        ArtifactStateError,
+    )
+
+    if isinstance(error, ArtifactDependencyError):
+        if _caused_by_missing_path(error):
+            return TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        if error.__cause__ is not None:
+            return TranscriptionFailureCode.ARTIFACT_CORRUPT
+        return TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    if isinstance(error, ArtifactIntegrityError):
+        if _caused_by_missing_path(error):
+            return TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        return TranscriptionFailureCode.ARTIFACT_CORRUPT
+    if isinstance(error, (ArtifactLeaseError, ArtifactStateError)):
+        return TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+    return TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+
+
 def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Any] | None:
-    if request.managed_artifact_ref is None:
+    if request.managed_artifact_ref is None and not request.managed_dependency_refs:
         return None
     assert request.managed_store_root is not None
     from tldw_chatbook.Model_Artifacts import ArtifactRef, ModelArtifactService
+
+    if request.managed_artifact_ref is None:
+        try:
+            references = tuple(
+                ArtifactRef(*reference) for reference in request.managed_dependency_refs
+            )
+            leased = ModelArtifactService(
+                request.managed_store_root
+            ).acquire_dependencies(references)
+            return leased, leased.handle
+        except Exception as error:
+            raise _ProviderLoadFailure(_dependency_failure_code(error)) from None
 
     try:
         reference = ArtifactRef(*request.managed_artifact_ref)
@@ -259,8 +306,11 @@ def _load_resident(
     handle = None
     if acquired is not None:
         lease, handle = acquired
-        model_root = dict(handle.paths)[handle.root]
+        if request.managed_artifact_ref is not None:
+            model_root = dict(handle.paths)[handle.root]
     try:
+        if request.local_source is not None and handle is not None:
+            model_root = _direct_local_model_root(request)
         provider = provider_builder(request, model_root, handle, is_cancelled)
     except Exception:
         if lease is not None:
@@ -278,6 +328,7 @@ def _load_resident(
             else None
         ),
         managed_artifact_ref=request.managed_artifact_ref,
+        managed_dependency_refs=request.managed_dependency_refs,
         lease=lease,
     )
 
@@ -294,11 +345,18 @@ def _validate_reuse(request: ExecutorRequest, resident: _ResidentRuntime) -> Non
         if request.managed_store_root is not None
         else None
     )
+    if request.managed_dependency_refs != resident.managed_dependency_refs:
+        raise LocalSourceChangedError("Local STT model dependencies changed")
     if (
         request_store != resident.managed_store_root
         or request.managed_artifact_ref != resident.managed_artifact_ref
     ):
         raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+    if request.local_source is not None and request.managed_dependency_refs:
+        acquired = _acquire_managed_model(request)
+        if acquired is None:
+            raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
+        acquired[0].close()
 
 
 def _transcribe_cpp_provider(
@@ -487,12 +545,15 @@ def _parakeet_provider(
     vad_root = None
     if managed_handle is not None:
         paths = dict(managed_handle.paths)
-        artifact_root = managed_handle.root.lease_key()
-        dependency_refs = tuple(
-            reference
-            for reference in managed_handle.closure
-            if reference != managed_handle.root
-        )
+        if hasattr(managed_handle, "root"):
+            artifact_root = managed_handle.root.lease_key()
+            dependency_refs = tuple(
+                reference
+                for reference in managed_handle.closure
+                if reference != managed_handle.root
+            )
+        else:
+            dependency_refs = managed_handle.references
         artifact_dependencies = tuple(
             reference.lease_key() for reference in dependency_refs
         )
@@ -852,7 +913,14 @@ def _run_executor_worker(
                         cancelled=cancellation_event.is_set(),
                     )
                 )
-                if isinstance(error, LocalSourceChangedError):
+                if isinstance(error, LocalSourceChangedError) or (
+                    isinstance(error, _ProviderLoadFailure)
+                    and error.code
+                    in {
+                        TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+                        TranscriptionFailureCode.ARTIFACT_CORRUPT,
+                    }
+                ):
                     return
     except (EOFError, OSError):
         return

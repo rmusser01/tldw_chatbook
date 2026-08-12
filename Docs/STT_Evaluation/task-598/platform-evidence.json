@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "evidence_label": "task598_native_external_parakeet_matrix",
+  "workflow": {
+    "run_id": "31553729188",
+    "run_attempt": "1",
+    "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31553729188",
+    "tested_commit": "9e006d3e618bf228305e3de575d1a4aac699a1d3",
+    "status": "passed"
+  },
+  "probe": {
+    "managed_vad": {
+      "artifact_id": "silero-vad",
+      "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+      "variant": "f32"
+    },
+    "model_references": {
+      "nemo-parakeet-tdt-0.6b-v2": {
+        "artifact_id": "parakeet-v2",
+        "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+        "variant": "int8"
+      },
+      "nemo-parakeet-tdt-0.6b-v3": {
+        "artifact_id": "parakeet-v3",
+        "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+        "variant": "int8"
+      }
+    },
+    "models": [
+      "nemo-parakeet-tdt-0.6b-v2",
+      "nemo-parakeet-tdt-0.6b-v3"
+    ],
+    "precision": "int8",
+    "audio": "generated 4-second 16 kHz mono 16-bit zero PCM",
+    "classification": "runtime smoke, not transcription-quality evidence",
+    "network_after_provision": false
+  },
+  "platforms": {
+    "linux-x86_64": {
+      "artifact_sha256": "ec640554a9679b78ff35cdb2080b21825d47c082677671dd52c53e5eb27727a7",
+      "host": {
+        "system": "Linux",
+        "architecture": "x86_64",
+        "python": "3.12.13",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0",
+        "available_providers": [
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "status": "passed",
+      "final_store": {
+        "vad_only": true,
+        "no_parakeet_roots": true,
+        "no_readiness": true,
+        "no_active_selector": true
+      },
+      "models": {
+        "nemo-parakeet-tdt-0.6b-v2": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 35.790551185,
+          "inference_seconds": 3.876253434000006
+        },
+        "nemo-parakeet-tdt-0.6b-v3": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 13.653025869000004,
+          "inference_seconds": 3.737816035999998
+        }
+      }
+    },
+    "linux-aarch64": {
+      "artifact_sha256": "3365a7f9c69756bcebadb13a3628034224e33a597c9cb2ade0a5c41ea0ec3856",
+      "host": {
+        "system": "Linux",
+        "architecture": "aarch64",
+        "python": "3.12.13",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0",
+        "available_providers": [
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "status": "passed",
+      "final_store": {
+        "vad_only": true,
+        "no_parakeet_roots": true,
+        "no_readiness": true,
+        "no_active_selector": true
+      },
+      "models": {
+        "nemo-parakeet-tdt-0.6b-v2": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 44.0261491,
+          "inference_seconds": 3.0484720979999906
+        },
+        "nemo-parakeet-tdt-0.6b-v3": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 17.864072383999996,
+          "inference_seconds": 2.995343151000043
+        }
+      }
+    },
+    "windows-x86_64": {
+      "artifact_sha256": "fecf7e43eb4440d2d089dc27d45ffe9532f8f17436db8c36e66e8ccdff355590",
+      "host": {
+        "system": "Windows",
+        "architecture": "AMD64",
+        "python": "3.12.10",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.28.0",
+        "available_providers": [
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "status": "passed",
+      "final_store": {
+        "vad_only": true,
+        "no_parakeet_roots": true,
+        "no_readiness": true,
+        "no_active_selector": true
+      },
+      "models": {
+        "nemo-parakeet-tdt-0.6b-v2": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 31.0,
+          "inference_seconds": 5.968000000000075
+        },
+        "nemo-parakeet-tdt-0.6b-v3": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 27.484000000000037,
+          "inference_seconds": 6.155999999999949
+        }
+      }
+    },
+    "macos-x86_64": {
+      "artifact_sha256": "fa7ccb582bc246ef7597418a2a95f78b12c6b619577b490d26da06978fc31a04",
+      "host": {
+        "system": "Darwin",
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.23.2",
+        "available_providers": [
+          "CoreMLExecutionProvider",
+          "AzureExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "status": "passed",
+      "final_store": {
+        "vad_only": true,
+        "no_parakeet_roots": true,
+        "no_readiness": true,
+        "no_active_selector": true
+      },
+      "models": {
+        "nemo-parakeet-tdt-0.6b-v2": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 48.761754911000025,
+          "inference_seconds": 6.311099454999976
+        },
+        "nemo-parakeet-tdt-0.6b-v3": {
+          "execution_provider": "CPUExecutionProvider",
+          "artifact_root": null,
+          "descriptor_verified": true,
+          "external_unchanged": true,
+          "cache_unchanged": true,
+          "store_unchanged": true,
+          "source_preference_unchanged": true,
+          "managed_copy_deleted": true,
+          "shutdown_completed": true,
+          "model_total_seconds": 37.13056922599981,
+          "inference_seconds": 6.233395894000068
+        }
+      }
+    }
+  }
+}

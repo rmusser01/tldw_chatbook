@@ -234,6 +234,10 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                     id="mcp-tools-workspace-save",
                     classes="console-action-primary",
                     compact=True,
+                    tooltip=(
+                        "Save this workspace root for the next Console agent run; "
+                        "blank uses the app folder."
+                    ),
                 )
             yield Static(
                 "Changes apply to the next Console agent run.",

@@ -56,6 +56,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactCatalog",
         "ArtifactConflictError",
         "ArtifactDependencyError",
+        "ArtifactDependencyHandle",
         "ArtifactDescriptor",
         "ArtifactDescriptorError",
         "ArtifactDescriptorParseError",
@@ -90,6 +91,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "InsufficientSpaceError",
         "InstalledArtifact",
         "LeasedArtifactHandle",
+        "LeasedArtifactDependencyHandle",
         "LeaseMode",
         "ModelArtifactService",
         "PreflightNotGrantableError",
@@ -932,8 +934,17 @@ def test_reconcile_reports_live_pre_lifecycle_install_staging_entry(
         copied_item: ArtifactDescriptor,
         copied_source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
     ) -> None:
-        original_copy(copied_item, copied_source, staging)
+        original_copy(
+            copied_item,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
         copy_finished.set()
         if not release_install.wait(10.0):
             raise AssertionError("test did not release staged install")
@@ -1535,6 +1546,196 @@ def test_install_verifies_then_promotes_immutable_directory(tmp_path: Path) -> N
         "schema_version": 1,
         "descriptor": item.to_dict(),
     }
+
+
+@pytest.mark.parametrize("phase", ("_copy_payload", "_verify_payload"))
+def test_install_forwards_default_cancellation_probe_to_private_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    real_phase = getattr(service, phase)
+    probes: list[Callable[[], bool]] = []
+
+    def record_phase(
+        *args: object,
+        cancelled: Callable[[], bool],
+        **kwargs: object,
+    ) -> None:
+        probes.append(cancelled)
+        real_phase(*args, cancelled=cancelled, **kwargs)
+
+    monkeypatch.setattr(service, phase, record_phase)
+
+    assert service.install(item, source) == item.reference
+    assert len(probes) == 1
+    assert probes[0]() is False
+
+
+def test_install_cancellation_during_copy_is_path_private_and_removes_only_its_stage(
+    tmp_path: Path,
+) -> None:
+    """A cancelled local copy never publishes or damages user-owned bytes."""
+
+    payload = b"model" * 600_000
+    service, item, source = install_inputs(
+        tmp_path,
+        {"models/model.onnx": payload},
+    )
+    abandoned = service.staging_path / "pre-existing" / "part"
+    abandoned.parent.mkdir(parents=True)
+    abandoned.write_bytes(b"keep")
+    private_path = str(source)
+    saw_partial_stage = False
+
+    def cancelled() -> bool:
+        nonlocal saw_partial_stage
+        staged = tuple(service.staging_path.glob("install-*/models/model.onnx"))
+        if not staged:
+            return False
+        copied = staged[0].stat().st_size
+        saw_partial_stage = 0 < copied < len(payload)
+        return saw_partial_stage
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(item, source, cancelled=cancelled)
+
+    assert saw_partial_stage is True
+    assert private_path not in str(caught.value)
+    assert (source / "models/model.onnx").read_bytes() == payload
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == (abandoned.parent,)
+    assert abandoned.read_bytes() == b"keep"
+
+
+def test_install_cancellation_during_second_staged_hash_never_publishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hashing remains cooperatively cancellable after every copy completes."""
+
+    first = b"a" * (1024 * 1024 + 17)
+    second = b"b" * (1024 * 1024 + 17)
+    service, item, source = install_inputs(
+        tmp_path,
+        {"first.onnx": first, "second.onnx": second},
+    )
+    real_sha256 = service_module.hashlib.sha256
+    hashes_started = 0
+    second_hash_started = False
+    second_hash_chunks = 0
+
+    class _TrackedHash:
+        def __init__(self, *args, **kwargs) -> None:
+            nonlocal hashes_started
+            if not args and not kwargs:
+                hashes_started += 1
+                self._index = hashes_started
+            else:
+                self._index = 0
+            self._inner = real_sha256(*args, **kwargs)
+
+        def update(self, chunk: bytes) -> None:
+            nonlocal second_hash_chunks, second_hash_started
+            self._inner.update(chunk)
+            if self._index == 2:
+                second_hash_started = True
+                second_hash_chunks += 1
+
+        def hexdigest(self) -> str:
+            return self._inner.hexdigest()
+
+    monkeypatch.setattr(service_module.hashlib, "sha256", _TrackedHash)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(item, source, cancelled=lambda: second_hash_started)
+
+    assert second_hash_started is True
+    assert second_hash_chunks == 1
+    assert str(source) not in str(caught.value)
+    assert (source / "first.onnx").read_bytes() == first
+    assert (source / "second.onnx").read_bytes() == second
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_install_rechecks_cancellation_immediately_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation after staged verification still prevents publication."""
+
+    payload = b"model"
+    service, item, source = install_inputs(tmp_path, {"model.onnx": payload})
+    verified = False
+    real_verify = service._verify_payload
+
+    def finish_verification(*args, **kwargs) -> None:
+        nonlocal verified
+        real_verify(*args, **kwargs)
+        verified = True
+
+    monkeypatch.setattr(service, "_verify_payload", finish_verification)
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ):
+        service.install(item, source, cancelled=lambda: verified)
+
+    assert verified is True
+    assert (source / "model.onnx").read_bytes() == payload
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_install_rechecks_cancellation_adjacent_to_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation after the final destination probe still prevents publish."""
+
+    payload = b"model"
+    service, item, source = install_inputs(tmp_path, {"model.onnx": payload})
+    destination = service.artifact_path(item.reference)
+    real_exists = service._managed_path_exists
+    destination_probes = 0
+
+    def cancel_after_second_destination_probe(path: Path) -> bool:
+        nonlocal destination_probes
+        exists = real_exists(path)
+        if path == destination:
+            destination_probes += 1
+        return exists
+
+    monkeypatch.setattr(
+        service,
+        "_managed_path_exists",
+        cancel_after_second_destination_probe,
+    )
+
+    with pytest.raises(
+        service_module.ArtifactStateError,
+        match="^artifact installation cancelled$",
+    ) as caught:
+        service.install(
+            item,
+            source,
+            cancelled=lambda: destination_probes >= 2,
+        )
+
+    assert destination_probes == 2
+    assert str(source) not in str(caught.value)
+    assert (source / "model.onnx").read_bytes() == payload
+    assert destination.exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -2278,10 +2479,19 @@ def test_install_rejects_source_directory_identity_change_during_copy(
         copied_descriptor: ArtifactDescriptor,
         copied_source: Path,
         staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
     ) -> None:
         copied_source.rename(tmp_path / "original-source")
         replacement.rename(copied_source)
-        original_copy(copied_descriptor, copied_source, staging)
+        original_copy(
+            copied_descriptor,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
 
     monkeypatch.setattr(service, "_copy_payload", swap_then_copy)
 
@@ -2305,6 +2515,104 @@ def test_install_rejects_special_source_entry_when_supported(
 
     with pytest.raises(service_module.ArtifactPathError):
         service.install(item, source)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_declared_files_only_install_ignores_unrelated_entries_and_copies_declared(
+    tmp_path: Path,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    (source / "README.md").write_text("user-owned", encoding="utf-8")
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"outside")
+    symlink_or_skip(source / "unrelated-link", unrelated, target_is_directory=False)
+
+    assert service.install(item, source, declared_files_only=True) == item.reference
+
+    final = service.artifact_path(item.reference)
+    assert (final / "nested" / "model.onnx").read_bytes() == b"model"
+    assert (final / "manifest.json").is_file()
+    assert (final / "README.md").exists() is False
+    assert (final / "unrelated-link").exists() is False
+
+
+@pytest.mark.parametrize("symlink_target", ("declared-file", "declared-directory"))
+def test_declared_files_only_install_rejects_symlinked_declared_paths(
+    tmp_path: Path,
+    symlink_target: str,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    external = tmp_path / "external"
+    if symlink_target == "declared-file":
+        external.write_bytes(b"model")
+        (source / "nested" / "model.onnx").unlink()
+        symlink_or_skip(
+            source / "nested" / "model.onnx",
+            external,
+            target_is_directory=False,
+        )
+    else:
+        external.mkdir()
+        (external / "model.onnx").write_bytes(b"model")
+        shutil.rmtree(source / "nested")
+        symlink_or_skip(source / "nested", external, target_is_directory=True)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, source, declared_files_only=True)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_declared_files_only_install_rechecks_declared_ancestor_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    original_copy = service._copy_payload
+
+    def copy_then_replace_ancestor(
+        copied_descriptor: ArtifactDescriptor,
+        copied_source: Path,
+        staging: Path,
+        *,
+        consume_source: bool = False,
+        cancelled: Callable[[], bool],
+    ) -> None:
+        original_copy(
+            copied_descriptor,
+            copied_source,
+            staging,
+            consume_source=consume_source,
+            cancelled=cancelled,
+        )
+        nested = copied_source / "nested"
+        nested.rename(copied_source / "original-nested")
+        nested.mkdir()
+        (nested / "model.onnx").write_bytes(b"model")
+
+    monkeypatch.setattr(service, "_copy_payload", copy_then_replace_ancestor)
+
+    with pytest.raises(service_module.ArtifactPathError, match="changed"):
+        service.install(item, source, declared_files_only=True)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_declared_files_only_flag_requires_a_real_bool(tmp_path: Path) -> None:
+    service, item, source = install_inputs(tmp_path)
+
+    with pytest.raises(TypeError):
+        service.install(item, source, declared_files_only=1)  # type: ignore[arg-type]
 
     assert service.artifact_path(item.reference).exists() is False
 
@@ -3397,6 +3705,219 @@ def test_acquire_holds_exact_shared_closure_until_idempotent_close(
         timeout_seconds=0.1,
     ):
         pass
+
+
+def test_acquire_dependencies_verifies_and_leases_without_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    dependency_ref = ref("silero-vad", "vad-revision", "int8")
+    dependency = single_file_descriptor(
+        dependency_ref,
+        ArtifactRole.DEPENDENCY,
+        b"dependency",
+    )
+    install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+
+    def reject_state_write(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("dependency acquisition must not write derived state")
+
+    monkeypatch.setattr(service, "activate", reject_state_write)
+    monkeypatch.setattr(service, "_write_readiness", reject_state_write)
+    monkeypatch.setattr(service_module, "atomic_write_json", reject_state_write)
+
+    leased = service.acquire_dependencies((dependency_ref,))
+    assert isinstance(leased, service_module.LeasedArtifactDependencyHandle)
+    assert isinstance(leased.handle, service_module.ArtifactDependencyHandle)
+    assert leased.handle.references == (dependency_ref,)
+    assert leased.handle.paths == (
+        (dependency_ref, service.artifact_path(dependency_ref)),
+    )
+    assert leased.handle.lease_keys == (dependency_ref.lease_key(),)
+    assert service.readiness_path(dependency_ref).exists() is False
+    assert service.active_path(dependency_ref.artifact_id).exists() is False
+
+    with leased as entered:
+        assert entered is leased
+        with pytest.raises(service_module.ArtifactInUseError):
+            service.delete(dependency_ref)
+
+    leased.close()
+    with pytest.raises(service_module.ArtifactStateError, match="closed"):
+        with leased:
+            pass
+
+
+def test_acquire_dependencies_sorts_uniquifies_and_leases_exact_references(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    first_ref = ref("aaa-vad", "first-revision", "int8")
+    second_ref = ref("zzz-tokenizer", "second-revision", "int8")
+    for item, content in (
+        (
+            single_file_descriptor(
+                first_ref,
+                ArtifactRole.DEPENDENCY,
+                b"first",
+            ),
+            b"first",
+        ),
+        (
+            single_file_descriptor(
+                second_ref,
+                ArtifactRole.DEPENDENCY,
+                b"second",
+            ),
+            b"second",
+        ),
+    ):
+        install_descriptor_payload(service, tmp_path, item, content)
+
+    with service.acquire_dependencies(
+        (second_ref, first_ref, second_ref),
+    ) as leased:
+        expected = (first_ref, second_ref)
+        assert leased.handle.references == expected
+        assert leased.handle.paths == tuple(
+            (reference, service.artifact_path(reference)) for reference in expected
+        )
+        for reference in expected:
+            with pytest.raises(service_module.ArtifactInUseError):
+                service.delete(reference)
+
+
+def test_acquire_dependencies_verifies_each_reference_under_its_shared_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    references = (
+        ref("aaa-vad", "first-revision", "int8"),
+        ref("zzz-tokenizer", "second-revision", "int8"),
+    )
+    for reference, content in zip(references, (b"first", b"second"), strict=True):
+        item = single_file_descriptor(
+            reference,
+            ArtifactRole.DEPENDENCY,
+            content,
+        )
+        install_descriptor_payload(service, tmp_path, item, content)
+
+    original = service._verify_installed
+    verified: list[ArtifactRef] = []
+
+    def verify_under_lease(
+        reference: ArtifactRef,
+        expected_role: ArtifactRole,
+    ) -> None:
+        with pytest.raises(service_module.ArtifactLeaseError):
+            service_module.ArtifactOperationLease(
+                service.locks_path,
+                reference.lease_key(),
+                service_module.LeaseMode.EXCLUSIVE,
+                timeout_seconds=0.01,
+            ).acquire()
+        verified.append(reference)
+        original(reference, expected_role)
+
+    monkeypatch.setattr(service, "_verify_installed", verify_under_lease)
+
+    leased = service.acquire_dependencies(tuple(reversed(references)))
+    leased.close()
+
+    assert verified == list(references)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    (
+        ("missing", service_module.ArtifactDependencyError),
+        ("wrong-role", service_module.ArtifactDependencyError),
+        ("corrupt", service_module.ArtifactIntegrityError),
+    ),
+)
+def test_acquire_dependencies_rejects_invalid_exact_dependencies(
+    tmp_path: Path,
+    failure: str,
+    expected_error: type[Exception],
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    dependency_ref = ref("silero-vad", "vad-revision", "int8")
+    if failure != "missing":
+        role = ArtifactRole.ROOT if failure == "wrong-role" else ArtifactRole.DEPENDENCY
+        dependency = single_file_descriptor(dependency_ref, role, b"dependency")
+        install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+        if failure == "corrupt":
+            (service.artifact_path(dependency_ref) / "model.onnx").write_bytes(
+                b"x" * len(b"dependency")
+            )
+
+    with pytest.raises(expected_error):
+        service.acquire_dependencies((dependency_ref,))
+
+    assert service.readiness_path(dependency_ref).exists() is False
+    assert service.active_path(dependency_ref.artifact_id).exists() is False
+
+
+def test_acquire_dependencies_verification_failure_releases_all_shared_leases(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_ref = ref("aaa-vad", "first-revision", "int8")
+    second_ref = ref("zzz-tokenizer", "second-revision", "int8")
+    for item, content in (
+        (
+            single_file_descriptor(
+                first_ref,
+                ArtifactRole.DEPENDENCY,
+                b"first",
+            ),
+            b"first",
+        ),
+        (
+            single_file_descriptor(
+                second_ref,
+                ArtifactRole.DEPENDENCY,
+                b"second",
+            ),
+            b"second",
+        ),
+    ):
+        install_descriptor_payload(service, tmp_path, item, content)
+    (service.artifact_path(second_ref) / "model.onnx").write_bytes(b"xxxxxx")
+
+    with pytest.raises(service_module.ArtifactIntegrityError):
+        service.acquire_dependencies((second_ref, first_ref))
+
+    keys = tuple(reference.lease_key() for reference in (first_ref, second_ref))
+    with service_module.ArtifactOperationLeaseSet(
+        service.locks_path,
+        keys,
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.1,
+    ):
+        pass
+
+
+def test_acquire_dependencies_rejects_invalid_reference_collections(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+
+    with pytest.raises(TypeError, match="tuple"):
+        service.acquire_dependencies([])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="ArtifactRef"):
+        service.acquire_dependencies((object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="at least one"):
+        service.acquire_dependencies(())
 
 
 def test_closed_leased_handle_cannot_be_reentered(tmp_path: Path) -> None:

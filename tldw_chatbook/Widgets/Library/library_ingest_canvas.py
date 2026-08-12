@@ -1033,15 +1033,35 @@ class LibraryIngestCanvas(VerticalScroll):
             super().__init__()
             self.expanded = expanded
 
+    class DirectoryBrowseRequested(Message):
+        """A directory-backed text option requested a native picker."""
+
+        def __init__(self, group: str, name: str) -> None:
+            super().__init__()
+            self.group = group
+            self.name = name
+
     class ParakeetInstallRequested(Message):
         """The user requested the curated Parakeet v2 installer."""
+
+    class ExternalPreparationCancelRequested(Message):
+        """The user requested cancellation of external-model preparation."""
 
     class TranscribeCppGGUFRequested(Message):
         """The user requested a local transcribe.cpp GGUF picker."""
 
-    def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: LibraryIngestCanvasState,
+        *,
+        external_busy: bool = False,
+        external_status: str = "",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self.external_busy = external_busy
+        self.external_status = external_status
         self.styles.width = "1fr"
         self.styles.min_width = 40
         # Value each option widget was last rendered/reported with, keyed by
@@ -1079,6 +1099,7 @@ class LibraryIngestCanvas(VerticalScroll):
             disabled, disabled_note = field_disabled_state(
                 field, cap, values, is_installed=_is_installed
             )
+            control_disabled = disabled or self.external_busy
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
@@ -1103,7 +1124,7 @@ class LibraryIngestCanvas(VerticalScroll):
                         checkbox_label,
                         value=bool(value),
                         id=widget_id,
-                        disabled=disabled,
+                        disabled=control_disabled,
                     )
                 )
             elif field.type == "select":
@@ -1139,7 +1160,7 @@ class LibraryIngestCanvas(VerticalScroll):
                         select_options,
                         value=select_value,
                         id=widget_id,
-                        disabled=disabled,
+                        disabled=control_disabled,
                         allow_blank=False,
                     )
                 )
@@ -1188,17 +1209,48 @@ class LibraryIngestCanvas(VerticalScroll):
                         markup=False,
                     )
                 )
-                children.append(
-                    Input(
-                        value=str(value),
-                        # (task-3305) Example content when the schema
-                        # provides it; a placeholder repeating the label
-                        # line directly above is stutter.
-                        placeholder=field.placeholder or field.label,
-                        id=widget_id,
-                        disabled=disabled,
-                    )
+                input_widget = Input(
+                    value=str(value),
+                    # (task-3305) Example content when the schema
+                    # provides it; a placeholder repeating the label
+                    # line directly above is stutter.
+                    placeholder=field.placeholder or field.label,
+                    id=widget_id,
+                    disabled=control_disabled,
                 )
+                if field.directory_picker:
+                    input_widget.styles.width = "1fr"
+                    input_widget.styles.min_width = 0
+                    browse_button = Button(
+                        "Browse…",
+                        id=f"{widget_id}-browse",
+                        classes=(
+                            "library-canvas-action library-ingest-directory-browse"
+                        ),
+                        compact=True,
+                        disabled=control_disabled,
+                    )
+                    browse_button.styles.width = "auto"
+                    path_row = Horizontal(
+                        input_widget,
+                        browse_button,
+                        classes="library-ingest-path-actions",
+                    )
+                    path_row.styles.width = "100%"
+                    path_row.styles.height = 3
+                    children.append(path_row)
+                    if field.name == "transcription_model_dir":
+                        children.append(
+                            Static(
+                                "This import and its retries only · does not "
+                                "change Lab Models or your global source.",
+                                id="library-external-scope-helper",
+                                classes="type-group-scope",
+                                markup=False,
+                            )
+                        )
+                else:
+                    children.append(input_widget)
                 # (task-2130) Inline validation message -- a text line, not a
                 # color-only border. Display-managed so typing updates it in
                 # place without recomposing the panel.
@@ -1210,7 +1262,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 if error_message:
                     # (task-2230 a11y) Persistent marker: the stock invalid
                     # border only paints while focused.
-                    children[-1].add_class("-ingest-option-invalid")
+                    input_widget.add_class("-ingest-option-invalid")
                 error_line = Static(
                     error_message,
                     id=f"{widget_id}-error",
@@ -1237,7 +1289,7 @@ class LibraryIngestCanvas(VerticalScroll):
                     id="opt-audio_video-install-parakeet-v2",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=install_gated,
+                    disabled=install_gated or self.external_busy,
                 )
             )
             if provider_value == "transcribe-cpp":
@@ -1258,6 +1310,7 @@ class LibraryIngestCanvas(VerticalScroll):
                         id="opt-audio_video-choose-transcribe-cpp-gguf",
                         classes="library-canvas-action",
                         compact=True,
+                        disabled=self.external_busy,
                     )
                 )
 
@@ -1267,6 +1320,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 id=f"opt-{group}-reset",
                 classes="library-canvas-action library-ingest-option-reset",
                 compact=True,
+                disabled=self.external_busy,
             )
         )
 
@@ -1310,6 +1364,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-backend-switch",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.external_busy,
             )
         if state.unavailable_line:
             yield Static(
@@ -1334,6 +1389,7 @@ class LibraryIngestCanvas(VerticalScroll):
             placeholder="Path to a local file or a URL…",
             id="library-ingest-path",
             classes="library-ingest-field",
+            disabled=self.external_busy,
         )
         with Horizontal(classes="library-ingest-path-actions"):
             yield Button(
@@ -1341,6 +1397,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-browse",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.external_busy,
             )
             # (task-2042) Always mounted, shown/hidden via ``display`` so a
             # path appearing/disappearing never changes the canvas's widget
@@ -1352,6 +1409,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-clear-path",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.external_busy,
             )
             clear_button.display = state.show_clear_path
             yield clear_button
@@ -1472,12 +1530,28 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         analysis_hint.display = bool(state.analysis_hint_line)
         yield analysis_hint
+        external_status = Static(
+            self.external_status,
+            id="library-external-prepare-status",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        external_status.display = bool(self.external_status)
+        yield external_status
+        external_cancel = Button(
+            "Cancel external preparation",
+            id="library-external-prepare-cancel",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        external_cancel.display = self.external_busy
+        yield external_cancel
         yield Button(
             "Start import",
             id="library-ingest-start",
             classes="library-canvas-action",
             compact=True,
-            disabled=not state.start_enabled,
+            disabled=not state.start_enabled or self.external_busy,
         )
         yield Static(
             state.queue_heading,
@@ -1641,6 +1715,26 @@ class LibraryIngestCanvas(VerticalScroll):
         """Request explicit install confirmation from the owning screen."""
         event.stop()
         self.post_message(self.ParakeetInstallRequested())
+
+    @on(Button.Pressed, "#library-external-prepare-cancel")
+    def _request_external_preparation_cancel(self, event: Button.Pressed) -> None:
+        """Bubble explicit cancellation to the owning screen."""
+
+        event.stop()
+        self.post_message(self.ExternalPreparationCancelRequested())
+
+    @on(Button.Pressed, ".library-ingest-directory-browse")
+    def _request_directory_browse(self, event: Button.Pressed) -> None:
+        """Bubble an adjacent directory picker request to the screen."""
+
+        event.stop()
+        button_id = event.button.id or ""
+        suffix = "-browse"
+        if not button_id.startswith("opt-") or not button_id.endswith(suffix):
+            return
+        group, separator, name = button_id[4 : -len(suffix)].partition("-")
+        if separator and group and name:
+            self.post_message(self.DirectoryBrowseRequested(group, name))
 
     @on(Button.Pressed, "#opt-audio_video-choose-transcribe-cpp-gguf")
     def _request_transcribe_cpp_gguf(self, event: Button.Pressed) -> None:

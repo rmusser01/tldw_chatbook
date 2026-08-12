@@ -10,6 +10,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDiskUsage,
     ArtifactRef,
+    ArtifactRole,
     InstalledArtifact,
     ProvenanceClass,
 )
@@ -162,17 +163,13 @@ def test_inventory_keeps_broken_and_unmanaged_rows_visible(tmp_path: Path) -> No
     assert rows[1].staging_store_bytes == 25
 
 
-def test_inventory_marks_unassigned_models_ineligible_for_activation(
+def test_inventory_labels_dependencies_and_never_allows_activation(
     tmp_path: Path,
 ) -> None:
-    """A downloaded unassigned model never claims runtime compatibility.
-
-    This fails if inventory uses readiness or active state to enable an
-    unassigned descriptor, rather than its consumer authority.
-    """
+    """A managed dependency remains readable without a root-only action."""
     from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
 
-    descriptor = replace(make_descriptor(), consumer="unassigned")
+    descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
     row = inventory_rows(
         (
             InstalledArtifact(
@@ -188,20 +185,16 @@ def test_inventory_marks_unassigned_models_ineligible_for_activation(
     )[0]
 
     assert row.activation_allowed is False
-    assert row.action_hint == "Downloaded · runtime compatibility not verified"
+    assert row.action_hint == "Managed dependency"
 
 
-def test_inventory_keeps_repair_copy_ahead_of_unassigned_compatibility(
+def test_inventory_keeps_repair_copy_ahead_of_dependency_label(
     tmp_path: Path,
 ) -> None:
-    """A broken unassigned model remains repairable instead of looking ready.
-
-    This fails if the unassigned compatibility branch precedes the broken
-    branch.
-    """
+    """A broken dependency remains repairable instead of looking installed."""
     from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
 
-    descriptor = replace(make_descriptor(), consumer="unassigned")
+    descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
     row = inventory_rows(
         (
             InstalledArtifact(
@@ -218,6 +211,31 @@ def test_inventory_keeps_repair_copy_ahead_of_unassigned_compatibility(
 
     assert row.activation_allowed is False
     assert row.action_hint == "Needs repair — Repair"
+
+
+def test_inventory_marks_valid_unready_root_as_activation_required(
+    tmp_path: Path,
+) -> None:
+    """Missing readiness is the action to activate, not a broken root."""
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+
+    row = inventory_rows(
+        (
+            InstalledArtifact(
+                path=tmp_path / "installed-root",
+                descriptor=make_descriptor(),
+                ready=False,
+                active=False,
+                error=None,
+            ),
+        ),
+        None,
+        (),
+    )[0]
+
+    assert row.activation_allowed is True
+    assert row.ready is False
+    assert row.action_hint == "Installed · activation required"
 
 
 def test_inventory_keeps_assigned_consumer_readiness_copy(tmp_path: Path) -> None:

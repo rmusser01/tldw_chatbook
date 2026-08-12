@@ -7,7 +7,10 @@ actually download today -- see SpeechSetupStep in FirstRunSetupWizard.py for
 the live wiring against tldw_chatbook.Model_Artifacts.curated_registry.
 """
 
+from types import SimpleNamespace
+
 from tldw_chatbook.STT.routing import RoutingPolicy
+from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
     SpeechLanguageOption,
     SpeechPrecisionOption,
@@ -139,6 +142,53 @@ class TestBuildSpeechTranscriptionCommit:
                 "default_precision": "f32",
             }
         }
+
+    def test_external_source_patch_merges_with_all_speech_defaults_without_writing(
+        self,
+    ):
+        """Task 8: the wizard owns the only write; the pure helper only merges."""
+        state = speech_state.SpeechSelection(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v3",
+            language="fr",
+            precision="f32",
+        )
+        source_commit = SimpleNamespace(
+            section_values={
+                "transcription": {
+                    "parakeet_external_sources": {
+                        "v3_f32": {
+                            "model_id": "nemo-parakeet-tdt-0.6b-v3",
+                            "precision": "f32",
+                            "directory": "/user-owned/parakeet-v3",
+                            "preferred_source": "external",
+                        }
+                    }
+                }
+            }
+        )
+
+        patch = speech_state.speech_config_patch(state, source_commit)
+
+        assert patch == {
+            "transcription": {
+                "default_provider": "parakeet-onnx",
+                "default_model": "nemo-parakeet-tdt-0.6b-v3",
+                "default_language": "fr",
+                "default_precision": "f32",
+                "parakeet_external_sources": {
+                    "v3_f32": {
+                        "model_id": "nemo-parakeet-tdt-0.6b-v3",
+                        "precision": "f32",
+                        "directory": "/user-owned/parakeet-v3",
+                        "preferred_source": "external",
+                    }
+                },
+            }
+        }
+
+    def test_state_module_does_not_duplicate_speech_selection_type(self):
+        assert not hasattr(speech_state, "SpeechSetupState")
 
 
 class TestResolveSpeechSelection:

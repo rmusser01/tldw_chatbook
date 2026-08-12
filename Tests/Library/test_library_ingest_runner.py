@@ -24,6 +24,7 @@ that a spawned process can run ``run_parse_job``.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import os
 import subprocess
 import sys
@@ -40,12 +41,21 @@ from textual.app import App
 
 import tldw_chatbook.app as _app_module
 import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
+import tldw_chatbook.STT.parakeet_external as _parakeet_external_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
+)
+from tldw_chatbook.Model_Artifacts.service import (
+    ArtifactDescriptor,
+    ArtifactFile,
+    ArtifactFormat,
+    ArtifactRef,
+    ArtifactRole,
+    ProvenanceClass,
 )
 from tldw_chatbook.STT.contracts import (
     ExecutionDevice,
@@ -287,6 +297,7 @@ def _fake_local_stt_dispatch(job, options) -> dict[str, Any]:
         "local_source": None,
         "managed_store_root": None,
         "managed_artifact_ref": None,
+        "managed_dependency_refs": (),
     }
 
 
@@ -305,6 +316,48 @@ def _fake_parakeet_dispatch() -> ParakeetDispatch:
         managed_artifact_ref=None,
         option_updates=MappingProxyType({}),
     )
+
+
+def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
+    """Give dispatch fixtures exact hashes and ready VAD without global state."""
+
+    service = app._ensure_parakeet_source_service()
+    service._vad_ready = lambda: True
+
+    def descriptor(model_id: str, precision: str) -> ArtifactDescriptor:
+        files = tuple(
+            ArtifactFile(
+                path.name,
+                path.stat().st_size,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in sorted(root.iterdir())
+        )
+        version = "v3" if model_id.endswith("-v3") else "v2"
+        return ArtifactDescriptor(
+            reference=ArtifactRef(f"parakeet-{version}", "fixture", precision),
+            model_id=model_id,
+            role=ArtifactRole.ROOT,
+            format=ArtifactFormat.ONNX,
+            consumer="stt",
+            model_family="parakeet",
+            upstream_repository="example/parakeet",
+            upstream_revision="fixture",
+            source_url="https://example.invalid/parakeet",
+            precision=precision,
+            expected_installed_bytes=sum(item.size_bytes for item in files),
+            license_id="cc-by-4.0",
+            license_url="https://example.invalid/license",
+            usage_notice="test fixture",
+            runtime_name="onnx-asr",
+            runtime_version_constraint="==0.12.0",
+            supported_os=("darwin",),
+            supported_architectures=("arm64",),
+            provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+            files=files,
+        )
+
+    service._descriptor_for = descriptor
 
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
@@ -1164,6 +1217,66 @@ async def test_library_retry_clears_executor_unhealthy_gate_explicitly(
 
 
 @pytest.mark.asyncio
+async def test_parakeet_retry_keeps_job_local_override_and_scope_path_private(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    selected = str(tmp_path / "private-parakeet")
+    scope_id = "library-external-retry-scope"
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": selected,
+                    "transcription_external_scope_id": scope_id,
+                }
+            },
+        )
+        await pilot.pause()
+        first_options = executor.calls[0]["options"]
+        assert first_options["transcription_model_dir"] == selected
+        assert first_options["transcription_context"]["external_scope_id"] == scope_id
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        failed = await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+        assert selected not in failed.error
+        assert selected not in str(failed.error_detail)
+
+        retry = app.retry_library_ingest_job(failed.job_id)
+        assert retry is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(executor.calls) == 2
+        retry_options = executor.calls[1]["options"]
+        assert retry_options["transcription_model_dir"] == selected
+        assert retry_options["transcription_context"]["external_scope_id"] == scope_id
+
+
+@pytest.mark.asyncio
 async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
     tmp_path: Path,
 ) -> None:
@@ -1304,6 +1417,7 @@ async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
         "decoder_joint-model.int8.onnx",
     ):
         (model_dir / filename).write_bytes(filename.encode("utf-8"))
+    _allow_test_external_root(app, model_dir)
 
     async with app.run_test() as pilot:
         app.submit_library_ingest_job(
@@ -1345,9 +1459,10 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
         "decoder_joint-model.int8.onnx",
     ):
         (validated_dir / filename).write_bytes(filename.encode("utf-8"))
+    _allow_test_external_root(app, validated_dir)
 
     with patch.object(
-        _parakeet_dispatch_module,
+        _parakeet_external_module,
         "validate_path_simple",
         return_value=validated_dir,
     ):
@@ -1372,11 +1487,14 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
 def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
     tmp_path: Path,
 ) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
     app = _IngestRunnerHarness(None)
     job = LibraryIngestJob(job_id="job-shared-resolver", source_path="speech.wav")
     identity = ModelIdentity(
         provider_id="parakeet-onnx",
-        model_id="fixture-model",
+        model_id=PARAKEET_V2_MODEL,
         root_revision="fixture-revision",
         closure_fingerprint="fixture-closure",
         precision="f32",
@@ -1393,6 +1511,7 @@ def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
                 "_verify_legacy_parakeet_v2": True,
             }
         ),
+        managed_dependency_refs=(("silero-vad", "vad-revision", "f32"),),
     )
     requested = tmp_path / "requested"
     requested.mkdir()
@@ -1406,23 +1525,20 @@ def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
         (requested / filename).write_bytes(filename.encode())
     options = {
         "transcription_provider": "parakeet-onnx",
-        "transcription_model": "fixture-model",
+        "transcription_model": PARAKEET_V2_MODEL,
         "transcription_precision": "f32",
         "transcription_model_dir": str(requested),
     }
 
-    with patch.object(
-        _parakeet_dispatch_module,
-        "resolve_parakeet_dispatch",
-        autospec=True,
-        return_value=resolved,
-    ) as resolver:
-        dispatch = app._build_local_stt_dispatch(job, options)
+    resolver = SimpleNamespace(resolve=lambda *_args, **_kwargs: resolved)
+    with patch.object(app, "_ensure_parakeet_source_service", return_value=resolver):
+        with patch.object(resolver, "resolve", wraps=resolver.resolve) as resolve:
+            dispatch = app._build_local_stt_dispatch(job, options)
 
-    resolver.assert_called_once_with(
-        model_id="fixture-model",
-        precision="f32",
-        model_dir=str(requested),
+    resolve.assert_called_once_with(
+        ParakeetSourceKey.V2_F32,
+        override=str(requested),
+        scope_id="job-shared-resolver",
     )
     assert dispatch == {
         "attempt_id": "job-shared-resolver-attempt-1",
@@ -1430,6 +1546,7 @@ def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
         "local_source": None,
         "managed_store_root": tmp_path / "managed",
         "managed_artifact_ref": ("artifact", "revision", "variant"),
+        "managed_dependency_refs": (("silero-vad", "vad-revision", "f32"),),
     }
     assert options["transcription_model_dir"] == str(tmp_path / "resolved")
     assert options["_verify_legacy_parakeet_v2"] is True
@@ -1551,6 +1668,7 @@ def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> 
     for filename in required:
         (model_root / filename).write_bytes(filename.encode())
     app = _IngestRunnerHarness(None)
+    _allow_test_external_root(app, model_root)
     job = LibraryIngestJob(job_id="job-v2-f32", source_path="speech.wav")
 
     dispatch = app._build_local_stt_dispatch(
@@ -1563,7 +1681,9 @@ def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> 
         },
     )
 
-    assert dispatch["local_source"].paths == tuple(model_root / item for item in required)
+    assert dispatch["local_source"].paths == tuple(
+        model_root / item for item in sorted(required)
+    )
 
 
 def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(

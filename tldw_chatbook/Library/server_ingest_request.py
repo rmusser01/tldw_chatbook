@@ -429,6 +429,12 @@ def build_server_ingest_kwargs(
     # forwarding another group's would ask the server to transcribe a PDF.
     group = get_type_group(source)
     for name, value in (options.get(group) or {}).items():
+        if name in {
+            "transcription_model_dir",
+            "transcription_external_scope_id",
+        }:
+            # Local verifier authority never crosses the server boundary.
+            continue
         if group == "generic" and name in {
             "analyze",
             "chunk",

@@ -14,11 +14,11 @@ import stat
 import sys
 import tempfile
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TypeVar
+from typing import Generic, Self, TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
@@ -120,6 +120,18 @@ _READINESS_SCHEMA_VERSION = 1
 _READINESS_KEYS = frozenset(
     {"schema_version", "root", "closure", "closure_fingerprint"}
 )
+_LOCAL_COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def _never_cancelled() -> bool:
+    return False
+
+
+def _raise_if_install_cancelled(cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise ArtifactStateError("artifact installation cancelled")
+
+
 _ACTIVE_SCHEMA_VERSION = 1
 _ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
@@ -888,6 +900,20 @@ class ReconcileReport:
 
 
 @dataclass(frozen=True)
+class ArtifactDependencyHandle:
+    """Verified exact managed dependencies and their payload paths."""
+
+    references: tuple[ArtifactRef, ...]
+    paths: tuple[tuple[ArtifactRef, Path], ...]
+
+    @property
+    def lease_keys(self) -> tuple[ArtifactLeaseKey, ...]:
+        """Return exact dependency lease keys in canonical order."""
+
+        return tuple(reference.lease_key() for reference in self.references)
+
+
+@dataclass(frozen=True)
 class ArtifactHandle:
     """A verified exact artifact closure and its managed payload paths."""
 
@@ -948,26 +974,29 @@ class _ReadinessRecord:
         }
 
 
-class LeasedArtifactHandle:
-    """Own shared operation leases for an already acquired artifact handle."""
+_HandleT = TypeVar("_HandleT", ArtifactHandle, ArtifactDependencyHandle)
+
+
+class _LeasedArtifactHandle(Generic[_HandleT]):
+    """Own shared operation leases for an already acquired handle."""
 
     def __init__(
         self,
-        handle: ArtifactHandle,
+        handle: _HandleT,
         lease_set: ArtifactOperationLeaseSet,
     ) -> None:
         self.handle = handle
         self._lease_set: ArtifactOperationLeaseSet | None = lease_set
 
     def close(self) -> None:
-        """Release the exact shared closure lease set idempotently."""
+        """Release the owned shared lease set idempotently."""
 
         lease_set = self._lease_set
         self._lease_set = None
         if lease_set is not None:
             lease_set.release()
 
-    def __enter__(self) -> LeasedArtifactHandle:
+    def __enter__(self) -> Self:
         """Return this already acquired handle without reacquiring leases."""
 
         if self._lease_set is None:
@@ -990,6 +1019,14 @@ class LeasedArtifactHandle:
             exc.add_note(f"lease context cleanup failed: {cleanup_error!r}")
             for note in getattr(cleanup_error, "__notes__", ()):
                 exc.add_note(note)
+
+
+class LeasedArtifactHandle(_LeasedArtifactHandle[ArtifactHandle]):
+    """Own shared operation leases for an acquired artifact closure."""
+
+
+class LeasedArtifactDependencyHandle(_LeasedArtifactHandle[ArtifactDependencyHandle]):
+    """Own shared operation leases for verified exact dependencies."""
 
 
 class ModelArtifactService:
@@ -2089,6 +2126,50 @@ class ModelArtifactService:
                     error.add_note(note)
             raise
 
+    def acquire_dependencies(
+        self,
+        references: tuple[ArtifactRef, ...],
+    ) -> LeasedArtifactDependencyHandle:
+        """Verify and lease exact managed dependency artifacts."""
+
+        if type(references) is not tuple:
+            raise TypeError("references must be a tuple")
+        if any(type(reference) is not ArtifactRef for reference in references):
+            raise TypeError("references must contain only ArtifactRef values")
+        ordered = tuple(sorted(set(references)))
+        if not ordered:
+            raise ValueError("references must contain at least one ArtifactRef")
+
+        self._assert_managed_path(self._locks_path)
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            tuple(reference.lease_key() for reference in ordered),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact dependency leases"
+            ) from error
+        try:
+            for reference in ordered:
+                self._verify_installed(reference, ArtifactRole.DEPENDENCY)
+            paths = tuple(
+                (reference, self.artifact_path(reference)) for reference in ordered
+            )
+            handle = ArtifactDependencyHandle(references=ordered, paths=paths)
+            return LeasedArtifactDependencyHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
     def list_installed(self) -> tuple[InstalledArtifact, ...]:
         """Return a deterministic manifest-only installed inventory."""
 
@@ -2935,6 +3016,8 @@ class ModelArtifactService:
         source_directory: Path,
         *,
         consume_source: bool = False,
+        declared_files_only: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
@@ -2945,6 +3028,10 @@ class ModelArtifactService:
                 the service root. Requires source inside the root; raises
                 ArtifactPathError otherwise. On EXDEV (cross-device link), falls
                 back to copy+delete. Defaults to False (today's copy semantics).
+            declared_files_only: Validate and snapshot only descriptor-declared
+                paths, allowing unrelated user-owned entries to remain ignored.
+            cancelled: Optional caller-thread-safe cancellation probe, polled
+                between fixed-size local-copy chunks and install phases.
 
         Returns:
             The installed artifact's immutable reference.
@@ -2962,6 +3049,11 @@ class ModelArtifactService:
             raise TypeError("descriptor must be an ArtifactDescriptor")
         if not isinstance(source_directory, Path):
             raise TypeError("source_directory must be a Path")
+        if type(declared_files_only) is not bool:
+            raise TypeError("declared_files_only must be a bool")
+        if not callable(cancelled):
+            raise TypeError("cancelled must be callable")
+        _raise_if_install_cancelled(cancelled)
         try:
             source_directory = validate_path_simple(
                 source_directory,
@@ -2973,7 +3065,9 @@ class ModelArtifactService:
         source_snapshot = self._validate_payload_tree(
             source_directory,
             descriptor.files,
+            declared_files_only=declared_files_only,
         )
+        _raise_if_install_cancelled(cancelled)
 
         staging: Path | None = None
         staging_lease: ArtifactOperationLease | None = None
@@ -3023,12 +3117,14 @@ class ModelArtifactService:
                     "failed to create artifact install staging directory"
                 ) from error
             self._assert_managed_path(staging)
-            # Only pass consume_source if True to maintain backward compatibility
-            # with tests that monkeypatch _copy_payload
-            if consume_source:
-                self._copy_payload(descriptor, source_directory, staging, consume_source=True)
-            else:
-                self._copy_payload(descriptor, source_directory, staging)
+            self._copy_payload(
+                descriptor,
+                source_directory,
+                staging,
+                consume_source=consume_source,
+                cancelled=cancelled,
+            )
+            _raise_if_install_cancelled(cancelled)
             # When consume_source=True, files are intentionally moved from source.
             # Skip the unchanged-tree check in that case; it's expected to change.
             if not consume_source:
@@ -3036,10 +3132,12 @@ class ModelArtifactService:
                     self._validate_payload_tree(
                         source_directory,
                         descriptor.files,
+                        declared_files_only=declared_files_only,
                     )
                     != source_snapshot
                 ):
                     raise ArtifactPathError("source tree changed during artifact copy")
+            _raise_if_install_cancelled(cancelled)
             destination = self.artifact_path(descriptor.reference)
             self._assert_managed_path(self._locks_path)
 
@@ -3063,7 +3161,13 @@ class ModelArtifactService:
                             descriptor,
                         )
                         return descriptor.reference
-                    self._verify_payload(staging, descriptor.files)
+                    _raise_if_install_cancelled(cancelled)
+                    self._verify_payload(
+                        staging,
+                        descriptor.files,
+                        cancelled=cancelled,
+                    )
+                    _raise_if_install_cancelled(cancelled)
                     atomic_write_json(
                         staging / "manifest.json",
                         {
@@ -3078,6 +3182,7 @@ class ModelArtifactService:
                         )
                     self._assert_managed_path(staging)
                     self._assert_managed_path(destination.parent)
+                    _raise_if_install_cancelled(cancelled)
                     self._promote(staging, destination)
                     self._assert_managed_path(destination)
                     staging = None
@@ -3502,6 +3607,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        declared_files_only: bool = False,
     ) -> tuple[tuple[str, _PathSnapshot], ...]:
         lexical_root = Path(os.path.abspath(root))
         try:
@@ -3520,6 +3626,41 @@ class ModelArtifactService:
         root_mode = root_info.st_mode
         if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
             raise ArtifactPathError("source_directory must be a non-symlink directory")
+        if declared_files_only:
+            snapshots = {"": _path_snapshot(root_info)}
+            for item in files:
+                current = lexical_root
+                parts = Path(item.path).parts
+                for index, component in enumerate(parts):
+                    current /= component
+                    relative = current.relative_to(lexical_root).as_posix()
+                    try:
+                        info = current.stat(follow_symlinks=False)
+                        resolved = current.resolve(strict=True)
+                        resolved.relative_to(resolved_root)
+                    except (FileNotFoundError, NotADirectoryError) as error:
+                        raise ArtifactPathError(
+                            f"source is missing declared path: {relative}"
+                        ) from error
+                    except (OSError, RuntimeError, ValueError) as error:
+                        raise ArtifactPathError(
+                            f"failed to inspect declared path: {relative}"
+                        ) from error
+                    is_file = index == len(parts) - 1
+                    if stat.S_ISLNK(info.st_mode) or resolved != current:
+                        raise ArtifactPathError(
+                            f"declared path is symlinked or redirected: {relative}"
+                        )
+                    if is_file and not stat.S_ISREG(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path is not a regular file: {relative}"
+                        )
+                    if not is_file and not stat.S_ISDIR(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path ancestor is not a directory: {relative}"
+                        )
+                    snapshots[relative] = _path_snapshot(info)
+            return tuple(sorted(snapshots.items()))
         expected_files = {item.path for item in files}
         permitted_files = expected_files | allowed_files
         expected_directories = {
@@ -3569,7 +3710,7 @@ class ModelArtifactService:
         if missing:
             raise ArtifactPathError(
                 f"source is missing declared files: {sorted(missing)}"
-            )
+            ) from FileNotFoundError("declared payload file is missing")
         return tuple(snapshots)
 
     def _copy_payload(
@@ -3579,6 +3720,7 @@ class ModelArtifactService:
         staging: Path,
         *,
         consume_source: bool = False,
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         """Copy or move declared payload into install staging.
 
@@ -3590,6 +3732,7 @@ class ModelArtifactService:
                 inside this service's root (both stagings share it). EXDEV
                 (bind-mount inside the root) degrades to copy+delete for that
                 file — correctness over the disk optimization.
+            cancelled: Cancellation probe polled at fixed copy chunks.
 
         Raises:
             ArtifactPathError: consume_source with a source outside the root,
@@ -3607,6 +3750,7 @@ class ModelArtifactService:
                 ) from error
 
         for item in descriptor.files:
+            _raise_if_install_cancelled(cancelled)
             src = source / item.path
             dst = staging / item.path
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -3617,7 +3761,10 @@ class ModelArtifactService:
                 except OSError as exc:
                     if exc.errno != errno.EXDEV:
                         raise
-            shutil.copyfile(src, dst, follow_symlinks=False)
+            with src.open("rb") as source_file, dst.open("xb") as destination_file:
+                while chunk := source_file.read(_LOCAL_COPY_CHUNK_BYTES):
+                    destination_file.write(chunk)
+                    _raise_if_install_cancelled(cancelled)
             if consume_source:
                 src.unlink()
 
@@ -3627,6 +3774,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        cancelled: Callable[[], bool] = _never_cancelled,
     ) -> None:
         self._validate_payload_tree(
             root,
@@ -3641,6 +3789,7 @@ class ModelArtifactService:
                 with path.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
+                        _raise_if_install_cancelled(cancelled)
             except OSError as error:
                 raise ArtifactIntegrityError(
                     f"failed to verify payload file {item.path}"

@@ -95,7 +95,7 @@ a seam this path does not read -- it calls `_provider_setting_values_mapping()`
 free by the empty config.
 
 The remaining four are xfail(strict=True) against two filed product bugs, not
-silenced: **task-15510** (navigation preselect applies the provider, which is
+silenced: **task-15603** (navigation preselect applies the provider, which is
 itself what marks the category dirty, so the deferred apply hits its
 unsaved-changes guard and drops the model -- measured: dirty=False before,
 dirty=True and model unchanged after) and **task-15511** (a completed

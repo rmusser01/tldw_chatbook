@@ -1,5 +1,5 @@
 ---
-id: task-15510
+id: task-15603
 title: Settings navigation preselect applies the provider then silently drops the model
 status: To Do
 assignee: []

@@ -71,6 +71,8 @@ class OptionField:
             ``/path/to/parakeet-model``). Empty falls back to the field
             label -- but a placeholder that merely repeats the label is
             stutter, so empty-by-default text fields should set one.
+        directory_picker: Whether a text field gets an adjacent directory
+            picker action. The text input remains editable and authoritative.
     """
 
     name: str
@@ -85,6 +87,7 @@ class OptionField:
     disabled_reason: str = ""
     option_labels: tuple[tuple[str, str], ...] = ()
     placeholder: str = ""
+    directory_picker: bool = False
 
 
 @dataclass(frozen=True)
@@ -626,6 +629,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # (task-3305) Example content, not the label repeated: an
                 # empty Input otherwise shows label-as-placeholder stutter.
                 placeholder="/path/to/parakeet-model",
+                directory_picker=True,
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),

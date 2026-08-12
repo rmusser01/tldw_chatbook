@@ -255,7 +255,7 @@ class LLMManagementWindow(Container):
     """
 
     class DeferredViewsMounted(Message):
-        """The five deferred views now exist (task-2900).
+        """The deferred model-management views now exist (task-2900).
 
         Posted at the end of `_finish_deferred_mount` so ancestors that
         hydrate state into those views on (re)mount — `LLMScreen`'s
@@ -509,6 +509,7 @@ class LLMManagementWindow(Container):
             "mlx-lm": "llm-view-mlx-lm",
             "curated": "llm-view-curated",
             "installed": "llm-view-installed",
+            "external": "llm-view-external",
             "remote": "llm-view-remote",
             "download-models": "llm-view-download-models",
         }
@@ -558,7 +559,7 @@ class LLMManagementWindow(Container):
         self.post_message(self.DeferredViewsMounted())
 
     async def _mount_deferred_views(self) -> None:
-        """Mount the five heavy views that arrive CSS-hidden (task-2900).
+        """Mount the deferred views that arrive CSS-hidden (task-2900).
 
         Screen survey: `#llm-view-download-models` (76 widgets),
         `#llm-view-ollama` (58) and the curated/installed/remote library
@@ -577,18 +578,21 @@ class LLMManagementWindow(Container):
             return
 
         from .Screens.model_curated_view import CuratedView
+        from .Screens.model_external_view import ExternalModelView
         from .Screens.model_installed_view import InstalledView
         from .Screens.model_remote_view import RemoteView
         from ..Widgets.HuggingFace import HuggingFaceModelBrowser
 
         curated = Container(id="llm-view-curated", classes="llm-view")
         installed = Container(id="llm-view-installed", classes="llm-view")
+        external = Container(id="llm-view-external", classes="llm-view")
         remote = Container(id="llm-view-remote", classes="llm-view")
         download = Container(id="llm-view-download-models", classes="llm-view")
         await content.mount(
             OllamaServiceView(self._ollama_prereq_text()),
             curated,
             installed,
+            external,
             remote,
             download,
         )
@@ -605,8 +609,17 @@ class LLMManagementWindow(Container):
                 legacy_dir = Path(str(configured)).expanduser()
 
         await curated.mount(CuratedView(id="curated-models-view"))
+        source_service = self.app_instance._ensure_parakeet_source_service()
         await installed.mount(
-            InstalledView(legacy_dir=legacy_dir, id="installed-models-view")
+            InstalledView(
+                legacy_dir=legacy_dir,
+                on_root_activated=source_service.on_root_activated,
+                may_delete=source_service.may_delete,
+                id="installed-models-view",
+            )
+        )
+        await external.mount(
+            ExternalModelView(source_service, id="external-models-view")
         )
         # Remote is explicitly idle until Search is submitted.
         await remote.mount(RemoteView(id="remote-models-view"))

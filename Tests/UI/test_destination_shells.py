@@ -4066,3 +4066,56 @@ async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
         assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
 
     assert seen_routes == [], "Import sources must not hand off to another screen"
+
+
+@pytest.mark.asyncio
+async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceKey,
+        ParakeetSourcePreference,
+        ParakeetSourceRecord,
+    )
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
+    )
+
+    selected = (tmp_path / "private-parakeet-root").absolute()
+    service = MagicMock()
+    service.records.return_value = {
+        ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+            model_id=PARAKEET_V2_MODEL,
+            precision="int8",
+            directory=selected,
+            preferred_source=ParakeetSourcePreference.EXTERNAL,
+        )
+    }
+    service.may_delete.return_value = None
+    app = _build_test_app()
+    app._parakeet_source_service = service
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_selector(screen, pilot, "#external-models-view")
+        external = screen.query_one(ExternalModelView)
+        path_nodes = [
+            node
+            for node in screen.query(Static)
+            if str(selected) in str(node.renderable)
+        ]
+
+        assert len(path_nodes) == 1
+        assert "external-model-path" in path_nodes[0].classes
+        assert external in path_nodes[0].ancestors

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
+from tldw_chatbook.Model_Artifacts.service import ArtifactRole
+
 if TYPE_CHECKING:
     from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
     from tldw_chatbook.Model_Artifacts.service import (
@@ -223,17 +225,17 @@ def inventory_rows(
             continue
 
         is_broken = item.error is not None
-        activation_allowed = descriptor.consumer != "unassigned"
+        activation_allowed = descriptor.role is ArtifactRole.ROOT
         if is_broken:
             action_hint = "Needs repair — Repair"
-        elif not activation_allowed:
-            action_hint = "Downloaded · runtime compatibility not verified"
+        elif descriptor.role is ArtifactRole.DEPENDENCY:
+            action_hint = "Managed dependency"
         elif item.active:
             action_hint = "Active"
         elif item.ready:
             action_hint = "Ready"
         else:
-            action_hint = "Unavailable until verified"
+            action_hint = "Installed · activation required"
         rows.append(
             InventoryRow(
                 path=item.path,

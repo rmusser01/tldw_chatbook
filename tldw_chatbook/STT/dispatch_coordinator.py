@@ -538,6 +538,7 @@ class LocalSTTDispatchCoordinator:
                 local_source=capture.dispatch.local_source,
                 managed_store_root=capture.dispatch.managed_store_root,
                 managed_artifact_ref=capture.dispatch.managed_artifact_ref,
+                managed_dependency_refs=capture.dispatch.managed_dependency_refs,
                 on_result=lambda value: self._terminal(callbacks, value),
                 on_failure=lambda value: self._terminal(callbacks, value),
             )

@@ -196,6 +196,36 @@ def test_short_v2_result_is_normalized_with_exact_artifact_provenance(
     assert result.warnings == ()
 
 
+def test_external_runtime_provenance_has_only_managed_vad_identity(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    dependency = ArtifactLeaseKey("silero-vad", "vad-revision", "f32")
+    runtime = ParakeetOnnxRuntime(
+        model=_FakeModel(short_text="external text"),
+        vad=_FakeVad(()),
+        model_id=PARAKEET_V2_MODEL,
+        precision="int8",
+        artifact_root=None,
+        artifact_dependencies=(dependency,),
+        model_load_seconds=0.1,
+        audio_reader=lambda *_args, **_kwargs: None,
+        pad_list=lambda _chunks: None,
+        duration_reader=lambda _path: 1.0,
+    )
+
+    result = runtime.transcribe(
+        audio_path=tmp_path / "external.wav",
+        attempt_id="external-attempt",
+        language="en",
+        timestamps=False,
+    )
+
+    assert result.provenance.artifact_root is None
+    assert result.provenance.artifact_dependencies == (dependency,)
+
+
 def test_resident_reuse_reports_model_load_only_for_first_attempt(
     tmp_path: Path,
 ) -> None:

@@ -2073,6 +2073,9 @@ class LibraryIngestQueueMixin:
         self._local_stt_dispatch_coordinator: Optional[
             LocalSTTDispatchCoordinator
         ] = None
+        self._parakeet_source_service: Any | None = None
+        self._parakeet_source_registry_listener: Callable[[], None] | None = None
+        self._parakeet_submitting_scope_ids: set[str] = set()
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
@@ -2210,25 +2213,41 @@ class LibraryIngestQueueMixin:
             # so the queue can group this run's rows under one header and
             # the tally can answer "what did THIS run just do".
             folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
-            for expanded_path in expanded:
-                job = self.submit_library_ingest_job(
-                    source_path=expanded_path,
-                    ingest_options=ingest_options,
-                    batch_id=folder_batch_id,
-                    # Title is per-file (the ingest form clears it on submit
-                    # for exactly this reason), so a folder's files each take
-                    # their own filename-derived title rather than all
-                    # sharing one. Author and keywords are batch metadata and
-                    # do carry across.
-                    title="",
-                    author=author,
-                    keywords=keywords,
-                    perform_analysis=perform_analysis,
-                    chunk_enabled=chunk_enabled,
-                    chunk_size=chunk_size,
-                )
-                if first_job is None:
-                    first_job = job
+            audio_options = (ingest_options or {}).get("audio_video", {})
+            scope_id = (
+                str(audio_options.get("transcription_external_scope_id") or "").strip()
+                if isinstance(audio_options, dict)
+                else ""
+            )
+            submitting_scopes = getattr(self, "_parakeet_submitting_scope_ids", None)
+            if submitting_scopes is None:
+                submitting_scopes = self._parakeet_submitting_scope_ids = set()
+            if scope_id:
+                submitting_scopes.add(scope_id)
+            try:
+                for expanded_path in expanded:
+                    job = self.submit_library_ingest_job(
+                        source_path=expanded_path,
+                        ingest_options=ingest_options,
+                        batch_id=folder_batch_id,
+                        # Title is per-file (the ingest form clears it on submit
+                        # for exactly this reason), so a folder's files each take
+                        # their own filename-derived title rather than all
+                        # sharing one. Author and keywords are batch metadata and
+                        # do carry across.
+                        title="",
+                        author=author,
+                        keywords=keywords,
+                        perform_analysis=perform_analysis,
+                        chunk_enabled=chunk_enabled,
+                        chunk_size=chunk_size,
+                    )
+                    if first_job is None:
+                        first_job = job
+            finally:
+                if scope_id:
+                    submitting_scopes.discard(scope_id)
+                    self._sync_parakeet_source_scopes()
             # ``expanded`` is non-empty here, so the loop always assigns.
             assert first_job is not None
             return first_job
@@ -2777,6 +2796,13 @@ class LibraryIngestQueueMixin:
                 "retry_of_job_id": job.retry_of_job_id,
                 "retry_source_failure_provenance": failed_attempt,
             }
+            external_scope_id = str(
+                flat_opts.get("transcription_external_scope_id") or ""
+            ).strip()
+            if external_scope_id:
+                options["transcription_context"]["external_scope_id"] = (
+                    external_scope_id
+                )
             if route.provider == "transcribe-cpp":
                 configured_path = get_cli_setting(
                     "transcription.transcribe_cpp.model_path"
@@ -2850,6 +2876,59 @@ class LibraryIngestQueueMixin:
                 self._local_stt_executor = executor
             return executor
 
+    def _create_parakeet_source_service(self) -> Any:
+        """Construct the shared download-free Parakeet source service lazily."""
+
+        from tldw_chatbook.STT.parakeet_sources import ParakeetSourceService
+
+        return ParakeetSourceService()
+
+    def _ensure_parakeet_source_service(self) -> Any:
+        """Return the one app-owned Parakeet source service."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Local STT is shutting down")
+            service = getattr(self, "_parakeet_source_service", None)
+            if service is None:
+                service = self._create_parakeet_source_service()
+                listener = self._sync_parakeet_source_scopes
+                self._parakeet_source_service = service
+                self._parakeet_source_registry_listener = listener
+                self.library_ingest_jobs.add_listener(listener)
+                listener()
+            return service
+
+    @staticmethod
+    def _parakeet_scope_id_for_job(job: LibraryIngestJob) -> str:
+        """Return the path-free verifier owner captured for one Library job."""
+
+        audio_options = (job.ingest_options or {}).get("audio_video", {})
+        if isinstance(audio_options, dict):
+            scope_id = audio_options.get("transcription_external_scope_id")
+            if isinstance(scope_id, str) and scope_id.strip():
+                return scope_id.strip()
+        return job.batch_id or job.job_id
+
+    def _sync_parakeet_source_scopes(self) -> None:
+        """Release only source scopes the registry observed and then settled."""
+
+        service = getattr(self, "_parakeet_source_service", None)
+        if service is None:
+            return
+        active_states = {
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        }
+        active = {
+            self._parakeet_scope_id_for_job(job)
+            for job in self.library_ingest_jobs.jobs()
+            if job.state in active_states
+        }
+        active.update(getattr(self, "_parakeet_submitting_scope_ids", ()))
+        service.release_scopes_except(active)
+
     def _ensure_local_stt_dispatch_coordinator(
         self,
     ) -> LocalSTTDispatchCoordinator:
@@ -2880,10 +2959,17 @@ class LibraryIngestQueueMixin:
             TranscriptionService,
         )
 
+        app_loop_running = getattr(self, "_loop", None) is not None
+        on_app_thread = threading.get_ident() == getattr(self, "_thread_id", None)
+        if app_loop_running and not on_app_thread:
+            source_service = self.call_from_thread(self._ensure_parakeet_source_service)
+        else:
+            source_service = self._ensure_parakeet_source_service()
         return LazyLiveDictationService(
             **kwargs,
             transcription_service_factory=lambda: TranscriptionService(
-                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator()
+                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator(),
+                parakeet_source_service=source_service,
             ),
         )
 
@@ -2899,6 +2985,7 @@ class LibraryIngestQueueMixin:
         local_source = None
         managed_store_root = None
         managed_artifact_ref = None
+        managed_dependency_refs: tuple[tuple[str, str, str], ...] = ()
         root_revision = None
         closure_fingerprint = None
         device = ExecutionDevice.CPU
@@ -2922,28 +3009,12 @@ class LibraryIngestQueueMixin:
             model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
             precision = options.get("transcription_precision") or "int8"
             selected_dir = options.get("transcription_model_dir")
-            if (
-                not selected_dir
-                and model_id == PARAKEET_V2_MODEL
-                and precision == "int8"
-            ):
-                configured_dir = get_cli_setting(
-                    "transcription.parakeet_onnx_model_dir"
-                )
-                selected_dir = (
-                    configured_dir
-                    if isinstance(configured_dir, str) and configured_dir.strip()
-                    else None
-                )
+            from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 
-            from tldw_chatbook.STT.parakeet_dispatch import (
-                resolve_parakeet_dispatch,
-            )
-
-            resolved = resolve_parakeet_dispatch(
-                model_id=model_id,
-                precision=precision,
-                model_dir=selected_dir,
+            resolved = self._ensure_parakeet_source_service().resolve(
+                ParakeetSourceKey.from_values(model_id, precision),
+                override=selected_dir,
+                scope_id=self._parakeet_scope_id_for_job(job),
             )
             options.update(resolved.option_updates)
             return {
@@ -2952,6 +3023,7 @@ class LibraryIngestQueueMixin:
                 "local_source": resolved.local_source,
                 "managed_store_root": resolved.managed_store_root,
                 "managed_artifact_ref": resolved.managed_artifact_ref,
+                "managed_dependency_refs": resolved.managed_dependency_refs,
             }
 
         identity = ModelIdentity(
@@ -2971,6 +3043,7 @@ class LibraryIngestQueueMixin:
             "local_source": local_source,
             "managed_store_root": managed_store_root,
             "managed_artifact_ref": managed_artifact_ref,
+            "managed_dependency_refs": managed_dependency_refs,
         }
 
     def _submit_local_stt_job(
@@ -2978,6 +3051,8 @@ class LibraryIngestQueueMixin:
         job: LibraryIngestJob,
         options: dict[str, Any],
     ) -> None:
+        if options.get("transcription_provider") == "parakeet-onnx":
+            self._ensure_parakeet_source_service()
         attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
         self._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
         thread = threading.Thread(
@@ -3014,6 +3089,7 @@ class LibraryIngestQueueMixin:
                 local_source=dispatch["local_source"],
                 managed_store_root=dispatch["managed_store_root"],
                 managed_artifact_ref=dispatch["managed_artifact_ref"],
+                managed_dependency_refs=dispatch["managed_dependency_refs"],
                 on_event=functools.partial(self._ingest_local_stt_event, job.job_id),
                 on_result=functools.partial(self._ingest_local_stt_result, job.job_id),
                 on_failure=functools.partial(
@@ -3052,12 +3128,22 @@ class LibraryIngestQueueMixin:
         provider: str,
         error: BaseException,
     ) -> tuple[TranscriptionFailureCode, tuple[str, ...]]:
-        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
-        code = (
-            TranscriptionFailureCode.PROVIDER_UNAVAILABLE
-            if unavailable
-            else TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        from tldw_chatbook.STT.parakeet_sources import (
+            ParakeetSourceError,
+            ParakeetSourceErrorCode,
         )
+
+        missing_model = isinstance(error, ParakeetSourceError) and error.code in {
+            ParakeetSourceErrorCode.VAD_UNAVAILABLE,
+            ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
+        }
+        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
+        if missing_model:
+            code = TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        elif unavailable:
+            code = TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+        else:
+            code = TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
         actions = ["retry_faster_whisper"]
         if provider == "transcribe-cpp":
             actions.insert(0, "choose_another_gguf")
@@ -3766,10 +3852,11 @@ class LibraryIngestQueueMixin:
         pool callbacks -- ``_ingest_pool_callback``/
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
-        point on) and drops both worker references (nothing can submit to
-        either anymore). Executor close and parse-pool terminate/join then
-        run sequentially on one detached daemon thread, NEVER on the caller's
-        (loop) thread: CPython's ``Pool._terminate_pool`` does an unbounded
+        point on) and drops every worker reference (nothing can submit to
+        them anymore). Source/coordinator/executor close and parse-pool
+        terminate/join then run sequentially on one detached daemon thread,
+        NEVER on the caller's (loop) thread: verifier close may wait and
+        CPython's ``Pool._terminate_pool`` does an unbounded
         ``result_handler.join()``, and if that result-handler thread is at
         that moment parked inside a ``call_from_thread`` it entered just
         before the flag went up, joining it from the loop thread would
@@ -3782,17 +3869,21 @@ class LibraryIngestQueueMixin:
 
         Returns:
             The one teardown thread that owns every detached ingest resource,
-            or ``None`` when neither worker was ever created. The shutdown
-            flag is still set in that case.
+            or ``None`` when no ingest resource was ever created. The
+            shutdown flag is still set in that case.
         """
         self._ingest_shutdown = True
         with self._local_stt_executor_lock:
+            source_service = getattr(self, "_parakeet_source_service", None)
+            source_listener = getattr(self, "_parakeet_source_registry_listener", None)
             coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
             executor = getattr(self, "_local_stt_executor", None)
-            if coordinator is not None:
-                coordinator.close()
+            self._parakeet_source_service = None
+            self._parakeet_source_registry_listener = None
             self._local_stt_dispatch_coordinator = None
             self._local_stt_executor = None
+            if source_listener is not None:
+                self.library_ingest_jobs.remove_listener(source_listener)
         local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
         if local_jobs is None:
             self._ingest_local_stt_jobs = {}
@@ -3804,18 +3895,42 @@ class LibraryIngestQueueMixin:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if executor is None and pool is None:
+        if all(
+            resource is None
+            for resource in (source_service, coordinator, executor, pool)
+        ):
             return None
-        return self._shutdown_ingest_workers_off_thread(executor, pool)
+        return self._shutdown_ingest_workers_off_thread(
+            source_service,
+            coordinator,
+            executor,
+            pool,
+        )
 
     @staticmethod
     def _shutdown_ingest_workers_off_thread(
+        source_service: Any | None,
+        coordinator: Any | None,
         executor: Any | None,
         pool: Any | None,
     ) -> threading.Thread:
         """Close detached ingest workers without blocking the UI thread."""
 
         def _shutdown_workers() -> None:
+            if source_service is not None:
+                try:
+                    source_service.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Parakeet source service."
+                    )
+            if coordinator is not None:
+                try:
+                    coordinator.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the local STT dispatch coordinator."
+                    )
             if executor is not None:
                 try:
                     executor.close()

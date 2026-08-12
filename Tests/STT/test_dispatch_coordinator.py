@@ -61,6 +61,7 @@ class FakeExecutor:
         local_source: Any = None,
         managed_store_root: Path | None = None,
         managed_artifact_ref: tuple[str, str, str] | None = None,
+        managed_dependency_refs: tuple[tuple[str, str, str], ...] = (),
         on_event: Callable[[Any], None] = lambda _event: None,
         on_result: Callable[[ExecutorResult], None] = lambda _result: None,
         on_failure: Callable[[ExecutorFailure], None] = lambda _failure: None,
@@ -84,6 +85,7 @@ class FakeExecutor:
                 "local_source": local_source,
                 "managed_store_root": managed_store_root,
                 "managed_artifact_ref": managed_artifact_ref,
+                "managed_dependency_refs": managed_dependency_refs,
                 "on_event": on_event,
                 "on_result": on_result,
                 "on_failure": on_failure,
@@ -243,6 +245,27 @@ def _dispatch(model_id: str = "parakeet-tdt-0.6b-v2") -> ParakeetDispatch:
         managed_artifact_ref=None,
         option_updates={"provider_option": "copied"},
     )
+
+
+def test_dictation_forwards_exact_managed_dependency_refs(
+    coordinator_module: Any,
+) -> None:
+    dependency_refs = (("silero-vad", "vad-revision", "f32"),)
+    dispatch = ParakeetDispatch(
+        identity=_identity(),
+        local_source=None,
+        managed_store_root=Path("managed-store"),
+        managed_artifact_ref=None,
+        managed_dependency_refs=dependency_refs,
+        option_updates={},
+    )
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+
+    handle = _begin(coordinator_module, coordinator, dispatch=dispatch)
+    handle.append_segment(b"\x01\x00")
+
+    assert executor.submissions[0]["managed_dependency_refs"] == dependency_refs
 
 
 def _library_kwargs(
