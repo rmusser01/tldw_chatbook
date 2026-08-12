@@ -3704,9 +3704,7 @@ class SetupWizardContainer(WizardContainer):
         try:
             self.show_step(target_index)
         except Exception:
-            logger.warning(
-                "Setup resume target mount failed (step_id={})", draft.active_step_id
-            )
+            logger.warning("Setup resume target mount failed (category=mount)")
             return
         current = self.steps[self.current_step]
         if (

@@ -699,6 +699,49 @@ async def test_resume_control_restore_failure_keeps_attempt_marker(
             assert app.app_config["first_run"]["resume_attempted"] is True
 
 
+def test_resume_target_mount_failure_log_is_value_free_and_does_not_clear(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import SetupDraft
+
+    draft = SetupDraft(
+        version=1,
+        track="quick",
+        active_step_id=STEP_MODEL,
+        values={"model": {"model_id": "draft-private-model-value"}},
+        resume_attempted=True,
+    )
+    target = SimpleNamespace(config=SimpleNamespace(id=STEP_MODEL), compose_failed=False)
+    screen = SimpleNamespace(call_after_refresh=MagicMock())
+    warning = MagicMock()
+
+    def fail_show_step(index):
+        raise RuntimeError("exception-private-value")
+
+    container = SimpleNamespace(
+        resume_draft=draft,
+        active_ids=(STEP_MODEL,),
+        steps=[target],
+        screen=screen,
+        _restore_resume_controls=lambda candidate: True,
+        _step_index_for_id=lambda step_id: 0,
+        show_step=fail_show_step,
+    )
+    monkeypatch.setattr(wizard_module.logger, "warning", warning)
+
+    SetupWizardContainer._restore_resume_target(container)
+
+    warning.assert_called_once()
+    rendered_log = repr(warning.call_args)
+    assert "category=mount" in rendered_log
+    assert STEP_MODEL not in rendered_log
+    assert "draft-private-model-value" not in rendered_log
+    assert "exception-private-value" not in rendered_log
+    assert draft.resume_attempted is True
+    screen.call_after_refresh.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
