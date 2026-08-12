@@ -48,6 +48,47 @@ def _checkpoint_json(*, canary: str = "private reasoning") -> str:
     )
 
 
+def _kimi_checkpoint_json(
+    content: str, *, post_tool: bool = False, canary: str = "private K3 reasoning"
+) -> str:
+    rounds: list[dict[str, object]] = []
+    if post_tool:
+        rounds.append(
+            {
+                "assistant_content": "",
+                "reasoning_blocks": ["private tool reasoning"],
+                "calls": [
+                    {
+                        "call_id": "call_1",
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                        "state": "completed",
+                        "result": "4",
+                    }
+                ],
+            }
+        )
+    rounds.append(
+        {
+            "assistant_content": content,
+            "reasoning_blocks": [canary],
+            "calls": [],
+        }
+    )
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2 if post_tool else 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k3",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "complete",
+            "rounds": rounds,
+        }
+    )
+
+
 def _db_with_conversation(tmp_path: Path) -> tuple[CharactersRAGDB, str]:
     db = CharactersRAGDB(tmp_path / "continuation.db", client_id="continuation-test")
     conversation_id = db.add_conversation({"title": "continuation"})
@@ -299,6 +340,41 @@ def test_atomic_create_stale_invalid_and_crash_paths_leave_no_row_or_intent(
     assert _message_sync_entries(db, "crash-owner") == []
 
 
+def test_atomic_create_requires_exact_kimi_final_content_without_partial_write(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    canary = "PRIVATE-KIMI-CREATE-CANARY"
+
+    with pytest.raises(InputError) as invalid:
+        db.create_assistant_with_continuation(
+            message_id="kimi-mismatch",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="visible answer",
+            provider_continuation_json=_kimi_checkpoint_json(
+                "different answer", canary=canary
+            ),
+        )
+
+    assert canary not in str(invalid.value)
+    assert invalid.value.__cause__ is None
+    assert invalid.value.__context__ is None
+    assert db.get_message_by_id("kimi-mismatch") is None
+    assert _message_sync_entries(db, "kimi-mismatch") == []
+
+    assert (
+        db.create_assistant_with_continuation(
+            message_id="kimi-equal",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="visible answer",
+            provider_continuation_json=_kimi_checkpoint_json("visible answer"),
+        )
+        == "kimi-equal"
+    )
+
+
 def test_atomic_update_is_optimistic_and_rolls_back_row_with_sync_intent(
     tmp_path: Path,
 ) -> None:
@@ -363,6 +439,93 @@ def test_atomic_update_is_optimistic_and_rolls_back_row_with_sync_intent(
         )
     assert db.get_message_by_id(message_id) == stable
     assert len(_message_sync_entries(db, message_id)) == 2
+
+
+def test_atomic_update_requires_effective_kimi_final_content_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    message_id = db.create_assistant_with_continuation(
+        message_id="kimi-update-owner",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="current visible answer",
+        provider_continuation_json=_checkpoint_json(),
+    )
+    before = db.get_message_by_id(message_id)
+    assert before is not None
+    before_entries = _message_sync_entries(db, message_id)
+    canary = "PRIVATE-KIMI-UPDATE-CANARY"
+
+    with pytest.raises(InputError) as invalid:
+        db.update_provider_continuation(
+            message_id=message_id,
+            expected_message_version=before["version"],
+            provider_continuation_json=_kimi_checkpoint_json(
+                "different answer", post_tool=True, canary=canary
+            ),
+        )
+
+    assert canary not in str(invalid.value)
+    assert invalid.value.__cause__ is None
+    assert invalid.value.__context__ is None
+    assert db.get_message_by_id(message_id) == before
+    assert _message_sync_entries(db, message_id) == before_entries
+
+    checkpoint_json = _kimi_checkpoint_json("post-tool visible answer", post_tool=True)
+    assert db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=before["version"],
+        provider_continuation_json=checkpoint_json,
+        content="post-tool visible answer",
+    )
+    after = db.get_message_by_id(message_id)
+    assert after is not None
+    assert after["content"] == "post-tool visible answer"
+    assert after["version"] == before["version"] + 1
+    assert after["provider_continuation_json"] == dump_provider_continuation_json(
+        parse_provider_continuation_json(checkpoint_json)
+    )
+    assert len(_message_sync_entries(db, message_id)) == len(before_entries) + 1
+
+
+def test_clearing_image_only_owner_keeps_visible_image_and_one_update_intent(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    image = b"visible-image-bytes"
+    message_id = db.add_message(
+        {
+            "id": "image-owner",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "",
+            "image_data": image,
+            "image_mime_type": "image/png",
+            "provider_continuation_json": _checkpoint_json(),
+        }
+    )
+    before = db.get_message_by_id(message_id)
+    assert before is not None
+
+    assert db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=before["version"],
+        provider_continuation_json=None,
+    )
+
+    after = db.get_message_by_id(message_id)
+    assert after is not None
+    assert after["deleted"] == 0
+    assert after["image_data"] == image
+    assert after["image_mime_type"] == "image/png"
+    assert after["provider_continuation_json"] is None
+    assert after["version"] == before["version"] + 1
+    entries = _message_sync_entries(db, message_id)
+    assert [entry["operation"] for entry in entries] == ["create", "update"]
+    assert entries[-1]["version"] == after["version"]
+    assert entries[-1]["payload"]["image_mime_type"] == "image/png"
+    assert entries[-1]["payload"]["provider_continuation_json"] is None
 
 
 def test_discard_and_variant_ownership_stay_on_exact_assistant_rows(

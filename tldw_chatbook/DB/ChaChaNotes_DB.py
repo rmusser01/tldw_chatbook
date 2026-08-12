@@ -78,8 +78,8 @@ _UNSET = object()
 CONVERSATION_SCOPE_ALL = "all"
 
 
-def _canonical_provider_continuation_json(value: object) -> str:
-    """Return canonical private JSON or a context-free public input error."""
+def _validated_provider_continuation(value: object) -> tuple[Any, str]:
+    """Return a parsed checkpoint and canonical private JSON."""
     from tldw_chatbook.Chat.provider_continuation import (
         ContinuationValidationError,
         dump_provider_continuation_json,
@@ -90,10 +90,24 @@ def _canonical_provider_continuation_json(value: object) -> str:
         checkpoint = parse_provider_continuation_json(value)
         canonical = dump_provider_continuation_json(checkpoint)
         if canonical is not None:
-            return canonical
+            return checkpoint, canonical
     except ContinuationValidationError:
         pass
     raise InputError("Invalid provider continuation data.") from None
+
+
+def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
+    """Keep complete Kimi K3 final content on its exact assistant owner."""
+    if (
+        checkpoint.provider == "moonshot"
+        and checkpoint.model == "kimi-k3"
+        and checkpoint.state == "complete"
+        and not checkpoint.rounds[-1].calls
+        and checkpoint.rounds[-1].assistant_content != content
+    ):
+        raise InputError(
+            "Continuation content does not match assistant message."
+        ) from None
 
 
 # --- Custom Exceptions ---
@@ -8690,7 +8704,7 @@ UPDATE db_schema_version
                 raise InputError(
                     "Provider continuation requires an assistant message."
                 ) from None
-            provider_continuation_json = _canonical_provider_continuation_json(
+            _, provider_continuation_json = _validated_provider_continuation(
                 msg_data["provider_continuation_json"]
             )
 
@@ -8797,7 +8811,10 @@ UPDATE db_schema_version
             or expected_conversation_version <= 0
         ):
             raise InputError("Expected conversation version must be positive.")
-        canonical = _canonical_provider_continuation_json(provider_continuation_json)
+        checkpoint, canonical = _validated_provider_continuation(
+            provider_continuation_json
+        )
+        _validate_continuation_owner_content(checkpoint, content)
         now = self._get_current_utc_timestamp_iso()
 
         try:
@@ -8886,17 +8903,18 @@ UPDATE db_schema_version
             raise InputError("Assistant content must be text or None.")
         if deleted is not None and type(deleted) is not bool:
             raise InputError("Deleted must be a boolean or None.")
-        canonical = (
-            None
-            if provider_continuation_json is None
-            else _canonical_provider_continuation_json(provider_continuation_json)
-        )
+        checkpoint = None
+        canonical = None
+        if provider_continuation_json is not None:
+            checkpoint, canonical = _validated_provider_continuation(
+                provider_continuation_json
+            )
 
         try:
             with self.transaction() as conn:
                 current = conn.execute(
                     """
-                    SELECT role, content, deleted, version
+                    SELECT role, content, image_data, deleted, version
                       FROM messages
                      WHERE id = ?
                     """,
@@ -8920,8 +8938,12 @@ UPDATE db_schema_version
                     )
 
                 next_content = current["content"] if content is None else content
+                if checkpoint is not None:
+                    _validate_continuation_owner_content(checkpoint, next_content)
                 if canonical is None:
-                    required_deleted = not bool(next_content)
+                    required_deleted = not (
+                        bool(next_content) or bool(current["image_data"])
+                    )
                     if deleted is not None and deleted != required_deleted:
                         raise InputError(
                             "Deleted state conflicts with continuation discard semantics."
