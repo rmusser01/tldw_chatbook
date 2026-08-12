@@ -3710,3 +3710,26 @@ printed); check for the summary line before assuming the former. (3) Keep the
 sweep's worktree frozen and ship fixes from another one; the sweep's chunk
 results stay comparable, and later chunks re-finding an already-fixed class is
 CONFIRMATION, not new work.
+## A permanent gate must read its immutable baseline from a PINNED revision, not the live file it exists to police (TASK-15103, 2026-08-11)
+
+**Incident.** TASK-15103's complete-history denominator — the thrice-reviewed
+proof that every diagnostic transition since the stored baseline was
+consumed exactly once — read that stored baseline from the live
+`production-diagnostic-inventory.json`. The gate's entire lifecycle ends
+with regenerating that exact file, so the first LEGITIMATE regeneration
+broke it: the stored-revision scan went hunting through all of dev history
+for post-repair populations that exist in no dev-reachable revision, and 10
+gate nodes fell over — first on a merge-conflict-markered historical blob's
+SyntaxError, which had nothing to do with the actual defect. The evidence
+was always available immutably: `incident.recorded_base` pins the dev
+revision whose committed manifest IS the stale baseline, byte-identical on
+all 19 owner rows. One read-from-`recorded_base:`-tree change fixed all 10.
+
+**Companion lesson from the same day.** The freeze-first plan this gate
+belonged to never converged against live dev: three boundary re-freezes in
+one day (17→18→19 owners), each invalidated by dev advancing while the
+evidence was being rebuilt, zero production repairs shipped. Inverting the
+order — repair to the frozen contracts first, regenerate and prove ONCE at
+the end — landed all 43 repairs plus the gate in one session, and the next
+dev advance (11 rows + a sink-topology change) was correctly surfaced as a
+NEW incident (task-15600) instead of another re-freeze of this one.
