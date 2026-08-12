@@ -364,7 +364,7 @@ async def test_failed_step_commit_does_not_checkpoint_or_navigate():
 @pytest.mark.asyncio
 async def test_completion_marks_complete_and_clears_draft_atomically():
     calls = []
-    container = object.__new__(SetupWizardContainer)
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
     container._finalized = False
     container._dismiss_screen = lambda result: calls.append(("dismiss", result))
 
@@ -413,6 +413,106 @@ async def test_completion_write_failure_keeps_wizard_open_and_retains_draft(oper
     assert "could not be saved" in events[1][1].lower()
     assert container._finalized is False
     assert container.resume_draft is retained_draft
+
+
+def _draft_mutation_race_container():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    app_instance = SimpleNamespace(app_config=_attempted_model_resume_config())
+    draft = read_setup_draft(app_instance.app_config)
+    assert draft is not None
+    container = SetupWizardContainer(app_instance, resume_draft=draft)
+    clear_write_started = asyncio.Event()
+    release_clear_write = asyncio.Event()
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        first_run = settings.get("first_run", {})
+        if set(first_run) == {"resume_attempted"}:
+            clear_write_started.set()
+            await release_clear_write.wait()
+        container._mirror_into_app_config(settings, delete_keys)
+        return True
+
+    container.commit_config = commit_config
+    return container, clear_write_started, release_clear_write
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_newer_next_step_checkpoint():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "newest-model"},
+    }
+    checkpoint_task = asyncio.create_task(
+        container.persist_setup_checkpoint(STEP_SUMMARY)
+    )
+    await asyncio.sleep(0)
+    assert checkpoint_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    assert await checkpoint_task is True
+
+    newest = read_setup_draft(container.app_instance.app_config)
+    assert newest is not None
+    assert newest.active_step_id == STEP_SUMMARY
+    assert newest.values[STEP_MODEL] == {"model_id": "newest-model"}
+    assert newest.resume_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_finish_later_checkpoint():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    container.current_step = container._step_index_for_id(STEP_MODEL)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "finish-later-model"},
+    }
+    finish_later_task = asyncio.create_task(container.persist_current_checkpoint())
+    await asyncio.sleep(0)
+    assert finish_later_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    assert await finish_later_task is True
+
+    newest = read_setup_draft(container.app_instance.app_config)
+    assert newest is not None
+    assert newest.active_step_id == STEP_MODEL
+    assert newest.values[STEP_MODEL] == {"model_id": "finish-later-model"}
+    assert newest.resume_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_marker_clear_serializes_with_completion_delete():
+    container, clear_started, release_clear = _draft_mutation_race_container()
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+    clear_task = asyncio.create_task(container.clear_resume_attempt(STEP_MODEL))
+    await asyncio.wait_for(clear_started.wait(), timeout=1.0)
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.sleep(0)
+    assert completion_task.done() is False
+
+    release_clear.set()
+    assert await clear_task is True
+    await completion_task
+
+    first_run = container.app_instance.app_config["first_run"]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    container._dismiss_screen.assert_called_once()
 
 
 @pytest.mark.parametrize("save_result", [False, RuntimeError("private-value")])
@@ -541,6 +641,62 @@ async def test_recovery_later_performs_no_mutation_or_push(monkeypatch):
     fake.push_screen.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_failure", [False, RuntimeError("save-failed")])
+async def test_recovery_save_failure_reprompts_then_succeeds_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, first_failure
+):
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app.app_config["first_run"]["resume_attempted"] = False
+    app._initial_tab_value = "chat"
+    save_attempts = 0
+
+    def save(settings, *, delete_keys=None):
+        nonlocal save_attempts
+        save_attempts += 1
+        if save_attempts == 1:
+            if isinstance(first_failure, Exception):
+                raise first_failure
+            return first_failure
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+            )
+            _press(app.screen, "#setup-recovery-resume")
+            await _wait_until(pilot, lambda: save_attempts == 1)
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+            )
+            assert save_attempts == 1
+            assert sum(
+                type(screen).__name__ == "SetupRecoveryDialog"
+                for screen in app.screen_stack
+            ) == 1
+
+            _press(app.screen, "#setup-recovery-resume")
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+
+            assert save_attempts >= 2
+            assert sum(
+                type(screen).__name__ == "FirstRunSetupWizard"
+                for screen in app.screen_stack
+            ) == 1
+            assert not any(
+                type(screen).__name__ == "SetupRecoveryDialog"
+                for screen in app.screen_stack
+            )
+
+
 def _attempted_model_resume_config():
     return {
         "first_run": {
@@ -586,6 +742,137 @@ def _attempted_full_appearance_resume_config():
             "resume_attempted": True,
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_sparse_model_resume_preserves_persisted_prefill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "persisted-prefill-model",
+    }
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None and STEP_MODEL not in draft.values
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_MODEL,
+            )
+            model_step = app.screen.query_one(SetupWizardContainer).steps[
+                app.screen.query_one(SetupWizardContainer)._step_index_for_id(STEP_MODEL)
+            ]
+            assert model_step.get_step_data() == {
+                "model_id": "persisted-prefill-model"
+            }
+            assert (
+                model_step.query_one("#setup-model-custom", Input).value
+                == "persisted-prefill-model"
+            )
+
+
+@pytest.mark.asyncio
+async def test_sparse_appearance_resume_preserves_persisted_theme(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_appearance_resume_config()
+    app.app_config["first_run"]["draft_values"].pop(STEP_APPEARANCE)
+    app.app_config["general"] = {"default_theme": "textual-light"}
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None and STEP_APPEARANCE not in draft.values
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_APPEARANCE,
+            )
+            appearance = app.screen.query_one(SetupWizardContainer).steps[
+                app.screen.query_one(SetupWizardContainer)._step_index_for_id(
+                    STEP_APPEARANCE
+                )
+            ]
+            assert appearance.selected_theme == "textual-light"
+            assert [
+                getattr(button, "_theme_name", "")
+                for button in appearance.query("#setup-theme-choice RadioButton")
+                if button.value
+            ] == ["textual-light"]
+
+
+@pytest.mark.asyncio
+async def test_partial_appearance_restore_preserves_absent_splash_sibling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from dataclasses import replace
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_appearance_resume_config()
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == STEP_APPEARANCE,
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            appearance = container.steps[
+                container._step_index_for_id(STEP_APPEARANCE)
+            ]
+            splash_buttons = [
+                button
+                for button in appearance.query("#setup-splash-choice RadioButton")
+                if not str(button.label).startswith("Surprise me")
+            ]
+            assert splash_buttons
+            retained_splash = splash_buttons[0]
+            retained_splash.value = True
+            appearance.selected_splash_card = str(retained_splash.label)
+            partial_values = dict(draft.values)
+            partial_values[STEP_APPEARANCE] = {"theme": "textual-dark"}
+            partial = replace(draft, values=partial_values)
+
+            assert container._restore_resume_controls(partial) is True
+
+            assert appearance.selected_theme == "textual-dark"
+            assert appearance.selected_splash_card == str(retained_splash.label)
+            assert retained_splash.value is True
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -3605,6 +3604,7 @@ class SetupWizardContainer(WizardContainer):
         self.rerun = rerun
         self.resume_draft = resume_draft
         self.key_entered = False
+        self._draft_mutation_lock = asyncio.Lock()
         # (task-2040) MUST be set before ``_create_steps()``: step
         # constructors read ``self.wizard.app_instance`` (SpeechSetupStep
         # reads ``app_config`` through it at __init__ time), and the base
@@ -3738,35 +3738,38 @@ class SetupWizardContainer(WizardContainer):
             )
 
             provider_values = draft.values.get(wizard_state.STEP_PROVIDER, {})
-            provider_key = str(provider_values.get("provider_key") or "")
-            provider_value = str(provider_values.get("provider_value") or "")
             provider_step = self.steps[
                 self._step_index_for_id(wizard_state.STEP_PROVIDER)
             ]
             if isinstance(provider_step, ProviderStep):
-                provider_step.selected_provider_key = provider_key
-                provider_step.provider_value_for_chat_defaults = provider_value
-                choices = provider_step.query_one(
-                    "#setup-provider-choice", OptionList
-                )
-                for index in range(choices.option_count):
-                    option = choices.get_option_at_index(index)
-                    if getattr(option, "provider_key", None) == provider_key:
-                        choices.highlighted = index
-                        break
+                if "provider_key" in provider_values:
+                    provider_key = str(provider_values["provider_key"])
+                    provider_step.selected_provider_key = provider_key
+                    choices = provider_step.query_one(
+                        "#setup-provider-choice", OptionList
+                    )
+                    for index in range(choices.option_count):
+                        option = choices.get_option_at_index(index)
+                        if getattr(option, "provider_key", None) == provider_key:
+                            choices.highlighted = index
+                            break
+                if "provider_value" in provider_values:
+                    provider_step.provider_value_for_chat_defaults = str(
+                        provider_values["provider_value"]
+                    )
 
             model_values = draft.values.get(wizard_state.STEP_MODEL, {})
-            model_id = str(model_values.get("model_id") or "")
             model_step = self.steps[self._step_index_for_id(wizard_state.STEP_MODEL)]
-            if isinstance(model_step, ModelStep):
+            if isinstance(model_step, ModelStep) and "model_id" in model_values:
+                model_id = str(model_values["model_id"])
                 model_step.selected_model_id = model_id
                 model_step._model_id_from_custom_input = bool(model_id)
                 model_step.query_one("#setup-model-custom", Input).value = model_id
 
             rag_values = draft.values.get(wizard_state.STEP_RAG, {})
-            embedding_model = str(rag_values.get("embedding_model") or "")
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
-            if isinstance(rag_step, RagStep):
+            if isinstance(rag_step, RagStep) and "embedding_model" in rag_values:
+                embedding_model = str(rag_values["embedding_model"])
                 rag_step.selected_embedding_model = embedding_model
                 self._restore_radio_selection(
                     rag_step.query_one("#setup-rag-model-choice", RadioSet),
@@ -3774,42 +3777,48 @@ class SetupWizardContainer(WizardContainer):
                 )
 
             notes_values = draft.values.get(wizard_state.STEP_NOTES, {})
-            notes_enabled = notes_values.get("auto_sync_enabled")
             notes_step = self.steps[self._step_index_for_id(wizard_state.STEP_NOTES)]
-            if isinstance(notes_step, NotesSyncStep) and isinstance(notes_enabled, bool):
+            if (
+                isinstance(notes_step, NotesSyncStep)
+                and "auto_sync_enabled" in notes_values
+            ):
+                notes_enabled = notes_values["auto_sync_enabled"]
                 notes_step.query_one("#setup-notes-enable", Switch).value = notes_enabled
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
-            theme = str(appearance_values.get("theme") or "")
-            splash_card = str(appearance_values.get("splash_card") or "")
             appearance_step = self.steps[
                 self._step_index_for_id(wizard_state.STEP_APPEARANCE)
             ]
             if isinstance(appearance_step, AppearanceStep):
-                appearance_step.selected_theme = theme
-                appearance_step.selected_splash_card = splash_card
-                appearance_step._picked_surprise_me = False
-                self._restore_radio_selection(
-                    appearance_step.query_one("#setup-theme-choice", RadioSet),
-                    lambda button: getattr(button, "_theme_name", "") == theme,
-                )
-                self._restore_radio_selection(
-                    appearance_step.query_one("#setup-splash-choice", RadioSet),
-                    lambda button: (
-                        str(button.label) == splash_card
-                        if splash_card
-                        else str(button.label).startswith("Surprise me")
-                    ),
-                )
+                if "theme" in appearance_values:
+                    theme = str(appearance_values["theme"])
+                    appearance_step.selected_theme = theme
+                    self._restore_radio_selection(
+                        appearance_step.query_one("#setup-theme-choice", RadioSet),
+                        lambda button: getattr(button, "_theme_name", "") == theme,
+                    )
+                if "splash_card" in appearance_values:
+                    splash_card = str(appearance_values["splash_card"])
+                    appearance_step.selected_splash_card = splash_card
+                    appearance_step._picked_surprise_me = False
+                    self._restore_radio_selection(
+                        appearance_step.query_one("#setup-splash-choice", RadioSet),
+                        lambda button: (
+                            str(button.label) == splash_card
+                            if splash_card
+                            else str(button.label).startswith("Surprise me")
+                        ),
+                    )
 
             protect_values = draft.values.get(wizard_state.STEP_PROTECT, {})
-            encryption_enabled = protect_values.get("encryption_enabled")
             protect_step = self.steps[
                 self._step_index_for_id(wizard_state.STEP_PROTECT)
             ]
-            if isinstance(protect_step, ProtectKeysStep) and isinstance(
-                encryption_enabled, bool
+            if (
+                isinstance(protect_step, ProtectKeysStep)
+                and "encryption_enabled" in protect_values
             ):
+                encryption_enabled = protect_values["encryption_enabled"]
                 protect_step.encryption_enabled = encryption_enabled
                 if encryption_enabled:
                     protect_step.query_one("#setup-protect-status", Static).update(
@@ -4252,15 +4261,21 @@ class SetupWizardContainer(WizardContainer):
         self.run_worker(self._skip_entirely(), exclusive=True, group="setup-wizard-advance")
 
     async def _skip_entirely(self) -> None:
-        _, delete_keys = wizard_state.build_setup_draft_mutation(None)
-        saved = await self.commit_config(
-            wizard_state.build_wizard_state_commit(completed=True),
-            delete_keys=delete_keys,
-        )
+        async with self._draft_mutation_lock:
+            saved = await self._complete_setup_locked()
         if not saved:
             self._show_completion_save_error()
             return
         self._dismiss_screen({"completed": True, "exit_route": None})
+
+    async def _complete_setup_locked(self) -> bool:
+        """Persist completion and draft deletion while the mutation lock is held."""
+
+        _, delete_keys = wizard_state.build_setup_draft_mutation(None)
+        return await self.commit_config(
+            wizard_state.build_wizard_state_commit(completed=True),
+            delete_keys=delete_keys,
+        )
 
     def _show_completion_save_error(self) -> None:
         """Keep completion failures visible without exposing config values."""
@@ -4274,6 +4289,12 @@ class SetupWizardContainer(WizardContainer):
 
     async def persist_setup_checkpoint(self, active_step_id: str) -> bool:
         """Persist one allowlisted checkpoint after a successful step commit."""
+
+        async with self._draft_mutation_lock:
+            return await self._persist_setup_checkpoint_locked(active_step_id)
+
+    async def _persist_setup_checkpoint_locked(self, active_step_id: str) -> bool:
+        """Persist a checkpoint while the caller holds the mutation lock."""
 
         try:
             draft = wizard_state.setup_draft_checkpoint(
@@ -4293,6 +4314,53 @@ class SetupWizardContainer(WizardContainer):
             self.resume_draft = draft
             return True
         return False
+
+    async def clear_resume_attempt(self, expected_target_id: str) -> bool:
+        """Narrowly clear the marker against authoritative state under lock."""
+
+        async with self._draft_mutation_lock:
+            return await self._clear_resume_attempt_locked(expected_target_id)
+
+    async def _clear_resume_attempt_locked(self, expected_target_id: str) -> bool:
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        first_run = app_config.get(wizard_state.WIZARD_STATE_SECTION)
+        if not isinstance(first_run, Mapping):
+            return False
+        if wizard_state.coerce_wizard_flag(
+            first_run.get(wizard_state.SETUP_COMPLETED_KEY)
+        ):
+            return False
+        draft = wizard_state.read_setup_draft(app_config)
+        if (
+            draft is None
+            or not draft.resume_attempted
+            or draft.active_step_id != expected_target_id
+        ):
+            return False
+        saved = await self.commit_config(
+            {
+                wizard_state.WIZARD_STATE_SECTION: {
+                    wizard_state.DRAFT_RESUME_ATTEMPTED_KEY: False
+                }
+            }
+        )
+        if not saved:
+            return False
+        cleared = wizard_state.SetupDraft(
+            version=draft.version,
+            track=draft.track,
+            active_step_id=draft.active_step_id,
+            values=draft.values,
+            resume_attempted=False,
+        )
+        self.resume_draft = cleared
+        try:
+            screen = self.screen
+        except Exception:
+            screen = None
+        if isinstance(screen, FirstRunSetupWizard):
+            screen.resume_draft = cleared
+        return True
 
     async def persist_current_checkpoint(self) -> bool:
         """Persist the latest completed values with the currently visible target."""
@@ -4423,11 +4491,8 @@ class SetupWizardContainer(WizardContainer):
         """
         if self._finalized:
             return
-        _, delete_keys = wizard_state.build_setup_draft_mutation(None)
-        saved = await self.commit_config(
-            wizard_state.build_wizard_state_commit(completed=True),
-            delete_keys=delete_keys,
-        )
+        async with self._draft_mutation_lock:
+            saved = await self._complete_setup_locked()
         if not saved:
             self._show_completion_save_error()
             return
@@ -4650,25 +4715,7 @@ class FirstRunSetupWizard(WizardScreen):
         ):
             return
         self.run_worker(
-            self._clear_resume_attempt(),
+            container.clear_resume_attempt(target_step_id),
             exclusive=True,
             group="setup-wizard-resume-clear",
         )
-
-    async def _clear_resume_attempt(self) -> None:
-        draft = wizard_state.read_setup_draft(
-            getattr(self.app_instance, "app_config", {}) or {}
-        )
-        if draft is None or not draft.resume_attempted:
-            return
-        if (
-            self.resume_draft is None
-            or draft.active_step_id != self.resume_draft.active_step_id
-        ):
-            return
-        cleared = replace(draft, resume_attempted=False)
-        settings, delete_keys = wizard_state.build_setup_draft_mutation(cleared)
-        container = self.query_one(SetupWizardContainer)
-        if await container.commit_config(settings, delete_keys=delete_keys):
-            self.resume_draft = cleared
-            container.resume_draft = cleared

@@ -9732,6 +9732,7 @@ class TldwCli(
                 "Setup recovery could not be saved. Try again.",
                 severity="error",
             )
+            self._schedule_first_run_recovery_retry()
             return
 
         self._mirror_first_run_setup_mutation(settings, delete_keys)
@@ -9739,6 +9740,25 @@ class TldwCli(
             FirstRunSetupWizard(self, resume_draft=resume_draft),
             self._handle_first_run_wizard_result,
         )
+
+    def _schedule_first_run_recovery_retry(self) -> None:
+        """Reopen one actionable recovery prompt after a failed mutation."""
+
+        if getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = True
+        self._first_run_startup_action_scheduled = False
+        self.call_after_refresh(self._show_first_run_recovery_retry)
+
+    def _show_first_run_recovery_retry(self) -> None:
+        if not getattr(self, "_first_run_recovery_retry_scheduled", False):
+            return
+        self._first_run_recovery_retry_scheduled = False
+        self._first_run_startup_action_scheduled = True
+        current_screen = type(self.screen).__name__
+        if current_screen in {"SetupRecoveryDialog", "FirstRunSetupWizard"}:
+            return
+        self._push_first_run_recovery_dialog()
 
     def _mirror_first_run_setup_mutation(
         self,
