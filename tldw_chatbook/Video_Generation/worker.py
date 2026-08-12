@@ -163,10 +163,11 @@ def run_generation(
         raise VideoGenerationError(f"Adapter for backend {resolved!r} failed to load.")
     result = _generate_with_optional_cancel(adapter, request, cancel_event)
     try:
-        canonical_video_extension(result.container)
+        result_container = result.container
+        canonical_video_extension(result_container)
         mime_container = video_container_for_mime(result.content_type)
-    except ValueError as exc:
+    except Exception as exc:
         raise VideoGenerationError("Invalid video generation result format") from exc
-    if request.format != result.container or result.container != mime_container:
+    if request.format != result_container or result_container != mime_container:
         raise VideoGenerationError("Invalid video generation result format")
     return result

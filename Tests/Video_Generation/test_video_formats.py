@@ -68,3 +68,27 @@ def test_normalize_video_mime_rejects_malformed_runtime_types(value):
 
     with pytest.raises(ValueError, match="^unsupported video MIME$"):
         normalize_video_mime(value)
+
+
+def test_canonical_video_extension_rejects_equality_spoofers_before_comparison():
+    from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
+
+    class EqualitySpoof:
+        def __eq__(self, _other):
+            return True
+
+    with pytest.raises(ValueError, match="^unsupported video container$"):
+        canonical_video_extension(EqualitySpoof())
+
+
+def test_canonical_video_extension_contains_hostile_equality_errors():
+    from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
+
+    class EqualityTrap:
+        def __eq__(self, _other):
+            raise RuntimeError("PRIVATE-EQUALITY-ERROR")
+
+    with pytest.raises(ValueError, match="^unsupported video container$") as exc_info:
+        canonical_video_extension(EqualityTrap())
+
+    assert "PRIVATE-EQUALITY-ERROR" not in str(exc_info.value)

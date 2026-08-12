@@ -115,6 +115,38 @@ def test_run_generation_rejects_unknown_or_contradictory_result_facts(
     assert content_type not in str(exc_info.value)
 
 
+@pytest.mark.parametrize("case", ["missing", "malformed", "spoof", "raising"])
+def test_run_generation_contains_malformed_or_hostile_result_containers(case):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+    from tldw_chatbook.Video_Generation.worker import run_generation
+
+    class EqualitySpoof:
+        def __eq__(self, _other):
+            return True
+
+    class EqualityTrap:
+        def __eq__(self, _other):
+            raise RuntimeError("PRIVATE-EQUALITY-ERROR")
+
+    containers = {
+        "malformed": None,
+        "spoof": EqualitySpoof(),
+        "raising": EqualityTrap(),
+    }
+    result = SimpleNamespace(content_type="video/mp4")
+    if case != "missing":
+        result.container = containers[case]
+    _register_fake(result=result)
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        run_generation(_request())
+
+    assert str(exc_info.value) == "Invalid video generation result format"
+    assert "PRIVATE-EQUALITY-ERROR" not in str(exc_info.value)
+
+
 def test_build_request_defaults():
     req = _request()
     assert req.format == "mp4"

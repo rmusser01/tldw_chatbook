@@ -947,6 +947,10 @@ class ComfyUIVideoAdapter:
         if not isinstance(entry, dict):
             return None
         ComfyUIVideoAdapter._raise_for_terminal_history_status(entry)
+        if not ComfyUIVideoAdapter._is_terminal_success(entry):
+            return None
+        expected_suffix = f".{canonical_video_extension(requested_container)}"
+        matches: list[dict[str, str]] = []
         outputs = entry.get("outputs")
         if isinstance(outputs, dict):
             for node_id in ComfyUIVideoAdapter._output_node_ids(graph):
@@ -961,29 +965,33 @@ class ComfyUIVideoAdapter:
                             continue
                         filename = descriptor.get("filename")
                         subfolder = descriptor.get("subfolder", "")
-                        output_type = descriptor.get("type", "output")
+                        output_type = descriptor.get("type")
                         if not isinstance(filename, str) or not filename.strip():
                             continue
                         if subfolder is None:
                             subfolder = ""
-                        if output_type is None:
-                            output_type = "output"
-                        if not isinstance(subfolder, str) or not isinstance(output_type, str):
+                        if not isinstance(subfolder, str) or output_type != "output":
                             continue
                         filename = filename.strip()
                         suffix = Path(filename).suffix
-                        if suffix != f".{canonical_video_extension(requested_container)}":
+                        if suffix != expected_suffix:
                             continue
-                        return {
-                            "filename": filename,
-                            "subfolder": subfolder,
-                            "type": output_type or "output",
-                        }
-        if ComfyUIVideoAdapter._is_terminal_success(entry):
+                        matches.append(
+                            {
+                                "filename": filename,
+                                "subfolder": subfolder,
+                                "type": output_type,
+                            }
+                        )
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
             raise VideoGenerationError(
-                "ComfyUI history returned no matching canonical video output"
+                "ComfyUI history returned multiple matching canonical video outputs"
             )
-        return None
+        raise VideoGenerationError(
+            "ComfyUI history returned no matching canonical video output"
+        )
 
     def _download_output(
         self,

@@ -249,7 +249,10 @@ def test_generic_webm_output_returns_observed_container(
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-2"}
     routes[("GET", "/history/job-2")] = {
-        "job-2": {"outputs": {"7": {"videos": [{"filename": "clip.webm", "subfolder": "", "type": "output"}]}}}
+        "job-2": {
+            "outputs": {"7": {"videos": [{"filename": "clip.webm", "subfolder": "", "type": "output"}]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
     }
 
     result = adapter.generate(
@@ -334,7 +337,8 @@ def test_h3_download_requires_observed_mp4_mime(
                         {"filename": "clip.mp4", "subfolder": "", "type": "output"}
                     ]
                 }
-            }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
@@ -363,7 +367,10 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-3"}
     routes[("GET", "/history/job-3")] = {
-        "job-3": {"outputs": {"7": {"videos": [{"filename": "clip.mp4", "subfolder": "", "type": "output"}]}}}
+        "job-3": {
+            "outputs": {"7": {"videos": [{"filename": "clip.mp4", "subfolder": "", "type": "output"}]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
     }
     image = ResolvedReferenceAsset("first_frame", b"png-bytes", "image/png", "source.png")
 
@@ -679,7 +686,8 @@ def test_save_video_output_accepts_arbitrary_list_collection(adapter):
                         {"filename": "clip.mp4", "subfolder": "video", "type": "output"}
                     ]
                 }
-            }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
@@ -698,14 +706,23 @@ def test_save_video_output_accepts_arbitrary_list_collection(adapter):
         {"filename": ""},
         {"filename": "clip.mp4", "subfolder": {}},
         {"filename": "clip.mp4", "type": []},
+        {"filename": "clip.mp4"},
         {"filename": "still.png", "subfolder": "", "type": "output"},
     ],
 )
-def test_save_video_output_skips_malformed_or_unsupported_descriptors(adapter, descriptor):
+def test_terminal_output_rejects_malformed_or_unsupported_descriptors(
+    adapter, descriptor
+):
     graph = _h3_workflow()
-    history = {"job": {"outputs": {"save": {"files": [descriptor]}}}}
+    history = {
+        "job": {
+            "outputs": {"save": {"files": [descriptor]}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
 
-    assert adapter._find_output_descriptor(history, "job", graph, "mp4") is None
+    with pytest.raises(VideoGenerationError, match="no matching canonical"):
+        adapter._find_output_descriptor(history, "job", graph, "mp4")
 
 
 @pytest.mark.parametrize("requested", ["mp4", "webm"])
@@ -732,12 +749,103 @@ def test_output_selection_uses_only_request_matching_canonical_descriptor(
                         {"filename": "movie.mov", "subfolder": "", "type": "output"},
                     ]
                 }
-            }
+            },
+            "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
     expected = "first.mp4" if requested == "mp4" else "second.webm"
     assert adapter._find_output_descriptor(history, "job", graph, requested)["filename"] == expected
+
+
+def test_output_selection_waits_for_explicit_terminal_success(adapter):
+    graph = {"output": {"class_type": "SaveVideo", "inputs": {}}}
+    history = {
+        "job": {
+            "outputs": {
+                "output": {
+                    "videos": [
+                        {"filename": "partial.mp4", "subfolder": "", "type": "output"}
+                    ]
+                }
+            },
+            "status": {"completed": False, "status_str": "running", "messages": []},
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4") is None
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_output_selection_rejects_multiple_matching_final_outputs_boundedly(
+    adapter, reverse_order
+):
+    node_ids = ["save-a", "save-b"]
+    if reverse_order:
+        node_ids.reverse()
+    graph = {
+        node_id: {"class_type": "SaveVideo", "inputs": {}} for node_id in node_ids
+    }
+    output_items = [
+        (
+            "save-a",
+            {
+                "videos": [
+                    {"filename": "PRIVATE-A.mp4", "subfolder": "", "type": "output"},
+                    {"filename": "temp.mp4", "subfolder": "", "type": "temp"},
+                ]
+            },
+        ),
+        (
+            "save-b",
+            {
+                "files": [
+                    {"filename": "PRIVATE-B.mp4", "subfolder": "", "type": "output"}
+                ]
+            },
+        ),
+    ]
+    if reverse_order:
+        output_items.reverse()
+        for _node_id, collections in output_items:
+            collections["files" if "files" in collections else "videos"].reverse()
+    history = {
+        "job": {
+            "outputs": dict(output_items),
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    with pytest.raises(VideoGenerationError, match="multiple matching canonical") as exc_info:
+        adapter._find_output_descriptor(history, "job", graph, "mp4")
+
+    assert "PRIVATE-A" not in str(exc_info.value)
+    assert "PRIVATE-B" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_output_selection_ignores_temp_descriptor_with_matching_suffix(
+    adapter, reverse_order
+):
+    descriptors = [
+        {"filename": "temp.mp4", "subfolder": "", "type": "temp"},
+        {"filename": "final.mp4", "subfolder": "video", "type": "output"},
+    ]
+    if reverse_order:
+        descriptors.reverse()
+    graph = {"save": {"class_type": "SaveVideo", "inputs": {}}}
+    history = {
+        "job": {
+            "outputs": {"save": {"videos": descriptors}},
+            "status": {"completed": True, "status_str": "success", "messages": []},
+        }
+    }
+
+    assert adapter._find_output_descriptor(history, "job", graph, "mp4") == {
+        "filename": "final.mp4",
+        "subfolder": "video",
+        "type": "output",
+    }
 
 
 def test_terminal_success_without_media_fails_without_waiting(adapter):

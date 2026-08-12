@@ -163,6 +163,31 @@ def test_file_id_fallback_requires_observed_mp4_mime(
     assert retrieve["kwargs"]["params"] == {"file_id": "98765"}
 
 
+def test_file_id_fallback_accepts_exact_normalized_mp4_result(adapter, http_recorder):
+    calls, routes = http_recorder
+    routes[("POST", "/v2/video_generation")] = {"task_id": "t2-positive"}
+    routes[("GET", "/v2/query/")] = {
+        "task_id": "t2-positive",
+        "status": "Success",
+        "file_id": "12345",
+    }
+    routes[("GET", "/v1/files/retrieve")] = {
+        "file": {"download_url": "https://cdn.example.com/fallback.mp4"}
+    }
+    routes[("BYTES", "cdn.example.com")] = (
+        b"fallback-bytes",
+        " Video/MP4 ; codecs=avc1 ",
+    )
+
+    result = adapter.generate(_request())
+
+    assert result.content == b"fallback-bytes"
+    assert result.content_type == "video/mp4"
+    assert result.container == "mp4"
+    retrieve = next(c for c in calls if "/v1/files/retrieve" in c["url"])
+    assert retrieve["kwargs"]["params"] == {"file_id": "12345"}
+
+
 def test_download_accepts_normalized_mp4_mime_with_parameters(adapter, http_recorder):
     _calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t-params"}

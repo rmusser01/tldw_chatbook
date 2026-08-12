@@ -20,6 +20,8 @@ def normalize_video_mime(value: object) -> str:
 
 def canonical_video_extension(container: object) -> str:
     """Return the one canonical extension for a supported container."""
+    if type(container) is not str:
+        raise ValueError("unsupported video container")
     for known_container, _mime, extension in SUPPORTED_VIDEO_FORMATS:
         if container == known_container:
             return extension
