@@ -105,6 +105,9 @@ _REASONING_EFFORT_VALUES = frozenset(
 _REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
 _VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
 _THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
+_LEGACY_CHAT_PROVIDER_ALIASES = {
+    "openai_compatible": "openai",
+}
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -175,6 +178,16 @@ class ConsoleSessionSettings:
     #: persisted per-conversation in conversations.metadata (one-shot
     #: prefill is transient store state, not settings).
     pinned_prefill: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveChatConfiguration:
+    """Canonical provider, model, and endpoint selected for a chat session."""
+
+    provider: str
+    model: str | None
+    base_url: str | None
+    model_source: str
 
 
 @dataclass(frozen=True)
@@ -379,17 +392,14 @@ def build_default_console_session_settings(
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
-    configured_provider = provider_config_key(
-        _string_value(provider) or _string_setting(chat_defaults, "provider")
+    effective = resolve_effective_chat_configuration(
+        app_config,
+        provider=provider,
+        model=model,
     )
+    configured_provider = effective.provider
     provider_settings = _provider_settings(app_config, configured_provider)
-    configured_model = _first_string(
-        model,
-        provider_settings.get("model"),
-        provider_settings.get("api_model"),
-        provider_settings.get("default_model"),
-        chat_defaults.get("model"),
-    )
+    configured_model = effective.model
     model_profile = _model_default_profile(provider_settings, configured_model)
     # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
     # Console's Save-as-default wrote, so it outranks everything except a
@@ -407,7 +417,7 @@ def build_default_console_session_settings(
     return ConsoleSessionSettings(
         provider=configured_provider,
         model=configured_model,
-        base_url=_default_base_url(configured_provider, provider_settings),
+        base_url=effective.base_url,
         temperature=_float_setting_from_sources(default_sources, "temperature", 0.7),
         top_p=_float_setting_from_sources(default_sources, "top_p", 0.95),
         min_p=_optional_float_setting_from_sources(default_sources, "min_p"),
@@ -435,6 +445,57 @@ def build_default_console_session_settings(
         ),
         streaming=_bool_setting_from_sources(default_sources, "streaming", True),
     )
+
+
+def resolve_effective_chat_configuration(
+    app_config: Mapping[str, object],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> EffectiveChatConfiguration:
+    """Resolve canonical chat defaults without mutating loaded configuration."""
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    provider_id = _canonical_chat_provider_id(
+        _string_value(provider) or _string_setting(chat_defaults, "provider")
+    )
+    provider_settings = _provider_settings(app_config, provider_id)
+    candidates = (
+        ("session", model),
+        ("chat_defaults", chat_defaults.get("model")),
+        ("provider_fallback", provider_settings.get("model")),
+        ("provider_fallback", provider_settings.get("api_model")),
+        ("provider_fallback", provider_settings.get("default_model")),
+    )
+    model_source = "none"
+    resolved_model = None
+    for candidate_source, candidate_model in candidates:
+        resolved_model = _string_value(candidate_model)
+        if resolved_model is not None:
+            model_source = candidate_source
+            break
+
+    return EffectiveChatConfiguration(
+        provider=provider_id,
+        model=resolved_model,
+        base_url=_default_base_url(provider_id, provider_settings),
+        model_source=model_source,
+    )
+
+
+def build_canonical_chat_defaults_mutation(
+    effective: EffectiveChatConfiguration,
+) -> dict[str, dict[str, str]]:
+    """Build the canonical provider/model fragment for an explicit save."""
+    chat_defaults: dict[str, str] = {}
+    provider_id = _canonical_chat_provider_id(effective.provider)
+    model = _string_value(effective.model)
+    if provider_id:
+        chat_defaults["provider"] = provider_id
+    if model:
+        chat_defaults["model"] = model
+    return {"chat_defaults": chat_defaults}
 
 
 def validate_console_session_settings(
@@ -835,6 +896,15 @@ def _chat_defaults_with_streaming_compat(
     compatible_defaults = dict(chat_defaults)
     compatible_defaults["streaming"] = chat_defaults.get("enable_streaming")
     return compatible_defaults
+
+
+def _canonical_chat_provider_id(provider: str | None) -> str:
+    normalized = provider_config_key(provider)
+    normalized = _LEGACY_CHAT_PROVIDER_ALIASES.get(normalized, normalized)
+    return resolve_console_provider_identity(
+        normalized,
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    ).readiness_key
 
 
 def _provider_settings(

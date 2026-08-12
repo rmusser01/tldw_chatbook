@@ -532,6 +532,33 @@ def test_default_console_session_settings_prefers_chat_defaults_over_provider_sc
     assert settings.streaming is False
 
 
+def test_default_console_settings_delegates_canonical_model_and_endpoint_resolution() -> (
+    None
+):
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI-Compatible",
+            "model": "chat-model",
+            "temperature": 0.31,
+        },
+        "api_settings": {
+            "openai": {
+                "model": "provider-model",
+                "api_base_url": "https://api.example.test/v1",
+                "temperature": 0.79,
+            }
+        },
+    }
+
+    settings = build_default_console_session_settings(app_config)
+
+    assert settings.provider == "openai"
+    assert settings.model == "chat-model"
+    assert settings.base_url == "https://api.example.test/v1"
+    assert settings.temperature == 0.31
+    assert app_config["chat_defaults"]["provider"] == "OpenAI-Compatible"
+
+
 def test_console_session_settings_accepts_documented_effort_values() -> None:
     app_config = {
         "api_settings": {
