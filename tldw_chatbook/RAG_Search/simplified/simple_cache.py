@@ -240,8 +240,12 @@ class SimpleRAGCache:
                 Passed for hybrid AND keyword searches (both read the FTS
                 leg), ``None`` for semantic. The pre-arc construction
                 (``"and"``) contributes NO key part, so every key built
-                before this parameter existed -- and every key built while
-                ``"and"`` ships -- stays byte-identical.
+                before this parameter existed stays byte-identical. Since
+                TASK-15400 shipped ``and_stopword_trim`` as the default
+                (2026-08-11) that is no longer the key a DEFAULT search
+                renders -- it carries ``fts:and_stopword_trim`` -- which is
+                the point: entries cached under the old construction are
+                keyed apart from the new one rather than served to it.
 
         Returns:
             A unique cache key
@@ -300,9 +304,10 @@ class SimpleRAGCache:
             and fts_match_construction != LEGACY_FTS_MATCH_CONSTRUCTION
         ):
             # Prefixed like the parts above so it can never be confused with
-            # another one. Omitted for the legacy construction (see the
-            # parameter's docstring) -- this is the SHIPPED value's
-            # byte-identity guarantee, not a "falsy means absent" test.
+            # another one. Omitted for the LEGACY (pre-TASK-15400)
+            # construction (see the parameter's docstring) -- this is that
+            # value's byte-identity guarantee, not a "falsy means absent"
+            # test, and it is deliberately NOT re-pointed at the new default.
             key_parts.append("fts:" + fts_match_construction)
 
         # Use a faster hash function - fallback to md5 if xxhash not available

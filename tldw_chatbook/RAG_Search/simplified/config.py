@@ -442,29 +442,44 @@ class SearchConfig:
     # pre-registers, resolved at USE time by
     # `rag_service.RAGService._fts5_match_expressions`:
     #
-    #   "and"                -- the shipped construction: implicit AND over
+    #   "and"                -- the PRE-15400 construction: implicit AND over
     #                           EVERY token (a document must contain every
     #                           word the user typed).
-    #   "and_stopword_trim"  -- AND over the content tokens only, falling
-    #                           back to the full AND when trimming empties
-    #                           the query.
+    #   "and_stopword_trim"  -- THE SHIPPED DEFAULT since 2026-08-11: AND over
+    #                           the content tokens only, falling back to the
+    #                           full AND when trimming empties the query.
     #   "or"                 -- OR over the content tokens.
     #   "and_then_or"        -- AND first; on a ZERO-row sub-leg result,
     #                           that sub-leg re-runs as the content-token
     #                           OR (a non-empty AND is never widened).
     #
-    # Deliberately NOT wired to TOML/user config: this arc measures the four
+    # The default is `and_stopword_trim` because TASK-15400's sweep MEASURED
+    # it as the winner under the arc's pre-registered rule (Task 3's matrix,
+    # 2026-08-11, sweep row `and_trim`): keyword-leg census 20 -> 21 of 53
+    # non-negative golden queries, hybrid prompt/recall 0.000 -> 0.200, and
+    # NO gated cell down anywhere in any of the three modes (plain and
+    # semantic are byte-identical to `and`; only hybrid can move). It also
+    # issues zero extra FTS queries. The two OR-bearing candidates scored a
+    # far bigger census (28 / 29) and were DISQUALIFIED -- see
+    # `RAGService._escape_fts5_query` for the mechanism.
+    #
+    # Deliberately NOT wired to TOML/user config: this arc measured the four
     # candidates against the golden set and ships the winner as the default,
     # rather than handing users an unmeasured knob (spec: "the construction
     # choice is NOT a config knob in this arc"). It is a field rather than a
     # constant only so the sweep can vary it on a live SearchConfig -- which
     # is exactly why it also joins the cache key (`simple_cache._make_key`);
     # a runtime-variable retrieval parameter outside the key is how TASK-4110's
-    # sweep would have reported "the parameter doesn't matter".
+    # sweep would have reported "the parameter doesn't matter". A consequence
+    # of the flip: the default now renders a `fts:and_stopword_trim` key part
+    # where the pre-arc default rendered none, so cached pre-flip results are
+    # never re-read under the new construction (they are keyed apart, not
+    # invalidated in place).
     #
     # An unrecognized value warns once and behaves as "and" (fail-safe to the
-    # shipped behaviour), matching how `hybrid_alpha`/`rrf_k` degrade.
-    fts_match_construction: str = "and"
+    # PRE-ARC behaviour, which is the one every escaping/pushdown pin still
+    # describes), matching how `hybrid_alpha`/`rrf_k` degrade.
+    fts_match_construction: str = "and_stopword_trim"
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False

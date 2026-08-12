@@ -3216,22 +3216,58 @@ class RAGService:
         rather than run a MATCH expression that can only ever match
         nothing.
 
-        **This construction is under review -- TASK-15400.** The implicit
-        AND means a document must contain literally every token the user
-        typed. Measured on the RAG_Eval golden set (TASK-15020/B2,
-        2026-08-11): this leg returns ZERO rows for 40 of 60 golden
-        queries, firing only where the query is keyword-shaped. The
-        dominant cause is AND-strictness over CONTENT words -- trimming
-        function words rescues 1 of those 40, and reusing the Library
-        four-seam path's ``build_fts_match_query`` also rescues 1;
-        OR-of-tokens rescues 34 (but loses the golden set's one
-        vector-blind fixture, whose design rests on AND uniqueness). For
-        media/notes/conversations the semantic leg hides this entirely;
-        prompts have no semantic leg, which is where it surfaced. Do not
-        change the join here without TASK-15400's before/after matrix --
-        and whatever changes, keep each token individually quoted (the
+        **TASK-15400 RESOLVED (2026-08-11): this full AND is no longer the
+        default join.** It is still the expression this method builds, and
+        it still ships on three live paths -- the ``and`` construction, the
+        fail-safe an unrecognized ``fts_match_construction`` degrades to,
+        and ``and_stopword_trim``'s own fallback when trimming empties the
+        query -- but ``SearchConfig.fts_match_construction`` now defaults to
+        ``and_stopword_trim``, so a default search ANDs the CONTENT tokens
+        (see ``_fts5_match_expressions``).
+
+        The arc's sweep measured all four pre-registered constructions over
+        the RAG_Eval golden set at the shipped fusion parameters and applied
+        a pre-registered rule; these are that matrix's cells, not arithmetic
+        on top of it (sweep row ``and_trim``, `Tests/RAG_Eval/harness/
+        fusion_sweep.py`):
+
+        * **What the winner bought.** Keyword-leg census 20 -> 21 of the 53
+          non-negative golden queries (the one rescue is
+          ``pm-vendor-chaser``; ``_FTS5_STOPWORDS``' comment records which
+          function word was blocking it), and hybrid ``prompt`` recall
+          0.000 -> 0.200 (mrr 0.022, ndcg 0.060) -- the category that
+          surfaced the arc at all, because prompts have no semantic leg to
+          hide the keyword leg's misses. NO cell moved DOWN in any category
+          in any mode, and plain/semantic are byte-identical to ``and``
+          (only hybrid can move). It issues zero extra FTS queries.
+        * **What it did NOT buy, and who owns that.** The arc opened on
+          "this leg returns ZERO rows for 40 of 60 golden queries"; the
+          winner moves that to **39 of 60**. What is left is not function
+          words -- the census's measured blockers are absent CONTENT words
+          (``template``, ``building``, ``rough``, ``turns``, ``pulls``,
+          ``builds``), which no stopword list removes -- and it belongs to
+          the RE-SCOPED follow-up filed off TASK-15400; see the next point
+          for why that is a merge problem rather than a MATCH problem.
+        * **The OR forms were measured and DISQUALIFIED -- on the merge,
+          not on the join.** ``or`` (census 28) and ``and_then_or`` (census
+          29) both scored far higher AND both lost the golden set's
+          vector-blind fixture's hybrid rescue, with scoped recall
+          1.000 -> 0.429. The mechanism, for ``and_then_or``, is not that
+          the fixture's own sub-leg widened -- it did not, its row is still
+          an AND row. ``_keyword_search`` merges the four FTS sub-legs with
+          ``interleave_rankings`` (round-robin, NOT a score merge), so when
+          OTHER sub-legs fall back they inject rows that displace the
+          untouched AND row from leg rank 1 to 2 -- and hybrid fusion
+          consumes LEG RANK. The same displacement decomposes the scoped
+          collapse exactly (the 4 note-targeted scoped queries fall behind a
+          media fallback row; media is first in the round-robin; 3 of 7 =
+          0.429). Any future widening therefore has to fix the MERGE first;
+          widening the MATCH form alone cannot satisfy the constraint.
+
+        Whatever changes here, keep each token individually quoted (the
         injection property above, pinned by
-        ``Tests/RAG_Search/test_fts5_query_escaping.py``).
+        ``Tests/RAG_Search/test_fts5_query_escaping.py``, which re-runs it
+        through every construction and through the fallback expression).
 
         Args:
             query: Raw search query

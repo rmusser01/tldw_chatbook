@@ -1,12 +1,23 @@
-"""The engine keyword leg's MATCH construction seam (TASK-15400, Task 1).
+"""The engine keyword leg's MATCH construction seam (TASK-15400, Tasks 1+4).
 
 `_escape_fts5_query` builds an implicit AND over every query token, which
-is why the leg returns zero rows for 40 of the 60 golden queries (the
-census in TASK-15400's description). This file pins the SEAM that lets a
-sweep measure four candidate constructions against each other -- it does
-NOT change what ships. `SearchConfig.fts_match_construction` defaults to
-`"and"`, and every pin below that describes shipped behaviour asserts the
-pre-arc bytes.
+is why the leg returned zero rows for 40 of the 60 golden queries (the
+census in TASK-15400's description). This file pins the SEAM that let the
+arc's sweep measure four candidate constructions against each other.
+
+**The default flipped in Task 4 (2026-08-11), and these pins moved with
+it.** `SearchConfig.fts_match_construction` was `"and"` (the pre-arc
+implicit AND over every token) and is now `"and_stopword_trim"`, the
+construction the sweep's matrix chose under the arc's pre-registered rule
+(row `and_trim`: leg census 20 → 21 of 53, hybrid prompt/recall
+0.000 → 0.200, no gated cell down in any mode, zero extra FTS queries; the
+two OR-bearing rows scored 28/29 and were disqualified for losing the
+vector-blind fixture's hybrid rescue — see `_escape_fts5_query`'s docstring
+for the interleave-displacement mechanism). Two pins below name both states
+explicitly: `test_the_shipped_default_is_the_sweeps_winner` (the flip
+itself) and `test_and_construction_is_byte_identical_to_the_shipped_escaper`
+(same property, now asked for explicitly). Every OTHER pin here sets its
+construction by hand and is unaffected by which one ships.
 
 Four properties, each with a mutation that reds it:
 
@@ -57,6 +68,8 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_AND,
+    FTS_MATCH_CONSTRUCTION_AND,
+    FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
     FTS_MATCH_CONSTRUCTIONS,
     FTS_MATCH_OR,
     _FTS5_STOPWORDS,
@@ -193,10 +206,43 @@ OR_ONLY_QUERY = "how does the wombat template work"  # "template"/"work" absent
 # --- expression shape -------------------------------------------------------
 
 
-def test_and_construction_is_byte_identical_to_the_shipped_escaper(tmp_path):
-    """The shipped default must produce exactly today's MATCH expression."""
+def test_the_shipped_default_is_the_sweeps_winner(tmp_path):
+    """DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
+    `and_trim`): the default was `"and"` and is now `"and_stopword_trim"`.
+
+    Both states named on purpose. `"and"` was the pre-arc construction (the
+    implicit AND over EVERY token); `"and_stopword_trim"` is what the arc's
+    construction matrix chose under its pre-registered rule — census 20 → 21
+    of 53, hybrid prompt/recall 0.000 → 0.200, no cell down in any mode,
+    zero extra FTS queries. This assertion is the flip: a default reverted
+    to `"and"` reds it (and reds the gated prompt pin in
+    `Tests/RAG_Eval/test_fixture_authoring_probe.py`).
+    """
     service = _make_service()
-    assert service.config.search.fts_match_construction == FTS_MATCH_AND
+    assert (
+        service.config.search.fts_match_construction
+        == FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM
+    )
+
+    # ...and the winner's shape at the DEFAULT, not merely its name: the
+    # function word goes, the content tokens stay ANDed, no fallback query.
+    assert service._fts5_match_expressions("notes about the vendor") == (
+        '"notes" "vendor"',
+        None,
+    )
+
+
+def test_and_construction_is_byte_identical_to_the_shipped_escaper(tmp_path):
+    """`and` still produces exactly the pre-arc MATCH expression.
+
+    DISCLOSED (2026-08-11): this used to be measured at the DEFAULT
+    construction, which was `"and"`; it now asks for `"and"` explicitly. The
+    property is unchanged and still load-bearing — `"and"` is what
+    `_resolved_fts_match_construction` degrades an unknown value to, and
+    what `and_stopword_trim` itself falls back to when trimming empties the
+    query, so the byte-identity is a live path, not a historical one.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND)
 
     for query in ("wombat", "Obsidian-3 spindle runout", "notes about the vendor"):
         primary, fallback = service._fts5_match_expressions(query)

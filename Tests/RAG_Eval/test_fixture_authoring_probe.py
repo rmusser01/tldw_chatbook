@@ -21,7 +21,12 @@ vector index, so those documents were absent from retrieval by construction.
 B2 shipped the first two; the third is deliberately still true. The test now
 pins the three-way split that produces (hybrid finds, semantic cannot, plain
 is a harness gap), keeping the same job: a prompt cell is EXPLAINED rather
-than assumed, in whichever direction it reads.
+than assumed, in whichever direction it reads. It has since read a THIRD way
+— TASK-15400's Task 4 (2026-08-11) shipped `and_stopword_trim` as the
+keyword leg's MATCH construction and hybrid now answers one of the five
+golden prompt queries (recall 0.000 → 0.200); the test's docstring carries
+all three states and the pin asserts the split, one hit and four misses,
+rather than a direction.
 
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`.
@@ -93,8 +98,16 @@ def test_the_probe_rejects_a_fixture_todays_pipeline_answers(tmp_path, capsys):
 PROMPT_REACHABILITY_QUERY = "shift log summary supervisor"
 PROMPT_REACHABILITY_SLUG = "prompt-shift-summary"
 
+#: The ONE prompt golden query the shipped construction now answers
+#: (TASK-15400 Task 4, 2026-08-11, sweep row `and_trim`). Its query is
+#: "saved prompt for chasing a supplier about a late order"; the full AND
+#: over every token could not be satisfied, and the content-token AND can
+#: (`_FTS5_STOPWORDS`' own comment records it as blocked solely by "about").
+#: This single id IS the gated `prompt` cell: 1 of 5 = recall 0.200.
+STOPWORD_TRIM_RESCUED_PROMPT_ID = "pm-vendor-chaser"
 
-def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
+
+def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     tmp_path, capsys
 ):
     """THE PROMPTS SUB-LEG'S OUTCOME — both states, dated, and the surprise.
@@ -121,20 +134,39 @@ def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
       fans out over the Library's own four seams — so its prompt column is a
       HARNESS gap, not a pipeline one; the shipped app's plain mode does
       find prompts.
-    * **hybrid** misses for the finding this task actually produced, filed
-      as **TASK-15400**: the engine's keyword leg builds its MATCH as an
+    * **hybrid** missed for the finding this task actually produced, filed
+      as **TASK-15400**: the engine's keyword leg built its MATCH as an
       implicit AND over EVERY query token (`_escape_fts5_query`, TASK-3995)
       with no plural/singular widening. The five prompt queries are
-      natural-language sentences, so each is one to five absent tokens away
-      from matching and the leg returns NOTHING for them. Measured across
-      the whole golden set at authoring time: the keyword leg returns zero
-      rows for 40 of 60 queries, firing only for the two categories whose
-      queries are keyword-shaped (`keyword` 13/16, `scoped` 7/7). The
-      dominant cause is AND-strictness over CONTENT words (`template`,
-      `building`, `rough`, `turns`, `pulls`, `builds`), not function words:
-      a stopword-trimmed AND rescues exactly 1 of those 40. For media,
-      notes and conversations the semantic leg hides all of it. Prompts
-      have no semantic leg, so they are where it becomes visible.
+      natural-language sentences, so each was one to five absent tokens
+      away from matching and the leg returned NOTHING for them. Measured
+      across the whole golden set at authoring time: the keyword leg
+      returned zero rows for 40 of 60 queries, firing only for the two
+      categories whose queries are keyword-shaped (`keyword` 13/16,
+      `scoped` 7/7). The dominant cause is AND-strictness over CONTENT
+      words (`template`, `building`, `rough`, `turns`, `pulls`, `builds`),
+      not function words. For media, notes and conversations the semantic
+      leg hides all of it. Prompts have no semantic leg, so they are where
+      it becomes visible.
+
+    **THIRD STATE — DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4,
+    sweep row `and_trim`): hybrid now answers ONE of the five.** The arc
+    swept four MATCH constructions and shipped the winner:
+    `SearchConfig.fts_match_construction` went from `"and"` to
+    `"and_stopword_trim"`, so the leg ANDs the CONTENT tokens. That rescues
+    exactly `STOPWORD_TRIM_RESCUED_PROMPT_ID` — the category's gated cell
+    moves recall 0.000 -> 0.200 (mrr 0.022, ndcg 0.060, precision 0.020),
+    and it is the ONLY gated cell family that moves in any mode. So this
+    test keeps its job in its third form: the four remaining misses are
+    still EXPLAINED by the paragraph above — absent CONTENT words, which no
+    stopword list removes — and they are part of the residual "39 of 60
+    zero-row queries" bound the arc's re-scoped follow-up owns, because
+    widening the MATCH form further was measured to break the leg's
+    round-robin merge rather than help. The one hit is asserted rather than
+    tolerated: if it silently reverted, the winner would not be doing what
+    the sweep measured. semantic and
+    plain are untouched by the construction (measured byte-identical across
+    all four) and still miss all five for the two reasons above.
 
     **The reachability half is what keeps this from being indistinguishable
     from "B2 never shipped".** A keyword-shaped query for the same fixture,
@@ -222,12 +254,23 @@ def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
             )
 
     for result in results:
+        # The flip: this one id is a hybrid HIT under the shipped
+        # `and_stopword_trim` and was a miss under the pre-arc `and`.
+        rescued = result.query_id == STOPWORD_TRIM_RESCUED_PROMPT_ID
         for mode in ("semantic", "plain", "hybrid"):
             cell = result.cell(mode)
             assert cell is not None and cell.error is None, (
                 f"{result.query_id}/{mode}: the query erred, so its result "
                 f"proves nothing: {cell}"
             )
+            if mode == "hybrid" and rescued:
+                assert not cell.is_miss, (
+                    f"{result.query_id}: hybrid MISSED the query the shipped "
+                    "construction was chosen for. Either the default reverted "
+                    "to `and` or `and_stopword_trim` stopped rescuing it — "
+                    "the gated prompt cell is 0.200 because of this one hit."
+                )
+                continue
             assert cell.is_miss, (
                 f"{result.query_id}: {mode} returned {result.target_slugs} at "
                 f"rank {cell.best_rank}. The docstring explains why each mode "
@@ -239,6 +282,18 @@ def test_prompt_fixtures_are_reachable_but_their_golden_queries_are_not(
         assert result.cell("hybrid").docs_returned > 0, (
             f"{result.query_id}: hybrid returned no rows at all"
         )
+
+    # ...and the split is EXACTLY one of five, which is the gated cell:
+    # recall 0.200. A second rescue would be a real improvement and would
+    # still red here, because the number it moves is baselined.
+    hybrid_hits = {
+        result.query_id for result in results if not result.cell("hybrid").is_miss
+    }
+    assert hybrid_hits == {STOPWORD_TRIM_RESCUED_PROMPT_ID}, (
+        f"hybrid answers {sorted(hybrid_hits)} of the prompt category; the "
+        "committed baseline's prompt/recall 0.200 is 1 of 5. Re-run the "
+        "construction sweep and re-stamp before moving this pin."
+    )
 
     # THE REACHABILITY HALF. Same runtime, same seam, keyword-shaped query.
     hybrid = reachable.cell("hybrid")

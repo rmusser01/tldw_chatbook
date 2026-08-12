@@ -449,8 +449,9 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
     Unquoted, `lathe OR NOT spindle` is an FTS5 expression whose meaning is
     the user's words rearranged into boolean logic. The only operators in
     an emitted expression are the ones the BUILDER put there: under `and`
-    the user's words stay quoted literals, and under the OR form they are
-    trimmed as the function words they are.
+    the user's words stay quoted literals, and under every content-token
+    form (the shipped `and_stopword_trim` default included) they are
+    trimmed as the function words they are. All three are checked here.
     """
     conn = _fts5_conn()
     _insert(conn, "Operator Words", "The word OR appears here, and NOT much else.")
@@ -464,8 +465,22 @@ def test_user_typed_operator_words_never_become_operators(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         _match(conn, query)
 
-    # Quoted, they are four ordinary search terms (matching nothing here,
-    # which is a relevance answer rather than a parse failure).
+    # DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
+    # `and_trim`): the DEFAULT construction was `and` -- which emitted
+    # '"lathe" "OR" "NOT" "spindle"' and matched NOTHING, since no document
+    # contains the literal words "OR" and "NOT" -- and is now
+    # `and_stopword_trim`, which drops both as the function words they are
+    # (`or` and `not` are in `_FTS5_STOPWORDS`) and matches the lathe log.
+    # The safety property is unchanged and if anything stronger: the only
+    # operators in the emitted expression are still the ones the BUILDER
+    # put there, and here there are none.
+    assert service._fts5_match_expressions(query)[0] == '"lathe" "spindle"'
+    assert _match(conn, '"lathe" "spindle"') == [(2,)]
+
+    # The pre-arc form, still shipped as the `and` construction and as the
+    # fail-safe for an unrecognized value -- asked for explicitly now that
+    # it is not the default. This is the state the flip moved AWAY from.
+    service.config.search.fts_match_construction = "and"
     assert service._fts5_match_expressions(query)[0] == (
         '"lathe" "OR" "NOT" "spindle"'
     )

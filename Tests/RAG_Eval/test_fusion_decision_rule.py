@@ -989,7 +989,20 @@ def test_the_construction_matrix_is_the_four_the_spec_pre_registered():
 
 
 def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
-    """Read off `SearchConfig`, not copied from the spec's prose."""
+    """Read off `SearchConfig`, not copied from the spec's prose.
+
+    DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
+    `and_trim`): the construction was part of this equality — the control
+    row's `"and"` WAS `SearchConfig`'s default. Task 4 shipped the sweep's
+    winner, so the engine now defaults to `"and_stopword_trim"` while the
+    control row deliberately stays `"and"`: the control column is the arc's
+    BEFORE-state, the one `SHIPPED_CONTROL_CENSUS == 20` was measured
+    against, and re-pointing it at the new default would delete the
+    baseline the matrix is read against (and silently turn rows 1 and 2
+    into the same measurement). The fusion parameters still ride the
+    engine's defaults — that half is what stops the matrix drifting off the
+    configuration it claims to measure.
+    """
     from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
 
     shipped = SearchConfig()
@@ -998,13 +1011,22 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
         control.rrf_k,
         control.hybrid_pool_multiplier,
         control.hybrid_alpha,
-        control.fts_match_construction,
     ) == (
         shipped.rrf_k,
         shipped.hybrid_pool_multiplier,
         shipped.hybrid_alpha,
-        shipped.fts_match_construction,
     )
+    assert control.fts_match_construction == "and"
+    assert shipped.fts_match_construction == "and_stopword_trim", (
+        "the engine's default is no longer the winner Task 4 shipped; if it "
+        "moved again, the construction matrix needs re-running before this "
+        "control row means anything"
+    )
+    # ...and the winner the arc chose IS one of the swept rows, so the
+    # shipped default is a construction this matrix actually measured.
+    assert shipped.fts_match_construction in {
+        strategy.fts_match_construction for strategy in CONSTRUCTION_STRATEGIES
+    }
 
 
 def test_every_construction_row_names_a_construction_the_engine_KNOWS():
