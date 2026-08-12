@@ -3,7 +3,7 @@
 import os
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import fields
+from dataclasses import asdict, fields
 from threading import Event, Thread
 
 import pytest
@@ -444,8 +444,11 @@ def test_save_lease_captured_during_settlement_conversion_becomes_stale(
     thread = Thread(target=lambda: settled.append(store.settle(token, result)))
     thread.start()
     assert conversion_started.wait(timeout=2)
-    lease = store.begin_save(identity)
-    continue_conversion.set()
+    try:
+        lease = store.begin_save(identity)
+        assert lease is not None
+    finally:
+        continue_conversion.set()
     thread.join(timeout=2)
 
     assert settled == [True]
@@ -454,6 +457,81 @@ def test_save_lease_captured_during_settlement_conversion_becomes_stale(
         identity,
         config_mod.ConfigMutationResult(True, True, None),
         lease=lease,
+    )
+
+
+@pytest.mark.parametrize("identity_specific", [False, True])
+def test_invalidate_cancels_settlement_during_out_of_lock_conversion(
+    monkeypatch,
+    identity_specific,
+):
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+    result = ProviderProbeResult("reachable", ("model-a",))
+    conversion_started = Event()
+    continue_conversion = Event()
+    original_conversion = provider_test_evidence_module._evidence_from_exact_outcome
+
+    def blocked_conversion(current_identity, current_outcome):
+        conversion_started.set()
+        assert continue_conversion.wait(timeout=2)
+        return original_conversion(current_identity, current_outcome)
+
+    monkeypatch.setattr(
+        provider_test_evidence_module,
+        "_evidence_from_exact_outcome",
+        blocked_conversion,
+    )
+    settled: list[bool] = []
+    thread = Thread(target=lambda: settled.append(store.settle(token, result)))
+    thread.start()
+    assert conversion_started.wait(timeout=2)
+    try:
+        assert store.invalidate(identity if identity_specific else None)
+    finally:
+        continue_conversion.set()
+    thread.join(timeout=2)
+
+    assert settled == [False]
+    assert store.evidence_for(identity) is None
+
+
+def test_identity_mismatch_does_not_cancel_in_flight_settlement(monkeypatch):
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    other = _evidence_identity(
+        endpoint="http://127.0.0.1:8002/v1/chat/completions"
+    )
+    token = store.begin(identity)
+    result = ProviderProbeResult("reachable", ("model-a",))
+    conversion_started = Event()
+    continue_conversion = Event()
+    original_conversion = provider_test_evidence_module._evidence_from_exact_outcome
+
+    def blocked_conversion(current_identity, current_outcome):
+        conversion_started.set()
+        assert continue_conversion.wait(timeout=2)
+        return original_conversion(current_identity, current_outcome)
+
+    monkeypatch.setattr(
+        provider_test_evidence_module,
+        "_evidence_from_exact_outcome",
+        blocked_conversion,
+    )
+    settled: list[bool] = []
+    thread = Thread(target=lambda: settled.append(store.settle(token, result)))
+    thread.start()
+    assert conversion_started.wait(timeout=2)
+    try:
+        assert not store.invalidate(other)
+    finally:
+        continue_conversion.set()
+    thread.join(timeout=2)
+
+    assert settled == [True]
+    assert store.evidence_for(identity) == ProviderTestEvidence(
+        identity, "reachable", ("model-a",)
     )
 
 
@@ -871,9 +949,7 @@ def test_provider_readiness_accepts_coherent_legacy_states(readiness):
 
 
 def test_provider_readiness_preserves_legacy_field_order():
-    assert [
-        item.name for item in fields(ProviderReadiness) if not item.name.startswith("_")
-    ] == [
+    expected_fields = [
         "provider",
         "provider_key",
         "requires_api_key",
@@ -884,6 +960,10 @@ def test_provider_readiness_preserves_legacy_field_order():
         "reason",
         "recovery",
     ]
+    readiness = _legacy_readiness()
+
+    assert [item.name for item in fields(ProviderReadiness)] == expected_fields
+    assert list(asdict(readiness)) == expected_fields
 
 
 @pytest.mark.parametrize(

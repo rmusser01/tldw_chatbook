@@ -183,16 +183,6 @@ class ProviderReadiness:
     env_var: str | None
     reason: str
     recovery: str | None
-    _configuration_facet: ConfigurationFacet = field(
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    _configuration_issue: ConfigurationIssueCode | None = field(
-        init=False,
-        repr=False,
-        compare=False,
-    )
 
     def __post_init__(self) -> None:
         """Reject legacy boolean states that contradict their structured truth."""

@@ -370,10 +370,12 @@ class ProviderTestEvidenceStore:
         self._operation_epoch = 0
         self._latest_generation = -1
         self._current_token: _ProviderTestToken | None = None
+        self._current_token_epoch: int | None = None
         self._current_identity: ProviderDraftIdentity | None = None
-        self._save_leases: dict[
-            _ProviderEvidenceSaveLease, tuple[ProviderDraftIdentity, int]
-        ] = {}
+        self._settling: tuple[ProviderDraftIdentity, int] | None = None
+        self._save_lease: tuple[
+            _ProviderEvidenceSaveLease, ProviderDraftIdentity, int
+        ] | None = None
         self._evidence: ProviderTestEvidence | None = None
 
     def begin(self, identity: ProviderDraftIdentity) -> object:
@@ -388,6 +390,7 @@ class ProviderTestEvidenceStore:
             self._advance_operation()
             token = _ProviderTestToken()
             self._current_token = token
+            self._current_token_epoch = self._operation_epoch
             self._current_identity = identity
             self._evidence = ProviderTestEvidence(identity, "testing", ())
             return token
@@ -400,27 +403,43 @@ class ProviderTestEvidenceStore:
             ProviderTestEvidence,
         }
         with self._lock:
-            if type(token) is not _ProviderTestToken or token is not self._current_token:
+            if (
+                type(token) is not _ProviderTestToken
+                or token is not self._current_token
+                or self._current_token_epoch != self._operation_epoch
+            ):
                 return False
             identity = self._current_identity
+            claim_epoch = self._current_token_epoch
             self._current_token = None
+            self._current_token_epoch = None
             self._current_identity = None
             self._evidence = None
-            self._advance_operation()
-            settlement_epoch = self._operation_epoch
+            self._save_lease = None
+            if identity is None or claim_epoch is None:
+                self._advance_operation()
+                return False
+            settlement_claim = (identity, claim_epoch)
+            self._settling = settlement_claim
 
-        if identity is None or not supported_outcome:
+        if not supported_outcome:
+            self._reject_settlement(settlement_claim)
             return False
         try:
             evidence = _evidence_from_exact_outcome(identity, outcome)
         except ValueError:
+            self._reject_settlement(settlement_claim)
             return False
 
         with self._lock:
-            if self._operation_epoch != settlement_epoch:
+            if (
+                self._operation_epoch != claim_epoch
+                or self._settling != settlement_claim
+                or self._current_token is not None
+                or self._evidence is not None
+            ):
                 return False
-            if self._current_token is not None or self._evidence is not None:
-                return False
+            self._settling = None
             self._evidence = evidence
             self._advance_operation()
             return True
@@ -443,27 +462,37 @@ class ProviderTestEvidenceStore:
         if identity is not None and type(identity) is not ProviderDraftIdentity:
             return False
         with self._lock:
-            if self._evidence is None:
+            owned_identities = self._owned_identities()
+            if not owned_identities:
                 return False
-            if identity is not None and self._evidence.identity != identity:
+            if identity is not None and identity not in owned_identities:
                 return False
-            self._evidence = None
-            self._current_token = None
-            self._current_identity = None
+            self._clear_all_test_state()
             self._advance_operation()
             return True
 
-    def begin_save(self, identity: ProviderDraftIdentity) -> object:
+    def begin_save(self, identity: ProviderDraftIdentity) -> object | None:
         """Capture a value-free lease for the store's current operation revision."""
 
         if type(identity) is not ProviderDraftIdentity:
             raise ValueError("Provider draft identity is invalid.")
         with self._lock:
-            if identity.draft_generation < self._latest_generation:
-                raise ValueError("Draft generation is older than current evidence.")
+            if self._owned_identity() != identity:
+                return None
             lease = _ProviderEvidenceSaveLease()
-            self._save_leases[lease] = (identity, self._operation_epoch)
+            self._save_lease = (lease, identity, self._operation_epoch)
             return lease
+
+    def cancel_save(self, lease: object) -> bool:
+        """Consume the current exact save lease without changing test evidence."""
+
+        if type(lease) is not _ProviderEvidenceSaveLease:
+            return False
+        with self._lock:
+            if self._save_lease is None or lease is not self._save_lease[0]:
+                return False
+            self._save_lease = None
+            return True
 
     def rebase_after_save(
         self,
@@ -475,27 +504,29 @@ class ProviderTestEvidenceStore:
     ) -> bool:
         """Rebind settled evidence after an equivalent, fully applied save."""
 
-        identities_are_valid = (
-            type(tested_identity) is ProviderDraftIdentity
-            and type(saved_identity) is ProviderDraftIdentity
-        )
+        tested_identity_is_valid = type(tested_identity) is ProviderDraftIdentity
+        saved_identity_is_valid = type(saved_identity) is ProviderDraftIdentity
         mutation_flags = _mutation_flags(mutation_result)
         if type(lease) is not _ProviderEvidenceSaveLease:
             return False
 
         with self._lock:
-            leased_operation = self._save_leases.pop(lease, None)
-            if leased_operation is None:
+            leased_operation = self._save_lease
+            if leased_operation is None or lease is not leased_operation[0]:
                 return False
-            if not identities_are_valid or mutation_flags is None:
+            if not tested_identity_is_valid:
                 return False
-            conflict, fully_applied = mutation_flags
-            leased_identity, leased_epoch = leased_operation
+            _, leased_identity, leased_epoch = leased_operation
             if (
                 leased_identity != tested_identity
                 or leased_epoch != self._operation_epoch
+                or self._owned_identity() != tested_identity
             ):
                 return False
+            self._save_lease = None
+            if not saved_identity_is_valid or mutation_flags is None:
+                return False
+            conflict, fully_applied = mutation_flags
 
             evidence = self._evidence
             can_preserve = bool(
@@ -514,7 +545,7 @@ class ProviderTestEvidenceStore:
                     saved_identity.draft_generation,
                 )
 
-            self._clear_state_for_identity(tested_identity)
+            self._clear_all_test_state()
             if can_preserve and evidence is not None:
                 self._evidence = ProviderTestEvidence(
                     saved_identity,
@@ -525,16 +556,46 @@ class ProviderTestEvidenceStore:
             self._advance_operation()
             return can_preserve
 
-    def _clear_state_for_identity(self, identity: ProviderDraftIdentity) -> None:
-        if self._evidence is not None and self._evidence.identity == identity:
-            self._evidence = None
-        if self._current_identity == identity:
-            self._current_token = None
-            self._current_identity = None
+    def _reject_settlement(
+        self,
+        settlement_claim: tuple[ProviderDraftIdentity, int],
+    ) -> None:
+        with self._lock:
+            if (
+                self._settling == settlement_claim
+                and self._operation_epoch == settlement_claim[1]
+            ):
+                self._settling = None
+                self._advance_operation()
+
+    def _owned_identity(self) -> ProviderDraftIdentity | None:
+        if self._settling is not None:
+            return self._settling[0]
+        if self._evidence is not None:
+            return self._evidence.identity
+        return self._current_identity
+
+    def _owned_identities(self) -> set[ProviderDraftIdentity]:
+        identities: set[ProviderDraftIdentity] = set()
+        if self._settling is not None:
+            identities.add(self._settling[0])
+        if self._evidence is not None:
+            identities.add(self._evidence.identity)
+        if self._current_identity is not None:
+            identities.add(self._current_identity)
+        return identities
+
+    def _clear_all_test_state(self) -> None:
+        self._evidence = None
+        self._current_token = None
+        self._current_token_epoch = None
+        self._current_identity = None
+        self._settling = None
 
     def _advance_operation(self) -> None:
         self._operation_epoch += 1
-        self._save_leases.clear()
+        self._settling = None
+        self._save_lease = None
 
 
 def _validate_model_ids(model_ids: object) -> None:

@@ -420,8 +420,73 @@ def test_parallel_save_lease_becomes_stale_after_first_rebase():
     second = store.begin_save(identity)
     mutation = ConfigMutationResult(True, True, None)
 
-    assert store.rebase_after_save(identity, identity, mutation, lease=second)
     assert not store.rebase_after_save(identity, identity, mutation, lease=first)
+    assert store.rebase_after_save(identity, identity, mutation, lease=second)
+
+
+def test_mismatched_save_callback_cannot_consume_current_exact_lease():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    other = _semantic_identity(
+        "https://other.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    mutation = ConfigMutationResult(True, True, None)
+
+    assert not store.rebase_after_save(other, other, mutation, lease=lease)
+    assert store.rebase_after_save(identity, identity, mutation, lease=lease)
+
+
+def test_begin_save_requires_exact_current_store_identity():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    other = _semantic_identity(
+        "https://other.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+
+    assert store.begin_save(identity) is None
+    store.begin(identity)
+    assert store.begin_save(other) is None
+    assert store.begin_save(identity) is not None
+
+
+def test_cancel_save_consumes_only_current_lease_without_clearing_evidence():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    lease = store.begin_save(identity)
+    assert lease is not None
+
+    assert store.cancel_save(lease)
+    assert not store.cancel_save(lease)
+    assert not store.rebase_after_save(
+        identity,
+        identity,
+        ConfigMutationResult(True, True, None),
+        lease=lease,
+    )
+    assert store.evidence_for(identity) is not None
+
+
+def test_save_lease_storage_remains_single_and_bounded():
+    identity = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = _settled_store(identity)
+    latest = None
+
+    for _ in range(100):
+        latest = store.begin_save(identity)
+
+    assert latest is not None
+    assert not hasattr(store, "_save_leases")
+    assert store._save_lease is not None
+    assert store._save_lease[0] is latest
 
 
 def test_invalidated_save_lease_cannot_rebase_recreated_identical_evidence():
@@ -442,7 +507,7 @@ def test_invalidated_save_lease_cannot_rebase_recreated_identical_evidence():
     assert store.evidence_for(identity) == recreated
 
 
-@pytest.mark.parametrize("state", ["changed-semantics", "testing", "no-evidence"])
+@pytest.mark.parametrize("state", ["changed-semantics", "testing"])
 def test_current_fully_applied_save_advances_generation_without_preserved_evidence(
     state,
 ):
