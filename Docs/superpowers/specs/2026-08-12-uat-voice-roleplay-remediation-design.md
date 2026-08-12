@@ -1,6 +1,6 @@
 # New-User Voice and Roleplay UAT Remediation Design
 
-**Status:** Approved
+**Status:** Design approved; architecture review revisions pending confirmation
 
 **Date:** 2026-08-12
 
@@ -39,8 +39,8 @@ The acceptance journey is:
 - Automatic reply speech is opt-in per conversation and starts off.
 - OpenAI-compatible TTS authentication is explicit: `api_key` or `none`.
 - Quick Setup and Full Setup both include Voice setup.
-- Quick Voice setup contains endpoint, authentication, model, voice, sample,
-  Test and Hear, and Use as default.
+- Quick Voice setup contains endpoint, authentication, model, voice, sample
+  text with Test and Hear, and Use as default.
 - Provider-neutral Voice Profiles and Kokoro Voice Blends are separate tools.
 - A valid offline configuration may be saved without a successful sample.
 - Existing information architecture remains in this tranche.
@@ -82,7 +82,7 @@ Console Speak, roleplay auto-speak, and onboarding. It returns:
 - Provider configuration reference
 - Authentication mode and credential-source metadata
 - Default or character profile source
-- Configuration and credential revisions
+- Saved, applied, and active provider configuration revisions
 
 Existing profile, character, Studio, global, and provider fallback precedence
 remains supported. Every UI surface displays and dispatches the same resolved
@@ -92,7 +92,17 @@ selection.
 
 Add `app_tts.OPENAI_AUTH_MODE` with accepted values `api_key` and `none`.
 Missing or invalid values resolve to `api_key`, preserving fail-closed behavior
-for existing installations.
+for existing installations. The Settings state field is
+`authentication_mode`, and it is part of
+`GLOBAL_TTS_PROVIDER_FIELD_IDS["openai"]` so every save path has the same
+ownership contract.
+
+The Official OpenAI preset always selects `api_key` and does not permit `none`
+while its endpoint is active. Switching from an unauthenticated compatible
+endpoint to Official OpenAI resets the draft to `api_key` before validation.
+Custom OpenAI-compatible endpoints expose both explicit choices, except that
+the normalized Official OpenAI origin always requires `api_key` regardless of
+which preset produced the draft.
 
 `none` has end-to-end meaning:
 
@@ -101,25 +111,38 @@ for existing installations.
 - No Authorization header is sent.
 - The UI identifies the configuration as explicitly unauthenticated.
 
-Selecting `none` for a non-loopback plaintext HTTP endpoint requires a one-time
-confirmation. Loopback HTTP and all HTTPS endpoints do not show that warning.
+Selecting `none` for a non-loopback plaintext HTTP endpoint requires explicit
+confirmation. The non-secret confirmation is tied to a fingerprint of the
+normalized endpoint origin. Changing the endpoint origin or authentication
+mode invalidates it. Userinfo and query strings are rejected and never enter
+the fingerprint. Loopback HTTP and all HTTPS endpoints do not show that
+warning.
 
-Credential operations increment a non-secret credential revision. Tests and
-profiles depend on that revision without hashing or recording secret values.
+Local credential and authentication changes invalidate the existing provider
+configuration revision; no second persistent credential-revision system is
+introduced. Connection and sample verification is process-scoped and returns
+to Needs test after restart unless the provider can re-establish availability
+without synthesis. This avoids implying that an endpoint or external secret is
+still usable when Chatbook has not observed it in the current process.
 
 ### Configuration Revisions
 
-Successful saves follow this order:
+The existing saved, applied, and active runtime revision distinction remains
+authoritative. Successful saves follow this order:
 
 1. Validate the draft.
 2. Persist atomically.
-3. Reload the runtime configuration snapshot.
-4. Apply provider adapter changes.
-5. Publish a monotonic configuration revision.
+3. Increment the saved provider configuration revision.
+4. Reload the runtime configuration snapshot.
+5. Apply provider adapter changes.
+6. Publish the applied and active runtime revisions after successful handoff.
 
-Consumers ignore older revisions and resolve fresh state from the runtime
-snapshot. A persistence, cache, or adapter failure cannot advertise the draft
-as the active configuration.
+Consumers compare the saved, applied, and active runtime revisions and resolve
+fresh state from the active snapshot. A persistence or reload failure does not
+advance any revision. An adapter handoff failure may leave a valid draft saved,
+but the UI reports Saved, activation failed and generation continues with the
+previous active runtime. No surface may advertise the saved draft as active
+until the applied and active revisions match it.
 
 ## First-Run Experience
 
@@ -135,8 +158,12 @@ crash, or select a group heading.
 
 ### Resume And Recovery
 
-Persist only the active step and non-secret completed-step values. API keys and
+Persist only the active step and non-secret completed-step values in a
+versioned setup-draft namespace. That draft is not an active application
+configuration and is never consumed by chat or speech resolvers. API keys and
 other secrets remain memory-only until an explicit credential operation.
+Start over deletes only the setup draft and transient setup state; it does not
+delete unrelated settings or a credential the user already explicitly saved.
 
 An interrupted setup produces a recovery prompt on the next launch:
 
@@ -144,10 +171,12 @@ An interrupted setup produces a recovery prompt on the next launch:
 - Start over
 - Later
 
-Resume opens the saved step. A repeated startup failure falls back to the Home
-Resume setup action instead of repeatedly pushing the wizard. Required provider
-and model step failures show Retry, Use manual setup, and Finish later. Only
-optional steps may be skipped automatically.
+Resume opens the saved step. Before that push, setup stores a resume-attempt
+marker and clears it only after the target step mounts successfully. If the
+next launch finds the marker uncleared, it does not push the wizard again; Home
+shows Resume setup and Start over actions instead. Required provider and model
+step failures show Retry, Use manual setup, and Finish later. Only optional
+steps may be skipped automatically.
 
 ### Voice Setup
 
@@ -162,6 +191,14 @@ authentication selected.
 Save is available for locally valid values. A successful sample marks the
 selection Verified. Saving an unverified selection is allowed and visibly
 marked Needs test.
+
+Use as default writes the canonical global TTS preference axes: provider,
+model mode and ID, voice mode and ID, response format, and speed. It references
+the provider configuration resolved at generation time; it does not copy an
+endpoint, credential, or secret into a profile. When selected, setup saves the
+provider configuration first and only updates the global default after the new
+runtime revision becomes active. If activation fails, the previous default is
+preserved and the user can retry without re-entering the draft.
 
 ### Progress And Network Activity
 
@@ -181,6 +218,11 @@ Primary Settings content uses task language and current status. Runtime owner,
 raw setting keys, revisions, and provenance move behind a Details disclosure at
 all widths. The Scope Inspector is not the default reading path.
 
+The default provider view contains no raw configuration keys, owner IDs,
+provenance chains, or revision numbers. Details and Scope Inspector are
+collapsed initially at desktop and narrow widths and preserve no expanded state
+across application restarts.
+
 Legacy aliases appear under Advanced, except when an existing configuration
 uses one and needs a visible migration path.
 
@@ -194,10 +236,13 @@ Clickable Save and Revert controls remain available while text inputs are
 focused. Letter shortcuts never fire inside a text-entry widget. A save action
 cannot append its shortcut character to an endpoint.
 
-Test state is keyed by a non-secret fingerprint containing tested fields,
-provider identity, configuration revision, and credential revision. Saving
-unchanged fields preserves Verified. Editing a tested field changes the state
-to Needs retest.
+Test state is keyed by a non-secret fingerprint containing the normalized
+tested fields, provider identity, and saved provider configuration revision.
+The fingerprint never contains credential values. Saving unchanged fields
+preserves Verified within the current process. Editing a tested field or
+changing the provider configuration revision changes the state to Needs
+retest. After restart, prior connection or sample evidence is not restored as
+Verified unless current provider capability discovery re-establishes it.
 
 ### Structured Readiness
 
@@ -209,6 +254,13 @@ Readiness contains independent values:
 UI summaries never describe a complete test as passed when the connection
 probe failed. Valid but offline configurations remain saveable.
 
+For speech-only OpenAI-compatible services, a successful bounded sample POST
+to the configured speech operation is the authoritative reachable result.
+Model or voice catalog discovery is optional and reported separately; an
+unsupported catalog cannot turn a successful speech sample into a connection
+failure. Manual model and voice entry remains available when discovery is not
+supported.
+
 Endpoint normalization parses known terminal paths, including:
 
 - `/v1/chat/completions`
@@ -217,8 +269,13 @@ Endpoint normalization parses known terminal paths, including:
 - `/v1/audio/speech`
 
 It then derives a provider-appropriate discovery or health URL. Unknown paths
-are probed directly when safe, or reported as Connection not tested. They are
-never extended by blindly appending `/v1/models`.
+are reported as Connection not tested unless an existing provider adapter
+declares a safe health target. Probes use the shared URL validation and SSRF
+policy, remain on the normalized origin, disable redirects, and never guess a
+path, forward userinfo, or carry query strings. Known paths are never extended
+by blindly appending `/v1/models`. Explicitly configured loopback destinations
+remain permitted for local PocketTTS use; redirect targets and automatically
+derived URLs receive no broader access than the original validated origin.
 
 ## Speech Lab And Voice Profiles
 
@@ -235,8 +292,21 @@ Provider-neutral Voice Profiles use the existing TTS profile service. A profile
 stores provider identity and synthesis axes, not endpoint URLs or credentials.
 Provider configuration is referenced at resolution time.
 
-Verified state records the provider configuration and credential revisions.
-Changing either marks dependent profiles Needs retest.
+The existing profile repository, draft types, generation provenance, and
+provider-configuration revision model are reused; this tranche does not create
+a second profile store or persistence schema. The profile availability service
+is extended with a process-scoped evidence cache so an OpenAI-compatible
+profile created from a successful sample can carry current provider-neutral
+test evidence. Evidence is keyed by profile ID and revision, exact synthesis
+axes, and active provider configuration revision. Today, non-audio.cpp profiles
+deliberately remain Unverified; treating that state as Verified without
+extending the service is not acceptable.
+
+Verified state records the active provider configuration revision and exact
+tested synthesis axes. A provider configuration change or edited synthesis
+axis marks the profile Needs retest. On restart, the profile remains usable but
+returns to Needs test unless current provider capability discovery can
+re-establish availability without generating speech.
 
 ### Voice Blends
 
@@ -282,16 +352,29 @@ correct `chat_defaults` model when no higher-precedence selection exists.
 ### Speak Replies
 
 Each Console conversation persists `auto_speak`, defaulting to false. Enabling
-Speak replies shows a one-time confirmation that completed assistant text is
-sent to the selected TTS provider and may incur charges.
+Speak replies shows a confirmation that completed assistant text is sent to
+the selected TTS provider. The copy names the effective provider and sanitized
+destination and mentions possible charges only when applicable.
+
+Consent is stored per conversation against a non-secret destination
+fingerprint containing provider identity and normalized origin. Before every
+automatic dispatch, Console resolves the current effective TTS configuration
+and compares the destination. A changed provider or origin pauses automatic
+speech and asks for confirmation before any text is sent. The fingerprint
+contains no userinfo, query, credential, or message text.
 
 Auto-speak uses the existing speech sequencer and playback cancellation path.
 Hands-free mode owns speech while active and suppresses duplicate auto-speak.
 
 Eligible content is a completed assistant or character response. Tool output,
 errors, system messages, partial streams, and cancelled responses are excluded.
+Enabling the toggle does not speak earlier messages. A response that completes
+after its conversation loses focus is not played automatically; it retains
+Manual Speak and shows that speech is ready. Returning to the conversation does
+not trigger delayed playback.
 One auto-speak failure changes the conversation state to Paused and exposes
-Retry speech and Resume auto-speak. Manual Speak remains available.
+Retry speech and Resume auto-speak. The paused state persists with the
+conversation so restart cannot silently retry. Manual Speak remains available.
 
 Manual Speak or Stop remains visible in the assistant message header. Other
 message actions remain in the selected-message action row. Playback state is
@@ -348,11 +431,15 @@ earlier plans rather than duplicating their own configuration logic.
 ### Unit Tests
 
 - Chat and TTS precedence, provenance, migration, and alias normalization
+- Setup-draft isolation from active chat and TTS configuration
 - Explicit authentication behavior and transport headers
-- Configuration and credential revisions
+- Plaintext unauthenticated confirmation invalidation by normalized origin
+- Saved, applied, and active configuration revisions
+- Process-scoped connection and sample verification
 - Structured readiness and endpoint derivation
 - Profile verification invalidation
 - Auto-speak eligibility and pause behavior
+- Auto-speak destination-consent invalidation and active-conversation gating
 - Paste-block boundaries
 
 ### Textual Integration Tests
@@ -360,13 +447,19 @@ earlier plans rather than duplicating their own configuration logic.
 - Keyboard traversal across every first-run provider option
 - Interrupted setup, Resume, Start over, Later, and crash-loop fallback
 - Save while an input is focused
+- Official OpenAI preset transition resets authentication to API key
+- Use as default commits only after runtime activation and preserves the prior
+  default on activation failure
 - Test fingerprint preservation and invalidation
+- Details and Scope Inspector are collapsed on each application start
 - Speech Lab refresh after a successful configuration revision
+- OpenAI-compatible profile verification, invalidation, and restart behavior
 - Profile and blend navigation labels
 - Character import start directory and selected row
 - Untouched-tab reuse and preserved worked-on tabs
 - Speak visibility and playback state
 - Auto-speak/hands-free exclusion
+- Destination-change reconfirmation and background-conversation suppression
 - Paste block display, expand, and submission
 
 ### Service And End-To-End Tests
@@ -378,6 +471,10 @@ requires:
 - TTS uses `pocket-tts`, the selected voice, and WAV in the reference UAT.
 - Authentication None sends no Authorization header.
 - Configuration-valid/connection-failed copy is not a passing test.
+- Official OpenAI cannot be saved with authentication None.
+- Endpoint probes reject cross-origin redirects and do not guess unknown paths.
+- Use as default resolves the tested provider, model, voice, format, and speed
+  without copying endpoint or credential data into the profile.
 - Character greeting, response, and spoken response remain in one active chat.
 
 ### Packaging And Visual Tests
