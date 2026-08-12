@@ -73,6 +73,27 @@ CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 #: (``UI/Chat_Modules/chat_log_pruning.py`` on feat/toad-ui-improvements).
 DEFAULT_PRUNE_HIGH_WATERMARK = 20000
 DEFAULT_PRUNE_LOW_WATERMARK = 12000
+#: TASK-15455: tail-first mount window for a conversation LOAD (session resume
+#: or a session switch). The watermarks above bound a transcript that GROWS;
+#: they can only act after the rows are mounted and laid out, so a resumed
+#: 500-message session used to pay a full mount plus a full-history Markdown
+#: parse before anything was trimmed. A load now mounts at most this many of
+#: the newest messages, further capped by an estimated line budget, and
+#: hydrates older messages when the reader scrolls back.
+#: 40 messages is roughly a dozen turns of scrollback -- comfortably more than
+#: any terminal shows at once, and above every fixture in the transcript
+#: suites, so the window only engages on histories those never reach.
+DEFAULT_TRANSCRIPT_WINDOW_MESSAGES = 40
+#: Estimated rendered rows (body lines + per-row chrome) allowed in the initial
+#: window. A handful of very long messages hit this before the message cap.
+DEFAULT_TRANSCRIPT_WINDOW_LINES = 600
+#: Messages hydrated per scroll-back step.
+DEFAULT_TRANSCRIPT_HYDRATE_MESSAGES = 20
+#: The window never shrinks below this many messages, however long they are --
+#: a single mounted row would make the transcript look truncated.
+MIN_TRANSCRIPT_WINDOW_MESSAGES = 3
+#: Per-message row chrome (rule + speaker label) folded into the line estimate.
+_MESSAGE_ROW_CHROME_LINES = 2
 #: task-2154.16 (FB-01): a failed assistant row with no partial content used
 #: to render as the bare token ``[failed]``. It now shows this placeholder
 #: (dimmed) with the state carried by a separate dim status line. Same copy
@@ -162,6 +183,57 @@ def get_console_prune_watermarks(
     if low > high:
         low = high
     return low, high
+
+
+def get_console_transcript_window(
+    app_config: Mapping[str, object] | None,
+) -> tuple[int, int, int]:
+    """Resolve the tail-first mount window settings from config.
+
+    Reads ``[chat_defaults] transcript_window_messages`` /
+    ``transcript_window_lines`` / ``transcript_hydrate_messages``, falling back
+    to the ``DEFAULT_TRANSCRIPT_*`` constants when missing or invalid. A
+    ``window_messages <= 0`` disables windowing entirely (the kill switch:
+    every message mounts at load, exactly as before TASK-15455).
+
+    Args:
+        app_config: The loaded application config dict (``app.app_config``).
+
+    Returns:
+        Tuple of ``(window_messages, window_lines, hydrate_messages)``.
+    """
+    chat_defaults = (app_config or {}).get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
+    window_messages = _coerce_prune_int(
+        chat_defaults.get("transcript_window_messages"),
+        DEFAULT_TRANSCRIPT_WINDOW_MESSAGES,
+    )
+    window_lines = _coerce_prune_int(
+        chat_defaults.get("transcript_window_lines"), DEFAULT_TRANSCRIPT_WINDOW_LINES
+    )
+    hydrate_messages = _coerce_prune_int(
+        chat_defaults.get("transcript_hydrate_messages"),
+        DEFAULT_TRANSCRIPT_HYDRATE_MESSAGES,
+    )
+    return window_messages, max(1, window_lines), max(1, hydrate_messages)
+
+
+def _estimated_message_lines(message: ConsoleChatMessage) -> int:
+    """Estimate a message's rendered height in terminal rows.
+
+    Deliberately cheap and approximate (raw newlines plus fixed row chrome, no
+    wrapping): it only sizes the INITIAL mount window, and the real bound on
+    mounted height stays the measured height watermarks.
+
+    Args:
+        message: The message about to be sized.
+
+    Returns:
+        Estimated rows the message's row group occupies.
+    """
+    content = getattr(message, "content", "") or ""
+    return content.count("\n") + 1 + _MESSAGE_ROW_CHROME_LINES
 
 
 def _message_role_label(message: ConsoleChatMessage) -> str:
@@ -1645,6 +1717,24 @@ class ConsoleTranscript(VerticalScroll):
         #: and the reconciliation stale-key path owns their removal.
         self._pruned_message_ids: set[str] = set()
         self._prune_check_scheduled = False
+        #: TASK-15455: tail-first mount window. Ids of the OLDEST messages a
+        #: conversation load deliberately did not mount; ``_transcript_rows``
+        #: filters them exactly like the prune window above. Unlike pruning
+        #: these come back: scrolling near the top hydrates the next chunk.
+        self._unhydrated_message_ids: set[str] = set()
+        #: Ids hydrated back into the view since the window was established.
+        #: They are protected from the watermark walk while
+        #: ``_scrollback_protected`` holds, so scrollback never vanishes
+        #: mid-read.
+        self._hydrated_message_ids: set[str] = set()
+        #: True from the moment scrollback is hydrated until the reader is back
+        #: at the tail (jump pill, a send, or simply scrolling to the bottom).
+        #: An explicit latch rather than a sampled "is following the tail?":
+        #: the anchor re-engages asynchronously, so a check scheduled by the
+        #: jump can otherwise run while the widget still reads as detached and
+        #: skip the reclaim entirely.
+        self._scrollback_protected = False
+        self._hydration_check_scheduled = False
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -1658,6 +1748,9 @@ class ConsoleTranscript(VerticalScroll):
         # TASK-1365: a transcript composed with a preloaded (resumed) history
         # can already exceed the watermarks before any refresh_messages call.
         self._schedule_prune_check()
+        # TASK-15455: the same compose path can have applied a mount window;
+        # a window shorter than the viewport must fill until it can scroll.
+        self._schedule_hydration_check()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -1746,6 +1839,10 @@ class ConsoleTranscript(VerticalScroll):
         except NoMatches:
             pass
         self._jump_pill_state = (False, "")
+        # TASK-15455: hydrated scrollback is protected from the watermark walk
+        # only while the reader is reading it; jumping back to the tail is
+        # exactly when that protection lifts, so drop it and run the check.
+        self._release_scrollback_protection()
 
     def note_follow_intent(self) -> None:
         """Record a programmatic jump-to-tail intent (send/resume/switch).
@@ -1818,6 +1915,17 @@ class ConsoleTranscript(VerticalScroll):
         # TASK-1365: same lifecycle for the prune window -- a session switch
         # re-renders from scratch, and a deleted message must not linger here.
         self._pruned_message_ids &= message_ids
+        # TASK-15455: (re)establish the tail-first mount window on a LOAD --
+        # the first ingest, or one whose ids are disjoint from the last (a
+        # session switch). An ingest that shares ids is the 0.2s sync tick, a
+        # send, or a branch swap: those extend the current view and must keep
+        # whatever the reader has already hydrated.
+        self._unhydrated_message_ids &= message_ids
+        self._hydrated_message_ids &= message_ids
+        if not self._seen_message_ids or not (message_ids & self._seen_message_ids):
+            self._hydrated_message_ids.clear()
+            self._scrollback_protected = False
+            self._unhydrated_message_ids = self._initial_unhydrated_ids()
         new_user_send = any(
             message.id not in self._seen_message_ids
             and message.role == ConsoleMessageRole.USER
@@ -1839,6 +1947,9 @@ class ConsoleTranscript(VerticalScroll):
             # anchor late, and it must not yank a reader who has already
             # scrolled back.
             self.anchor()
+            # TASK-15455: the send takes the reader out of any scrollback they
+            # hydrated, so the watermarks own those rows again.
+            self._release_scrollback_protection()
         self._seen_message_ids = message_ids
         # task-501: apply a swipe-handoff selection once its id is actually in
         # the ingested set (see ``pending_selection_id``); checked BEFORE the
@@ -1959,6 +2070,7 @@ class ConsoleTranscript(VerticalScroll):
         async with self._refresh_lock:
             await self._reconcile_rows(self._transcript_rows())
         self._schedule_prune_check()
+        self._schedule_hydration_check()
 
     def _schedule_prune_check(self) -> None:
         """Run one watermark pruning check after the pending refresh settles.
@@ -1979,6 +2091,224 @@ class ConsoleTranscript(VerticalScroll):
         except NoActiveAppError:
             app_config = None
         return get_console_prune_watermarks(app_config)
+
+    def _window_settings(self) -> tuple[int, int, int]:
+        """Return ``(window_messages, window_lines, hydrate_messages)``."""
+        try:
+            app_config = getattr(self.app, "app_config", None)
+        except NoActiveAppError:
+            app_config = None
+        return get_console_transcript_window(app_config)
+
+    def _initial_unhydrated_ids(self) -> set[str]:
+        """Return the ids a fresh load leaves unmounted (the tail-first window).
+
+        Walks backwards from the newest message, keeping messages until either
+        the message cap or the estimated line budget is reached (never fewer
+        than :data:`MIN_TRANSCRIPT_WINDOW_MESSAGES`). Everything older is
+        reported as unhydrated.
+
+        Returns:
+            Ids of the oldest messages to leave unmounted; empty when the whole
+            history fits the window or windowing is disabled.
+        """
+        window_messages, window_lines, _hydrate = self._window_settings()
+        total = len(self._messages)
+        if window_messages <= 0 or total <= window_messages:
+            return set()
+        kept = 0
+        lines = 0
+        for message in reversed(self._messages):
+            if kept >= window_messages:
+                break
+            if kept >= MIN_TRANSCRIPT_WINDOW_MESSAGES and lines >= window_lines:
+                break
+            lines += _estimated_message_lines(message)
+            kept += 1
+        if kept >= total:
+            return set()
+        logger.debug(
+            f"Console transcript load window: mounting the newest {kept} of "
+            f"{total} messages (~{lines} estimated rows)"
+        )
+        return {message.id for message in self._messages[: total - kept]}
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Hydrate older scrollback as the reader approaches the top.
+
+        Every scroll path (wheel, keyboard, scrollbar drag, programmatic)
+        lands here, so this is the single trigger for scroll-back hydration.
+        Costs one attribute read on the common path: transcripts with nothing
+        windowed out return immediately.
+        """
+        super().watch_scroll_y(old_value, new_value)
+        if getattr(self, "_scrollback_protected", False) and self._is_following_tail():
+            # Back at the tail: the reader has left the scrollback they
+            # hydrated, so the watermark walk may reclaim it again (see
+            # `_compute_prunable_prefix`).
+            self._release_scrollback_protection()
+        if not getattr(self, "_unhydrated_message_ids", None):
+            return
+        if new_value <= max(1, self.container_size.height):
+            self._schedule_hydration_check()
+
+    def _release_scrollback_protection(self) -> None:
+        """Let the watermarks reclaim hydrated scrollback again.
+
+        Called when the reader returns to the tail by any route (the jump
+        pill, a send, or scrolling to the bottom). No-op when nothing is
+        protected, so the common scroll path costs one boolean read.
+        """
+        if not self._scrollback_protected:
+            return
+        self._scrollback_protected = False
+        self._schedule_prune_check()
+
+    def _schedule_hydration_check(self) -> None:
+        """Queue one coalesced scroll-back hydration check after the refresh."""
+        if self._hydration_check_scheduled or not self.is_mounted:
+            return
+        if not self._unhydrated_message_ids:
+            return
+        self._hydration_check_scheduled = True
+        self.call_after_refresh(self._run_hydration_check)
+
+    async def _run_hydration_check(self) -> None:
+        """Mount the next chunk of older messages when the reader needs it.
+
+        Two conditions gate hydration, and together they make a
+        hydrate → prune → hydrate oscillation impossible for ANY watermark
+        configuration:
+
+        1. The mounted height must be strictly BELOW the low watermark. The
+           watermark walk only fires above the HIGH mark and always stops
+           while the remainder is still above the LOW mark, so a prune can
+           never put the transcript back into a hydratable state.
+        2. The reader must be within one viewport of the top -- or the window
+           must be too short to scroll at all, which is the same request
+           ("there is more above and I cannot reach it").
+
+        Each step is additionally sized against the room left under the low
+        watermark, so a hydration chunk does not vault the transcript over the
+        HIGH mark and hand the watermark walk the rows it just mounted.
+
+        A second, independent guard lives in ``_compute_prunable_prefix``:
+        hydrated ids are protected from pruning while the reader is detached,
+        so an oversized chunk that overshoots the high watermark is never
+        yanked back out from under them.
+        """
+        self._hydration_check_scheduled = False
+        if not self.is_mounted or self._closing or self._pruning:
+            return
+        if not self._unhydrated_message_ids:
+            return
+        low_mark, high_mark = self._prune_watermarks()
+        total_height = self.virtual_size.height
+        if high_mark > 0 and total_height >= low_mark:
+            return
+        if self.scroll_y > max(1, self.container_size.height):
+            return
+        _window, _lines, chunk = self._window_settings()
+        pending = [
+            message
+            for message in self._messages
+            if message.id in self._unhydrated_message_ids
+        ]
+        if not pending:
+            self._unhydrated_message_ids.clear()
+            return
+        # Size the step against the room left under the low watermark, using
+        # the same estimator as the initial window. Without this a fixed-size
+        # chunk can vault a small transcript clean over the HIGH mark, and the
+        # watermark walk then throws the freshly hydrated rows away (measured:
+        # a 3-message window hydrating 10 messages under a 20/40 config mounted
+        # 10 rows and pruned 9 of them one tick later). One message is always
+        # taken so scroll-back never stalls silently.
+        budget = max(0, low_mark - total_height) if high_mark > 0 else None
+        hydrate_ids: list[str] = []
+        estimated = 0
+        for message in reversed(pending):
+            if len(hydrate_ids) >= chunk:
+                break
+            lines = _estimated_message_lines(message)
+            if budget is not None and hydrate_ids and estimated + lines > budget:
+                break
+            estimated += lines
+            hydrate_ids.append(message.id)
+        hydrate_ids.reverse()
+        following = self._is_following_tail()
+        anchor_y = self.scroll_y
+        self._unhydrated_message_ids.difference_update(hydrate_ids)
+        self._hydrated_message_ids.update(hydrate_ids)
+        if not following:
+            # Reader-driven scroll-back: hold it until they return to the tail.
+            # A fill while following the tail is not scrollback the reader is
+            # reading, so it stays reclaimable by the watermarks.
+            self._scrollback_protected = True
+        logger.debug(
+            f"Hydrating {len(hydrate_ids)} older Console transcript message(s) "
+            f"({len(self._unhydrated_message_ids)} still windowed out)"
+        )
+        async with self._refresh_lock:
+            await self._reconcile_rows(self._transcript_rows())
+
+        def _restore_scroll() -> None:
+            if not self.is_mounted:
+                return
+            if following:
+                self.anchor()
+                self.scroll_end(animate=False)
+            else:
+                # Keep the same content in view: the hydrated rows were added
+                # ABOVE the reader, so shift down by the height actually added
+                # (measured, not estimated) -- the mirror image of pruning.
+                added = self.virtual_size.height - total_height
+                self.scroll_to(y=max(0.0, anchor_y + added), animate=False)
+            # One chunk may not be enough (a short window under a tall
+            # viewport, or tiny messages); re-arm. Bounded by the gates above
+            # and by the unhydrated set emptying.
+            self._schedule_hydration_check()
+
+        self.call_after_refresh(_restore_scroll)
+        self._schedule_prune_check()
+
+    def ensure_message_hydrated(self, message_id: str) -> bool:
+        """Mount a windowed-out message (and everything after it) on demand.
+
+        Jump targets -- a citation, a search hit, a programmatic selection --
+        can name a message the tail-first window never mounted. Hydrating from
+        that message forward keeps the mounted rows one contiguous suffix of
+        the history, which is what pruning and reconciliation both assume.
+
+        Args:
+            message_id: Identifier of the message that must have a row.
+
+        Returns:
+            True when rows were hydrated (a refresh is scheduled), False when
+            the message was already mounted or is not in this transcript.
+        """
+        if message_id not in self._unhydrated_message_ids:
+            return False
+        ordered = [
+            message.id
+            for message in self._messages
+            if message.id in self._unhydrated_message_ids
+        ]
+        try:
+            index = ordered.index(message_id)
+        except ValueError:  # pragma: no cover - membership was just checked
+            return False
+        hydrate_ids = ordered[index:]
+        self._unhydrated_message_ids.difference_update(hydrate_ids)
+        self._hydrated_message_ids.update(hydrate_ids)
+        self._scrollback_protected = True
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+        return True
+
+    def unhydrated_message_ids(self) -> frozenset[str]:
+        """Return the ids currently outside the tail-first mount window."""
+        return frozenset(self._unhydrated_message_ids)
 
     def _assistant_markdown_enabled(self) -> bool:
         """Return the ``[chat_defaults] assistant_markdown`` toggle (TASK-1990)."""
@@ -2073,6 +2403,14 @@ class ConsoleTranscript(VerticalScroll):
         }
         if self.selected_message_id is not None:
             protected_ids.add(self.selected_message_id)
+        if self._scrollback_protected:
+            # TASK-15455: scrollback the reader deliberately hydrated is what
+            # they are looking at; the walk must not delete it from under
+            # them (and an oversized hydration step that overshot the high
+            # mark must not be undone, which would restart the cycle).
+            # The latch drops the moment they return to the tail, so the
+            # watermarks still bound the steady state.
+            protected_ids |= self._hydrated_message_ids
 
         prune_ids: list[str] = []
         prune_height = 0
@@ -2169,6 +2507,10 @@ class ConsoleTranscript(VerticalScroll):
         """Select one message and show its contextual action row."""
         if message_id not in {message.id for message in self._messages}:
             return
+        # TASK-15455: a jump target (citation, search hit, programmatic focus)
+        # can name a message the tail-first window has not mounted; hydrate it
+        # first so the selection lands on a real row with its action row.
+        self.ensure_message_hydrated(message_id)
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
@@ -2418,17 +2760,19 @@ class ConsoleTranscript(VerticalScroll):
         )
 
     def _visible_messages(self) -> list[ConsoleChatMessage]:
-        """Return the messages with rendered rows (excludes the pruned window).
+        """Return the messages with rendered rows (excludes unmounted windows).
 
-        Keyboard selection walks this list so j/k never lands on a pruned
-        (row-less) message; the store-facing ``_messages`` keeps full history.
+        Keyboard selection walks this list so j/k never lands on a pruned or
+        not-yet-hydrated (row-less) message; the store-facing ``_messages``
+        keeps full history.
         """
-        if not self._pruned_message_ids:
+        if not self._pruned_message_ids and not self._unhydrated_message_ids:
             return self._messages
         return [
             message
             for message in self._messages
             if message.id not in self._pruned_message_ids
+            and message.id not in self._unhydrated_message_ids
         ]
 
     def _notify_selection_changed(self) -> None:
@@ -2445,6 +2789,11 @@ class ConsoleTranscript(VerticalScroll):
             if message.id in self._pruned_message_ids:
                 # TASK-1365: pruned by the height watermarks; the store keeps
                 # the message, the view window drops every row derived from it.
+                continue
+            if message.id in self._unhydrated_message_ids:
+                # TASK-15455: older than the tail-first load window. Same
+                # view-only contract as pruning above, except this one is
+                # reversible -- scrolling back hydrates these ids again.
                 continue
             message = self._with_expanded_tool_output(message)
             selected = message.id == self.selected_message_id
