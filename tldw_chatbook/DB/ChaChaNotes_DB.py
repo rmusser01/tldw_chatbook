@@ -5005,6 +5005,7 @@ UPDATE db_schema_version
                 )
 
                 if current_db_version == target_version:
+                    self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                     logger.debug(
                         f"Database schema '{self._SCHEMA_NAME}' is up to date (Version {target_version})."
                     )
@@ -5075,6 +5076,7 @@ UPDATE db_schema_version
                     raise SchemaError(
                         f"Schema migration process completed, but final DB version is {final_version_check}, expected {target_version}. Manual check required."
                     )
+                self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                 logger.info(
                     f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}."
                 )
@@ -11551,7 +11553,20 @@ UPDATE db_schema_version
             )
             raise
 
-    def soft_delete_note(self, note_id: str, expected_version: int) -> Optional[bool]:
+    def soft_delete_note(self, note_id: str, expected_version: int) -> bool:
+        """Soft-delete one active note using optimistic locking.
+
+        Args:
+            note_id: Stable note identity to delete.
+            expected_version: Version of the active row being deleted.
+
+        Returns:
+            ``True`` when this call changes the active row to a tombstone.
+
+        Raises:
+            ConflictError: If the note is missing, already deleted, or stale.
+            CharactersRAGDBError: If the database operation fails.
+        """
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
@@ -11570,10 +11585,12 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
-                            f"Note ID {note_id} already soft-deleted. Success (idempotent)."
+                        raise ConflictError(
+                            f"Note ID {note_id} is already soft-deleted at version "
+                            f"{record_status['version']}.",
+                            entity="notes",
+                            entity_id=note_id,
                         )
-                        return True
                     raise e
 
                 if current_db_version != expected_version:
@@ -11593,10 +11610,10 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
                     elif final_state["deleted"]:
-                        logger.info(
-                            f"Note ID {note_id} was soft-deleted concurrently. Success."
+                        msg = (
+                            f"Note ID {note_id} was soft-deleted concurrently at "
+                            f"version {final_state['version']}."
                         )
-                        return True
                     elif final_state["version"] != expected_version:
                         msg = f"Note ID {note_id} version changed to {final_state['version']} concurrently."
                     else:
@@ -11619,7 +11636,23 @@ UPDATE db_schema_version
     def _ensure_notes_fts_update_trigger_handles_undelete(
         conn: sqlite3.Connection,
     ) -> None:
-        """Repair older DBs whose Notes FTS update trigger breaks undelete."""
+        """Repair a legacy Notes FTS update trigger only when required.
+
+        Args:
+            conn: Active database connection used during schema initialization.
+        """
+        trigger_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+            ("notes_au",),
+        ).fetchone()
+        trigger_sql = "" if trigger_row is None else str(trigger_row["sql"] or "")
+        normalized_sql = " ".join(trigger_sql.lower().split())
+        if (
+            "where old.deleted = 0" in normalized_sql
+            and "where new.deleted = 0" in normalized_sql
+        ):
+            return
+
         conn.execute("DROP TRIGGER IF EXISTS notes_au")
         conn.execute(
             """
@@ -11660,7 +11693,6 @@ UPDATE db_schema_version
 
         try:
             with self.transaction() as conn:
-                self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                 current_state = conn.execute(
                     "SELECT deleted, version FROM notes WHERE id = ?", (note_id,)
                 ).fetchone()

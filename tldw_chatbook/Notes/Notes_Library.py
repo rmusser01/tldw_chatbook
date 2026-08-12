@@ -485,7 +485,20 @@ class NotesInteropService:
     def restore_note(
         self, user_id: str, note_id: str, expected_version: int
     ) -> bool:
-        """Restore a soft-deleted note through the per-user database seam."""
+        """Restore a soft-deleted note through the per-user database seam.
+
+        Args:
+            user_id: User identity used to select the unified DB client.
+            note_id: Stable note identity to restore.
+            expected_version: Version of the tombstone being restored.
+
+        Returns:
+            ``True`` when the note is restored or is already active.
+
+        Raises:
+            ConflictError: If the note is missing or its tombstone is stale.
+            CharactersRAGDBError: If the database operation fails.
+        """
         start_time = time.time()
         log_counter("notes_library_restore_note_attempt")
 

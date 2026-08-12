@@ -22066,6 +22066,10 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_escape_and_sav
             else:
                 await _wait_for_display(screen, pilot, "#library-note-context-region")
                 assert screen._library_note_session.destructive_admission is None
+                assert screen._library_note_delete_receipt is None
+                assert "(2)" in str(
+                    screen.query_one("#library-row-browse-notes").label
+                )
                 snapshot_after = screen._library_note_session.snapshot
                 assert snapshot_after is not None
                 assert snapshot_after.draft == snapshot_before.draft

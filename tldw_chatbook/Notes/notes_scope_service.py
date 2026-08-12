@@ -588,6 +588,21 @@ class NotesScopeService:
         the local ChaChaNotes tombstone contract. Runtime policy treats the
         undelete as the same local mutation authority as an update rather than
         introducing a parallel restore capability absent from the registry.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            note_id: Stable note identity to restore.
+            version: Version of the deleted row being restored.
+            user_id: Local Notes user identity.
+            sync_v2_profile: Optional sync-v2 routing metadata.
+
+        Returns:
+            Fresh active note record, including its restored version and tags.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+            ConflictError: If the note is missing, active, or stale.
+            RuntimeError: If restoration or the required read-back fails.
         """
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope != ScopeType.LOCAL_NOTE:

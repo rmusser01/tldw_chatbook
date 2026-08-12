@@ -23149,7 +23149,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-notes-delete-undo")
     def handle_library_note_delete_undo(self, event: Button.Pressed) -> None:
-        """Restore the exact note named by the current delete receipt."""
+        """Restore the exact note named by the current delete receipt.
+
+        Args:
+            event: Press event emitted by the receipt's Undo button.
+        """
         event.stop()
         if self._library_notes_mutation_in_flight:
             return
@@ -23169,7 +23173,11 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_delete_receipt_dismiss(
         self, event: Button.Pressed
     ) -> None:
-        """Dismiss the recovery receipt without changing persisted data."""
+        """Dismiss the recovery receipt without changing persisted data.
+
+        Args:
+            event: Press event emitted by the receipt's Dismiss button.
+        """
         event.stop()
         if self._library_notes_mutation_in_flight:
             return

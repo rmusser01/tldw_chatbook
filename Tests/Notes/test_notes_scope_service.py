@@ -837,6 +837,7 @@ async def test_scope_service_local_delete_survives_sync_v2_enqueue_failure():
 
 @pytest.mark.asyncio
 async def test_scope_service_restores_local_note_as_update_and_enqueues_active_upsert():
+    """Restore uses update authority and emits the fresh active sync record."""
     local = FakeLocalNotes()
     producer = FakeNotesSyncV2Producer()
     policy = FakePolicyEnforcer()
