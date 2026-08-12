@@ -1164,6 +1164,15 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the bounded evidence probe or validate an existing result.
+
+    Args:
+        argv: Optional CLI arguments. Defaults to ``sys.argv[1:]``.
+
+    Returns:
+        Zero when the requested operation succeeds; otherwise one.
+    """
+
     args = _parser().parse_args(argv)
     if args.validate is not None:
         try:

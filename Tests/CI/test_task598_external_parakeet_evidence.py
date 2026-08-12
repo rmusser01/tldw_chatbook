@@ -644,6 +644,14 @@ def test_validate_cli_rejects_failure_without_a_path_bearing_traceback(
     assert str(tmp_path) not in captured.out + captured.err
 
 
+def test_main_docstring_documents_cli_arguments_and_exit_code() -> None:
+    evidence = _load_probe()
+    docstring = evidence.main.__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
 def test_validator_accepts_only_complete_two_model_cpu_evidence() -> None:
     evidence = _load_probe()
 
