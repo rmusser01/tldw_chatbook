@@ -148,6 +148,51 @@ reports "reachable", "reachable (N models)", or a named failure ("timeout",
 "connection refused", "HTTP \<status\>"). A successful **Save** deliberately
 clears the previous verdict — run **Test Provider** again afterwards.
 
+#### QwenCloud
+
+Choose **QwenCloud** to reveal its provider-scoped **API mode** field. The two
+saved values are exactly `responses` and `chat_completions`; **Responses** is
+the default when the setting is absent. The embedded model and endpoint are
+`qwen3.8-max` and
+`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`. Set
+`DASHSCOPE_API_KEY`, or save a local key in this page. If your account provides
+a workspace-specific regional compatible-mode endpoint, replace the shared
+international (Singapore) base with that regional base. A compatible custom
+HTTP(S) base is also allowed; QwenCloud never borrows another provider's URL
+or credential.
+
+The mode changes only QwenCloud's external wire protocol:
+
+| Mode | Behavior and parameter limits |
+|---|---|
+| **Responses** (`responses`, default) | Re-sends canonical history on every turn, requests `store=false`, and never uses `previous_response_id`, conversation IDs, or a server-side session cache. Supported generation fields are temperature, top-p, maximum output, and the documented reasoning-effort values. Maximum output must be at least 16. Seed, penalties, response format, stop, `n`, log probabilities, verbosity, and reasoning summary are intentionally omitted. |
+| **Chat Completions** (`chat_completions`) | Sends `preserve_thinking=false` because Chatbook does not store private `reasoning_content` for exact replay. It supports temperature, top-p/top-k, maximum completion tokens, seed, presence penalty, stop, text/JSON-object response format, `n`, log probabilities, and reasoning effort. Tool requests require `n=1`; min-p, frequency penalty, logit bias, user identifiers, reasoning summary, verbosity, Anthropic thinking fields, and prompt-caching fields are intentionally omitted. |
+
+These lists are fail-closed: generic settings outside the selected mode's
+allowlist are not forwarded. A model can still reject a supported mode or
+parameter; Chatbook does not infer compatibility from its name.
+
+Existing Chatbook function tools use the ordinary Console agent runtime in
+both modes, including structured continuation. QwenCloud-hosted built-in tool
+types (such as hosted search or code execution) are excluded. **Discover
+models** and startup refresh use the same disk TTL cache, configured fallback,
+50-model selector cap, and full searchable catalog as other cloud providers;
+an empty or failed refresh does not erase the configured/cached fallback.
+
+Usage is still counted when the API returns it. If Chatbook has no verified
+price for the selected QwenCloud model, the Console says **pricing unknown**;
+it does not invent a dollar amount or treat unknown pricing as free.
+
+Recovery is fail-closed:
+
+- If **API mode** is invalid, sending and saving stay blocked. Open the field,
+  choose **Responses** or **Chat Completions**, then save.
+- If `api_settings.qwencloud` is not a TOML table, this page reports that the
+  provider settings are invalid and cannot repair the table in place. Open
+  **Advanced Config**, replace the malformed value with an
+  `[api_settings.qwencloud]` table, set a valid `api_mode`, then **Validate Raw
+  TOML**, **Save Raw TOML**, and **Reload Config** under Diagnostics.
+
 ### Core — Speech & TTS
 
 Application-wide speech and text-to-speech defaults — which TTS provider

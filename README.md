@@ -254,7 +254,7 @@ The screen shell is organized around a **master shell** of primary destinations 
 > **Migration note:** legacy tabs — `Chat` (now Console), `Notes`, `Media`, `Ingest`, `Search`, `Coding`, `Characters/Prompts` (now Personas), `Subscriptions` (now Watchlists), and `Chatbooks` (now under Artifacts) — still resolve as routes/aliases, but are no longer separate primary destinations. `Coding` in particular is now a thin compatibility stub; agentic programming happens in the Console.
 
 ### LLM Support
-- **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
+- **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, QwenCloud, HuggingFace
 - **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, MLX-LM, ONNX Runtime, Custom OpenAI-compatible endpoints
 - **Streaming responses** with real-time display
 - **Full conversation management**: Save, load, edit, fork conversations
@@ -632,7 +632,35 @@ API keys can also be set via environment variables:
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `COHERE_API_KEY`
+- `DASHSCOPE_API_KEY` (QwenCloud)
 - etc.
+
+### QwenCloud
+
+QwenCloud is a first-class Console provider with `qwen3.8-max` as the embedded
+default model. Its default compatible base is the functional international
+(Singapore) endpoint, while accounts that provide a workspace-specific
+regional endpoint should save that base under **Settings ▸ Providers &
+Models** instead:
+
+```toml
+[api_settings.qwencloud]
+api_key_env_var = "DASHSCOPE_API_KEY"
+api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+api_mode = "responses" # or "chat_completions"
+model = "qwen3.8-max"
+```
+
+`responses` is the default API mode. It sends stateless history with
+`store=false`; Chatbook does not use QwenCloud response or conversation IDs.
+`chat_completions` is also supported and explicitly disables preserved
+thinking because Chatbook does not retain private reasoning for replay.
+Existing Chatbook function tools work in both modes; QwenCloud-hosted built-in
+tools are not supported by this feature. Model discovery uses the shared
+cached catalog, and model/mode compatibility is reported by the service rather
+than guessed from a model name. See [Settings](Docs/User_Guide/settings.md#qwencloud)
+and [Console](Docs/User_Guide/console.md#qwencloud-in-console) for parameter,
+endpoint, recovery, and optional live-test details.
 
 ### Database Files
 Located at `~/.local/share/tldw_cli/`:

@@ -75,3 +75,40 @@ ADR path: `backlog/decisions/045-qwencloud-dual-api-provider-boundary.md`
 Reason: QwenCloud changes a provider/runtime boundary; ADR-045 already records
 the approved dual-mode adapter ownership and pinned Console handoff, so a new
 ADR would duplicate the existing decision.
+
+## Implementation Notes
+
+*Draft — final closeout pending.*
+
+- Added one first-class `qwencloud` provider across configuration, readiness,
+  dispatch, Console, canonical F9 Settings, native function tools, and the
+  shared cached model catalog. The dedicated adapter normalizes Responses and
+  Chat Completions into the existing internal contracts; no Qwen-specific
+  agent loop, cache, Settings surface, or built-in-tool execution path was
+  introduced.
+- Implemented stateless Responses history with `store=false`, exact
+  call/output pairing, Chat preserved-thinking replay disabled, fail-closed
+  mode-specific parameters, record-aware streaming, terminal usage, bounded
+  retries, and deterministic response closure/cancellation.
+- Documented setup, endpoint and mode selection, parameter limits, tool scope,
+  discovery, pricing uncertainty, recovery, and optional paid verification in
+  `README.md` and the Settings/Console user guides. Added a two-mode live test
+  isolated by `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH`,
+  and `[paths].data_dir` before Chatbook imports.
+- Evidence to date: the focused adapter, streaming, provider-contract,
+  native-tool, Settings, model-discovery, and live-test collection suite passed
+  outside the managed sandbox with `530 passed, 2 skipped`. The two skips are
+  the paid live modes; the user did not authorize paid calls, so
+  `TLDW_LIVE_QWENCLOUD` remained unset and no live QwenCloud request was made.
+  The identical in-sandbox run had 18 localhost fixture bind failures
+  (`PermissionError`) and otherwise `512 passed, 2 skipped`; rerunning where
+  localhost binding is permitted resolved all 18.
+- Task 9 checks also verified both paid cases collect and skip by default;
+  Ruff, Ruff format, MyPy, compileall, `git diff --check`, and the scoped
+  documentation term/link/anchor check pass. No credential, prompt, or
+  response content is emitted by the live harness.
+- Architecture: follows
+  [ADR-045](../decisions/045-qwencloud-dual-api-provider-boundary.md), with no
+  implementation deviation from its provider/runtime ownership. No schema
+  migration was required. Final whole-repository verification, acceptance
+  checklist updates, and status transition remain for closeout.
