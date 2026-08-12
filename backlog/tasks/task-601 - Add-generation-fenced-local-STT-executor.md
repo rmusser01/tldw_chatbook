@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-12 07:57'
+updated_date: '2026-08-12 08:06'
 labels:
   - stt
   - processes
@@ -74,4 +74,6 @@ PR review remediation centralized explicit Parakeet directory validation, harden
 ADR required: no. ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md` and `backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md`. Those accepted decisions already govern the runtime boundary, lease ownership, retry policy, and direct-local GGUF behavior.
 
 Native platform evidence attempt 1 remained red and did not close acceptance criterion 6. Workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31575959082 tested executable commit 48c4ccadb9ef93f64ddfffd9954aede9526ea48e: Linux x86_64 and macOS x86_64 passed; Windows x86_64 produced bounded test_execution failure evidence. All three required evidence nodes passed on Windows, but selected unit Tests/STT/test_executor_process_tree.py::test_unproven_tree_death_quarantines_containment failed before its assertion because the test monkeypatch required os.killpg to pre-exist. Windows does not expose os.killpg. This is a native test-portability defect, not a containment production failure. No aggregate was created. Remediation is limited to a RED-backed portable monkeypatch and requires a fresh full three-platform run on a new executable commit.
+
+Native platform evidence attempt 2 also remained red and did not close acceptance criterion 6. New workflow_dispatch run https://github.com/rmusser01/tldw_chatbook/actions/runs/31576646463 tested reviewed executable commit 83c68c30d82fe04b53db02612ff358fb2fb6a0ec: Linux x86_64 and macOS x86_64 passed; Windows x86_64 produced bounded test_execution failure evidence. All three required nodes again passed. The prior os.killpg monkeypatch repair allowed the same selected POSIX-emulation unit to reach its next Windows-unavailable POSIX symbol: signal.SIGKILL. No aggregate was created. Remediation remains test-only: install the simulated SIGKILL constant without skipping coverage, review it, and run a new full three-platform workflow on a new executable commit.
 <!-- SECTION:NOTES:END -->
