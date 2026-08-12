@@ -2,7 +2,6 @@
 # Description: Service layer for note synchronization operations
 #
 # Imports
-import asyncio
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Callable
@@ -111,7 +110,6 @@ class NotesSyncService:
         )
         self.sync_engine = NotesSyncEngine(notes_service, db)
         self.profiles: Dict[str, SyncProfile] = {}
-        self._auto_sync_tasks: Dict[str, asyncio.Task] = {}
         self._load_profiles()
 
     def _load_profiles(self):
@@ -140,41 +138,9 @@ class NotesSyncService:
         except Exception as e:
             logger.error(f"Error saving sync profiles: {e}")
 
-    def create_profile(
-        self,
-        name: str,
-        root_folder: Path,
-        direction: SyncDirection,
-        conflict_resolution: ConflictResolution,
-        extensions: List[str] = None,
-        auto_sync: bool = False,
-        sync_interval: int = 300,
-    ) -> SyncProfile:
-        """Create and save a new sync profile."""
-        profile = SyncProfile(
-            name=name,
-            root_folder=root_folder,
-            direction=direction,
-            conflict_resolution=conflict_resolution,
-            extensions=extensions,
-            auto_sync=auto_sync,
-            sync_interval=sync_interval,
-        )
-
-        self.profiles[name] = profile
-        self._save_profiles()
-
-        if auto_sync:
-            self.start_auto_sync(name)
-
-        return profile
-
     def delete_profile(self, name: str) -> bool:
         """Delete a sync profile."""
         if name in self.profiles:
-            # Stop auto-sync if running
-            self.stop_auto_sync(name)
-
             del self.profiles[name]
             self._save_profiles()
             return True
@@ -432,53 +398,6 @@ class NotesSyncService:
                 notes_status.append(note_data)
 
         return notes_status
-
-    def start_auto_sync(self, profile_name: str):
-        """Start auto-sync for a profile."""
-        profile = self.profiles.get(profile_name)
-        if not profile or not profile.auto_sync:
-            return
-
-        if profile_name in self._auto_sync_tasks:
-            logger.warning(f"Auto-sync already running for profile '{profile_name}'")
-            return
-
-        async def auto_sync_loop():
-            """Auto-sync loop for a profile."""
-            while profile_name in self._auto_sync_tasks:
-                try:
-                    # TODO: Get user_id from session or config
-                    user_id = "auto_sync"  # Placeholder
-
-                    logger.info(f"Running auto-sync for profile '{profile_name}'")
-                    await self.sync_with_profile(profile_name, user_id)
-
-                    # Wait for next sync
-                    await asyncio.sleep(profile.sync_interval)
-
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.error(
-                        f"Error in auto-sync for profile '{profile_name}': {e}"
-                    )
-                    await asyncio.sleep(60)  # Wait before retry
-
-        task = asyncio.create_task(auto_sync_loop())
-        self._auto_sync_tasks[profile_name] = task
-        logger.info(f"Started auto-sync for profile '{profile_name}'")
-
-    def stop_auto_sync(self, profile_name: str):
-        """Stop auto-sync for a profile."""
-        if profile_name in self._auto_sync_tasks:
-            task = self._auto_sync_tasks.pop(profile_name)
-            task.cancel()
-            logger.info(f"Stopped auto-sync for profile '{profile_name}'")
-
-    def stop_all_auto_syncs(self):
-        """Stop all auto-sync tasks."""
-        for profile_name in list(self._auto_sync_tasks.keys()):
-            self.stop_auto_sync(profile_name)
 
 
 #
