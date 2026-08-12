@@ -22,7 +22,10 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     ProfileMigrationJournalSlot,
     ProfileMigrationPublicationSlot,
     ProfileMigrationPublicationStage,
-    encode_profile_migration_journal,
+    _encode_initial_journal,
+    _encode_later_journal,
+    _JournalAuthority,
+    _new_profile_migration_journal_authority,
     parse_profile_migration_journal,
 )
 from tldw_chatbook.Utils import private_paths
@@ -361,24 +364,61 @@ def retain_profile_migration_destination(
         raise _safe_failure() from None
 
 
-def _journal_payload(
+def _journal_authority(
     artifacts: Sequence[PreparedProfileMigrationArtifact],
     destinations: Sequence[RetainedProfileMigrationDestination],
-    *,
-    phase: str,
-) -> bytes:
-    return encode_profile_migration_journal(
-        tuple(
-            ProfileMigrationJournalSlot(
-                slot=artifact._slot,
-                candidate=artifact._path.name,
-                target=destination._path.name,
-                rollback=(f".{destination._path.name}.{artifact._slot.value}.rollback"),
-                had_prior=destination._file_identity is not None,
+) -> _JournalAuthority:
+    rows: list[
+        tuple[
+            ProfileMigrationJournalSlot,
+            os.stat_result,
+            tuple[int, bytes],
+            int,
+            os.stat_result | None,
+            tuple[int, bytes] | None,
+            int | None,
+        ]
+    ] = []
+    for artifact, destination in zip(artifacts, destinations, strict=True):
+        if (
+            artifact._file_identity is None
+            or artifact._content_evidence is None
+            or artifact._schema_version is None
+            or (
+                destination._file_identity is not None
+                and (
+                    destination._content_evidence is None
+                    or destination._schema_version is None
+                )
             )
-            for artifact, destination in zip(artifacts, destinations, strict=True)
-        ),
-        phase=phase,
+        ):
+            raise ValueError
+        rows.append(
+            (
+                ProfileMigrationJournalSlot(
+                    slot=artifact._slot,
+                    candidate=artifact._path.name,
+                    target=destination._path.name,
+                    rollback=(
+                        f".{destination._path.name}.{artifact._slot.value}.rollback"
+                    ),
+                    had_prior=destination._file_identity is not None,
+                ),
+                artifact._file_identity,
+                artifact._content_evidence,
+                artifact._schema_version,
+                destination._file_identity,
+                destination._content_evidence,
+                (
+                    None
+                    if destination._file_identity is None
+                    else destination._schema_version
+                ),
+            )
+        )
+    return _new_profile_migration_journal_authority(
+        parent_identity=artifacts[0]._parent_identity,
+        rows=tuple(rows),
     )
 
 
@@ -840,6 +880,7 @@ def publish_profile_migration(
     destinations = (active_destination, *tuple(backup_destinations))
     journal_path: Path | None = None
     journal_identity: _JournalIdentity | None = None
+    authority_checksum: bytes | None = None
     key: tuple[int, int, str] | None = None
     body_error: BaseException | None = None
     deferred: list[BaseException] = []
@@ -855,7 +896,8 @@ def publish_profile_migration(
                 _immutable_validate(destination)
         if stage_hook is not None:
             stage_hook(ProfileMigrationPublicationStage.PREFLIGHT)
-        payload = _journal_payload(artifacts, destinations, phase="prepared")
+        authority = _journal_authority(artifacts, destinations)
+        payload, authority_checksum = _encode_initial_journal(authority)
         journal_identity = _write_new_journal(journal_path, payload)
         if stage_hook is not None:
             stage_hook(ProfileMigrationPublicationStage.JOURNAL_DURABLE)
@@ -872,7 +914,7 @@ def publish_profile_migration(
         _append_journal(
             journal_path,
             journal_identity,
-            _journal_payload(artifacts, destinations, phase="publishing"),
+            _encode_later_journal(authority_checksum, phase="publishing"),
         )
         ponr = True
         _post_ponr_stage(
@@ -885,7 +927,7 @@ def publish_profile_migration(
         _append_journal(
             journal_path,
             journal_identity,
-            _journal_payload(artifacts, destinations, phase="complete"),
+            _encode_later_journal(authority_checksum, phase="complete"),
         )
         _post_ponr_stage(
             stage_hook,
@@ -929,25 +971,32 @@ def publish_profile_migration(
 
     if ponr:
         journal_update_errors: list[BaseException] = []
-        if journal_path is not None and journal_identity is not None:
+        if (
+            journal_path is not None
+            and journal_identity is not None
+            and authority_checksum is not None
+        ):
             try:
                 _append_journal(
                     journal_path,
                     journal_identity,
-                    _journal_payload(artifacts, destinations, phase="restoring"),
+                    _encode_later_journal(authority_checksum, phase="restoring"),
                 )
             except BaseException as caught:
                 journal_update_errors.append(caught)
         restore_errors = _restore_all(states)
         if restore_errors:
-            if journal_path is not None and journal_identity is not None:
+            if (
+                journal_path is not None
+                and journal_identity is not None
+                and authority_checksum is not None
+            ):
                 try:
                     _append_journal(
                         journal_path,
                         journal_identity,
-                        _journal_payload(
-                            artifacts,
-                            destinations,
+                        _encode_later_journal(
+                            authority_checksum,
                             phase="unavailable",
                         ),
                     )

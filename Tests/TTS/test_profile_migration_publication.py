@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+from hashlib import sha256
 import importlib
 import json
 import os
@@ -63,6 +64,41 @@ def _retained(
         path,
         slot=slot,
         must_exist=slot is module.ProfileMigrationPublicationSlot.ACTIVE,
+    )
+
+
+def _encoded_journal(
+    module: ModuleType,
+    tmp_path: Path,
+    rows: tuple[object, ...],
+    *phases: str,
+) -> bytes:
+    identity = tmp_path.stat()
+    authority_rows = []
+    for row in rows:
+        schema_version = {
+            module.ProfileMigrationPublicationSlot.ACTIVE: 4,
+            module.ProfileMigrationPublicationSlot.PRE_V3: 2,
+            module.ProfileMigrationPublicationSlot.PRE_V4: 3,
+        }[row.slot]
+        authority_rows.append(
+            (
+                row,
+                identity,
+                (1, b"\x01" * 32),
+                schema_version,
+                identity if row.had_prior else None,
+                (1, b"\x02" * 32) if row.had_prior else None,
+                schema_version if row.had_prior else None,
+            )
+        )
+    authority = module._new_profile_migration_journal_authority(
+        parent_identity=identity,
+        rows=tuple(authority_rows),
+    )
+    initial, checksum = module._encode_initial_journal(authority)
+    return initial + b"".join(
+        module._encode_later_journal(checksum, phase=phase) for phase in phases
     )
 
 
@@ -179,7 +215,7 @@ def test_durable_journal_has_only_recognized_bounded_relative_slots(
     assert b"new" not in raw
     assert observed["mode"] == 0o600
     parsed = observed["parsed"]
-    assert parsed.version == 1
+    assert parsed.version == 2
     assert parsed.phase == "prepared"
     assert parsed.slots == ("active",)
     assert parsed.recovery_rows == (
@@ -191,31 +227,258 @@ def test_durable_journal_has_only_recognized_bounded_relative_slots(
             had_prior=True,
         ),
     )
-    assert (
-        module.encode_profile_migration_journal(
-            parsed.recovery_rows,
-            phase=parsed.phase,
-        )
-        == raw
+    assert module.parse_profile_migration_journal(raw).recovery_rows == (
+        parsed.recovery_rows
     )
     assert ".candidate.sqlite3" not in repr(parsed)
     assert "profiles.sqlite3" not in repr(parsed.recovery_rows[0])
     decoded_frame = json.loads(raw)
     assert set(decoded_frame) == {"checksum", "recovery"}
     assert len(decoded_frame["checksum"]) == 64
-    assert decoded_frame["recovery"] == {
-        "phase": "prepared",
-        "slots": [
-            {
-                "candidate": ".candidate.sqlite3",
-                "had_prior": True,
-                "rollback": ".profiles.sqlite3.active.rollback",
-                "slot": "active",
-                "target": "profiles.sqlite3",
-            }
-        ],
-        "version": 1,
-    }
+    recovery = decoded_frame["recovery"]
+    assert recovery["phase"] == "prepared"
+    assert recovery["version"] == 2
+    assert set(recovery["authority"]) == {"parent", "slots"}
+    assert recovery["authority"]["slots"][0]["candidate"] == ".candidate.sqlite3"
+
+
+def test_initial_journal_authority_detects_substitutions_and_redacts_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    candidate_bytes = candidate_path.read_bytes()
+    prior_bytes = active_path.read_bytes()
+    candidate_stat = candidate_path.stat()
+    prior_stat = active_path.stat()
+    parent_stat = tmp_path.stat()
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    observed: dict[str, object] = {}
+    cancellation = asyncio.CancelledError()
+
+    def inspect(stage: object) -> None:
+        if stage is module.ProfileMigrationPublicationStage.JOURNAL_DURABLE:
+            raw = next(tmp_path.glob("*.migration-publication.json")).read_bytes()
+            observed["raw"] = raw
+            observed["parsed"] = module.parse_profile_migration_journal(raw)
+            raise cancellation
+
+    with pytest.raises(asyncio.CancelledError):
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+            stage_hook=inspect,
+        )
+
+    parsed = observed["parsed"]
+    row = parsed.recovery_rows[0]
+    assert parsed.matches_parent(parent_stat)
+    assert row.matches_candidate(
+        candidate_stat,
+        byte_length=len(candidate_bytes),
+        sha256_digest=sha256(candidate_bytes).digest(),
+        schema_version=4,
+    )
+    assert row.matches_prior(
+        prior_stat,
+        byte_length=len(prior_bytes),
+        sha256_digest=sha256(prior_bytes).digest(),
+        schema_version=3,
+    )
+    assert (
+        row.classify_artifact(
+            candidate_stat,
+            byte_length=len(candidate_bytes),
+            sha256_digest=sha256(candidate_bytes).digest(),
+            schema_version=4,
+        )
+        == "candidate"
+    )
+    assert (
+        row.classify_artifact(
+            prior_stat,
+            byte_length=len(prior_bytes),
+            sha256_digest=sha256(prior_bytes).digest(),
+            schema_version=3,
+        )
+        == "prior"
+    )
+    assert (
+        row.matches_candidate(
+            candidate_stat,
+            byte_length=len(candidate_bytes),
+            sha256_digest=sha256(candidate_bytes).digest(),
+            schema_version=3,
+        )
+        is False
+    )
+    substituted = os.stat_result(
+        (
+            candidate_stat.st_mode,
+            candidate_stat.st_ino + 1,
+            candidate_stat.st_dev,
+            candidate_stat.st_nlink,
+            candidate_stat.st_uid,
+            candidate_stat.st_gid,
+            candidate_stat.st_size,
+            candidate_stat.st_atime,
+            candidate_stat.st_mtime,
+            candidate_stat.st_ctime,
+        )
+    )
+    assert (
+        row.matches_candidate(
+            substituted,
+            byte_length=len(candidate_bytes),
+            sha256_digest=sha256(candidate_bytes).digest(),
+            schema_version=4,
+        )
+        is False
+    )
+    assert (
+        row.classify_artifact(
+            substituted,
+            byte_length=len(candidate_bytes),
+            sha256_digest=sha256(candidate_bytes).digest(),
+            schema_version=4,
+        )
+        is None
+    )
+    parent_substitution = os.stat_result(
+        (
+            parent_stat.st_mode,
+            parent_stat.st_ino + 1,
+            parent_stat.st_dev,
+            parent_stat.st_nlink,
+            parent_stat.st_uid,
+            parent_stat.st_gid,
+            parent_stat.st_size,
+            parent_stat.st_atime,
+            parent_stat.st_mtime,
+            parent_stat.st_ctime,
+        )
+    )
+    assert parsed.matches_parent(parent_substitution) is False
+    private_values = (
+        str(parent_stat.st_dev),
+        str(parent_stat.st_ino),
+        sha256(candidate_bytes).hexdigest(),
+        sha256(prior_bytes).hexdigest(),
+    )
+    assert all(value not in repr(parsed) for value in private_values)
+    assert all(value not in repr(row) for value in private_values)
+
+
+def test_later_journal_frames_bind_without_repeating_authority(tmp_path: Path) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    observed: dict[str, bytes] = {}
+
+    def inspect(stage: object) -> None:
+        if stage is module.ProfileMigrationPublicationStage.PONR:
+            observed["raw"] = next(
+                tmp_path.glob("*.migration-publication.json")
+            ).read_bytes()
+            raise RuntimeError("stop after publishing frame")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+            stage_hook=inspect,
+        )
+
+    initial, later = observed["raw"].splitlines()
+    assert b'"authority"' in initial
+    assert b'"authority"' not in later
+    assert b'"authority_checksum"' in later
+    assert b'"sha256"' not in later
+    assert b'"byte_length"' not in later
+
+
+def test_later_frame_with_foreign_authority_binding_fails_context_free(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    initial = _encoded_journal(module, tmp_path, rows)
+    foreign = module._encode_later_journal(b"\x99" * 32, phase="publishing")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.parse_profile_migration_journal(initial + foreign)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert (b"99" * 32) not in repr(caught.value).encode()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("dev", -1), ("schema_version", 3)],
+)
+def test_canonical_forged_invalid_authority_evidence_fails_boundedly(
+    tmp_path: Path,
+    field: str,
+    value: int,
+) -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    decoded = json.loads(_encoded_journal(module, tmp_path, rows))
+    decoded["recovery"]["authority"]["slots"][0]["candidate_evidence"][field] = value
+    recovery = json.dumps(
+        decoded["recovery"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    decoded["checksum"] = sha256(recovery).hexdigest()
+    forged = (
+        json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode("ascii")
+        + b"\n"
+    )
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.parse_profile_migration_journal(forged)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_journal_authority_encoder_is_not_public() -> None:
+    module = _publication_module()
+
+    assert not hasattr(module, "encode_profile_migration_journal")
 
 
 @pytest.mark.parametrize("boundary", ["write", "file_fsync", "dir_fsync"])
@@ -226,7 +489,9 @@ def test_initial_journal_failure_removes_exact_partial_generation(
 ) -> None:
     module = _publication_module()
     journal_path = tmp_path / ".profiles.migration-publication.json"
-    payload = module.encode_profile_migration_journal(
+    payload = _encoded_journal(
+        module,
+        tmp_path,
         (
             module.ProfileMigrationJournalSlot(
                 slot=module.ProfileMigrationPublicationSlot.ACTIVE,
@@ -236,7 +501,6 @@ def test_initial_journal_failure_removes_exact_partial_generation(
                 had_prior=True,
             ),
         ),
-        phase="prepared",
     )
     real_open = module.os.open
     real_write = module.os.write
@@ -299,8 +563,12 @@ def test_append_failure_preserves_last_recognized_journal_frame(
             had_prior=True,
         ),
     )
-    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
-    publishing = module.encode_profile_migration_journal(rows, phase="publishing")
+    prepared, publishing = _encoded_journal(
+        module,
+        tmp_path,
+        rows,
+        "publishing",
+    ).splitlines(keepends=True)
     identity = module._write_new_journal(journal_path, prepared)
     real_write = module.os.write
     real_fsync = module.os.fsync
@@ -347,9 +615,7 @@ def test_parser_uses_last_valid_prefix_before_crash_suffix(tmp_path: Path) -> No
         ),
     )
     raw = (
-        module.encode_profile_migration_journal(rows, phase="prepared")
-        + module.encode_profile_migration_journal(rows, phase="publishing")
-        + b'{"checksum":"partial'
+        _encoded_journal(module, tmp_path, rows, "publishing") + b'{"checksum":"partial'
     )
 
     parsed = module.parse_profile_migration_journal(raw)
@@ -379,7 +645,7 @@ def test_parser_rejects_every_invalid_terminated_suffix(
             had_prior=True,
         ),
     )
-    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
+    prepared = _encoded_journal(module, tmp_path, rows)
 
     with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
         module.parse_profile_migration_journal(prepared + terminated_suffix)
@@ -399,8 +665,12 @@ def test_parser_rejects_canonical_but_illegal_complete_transition() -> None:
             had_prior=True,
         ),
     )
-    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
-    complete = module.encode_profile_migration_journal(rows, phase="complete")
+    prepared = _encoded_journal(module, Path.cwd(), rows)
+    authority = module.parse_profile_migration_journal(prepared)
+    complete = module._encode_later_journal(
+        authority._authority_checksum,
+        phase="complete",
+    )
 
     with pytest.raises(ProfileRepositoryError, match="migration_failed"):
         module.parse_profile_migration_journal(prepared + complete)
@@ -503,13 +773,21 @@ def test_successfully_publishes_active_then_every_backup_in_slot_order(
         _retained(module, pre_v4_path, slot.PRE_V4, None),
     )
     events: list[object] = []
+    final_journal: list[bytes] = []
+
+    def record(stage: object) -> None:
+        events.append(stage)
+        if stage is module.ProfileMigrationPublicationStage.FINAL_JOURNAL_DURABLE:
+            final_journal.append(
+                next(tmp_path.glob("*.migration-publication.json")).read_bytes()
+            )
 
     module.publish_profile_migration(
         active_candidate=artifacts[0],
         backup_candidates=artifacts[1:],
         active_destination=destinations[0],
         backup_destinations=destinations[1:],
-        stage_hook=events.append,
+        stage_hook=record,
     )
 
     stage = module.ProfileMigrationPublicationStage
@@ -530,6 +808,8 @@ def test_successfully_publishes_active_then_every_backup_in_slot_order(
         stage.BACKUP_REOPENED,
         stage.FINAL_JOURNAL_DURABLE,
     ]
+    assert len(final_journal[0]) <= module.MAX_PROFILE_MIGRATION_JOURNAL_BYTES
+    assert module.parse_profile_migration_journal(final_journal[0]).phase == "complete"
     assert active_path.read_bytes() == expected_active
     assert pre_v3_path.read_bytes() == expected_pre_v3 != old_pre_v3
     assert pre_v4_path.read_bytes() == expected_pre_v4
