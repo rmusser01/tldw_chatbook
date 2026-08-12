@@ -116,15 +116,30 @@ directory. `TLDW_CONFIG_PATH` controls the config file only; it does not relocat
 data paths selected from that config. Keep before/after fingerprints as the final
 backstop because path isolation and proof of non-mutation are separate claims.
 
-**A fourth incident, same rule (TASK-3401.14 / TASK-15674).** A real Textual UAT
-launch set `HOME`, every XDG directory, `TLDW_CONFIG_PATH`, and `[paths].data_dir`
-to one disposable profile. The run itself used the scratch databases and media,
-yet startup still appended built-in default keys to the unrelated user config.
-The mandatory byte-for-byte post-run comparison caught it; existing values had
-not changed, and the exact pre-run snapshot was restored before scratch cleanup.
-Do not delete the recovery snapshot merely because all configured paths look
-isolated. Compare first, restore if necessary, and file any cross-profile writer
-as a product defect.
+**A fourth incident, same rule (TASK-3401.14 / TASK-15674).** After a long real
+Textual UAT session configured with a disposable profile, the unrelated default
+config's post-run byte fingerprint differed from its validated pre-run snapshot.
+The byte delta consisted of built-in default keys appearing while existing values
+remained unchanged.
+Restoring that exact snapshot before scratch cleanup was the right containment
+action. It was not, however, proof that the isolated app lifecycle caused the
+mutation: unrelated concurrent activity existed, so the fingerprint established
+that bytes changed, not which actor changed them.
+
+TASK-15674 tested attribution under controlled current-development conditions. It
+used a disposable `HOME`, the relevant XDG config, data, and cache directories, an
+effective scratch `TLDW_CONFIG_PATH`, a distinct decoy default config, a scratch
+`[paths].data_dir`,
+and disabled model-catalog networking. Through the real mounted app's
+startup-to-approved-quit lifecycle, persistence ran and selected only the exact
+effective profile path; the decoy remained byte-identical.
+
+**What to do.** Keep a validated recovery snapshot and compare before deleting it;
+restore on unexplained drift. To identify the writer, separately reproduce with a
+distinct decoy default and effective profile under an isolated lifecycle. A
+fingerprint difference proves mutation, not actor identity. Track sensitive
+unexplained mutation as an investigation or provisional defect, but do not label a
+confirmed cross-profile writer or actor until causality is demonstrated.
 
 ---
 
