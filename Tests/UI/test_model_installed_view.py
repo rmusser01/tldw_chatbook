@@ -1,5 +1,6 @@
 """Focused tests for the managed-model Installed view."""
 
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -551,6 +552,295 @@ def test_deletion_guard_blocks_before_and_after_confirmation(monkeypatch) -> Non
         "Managed dependency is required by an external source.",
     )
     assert fake_app.notify.call_args.kwargs["severity"] == "warning"
+
+
+def _direct_delete_view(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    service: object,
+    recycle_idle,
+    may_delete,
+):
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    fake_app = MagicMock()
+    fake_app.call_from_thread.side_effect = lambda callback, *args: callback(*args)
+    monkeypatch.setattr(module.InstalledView, "app", property(lambda self: fake_app))
+    view = module.InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        recycle_idle=recycle_idle,
+        may_delete=may_delete,
+    )
+    view.ensure_loaded = MagicMock()
+    view.refresh = MagicMock()
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    view._operation_reference = reference
+    view._operation_name = "delete"
+    return module, view, fake_app, reference
+
+
+def test_delete_recycles_idle_owner_and_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A confirmed delete retires one idle owner before one service retry."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+
+    events: list[str] = []
+
+    class _Service:
+        def delete(self, _reference: ArtifactRef) -> None:
+            attempt = sum(event.startswith("delete-") for event in events) + 1
+            events.append(f"delete-{attempt}")
+            if attempt == 1:
+                raise ArtifactInUseError("private lease")
+
+    def recycle(_reference: ArtifactRef) -> bool:
+        events.append("recycle")
+        return True
+
+    def policy(_reference: ArtifactRef) -> None:
+        events.append("policy-recheck")
+        return None
+
+    module, view, fake_app, reference = _direct_delete_view(
+        monkeypatch,
+        tmp_path,
+        service=_Service(),
+        recycle_idle=recycle,
+        may_delete=policy,
+    )
+
+    module.InstalledView._delete_model.__wrapped__(view, reference)
+
+    assert events == ["delete-1", "recycle", "policy-recheck", "delete-2"]
+    assert fake_app.notify.call_args.args[0] == "Model delete completed."
+    assert fake_app.notify.call_args.kwargs["severity"] == "information"
+
+
+def test_delete_recycles_idle_owner_refusal_stays_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A busy or unrelated resident never authorizes a delete retry."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+
+    service = MagicMock()
+    service.delete.side_effect = ArtifactInUseError("private lease")
+    recycle = MagicMock(return_value=False)
+    policy = MagicMock(return_value=None)
+    module, view, fake_app, reference = _direct_delete_view(
+        monkeypatch,
+        tmp_path,
+        service=service,
+        recycle_idle=recycle,
+        may_delete=policy,
+    )
+
+    module.InstalledView._delete_model.__wrapped__(view, reference)
+
+    service.delete.assert_called_once_with(reference)
+    recycle.assert_called_once_with(reference)
+    policy.assert_not_called()
+    assert "in use" in fake_app.notify.call_args.args[0]
+    assert fake_app.notify.call_args.kwargs["severity"] == "error"
+
+
+def test_delete_rechecks_policy_after_idle_owner_recycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A newly required dependency remains installed after idle retirement."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+
+    service = MagicMock()
+    service.delete.side_effect = ArtifactInUseError("private lease")
+    blocker = "Managed dependency is required by an external source."
+    module, view, fake_app, reference = _direct_delete_view(
+        monkeypatch,
+        tmp_path,
+        service=service,
+        recycle_idle=lambda _reference: True,
+        may_delete=lambda _reference: blocker,
+    )
+
+    module.InstalledView._delete_model.__wrapped__(view, reference)
+
+    service.delete.assert_called_once_with(reference)
+    assert fake_app.notify.call_args.args[0] == blocker
+    assert fake_app.notify.call_args.kwargs["severity"] == "warning"
+
+
+def test_delete_retries_once_when_new_lease_wins(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A second lease conflict is final and never starts another recycle."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    marker = "PRIVATE-LEASE-PATH"
+    service = MagicMock()
+    service.delete.side_effect = (
+        ArtifactInUseError(marker),
+        ArtifactInUseError(marker),
+        None,
+    )
+    recycle = MagicMock(return_value=True)
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+    _module, view, fake_app, reference = _direct_delete_view(
+        monkeypatch,
+        tmp_path,
+        service=service,
+        recycle_idle=recycle,
+        may_delete=lambda _reference: None,
+    )
+
+    try:
+        module.InstalledView._delete_model.__wrapped__(view, reference)
+    finally:
+        module.logger.remove(sink_id)
+
+    assert service.delete.call_count == 2
+    recycle.assert_called_once_with(reference)
+    assert marker not in "".join(logs)
+    assert marker not in str(fake_app.notify.mock_calls)
+
+
+def test_delete_recycle_callback_failure_is_path_private(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Unexpected recycle failures retain no callback detail in logs or copy."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    marker = "PRIVATE-CALLBACK-PATH"
+    service = MagicMock()
+    service.delete.side_effect = ArtifactInUseError("private lease")
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+
+    def failed_recycle(_reference: ArtifactRef) -> bool:
+        raise RuntimeError(marker)
+
+    _module, view, fake_app, reference = _direct_delete_view(
+        monkeypatch,
+        tmp_path,
+        service=service,
+        recycle_idle=failed_recycle,
+        may_delete=lambda _reference: None,
+    )
+
+    try:
+        module.InstalledView._delete_model.__wrapped__(view, reference)
+    finally:
+        module.logger.remove(sink_id)
+
+    assert service.delete.call_count == 1
+    assert marker not in "".join(logs)
+    assert marker not in str(fake_app.notify.mock_calls)
+
+
+@pytest.mark.asyncio
+async def test_mounted_idle_recycle_state_is_distinct_and_path_private(
+    tmp_path: Path,
+) -> None:
+    """The matching row paints checking and retrying while controls stay pending."""
+    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    recycle_entered = threading.Event()
+    recycle_release = threading.Event()
+    retry_entered = threading.Event()
+    retry_release = threading.Event()
+    policy_threads: list[int] = []
+
+    class _Service:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def delete(self, _reference: ArtifactRef) -> None:
+            from tldw_chatbook.Model_Artifacts.service import ArtifactInUseError
+
+            self.calls += 1
+            if self.calls == 1:
+                raise ArtifactInUseError("PRIVATE-LEASE-PATH")
+            retry_entered.set()
+            assert retry_release.wait(timeout=2.0)
+
+    def recycle(_reference: ArtifactRef) -> bool:
+        recycle_entered.set()
+        assert recycle_release.wait(timeout=2.0)
+        return True
+
+    def policy(_reference: ArtifactRef) -> None:
+        policy_threads.append(threading.get_ident())
+        return None
+
+    row = InventoryRow(
+        path=tmp_path / "managed",
+        reference=reference,
+        model_label="Parakeet v2",
+        revision=reference.revision,
+        precision="INT8",
+        dependencies=(),
+        ready=True,
+        active=False,
+        activation_allowed=True,
+        is_broken=False,
+        is_unmanaged=False,
+        provenance="Managed",
+        action_hint="Ready",
+        error=None,
+        size_bytes=1024,
+        installed_store_bytes=1024,
+        staging_store_bytes=0,
+        free_bytes=4096,
+    )
+    view = InstalledView(
+        service_factory=_Service,
+        legacy_dir=tmp_path,
+        recycle_idle=recycle,
+        may_delete=policy,
+    )
+    view._loaded = True
+    view._rows = (row,)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+
+        async def wait_for(event: threading.Event) -> None:
+            for _ in range(50):
+                if event.is_set():
+                    return
+                await pilot.pause()
+            assert event.is_set()
+
+        view._operation_reference = reference
+        view._operation_name = "delete"
+        view.refresh(recompose=True)
+        worker = view._delete_model(reference)
+        await wait_for(recycle_entered)
+        await pilot.pause()
+        checking = "\n".join(str(item.renderable) for item in view.query("Static"))
+        assert "Checking for an idle model to unload…" in checking
+        assert "PRIVATE-LEASE-PATH" not in checking
+
+        recycle_release.set()
+        await wait_for(retry_entered)
+        await pilot.pause()
+        retrying = "\n".join(str(item.renderable) for item in view.query("Static"))
+        assert "Idle model unloaded; retrying deletion…" in retrying
+        assert "PRIVATE-LEASE-PATH" not in retrying
+        assert policy_threads == [app._thread_id]
+
+        retry_release.set()
+        await worker.wait()
 
 
 @pytest.mark.asyncio

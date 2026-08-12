@@ -49,6 +49,10 @@ if TYPE_CHECKING:
 MAX_UNMANAGED_MODELS = 500
 _MODEL_EXTENSIONS = frozenset({".gguf", ".bin", ".safetensors", ".pt", ".pth", ".onnx"})
 _MIN_LEGACY_MODEL_BYTES = 1024 * 1024
+_DELETE_RECOVERY_TEXT = {
+    "recycle-check": "Checking for an idle model to unload…",
+    "recycle-retry": "Idle model unloaded; retrying deletion…",
+}
 
 
 def lifecycle_failure_message(exc: BaseException, *, operation: str) -> str:
@@ -148,7 +152,9 @@ class InstalledView(Widget):
         self._legacy_dir = legacy_dir or Path("~/Downloads/tldw_models").expanduser()
         self._on_root_activated = on_root_activated or (lambda _reference: None)
         self._may_delete = may_delete or (lambda _reference: None)
-        self._recycle_idle = recycle_idle or (lambda _reference: False)
+        self._recycle_idle = (
+            recycle_idle if recycle_idle is not None else lambda _reference: False
+        )
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
         self._usage: ArtifactDiskUsage | None = None
@@ -277,6 +283,16 @@ class InstalledView(Widget):
         if row.size_bytes is not None:
             children.append(Static(f"Size: {format_mib(row.size_bytes)}"))
         children.append(Static(row.action_hint, markup=False))
+        if row.reference == self._operation_reference:
+            recovery_text = _DELETE_RECOVERY_TEXT.get(self._operation_name or "")
+            if recovery_text is not None:
+                children.append(
+                    Static(
+                        recovery_text,
+                        classes="installed-model-muted",
+                        markup=False,
+                    )
+                )
         if row.reference is not None and not row.is_broken:
             children.append(
                 ModelActivationControls(
@@ -513,23 +529,104 @@ class InstalledView(Widget):
 
     @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
     def _delete_model(self, reference: ArtifactRef) -> None:
-        """Delete one exact model without bypassing service leases."""
+        """Delete one exact model, retrying once after proven idle recycle."""
         try:
-            self._service_for_worker().delete(reference)
+            service = self._service_for_worker()
+            service.delete(reference)
+        except ArtifactInUseError as exc:
+            if not self.app.call_from_thread(
+                self._set_delete_phase,
+                reference,
+                "recycle-check",
+            ):
+                return
+            try:
+                recycled = self._recycle_idle(reference)
+            except Exception:
+                logger.error(
+                    "Managed model idle recycle failed for {}@{}/{}",
+                    reference.artifact_id,
+                    reference.revision,
+                    reference.variant,
+                )
+                self.app.call_from_thread(
+                    self._apply_lifecycle_result,
+                    "delete",
+                    "Model deletion failed. See the application log for details.",
+                )
+                return
+            if not recycled:
+                self._finish_delete_failure(reference, exc)
+                return
+            if not self.app.call_from_thread(self._prepare_delete_retry, reference):
+                return
+            try:
+                service.delete(reference)
+            except Exception as retry_exc:
+                self._finish_delete_failure(reference, retry_exc)
+                return
         except Exception as exc:
+            self._finish_delete_failure(reference, exc)
+            return
+        self.app.call_from_thread(self._apply_lifecycle_result, "delete", None)
+
+    def _finish_delete_failure(
+        self,
+        reference: ArtifactRef,
+        exc: BaseException,
+    ) -> None:
+        """Report one final delete failure without exposing lease details."""
+        if isinstance(exc, ArtifactInUseError):
+            logger.warning(
+                "Managed model deletion blocked by a lease for {}@{}/{}",
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+            )
+        else:
             logger.opt(exception=True).error(
                 "Managed model deletion failed for {}@{}/{}",
                 reference.artifact_id,
                 reference.revision,
                 reference.variant,
             )
-            self.app.call_from_thread(
-                self._apply_lifecycle_result,
-                "delete",
-                lifecycle_failure_message(exc, operation="deletion"),
-            )
-            return
-        self.app.call_from_thread(self._apply_lifecycle_result, "delete", None)
+        self.app.call_from_thread(
+            self._apply_lifecycle_result,
+            "delete",
+            lifecycle_failure_message(exc, operation="deletion"),
+        )
+
+    def _set_delete_phase(
+        self,
+        reference: ArtifactRef,
+        phase: str,
+    ) -> bool:
+        """Paint one current delete-recovery phase on the event loop."""
+        if self._operation_reference != reference or self._operation_name not in {
+            "delete",
+            "recycle-check",
+            "recycle-retry",
+        }:
+            return False
+        self._operation_name = phase
+        self.refresh(recompose=True)
+        return True
+
+    def _prepare_delete_retry(self, reference: ArtifactRef) -> bool:
+        """Recheck source policy and authorize one deletion retry."""
+        if (
+            self._operation_reference != reference
+            or self._operation_name != "recycle-check"
+        ):
+            return False
+        blocked = self._may_delete(reference)
+        if blocked is not None:
+            self._operation_reference = None
+            self._operation_name = None
+            self.notify(blocked, severity="warning")
+            self.ensure_loaded(force=True)
+            return False
+        return self._set_delete_phase(reference, "recycle-retry")
 
     @work(thread=True, group="installed_models_lifecycle", exclusive=True, exit_on_error=False)
     def _repair_store(self) -> None:
