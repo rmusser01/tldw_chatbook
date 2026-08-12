@@ -116,6 +116,16 @@ directory. `TLDW_CONFIG_PATH` controls the config file only; it does not relocat
 data paths selected from that config. Keep before/after fingerprints as the final
 backstop because path isolation and proof of non-mutation are separate claims.
 
+**A fourth incident, same rule (TASK-3401.14 / TASK-15674).** A real Textual UAT
+launch set `HOME`, every XDG directory, `TLDW_CONFIG_PATH`, and `[paths].data_dir`
+to one disposable profile. The run itself used the scratch databases and media,
+yet startup still appended built-in default keys to the unrelated user config.
+The mandatory byte-for-byte post-run comparison caught it; existing values had
+not changed, and the exact pre-run snapshot was restored before scratch cleanup.
+Do not delete the recovery snapshot merely because all configured paths look
+isolated. Compare first, restore if necessary, and file any cross-profile writer
+as a product defect.
+
 ---
 
 ## A schema bump is a one-way door for every OTHER worktree on this machine (2026-08-04)
