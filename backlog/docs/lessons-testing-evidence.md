@@ -3022,3 +3022,25 @@ unit, but leave stale-screen UI refresh outside it and normally cancellable. Tes
 must use events or instrumented locks to force both cancel-wins and commit-wins
 orders, including cancellation after commit but before metadata append; a sleep and
 an assertion that “nothing happened yet” are not evidence of ordering.
+
+## Returning from a Textual handler does not make its detached child cancellation-safe
+
+**TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation
+inside the real `Button.Pressed` handler. That kept the screen's MessagePump occupied,
+so the visible Stop press could not run. Moving the operation into an app-owned task
+fixed Stop responsiveness, but the old “outer cancellation drains success” test kept
+passing without ever cancelling anything: it awaited the now-immediate handler return,
+then released and awaited the detached operation normally. Directly cancelling the
+actual operation task exposed the gap—its `asyncio.to_thread()` runner continued while
+the owning coroutine removed the registry entry before durable settlement. App
+shutdown had the same problem because Textual did not drain arbitrary tasks created
+with `asyncio.create_task()`.
+
+**What to do.** For a detached, app-owned operation, test and own cancellation at the
+detached task—not at a caller that has already returned. The owned task must shield the
+real runner, translate cancellation into the exact shared event, await the runner to
+settlement, and only then re-raise. The application shutdown path must explicitly
+cancel and drain those registered tasks before tearing down screens or persistence.
+Use barriers to prove both success-wins (durable append exactly once) and
+cancellation-wins (no card), and mutation-check that the test fails if shielding,
+event propagation, or shutdown draining is removed.
