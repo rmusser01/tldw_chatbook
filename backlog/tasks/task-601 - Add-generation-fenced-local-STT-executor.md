@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-08 08:23'
+updated_date: '2026-08-12 05:06'
 labels:
   - stt
   - processes
@@ -20,6 +20,8 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
   - Docs/superpowers/specs/2026-08-02-task-601-local-stt-executor-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-11-task-601-platform-process-tree-evidence-design.md
   - Docs/superpowers/plans/2026-08-02-task-601-local-stt-executor.md
 priority: high
 ---
