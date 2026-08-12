@@ -3251,8 +3251,7 @@ class RAGService:
           (``template``, ``building``, ``rough``, ``turns``, ``pulls``,
           ``builds``), which no stopword list removes -- and it belongs to
           the RE-SCOPED merge-level follow-up filed off TASK-15400
-          (**TASK-15400-FOLLOWUP-ID-TBD**: the id is backfilled when that
-          task is filed; see the next point for why it is a merge problem
+          (**TASK-15700**; see the next point for why it is a merge problem
           rather than a MATCH problem).
         * **What else was measured, so these four rows do not read as the
           only options.** Reusing the Library four-seam path's

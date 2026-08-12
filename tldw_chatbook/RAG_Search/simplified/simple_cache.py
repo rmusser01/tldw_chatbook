@@ -559,9 +559,15 @@ class SimpleRAGCache:
                 callers).
             keyword_source_types: Optional keyword-leg source-type selection;
                 also part of the key. The synchronous ``get``/``put`` twins
-                deliberately do not take it: no caller can hand them one, so
-                they key without it, and the worst a mixed sync/async
-                workload can produce is a miss -- never a wrong hit.
+                do not take it: no caller can hand them one, so they key
+                without it. Across a MIXED sync/async workload that can only
+                produce a miss (the two paths render different keys). It is
+                NOT safe between two SYNC calls: two sync searches differing
+                only in a dimension the sync key omits render the SAME key,
+                so the second is served the first's rows -- a wrong hit.
+                Latent only because no production code calls the sync API
+                (re-verified at the close of TASK-15400); **TASK-15701**
+                owns closing it.
             hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
                 for a hybrid search; see ``_make_key`` for why this must be
                 part of the key. Same sync-twin exclusion rationale as

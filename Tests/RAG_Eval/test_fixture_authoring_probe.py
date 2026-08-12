@@ -161,7 +161,7 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     still EXPLAINED by the paragraph above — absent CONTENT words, which no
     stopword list removes — and they are part of the residual "39 of 60
     zero-row queries" bound the arc's re-scoped merge-level follow-up owns
-    (**TASK-15400-FOLLOWUP-ID-TBD** — backfill the id when it is filed), because
+    (**TASK-15700**), because
     widening the MATCH form further was measured to break the leg's
     round-robin merge rather than help. The one hit is asserted rather than
     tolerated: if it silently reverted, the winner would not be doing what

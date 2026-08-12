@@ -482,9 +482,12 @@ class SearchConfig:
     # and before the flip that key was CORRECT for a default-config search,
     # while after it a sync-path entry is labelled as if the full AND
     # produced it. No production code calls the sync API today (verified by
-    # grep, and recorded as a Task-1 handover), which is the only reason
-    # this is a note rather than a defect; wiring anything to the sync
-    # twins requires passing the construction first.
+    # grep, and re-verified at the close of TASK-15400), which is the only
+    # reason this is a note rather than a defect; wiring anything to the
+    # sync twins requires passing the construction first. Escalated as
+    # **TASK-15701**, which covers all three dimensions the sync key omits
+    # (this one, `keyword_source_types` and `hybrid_fusion`) rather than
+    # only the construction.
     #
     # An unrecognized value warns once and behaves as "and" (fail-safe to the
     # PRE-ARC behaviour, which is the one every escaping/pushdown pin still
