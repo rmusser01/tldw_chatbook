@@ -144,6 +144,24 @@ it cannot identify; the doubles behind this seam have no `.db`. This covers
 selection, attachments, versions/activity and the entry add/update/delete/reorder
 handlers, which all route through the scope service.
 
+**Review bundle (two follow-up fixes, second commit).**
+1. The AU trigger cleared only `OLD.id`, but the FK's `ON UPDATE CASCADE` has already
+   renamed the index rows to `NEW.id` by the time an AFTER UPDATE trigger fires — so a
+   conversation id change left the OLD dictionary ids indexed under the NEW id
+   (reproduced: one UPDATE changing id and metadata `[1,2]`→`[3]` left 1, 2 AND 3).
+   Both DELETEs now clear `IN (OLD.id, NEW.id)`, which is also what keeps this correct
+   on a connection running without `PRAGMA foreign_keys = ON`. The migration file was
+   amended in place (it has never merged, so no second migration). Test is
+   parametrized over both FK modes and both arms are mutation-checked: `IN (OLD.id)`
+   reds only the FK-on arm, `IN (NEW.id)` reds only the FK-off arm.
+2. Threading made the version-history sidecar reachable from worker threads, where two
+   `_record_history` calls raced on the single `<sidecar>.tmp` write+replace. Closed
+   with a `threading.RLock` around every mutate+persist and every read snapshot
+   (RLock because `_ensure_history_baseline` nests `_record_history`; no deadlock is
+   possible because no caller holds an open DB transaction while taking it). Mutation-
+   checked: with the lock stubbed out the new concurrency test fails 3 runs of 3 with
+   `FileNotFoundError`.
+
 **Measured** (isolated probe, `add_conversation` + metadata writes, medians of 25):
 
 | conversations | click DB work BEFORE | AFTER | used-by BEFORE | AFTER | used-by, 0 hits, BEFORE | AFTER |
@@ -160,16 +178,17 @@ triggers, same probe shape: a metadata-changing `update_conversation` goes 0.097
 (new), `DB/ChaChaNotes_DB.py` (version 35 + runner + step), `DB/sql_validation.py`
 (both tables allowlisted), `Character_Chat/local_chat_dictionary_service.py`,
 `Character_Chat/chat_dictionary_scope_service.py`, `UI/Screens/personas_screen.py`,
-`Tests/Character_Chat/test_dictionary_attachment_index.py` (new, 24 tests),
+`Tests/Character_Chat/test_dictionary_attachment_index.py` (new, 28 tests),
 `Tests/UI/test_personas_dictionaries.py` (+1), `Tests/DB/
 test_chachanotes_console_context_memory_migration.py` (3 current-version
 assertions 34 -> 35), `backlog/docs/lessons-testing-evidence.md`.
 
-**Tests.** New file 24 passed; `Tests/Character_Chat/` 568 passed;
-`Tests/UI/test_personas_dictionaries.py` 79 passed; `Tests/DB/` +
-`Tests/ChaChaNotesDB/` 1046 passed / 34 failed — byte-identical to the pre-change
-baseline (the V33->V34 `duplicate column name: compaction_representation` bug and
-its stale hardcoded-version assertions; not touched). `Tests/UI/
+**Tests** (after the review bundle). New file 28 passed;
+`Tests/Character_Chat/` 573 passed; `Tests/UI/test_personas_dictionaries.py` +
+`test_console_dictionaries_screen.py` 88 passed; `Tests/DB/` +
+`Tests/ChaChaNotesDB/` 1046 passed / 1 skipped / 34 failed — byte-identical to the
+pre-change baseline (the V33->V34 `duplicate column name: compaction_representation`
+bug and its stale hardcoded-version assertions; not touched). `Tests/UI/
 test_console_dictionary_send_integration.py`'s 2 failures were confirmed
 pre-existing by running that file against a pristine copy of the base commit.
 Not fixed here: `Tests/DB/test_sql_validation.py::test_no_missing_tables` stays red

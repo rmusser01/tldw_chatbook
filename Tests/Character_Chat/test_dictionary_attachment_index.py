@@ -278,6 +278,62 @@ class TestIndexMaintenance:
         assert service.list_dictionary_conversations(5)["conversations"] == []
         assert service.list_dictionary_conversations(8)["conversations"] == []
 
+    @pytest.mark.parametrize("foreign_keys", [True, False])
+    def test_conversation_id_change_leaves_no_stale_rows(
+        self, dictionary_db, foreign_keys
+    ):
+        """The FK's ON UPDATE CASCADE runs BEFORE the AFTER UPDATE trigger.
+
+        A conversation id change renames the index rows to NEW.id first, so a
+        trigger deleting only `WHERE conversation_id = OLD.id` matched nothing
+        and the OLD dictionary ids survived under the NEW id -- this exact
+        UPDATE (id AND metadata, [1, 2] -> [3]) used to leave 1, 2 AND 3
+        indexed. Parametrized over `PRAGMA foreign_keys` because the two modes
+        fail in opposite directions: with cascade the stale rows follow the new
+        id, without it they linger under the old one.
+        """
+        service = LocalChatDictionaryService(dictionary_db)
+        conversation_id = dictionary_db.add_conversation({"title": "chat"})
+        record = dictionary_db.get_conversation_by_id(conversation_id)
+        dictionary_db.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps({"active_dictionaries": [1, 2]})},
+            expected_version=record["version"],
+        )
+        conn = dictionary_db.get_connection()
+        if not foreign_keys:
+            conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute(
+                "UPDATE conversations SET id = ?, metadata = ? WHERE id = ?",
+                (
+                    "renamed-conversation",
+                    json.dumps({"active_dictionaries": [3]}),
+                    conversation_id,
+                ),
+            )
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+        assert [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT conversation_id, dictionary_id "
+                "FROM conversation_dictionary_attachments"
+            )
+        ] == [("renamed-conversation", 3)]
+        assert service.list_dictionary_conversations(1)["conversations"] == []
+        assert service.list_dictionary_conversations(2)["conversations"] == []
+        assert [
+            row["conversation_id"]
+            for row in service.list_dictionary_conversations(3)["conversations"]
+        ] == ["renamed-conversation"]
+        # ...and the answer still matches the old scan for every id involved.
+        for dictionary_id in (1, 2, 3):
+            assert service.list_dictionary_conversations(dictionary_id)[
+                "conversations"
+            ] == _reference_used_by(dictionary_db, dictionary_id)
+
     def test_hard_delete_clears_index_rows(self, dictionary_db):
         service = LocalChatDictionaryService(dictionary_db)
         conversation_id = dictionary_db.add_conversation({"title": "chat"})
@@ -559,6 +615,89 @@ class TestBackendRunsOffTheEventLoop:
         assert [row["conversation_id"] for row in result["conversations"]] == [
             conversation_id
         ]
+
+
+class TestHistoryStoreConcurrency:
+    """The version-history sidecar is now reachable from worker threads.
+
+    Before task-15469 every call into this service was serialized by the event
+    loop; threading the scope service means `_record_history`'s
+    mutate-bucket-then-rewrite-`<sidecar>.tmp`-then-replace can run twice at
+    once, which can publish a half-written file and lose appends.
+    """
+
+    def test_concurrent_history_writes_keep_the_sidecar_whole(
+        self, dictionary_db, tmp_path
+    ):
+        """Mutation-checked: with the lock replaced by a no-op this fails
+        3 runs out of 3 with `FileNotFoundError` -- one writer's `replace()`
+        moves the shared `.tmp` file out from under another's."""
+        store = tmp_path / "history.json"
+        service = LocalChatDictionaryService(dictionary_db, history_store_path=store)
+        records = [
+            service.create_dictionary({"name": f"Dictionary {index}"})
+            for index in range(4)
+        ]
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(len(records) * 2)
+
+        def _write(record: dict, revision: int) -> None:
+            try:
+                barrier.wait(timeout=10)
+                service._record_history(
+                    record["id"], "update", {**record, "version": revision}
+                )
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                errors.append(exc)
+
+        def _read(record: dict) -> None:
+            try:
+                barrier.wait(timeout=10)
+                for _ in range(10):
+                    service.list_versions(record["id"])
+                    service.list_activity(record["id"])
+            except BaseException as exc:  # noqa: BLE001 - reported below
+                errors.append(exc)
+
+        threads = []
+        for revision, record in enumerate(records, start=2):
+            threads.append(threading.Thread(target=_write, args=(record, revision)))
+            threads.append(threading.Thread(target=_read, args=(record,)))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not [thread for thread in threads if thread.is_alive()], "deadlock"
+        assert errors == []
+        # The file on disk is whole, and no write was lost.
+        persisted = json.loads(store.read_text(encoding="utf-8"))["dictionaries"]
+        for revision, record in enumerate(records, start=2):
+            revisions = {
+                int(version["revision"])
+                for version in persisted[str(record["id"])]["versions"]
+            }
+            assert revision in revisions, (record["id"], revisions)
+        assert not store.with_suffix(store.suffix + ".tmp").exists()
+
+    def test_nested_history_lock_does_not_deadlock(self, dictionary_db, tmp_path):
+        """`list_versions` -> `_ensure_history_baseline` -> `_record_history`
+        re-enters the lock; a non-reentrant Lock would hang here forever."""
+        service = LocalChatDictionaryService(
+            dictionary_db, history_store_path=tmp_path / "history.json"
+        )
+        created = service.create_dictionary({"name": "Meds"})
+        service._history = {}  # force the baseline-seeding path
+
+        done: list[dict] = []
+        worker = threading.Thread(
+            target=lambda: done.append(service.list_versions(created["id"]))
+        )
+        worker.start()
+        worker.join(timeout=15)
+
+        assert not worker.is_alive(), "nested history lock deadlocked"
+        assert done and done[0]["versions"]
 
 
 class TestMigrationBackfill:

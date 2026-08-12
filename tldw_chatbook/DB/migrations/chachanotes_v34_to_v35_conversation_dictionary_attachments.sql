@@ -117,12 +117,22 @@ BEGIN
          );
 END;
 
+/* The DELETEs clear BOTH ids, not just OLD.id, because the FK's ON UPDATE
+   CASCADE has already run by the time an AFTER UPDATE trigger fires: a
+   conversation id change renames these rows to NEW.id first, so a
+   `WHERE conversation_id = OLD.id` delete matches nothing and the row's OLD
+   dictionary ids survive under the NEW id (reproduced: an UPDATE changing id
+   AND metadata from [1,2] to [3] left 1, 2 AND 3 indexed). Clearing both ids
+   is also what keeps this correct on a connection running WITHOUT
+   `PRAGMA foreign_keys = ON`, where no cascade renames anything. */
 CREATE TRIGGER conversation_dictionary_index_au
 AFTER UPDATE ON conversations
 WHEN NEW.metadata IS NOT OLD.metadata OR NEW.id <> OLD.id
 BEGIN
-  DELETE FROM conversation_dictionary_attachments WHERE conversation_id = OLD.id;
-  DELETE FROM conversation_dictionary_unresolved  WHERE conversation_id = OLD.id;
+  DELETE FROM conversation_dictionary_attachments
+   WHERE conversation_id IN (OLD.id, NEW.id);
+  DELETE FROM conversation_dictionary_unresolved
+   WHERE conversation_id IN (OLD.id, NEW.id);
 
   INSERT OR IGNORE INTO conversation_dictionary_attachments(conversation_id, dictionary_id)
   SELECT NEW.id, CAST(element.value AS INTEGER)

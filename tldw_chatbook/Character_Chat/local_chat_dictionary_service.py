@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -175,6 +176,21 @@ class LocalChatDictionaryService:
             if history_store_path is not None
             else None
         )
+        # The in-memory history and its JSON sidecar are shared mutable state,
+        # and since task-15469 the scope service runs these methods on
+        # `asyncio.to_thread` workers -- they are no longer serialized by the
+        # event loop. Two threads recording history would interleave appends to
+        # the same bucket list AND race on the single `<sidecar>.tmp` write +
+        # replace, which can publish a half-written file. Every mutate+persist
+        # and every read snapshot is taken under this lock.
+        #
+        # RLock, not Lock: `_ensure_history_baseline` holds it across
+        # `_record_history`. Held across `get_dictionary()`'s DB read in that
+        # one path, which cannot deadlock -- no caller holds an open DB
+        # transaction while acquiring this lock (every `_record_history` call
+        # site runs after its DB write has committed), so there is no lock
+        # ordering cycle to close.
+        self._history_lock = threading.RLock()
         self._history: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self._load_history()
 
@@ -193,30 +209,42 @@ class LocalChatDictionaryService:
         try:
             payload = json.loads(self.history_store_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            self._history = {}
+            with self._history_lock:
+                self._history = {}
             return
         dictionaries = (
             payload.get("dictionaries", payload) if isinstance(payload, dict) else {}
         )
-        if not isinstance(dictionaries, dict):
+        with self._history_lock:
+            if not isinstance(dictionaries, dict):
+                self._history = {}
+                return
             self._history = {}
-            return
-        self._history = {}
-        for dictionary_id, bucket in dictionaries.items():
-            if not isinstance(bucket, dict):
-                continue
-            activity = bucket.get("activity", [])
-            versions = bucket.get("versions", [])
-            self._history[str(dictionary_id)] = {
-                "activity": [dict(item) for item in activity if isinstance(item, dict)]
-                if isinstance(activity, list)
-                else [],
-                "versions": [dict(item) for item in versions if isinstance(item, dict)]
-                if isinstance(versions, list)
-                else [],
-            }
+            for dictionary_id, bucket in dictionaries.items():
+                if not isinstance(bucket, dict):
+                    continue
+                activity = bucket.get("activity", [])
+                versions = bucket.get("versions", [])
+                self._history[str(dictionary_id)] = {
+                    "activity": [
+                        dict(item) for item in activity if isinstance(item, dict)
+                    ]
+                    if isinstance(activity, list)
+                    else [],
+                    "versions": [
+                        dict(item) for item in versions if isinstance(item, dict)
+                    ]
+                    if isinstance(versions, list)
+                    else [],
+                }
 
     def _persist_history(self) -> None:
+        """Rewrite the history sidecar. Callers must hold ``_history_lock``.
+
+        The temp path is a single fixed name, so two unserialized writers would
+        interleave their `write_text` + `replace` and could publish a
+        half-written file.
+        """
         if self.history_store_path is None:
             return
         self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +260,11 @@ class LocalChatDictionaryService:
         temp_path.replace(self.history_store_path)
 
     def _history_bucket(self, dictionary_id: int) -> dict[str, list[dict[str, Any]]]:
+        """Return (creating if needed) one dictionary's history bucket.
+
+        Callers must hold ``_history_lock`` -- both the create-if-missing and
+        every use of the returned lists are shared mutable state.
+        """
         key = str(int(dictionary_id))
         if key not in self._history:
             self._history[key] = {"activity": [], "versions": []}
@@ -259,41 +292,42 @@ class LocalChatDictionaryService:
         self, dictionary_id: int, action: str, record: Mapping[str, Any]
     ) -> None:
         snapshot = self._dictionary_snapshot(record)
-        bucket = self._history_bucket(dictionary_id)
-        now = self._now()
-        revision = int(snapshot.get("version", 1) or 1)
-        bucket["activity"].append(
-            {
-                "id": f"local:chat_dictionary_activity:{int(dictionary_id)}:{len(bucket['activity']) + 1}",
+        with self._history_lock:
+            bucket = self._history_bucket(dictionary_id)
+            now = self._now()
+            revision = int(snapshot.get("version", 1) or 1)
+            bucket["activity"].append(
+                {
+                    "id": f"local:chat_dictionary_activity:{int(dictionary_id)}:{len(bucket['activity']) + 1}",
+                    "dictionary_id": int(dictionary_id),
+                    "action": action,
+                    "revision": revision,
+                    "created_at": now,
+                    "source": "local",
+                }
+            )
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(bucket["versions"])
+                    if int(item.get("revision", -1)) == revision
+                ),
+                None,
+            )
+            version_record = {
                 "dictionary_id": int(dictionary_id),
-                "action": action,
                 "revision": revision,
+                "action": action,
+                "name": snapshot.get("name"),
                 "created_at": now,
+                "snapshot": snapshot,
                 "source": "local",
             }
-        )
-        existing_index = next(
-            (
-                index
-                for index, item in enumerate(bucket["versions"])
-                if int(item.get("revision", -1)) == revision
-            ),
-            None,
-        )
-        version_record = {
-            "dictionary_id": int(dictionary_id),
-            "revision": revision,
-            "action": action,
-            "name": snapshot.get("name"),
-            "created_at": now,
-            "snapshot": snapshot,
-            "source": "local",
-        }
-        if existing_index is None:
-            bucket["versions"].append(version_record)
-        else:
-            bucket["versions"][existing_index] = version_record
-        self._persist_history()
+            if existing_index is None:
+                bucket["versions"].append(version_record)
+            else:
+                bucket["versions"][existing_index] = version_record
+            self._persist_history()
 
     def _ensure_history_baseline(
         self, dictionary_id: int, record: Mapping[str, Any] | None = None
@@ -307,13 +341,14 @@ class LocalChatDictionaryService:
                 (task-15469); it is used only when a baseline is actually
                 missing.
         """
-        bucket = self._history_bucket(dictionary_id)
-        if bucket["versions"]:
-            return
-        if record is None:
-            record = self.get_dictionary(int(dictionary_id))
-        if record is not None:
-            self._record_history(int(dictionary_id), "baseline", record)
+        with self._history_lock:
+            bucket = self._history_bucket(dictionary_id)
+            if bucket["versions"]:
+                return
+            if record is None:
+                record = self.get_dictionary(int(dictionary_id))
+            if record is not None:
+                self._record_history(int(dictionary_id), "baseline", record)
 
     def _normalize_dictionary(
         self, record: dict[str, Any] | None
@@ -726,8 +761,12 @@ class LocalChatDictionaryService:
         self, dictionary_id: int, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
         self._ensure_history_baseline(int(dictionary_id))
-        bucket = self._history_bucket(int(dictionary_id))
-        activity = list(reversed(bucket["activity"]))
+        with self._history_lock:
+            # Snapshot under the lock: a concurrent `_record_history` appends
+            # to this very list.
+            activity = list(
+                reversed(self._history_bucket(int(dictionary_id))["activity"])
+            )
         page = activity[offset : offset + limit]
         return {
             "dictionary_id": int(dictionary_id),
@@ -757,12 +796,14 @@ class LocalChatDictionaryService:
                 without a second full load (task-15469).
         """
         self._ensure_history_baseline(int(dictionary_id), record)
-        bucket = self._history_bucket(int(dictionary_id))
-        versions = sorted(
-            bucket["versions"],
-            key=lambda item: int(item.get("revision", 0)),
-            reverse=True,
-        )
+        with self._history_lock:
+            # Snapshot under the lock: a concurrent `_record_history` appends
+            # to (or replaces an item in) this very list.
+            versions = sorted(
+                list(self._history_bucket(int(dictionary_id))["versions"]),
+                key=lambda item: int(item.get("revision", 0)),
+                reverse=True,
+            )
         summaries = [
             {key: value for key, value in version.items() if key != "snapshot"}
             for version in versions
@@ -779,10 +820,10 @@ class LocalChatDictionaryService:
 
     def get_version(self, dictionary_id: int, revision: int) -> dict[str, Any]:
         self._ensure_history_baseline(int(dictionary_id))
-        bucket = self._history_bucket(int(dictionary_id))
-        for version in bucket["versions"]:
-            if int(version.get("revision", -1)) == int(revision):
-                return dict(version)
+        with self._history_lock:
+            for version in list(self._history_bucket(int(dictionary_id))["versions"]):
+                if int(version.get("revision", -1)) == int(revision):
+                    return dict(version)
         raise ValueError(
             f"local_chat_dictionary_version_not_found:{dictionary_id}:{revision}"
         )
