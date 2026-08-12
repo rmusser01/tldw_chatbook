@@ -872,9 +872,7 @@ def test_a_fleet_child_completes_its_model_call_after_the_turn_loop_is_gone(
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
 
     try:
-        outcome = _run(
-            bridge, store, session, aid, conversation_id="conv-cross-turn"
-        )
+        outcome = _run(bridge, store, session, aid, conversation_id="conv-cross-turn")
 
         assert outcome.status == "done"
         assert outcome.final_text == "parent final"
@@ -5366,9 +5364,7 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     try:
         outcome = _run(
             bridge, store, session, assistant.id, conversation_id="conv-survivor"
@@ -5394,9 +5390,7 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
     _join_fleet_threads()
 
     child = next(
-        row
-        for row in db.list_runs("conv-survivor")
-        if row["agent_kind"] == "subagent"
+        row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
     # Settled: the conversation's live fleet is empty again and the
@@ -5445,9 +5439,7 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     handle_box: dict = {}
     try:
         _run(bridge, store, session, assistant.id, conversation_id="conv-survivor")
@@ -5497,9 +5489,7 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     _join_fleet_threads()
 
     child = next(
-        row
-        for row in db.list_runs("conv-survivor")
-        if row["agent_kind"] == "subagent"
+        row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
 
@@ -5585,18 +5575,14 @@ def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     try:
         _run(bridge, store, session, assistant.id, conversation_id="conv-cap")
         assert gateway.entered_event.wait(5), "turn 1's children never started"
         assert len(bridge.fleet_snapshot("conv-cap")) == 2
 
         second = _second_turn_message(store, session)
-        outcome_2 = _run(
-            bridge, store, session, second, conversation_id="conv-cap"
-        )
+        outcome_2 = _run(bridge, store, session, second, conversation_id="conv-cap")
         assert outcome_2.status == "done"
 
         # The cap held: turn 2's spawn was refused, and refused
@@ -5614,9 +5600,7 @@ def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
         # No third child was ever created -- the refusal happens before
         # any run row or thread exists.
         child_rows = [
-            row
-            for row in db.list_runs("conv-cap")
-            if row["agent_kind"] == "subagent"
+            row for row in db.list_runs("conv-cap") if row["agent_kind"] == "subagent"
         ]
         assert len(child_rows) == 2, [row["task"] for row in child_rows]
     finally:
@@ -5836,21 +5820,17 @@ def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
     _run(bridge, store, session, aid, conversation_id="conv-live-prune")
     _join_fleet_threads()
     # Turn 1: its own summary slot plus its child's own slot.
-    assert len(bridge._live["conv-live-prune"]) == 2, bridge._live[
-        "conv-live-prune"
-    ]
+    assert len(bridge._live["conv-live-prune"]) == 2, bridge._live["conv-live-prune"]
 
     second = _second_turn_message(store, session)
     _run(bridge, store, session, second, conversation_id="conv-live-prune")
     _join_fleet_threads()
 
     assert len(bridge._live["conv-live-prune"]) == 2, (
-        "turn 1's finished slots were never dropped: "
-        f"{bridge._live['conv-live-prune']}"
+        f"turn 1's finished slots were never dropped: {bridge._live['conv-live-prune']}"
     )
     assert (
-        bridge._live_primary_keys["conv-live-prune"]
-        in bridge._live["conv-live-prune"]
+        bridge._live_primary_keys["conv-live-prune"] in bridge._live["conv-live-prune"]
     )
 
 
@@ -5886,16 +5866,12 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store, provider_gateway=object(), agent_bridge=bridge
     )
     try:
-        outcome = _run(
-            bridge, store, session, assistant.id, conversation_id=session.id
-        )
+        outcome = _run(bridge, store, session, assistant.id, conversation_id=session.id)
         assert outcome.status == "done"
         assert gateway.entered_event.wait(5), "the child never started"
 

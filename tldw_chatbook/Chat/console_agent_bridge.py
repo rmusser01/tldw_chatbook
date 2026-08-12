@@ -1371,8 +1371,7 @@ class _StreamingModelAdapter:
         # promptly; a wedged one would make every such sweep burn its full
         # timeout. The handle still identifies it.
         lifeline = _ModelCallLifeline(
-            "child-loop-"
-            + threading.current_thread().name.removeprefix("fleet-")
+            "child-loop-" + threading.current_thread().name.removeprefix("fleet-")
         )
         try:
             lifeline.start()
@@ -2751,9 +2750,7 @@ class ConsoleAgentBridge:
         #: run key -> that run's own live step feed. The primary's entry is
         #: `live_steps` itself, so every existing reader of that local is
         #: unchanged.
-        run_live_steps: dict[str, list[AgentLiveStep]] = {
-            primary_live_key: live_steps
-        }
+        run_live_steps: dict[str, list[AgentLiveStep]] = {primary_live_key: live_steps}
         self._publish_live(
             conversation_id,
             primary_live_key,
@@ -2999,9 +2996,7 @@ class ConsoleAgentBridge:
             # still visible and stoppable through. `None` when the fleet
             # kill switch is on, which leaves `AgentService` to take its
             # own inline path exactly as before.
-            fleet_coordinator=self._conversation_fleet_coordinator(
-                conversation_id
-            ),
+            fleet_coordinator=self._conversation_fleet_coordinator(conversation_id),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
         # `self._fleet_services`'s own docstring in `__init__` for the
@@ -3125,15 +3120,11 @@ class ConsoleAgentBridge:
                     # exactly one of them, never in the crack between and
                     # never on both cards.
                     self._close_post_turn_change_window(conversation_id)
-                    _steps = (
-                        outcome.steps if "outcome" in locals() else []
-                    )
+                    _steps = outcome.steps if "outcome" in locals() else []
                     # Read before E: a child still running when the end
                     # snapshot is taken is a child whose later writes this
                     # turn's record cannot contain.
-                    _had_live_children = (
-                        self._live_child_count(conversation_id) > 0
-                    )
+                    _had_live_children = self._live_child_count(conversation_id) > 0
                     _records = self._change_tracker.end_turn(
                         change_handle,
                         touched_paths=ChangeTurnTracker.tool_touched_paths(_steps),
@@ -3282,9 +3273,7 @@ class ConsoleAgentBridge:
         # own children) -- `service` is this call's own object either way.
         if service.live_subagent_handles():
             with self._fleet_survivor_lock:
-                retained = self._fleet_survivor_services.setdefault(
-                    conversation_id, []
-                )
+                retained = self._fleet_survivor_services.setdefault(conversation_id, [])
                 if service not in retained:
                     retained.append(service)
 
@@ -3450,9 +3439,7 @@ class ConsoleAgentBridge:
                 # running well before the successor turn ends.
                 window.successor.await_baseline()
                 end_shas = dict(window.successor.baselines)
-            records = self._change_tracker.end_turn(
-                window.handle, end_shas=end_shas
-            )
+            records = self._change_tracker.end_turn(window.handle, end_shas=end_shas)
             if not records:
                 return
             self._record_change_snapshots(
@@ -3534,9 +3521,7 @@ class ConsoleAgentBridge:
             if not retained:
                 return
             still_live = [
-                service
-                for service in retained
-                if service.live_subagent_handles()
+                service for service in retained if service.live_subagent_handles()
             ]
             if still_live:
                 self._fleet_survivor_services[conversation_id] = still_live
@@ -3605,9 +3590,7 @@ class ConsoleAgentBridge:
         coordinator.prune_terminal()
         return coordinator
 
-    def _conversation_fleet_handles(
-        self, conversation_id: str
-    ) -> list[FleetHandle]:
+    def _conversation_fleet_handles(self, conversation_id: str) -> list[FleetHandle]:
         """Every handle this conversation's coordinator still holds.
 
         Terminal ones included -- this is the rail's source for "the
@@ -3660,9 +3643,7 @@ class ConsoleAgentBridge:
             return snapshot
         return dataclass_replace(
             snapshot,
-            subagents=_subagent_summaries_from_fleet(
-                handles, list(snapshot.subagents)
-            ),
+            subagents=_subagent_summaries_from_fleet(handles, list(snapshot.subagents)),
         )
 
     def live_run_snapshot(
@@ -4211,8 +4192,7 @@ class ConsoleAgentBridge:
                     )
                 )
                 if _rows is turn_rows and any(
-                    str(r.get("kind") or "")
-                    == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                    str(r.get("kind") or "") == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
                     for r in clean
                 ):
                     block.append(
