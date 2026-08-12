@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import struct
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
 from hashlib import sha256
 from io import BytesIO
 from uuid import UUID
@@ -27,6 +28,7 @@ from tldw_chatbook.TTS.voice_bundle_codec import (
     encode_clone_voice_bundle,
     inspect_clone_voice_bundle,
 )
+import tldw_chatbook.TTS.voice_bundle_codec as codec
 
 
 def canonical_wav() -> bytes:
@@ -69,6 +71,38 @@ def canonical_bundle() -> TTSCloneVoiceBundle:
             model_id="model-界",
         ),
     )
+
+
+def _codec_traceback_values(error: BaseException) -> list[object]:
+    pending: list[object] = []
+    current = error.__traceback__
+    while current is not None:
+        if current.tb_frame.f_globals.get("__name__") == codec.__name__:
+            pending.extend(current.tb_frame.f_locals.values())
+        current = current.tb_next
+    values: list[object] = []
+    seen: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        values.append(value)
+        if type(value) is dict:
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif type(value) in (list, tuple, set, frozenset):
+            pending.extend(value)
+        elif isinstance(value, BaseException):
+            pending.extend(value.args)
+            pending.extend(
+                item
+                for item in (value.__cause__, value.__context__)
+                if item is not None
+            )
+        elif not isinstance(value, type) and is_dataclass(value):
+            pending.extend(getattr(value, field.name) for field in fields(value))
+    return values
 
 
 def test_writer_emits_exact_deterministic_four_member_bundle() -> None:
@@ -293,3 +327,233 @@ def test_sink_collaborator_failure_severs_private_traceback_locals_and_graph() -
     assert private_transcript not in rendered
     assert private_path not in rendered
     assert "FailingSink" not in rendered
+
+
+@pytest.mark.parametrize(
+    "raised_type", [asyncio.CancelledError, KeyboardInterrupt, SystemExit]
+)
+def test_sink_control_flow_is_redelivered_fresh_without_private_locals(
+    raised_type: type[BaseException],
+) -> None:
+    private_transcript = "PRIVATE CONTROL FLOW TRANSCRIPT"
+    source = canonical_bundle()
+    source = replace(
+        source,
+        reference=replace(source.reference, reference_text=private_transcript),
+    )
+    private_archive = encode_clone_voice_bundle(source)
+    private_path = "/private/staging/PRIVATE-CONTROL-FLOW"
+
+    class InterruptingSink(BytesIO):
+        def seek(self, *_args, **_kwargs):
+            raise raised_type(private_path)
+
+        def __repr__(self) -> str:
+            return private_path
+
+    private_sink = InterruptingSink()
+    sinks = TTSVoiceBundleSinks(
+        manifest_json=private_sink,
+        profile_json=BytesIO(),
+        reference_wav=BytesIO(),
+        reference_txt=BytesIO(),
+    )
+
+    with pytest.raises(raised_type) as caught:
+        inspect_clone_voice_bundle(private_archive, sinks=sinks)
+
+    rendered = ""
+    current = caught.value.__traceback__
+    while current is not None:
+        if current.tb_frame.f_globals.get("__name__") == (
+            "tldw_chatbook.TTS.voice_bundle_codec"
+        ):
+            rendered += repr(current.tb_frame.f_locals)
+        current = current.tb_next
+    assert caught.value.args == ()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert repr(private_archive) not in rendered
+    assert private_transcript not in rendered
+    assert private_path not in rendered
+    assert "InterruptingSink" not in rendered
+    values = _codec_traceback_values(caught.value)
+    assert all(value is not private_archive for value in values)
+    assert all(value is not private_sink for value in values)
+    assert private_archive not in [value for value in values if type(value) is bytes]
+    assert private_transcript not in [value for value in values if type(value) is str]
+    assert private_path not in [value for value in values if type(value) is str]
+
+
+def test_sink_non_control_base_exception_is_normalized_and_severed() -> None:
+    private_archive = encode_clone_voice_bundle(canonical_bundle())
+    private_path = "/private/staging/PRIVATE-GENERATOR-EXIT"
+
+    class ExitingSink(BytesIO):
+        def seek(self, *_args, **_kwargs):
+            raise GeneratorExit(private_path)
+
+    private_sink = ExitingSink()
+    sinks = TTSVoiceBundleSinks(
+        manifest_json=private_sink,
+        profile_json=BytesIO(),
+        reference_wav=BytesIO(),
+        reference_txt=BytesIO(),
+    )
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(private_archive, sinks=sinks)
+
+    values = _codec_traceback_values(caught.value)
+    assert caught.value.code == "bundle_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert all(value is not private_archive for value in values)
+    assert all(value is not private_sink for value in values)
+    assert private_archive not in [value for value in values if type(value) is bytes]
+    assert private_path not in [value for value in values if type(value) is str]
+
+
+@pytest.mark.parametrize("alias_pair", [(0, 1), (1, 3), (2, 3)])
+def test_duplicate_sink_identity_is_refused_before_any_sink_mutation(
+    alias_pair: tuple[int, int],
+) -> None:
+    touched: list[str] = []
+
+    class TrackingSink(BytesIO):
+        def read(self, *_args, **_kwargs):
+            touched.append("read")
+            return super().read(*_args, **_kwargs)
+
+        def seek(self, *_args, **_kwargs):
+            touched.append("seek")
+            return super().seek(*_args, **_kwargs)
+
+        def truncate(self, *_args, **_kwargs):
+            touched.append("truncate")
+            return super().truncate(*_args, **_kwargs)
+
+        def write(self, *_args, **_kwargs):
+            touched.append("write")
+            return super().write(*_args, **_kwargs)
+
+    streams = [TrackingSink(f"original-{index}".encode()) for index in range(4)]
+    streams[alias_pair[1]] = streams[alias_pair[0]]
+    before = [stream.getvalue() for stream in streams]
+    sinks = TTSVoiceBundleSinks(*streams)
+
+    with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
+        inspect_clone_voice_bundle(
+            encode_clone_voice_bundle(canonical_bundle()), sinks=sinks
+        )
+
+    assert [stream.getvalue() for stream in streams] == before
+    assert touched == []
+
+
+def test_sink_capabilities_are_rejected_before_any_sink_mutation() -> None:
+    class NotWritable(BytesIO):
+        def writable(self) -> bool:
+            return False
+
+    streams = [BytesIO(f"original-{index}".encode()) for index in range(3)]
+    invalid = NotWritable(b"original-invalid")
+    before = [stream.getvalue() for stream in [invalid, *streams]]
+    sinks = TTSVoiceBundleSinks(invalid, *streams)
+
+    with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
+        inspect_clone_voice_bundle(
+            encode_clone_voice_bundle(canonical_bundle()), sinks=sinks
+        )
+
+    assert [stream.getvalue() for stream in [invalid, *streams]] == before
+
+
+def test_encoder_collaborator_failure_is_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = canonical_bundle()
+    transcript = source.reference.reference_text
+    wav = source.reference.wav_bytes
+    original = ZipFile.writestr
+
+    def fail(self, info, data, *args, **kwargs):
+        if getattr(info, "filename", "") == "profile.json":
+            raise RuntimeError(f"{transcript}:{wav.hex()}")
+        return original(self, info, data, *args, **kwargs)
+
+    monkeypatch.setattr(ZipFile, "writestr", fail)
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        encode_clone_voice_bundle(source)
+
+    rendered = ""
+    current = caught.value.__traceback__
+    while current is not None:
+        if current.tb_frame.f_globals.get("__name__") == (
+            "tldw_chatbook.TTS.voice_bundle_codec"
+        ):
+            rendered += repr(current.tb_frame.f_locals)
+        current = current.tb_next
+    assert caught.value.code == "bundle_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    values = _codec_traceback_values(caught.value)
+    assert all(value is not source.profile.draft for value in values)
+    assert transcript not in [value for value in values if type(value) is str]
+    assert wav not in [value for value in values if type(value) is bytes]
+    assert transcript not in rendered
+    assert wav.hex() not in rendered
+
+
+@pytest.mark.parametrize(
+    "raised_type", [asyncio.CancelledError, KeyboardInterrupt, SystemExit]
+)
+def test_encoder_control_flow_is_redelivered_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+    raised_type: type[BaseException],
+) -> None:
+    source = canonical_bundle()
+    transcript = source.reference.reference_text
+
+    def interrupt(*_args, **_kwargs):
+        raise raised_type(transcript)
+
+    monkeypatch.setattr(ZipFile, "writestr", interrupt)
+
+    with pytest.raises(raised_type) as caught:
+        encode_clone_voice_bundle(source)
+
+    assert caught.value.args == ()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    values = _codec_traceback_values(caught.value)
+    assert all(value is not source for value in values)
+    assert all(value is not source.profile.draft for value in values)
+    assert transcript not in [value for value in values if type(value) is str]
+
+
+@pytest.mark.parametrize("raised_type", [RuntimeError, GeneratorExit])
+def test_encoder_failing_stream_is_normalized_without_private_graph(
+    monkeypatch: pytest.MonkeyPatch,
+    raised_type: type[BaseException],
+) -> None:
+    source = canonical_bundle()
+    transcript = source.reference.reference_text
+
+    class FailingStream(BytesIO):
+        def write(self, _payload) -> int:
+            raise raised_type(transcript)
+
+    monkeypatch.setattr(codec, "BytesIO", FailingStream)
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        encode_clone_voice_bundle(source)
+
+    values = _codec_traceback_values(caught.value)
+    assert caught.value.code == "bundle_invalid"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert all(value is not source for value in values)
+    assert all(value is not source.profile.draft for value in values)
+    assert transcript not in [value for value in values if type(value) is str]

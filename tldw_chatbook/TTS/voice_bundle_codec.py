@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import stat
@@ -52,6 +53,9 @@ _JSON_CHUNK_BYTES = 64 * 1024
 TTSVoiceBundleErrorCode = Literal[
     "bundle_invalid", "bundle_limit_exceeded", "unsupported_bundle"
 ]
+_ControlFlowCode = Literal["cancelled", "keyboard_interrupt", "system_exit"]
+_FailureCode = TTSVoiceBundleErrorCode | _ControlFlowCode
+_CONTROL_FLOW_CODES = frozenset({"cancelled", "keyboard_interrupt", "system_exit"})
 _ERROR_CODES = frozenset(
     {"bundle_invalid", "bundle_limit_exceeded", "unsupported_bundle"}
 )
@@ -110,7 +114,12 @@ class TTSCloneVoiceBundle:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class TTSVoiceBundleSinks:
-    """Caller-owned fixed destinations for validated member bytes."""
+    """Caller-owned, nontransactional destinations for validated member bytes.
+
+    A sink failure may leave partial data in any destination. The portability
+    service must discard its fresh staging destinations after failure; the codec
+    does not roll them back.
+    """
 
     manifest_json: BinaryIO
     profile_json: BinaryIO
@@ -240,9 +249,7 @@ def _manifest_payload(
     }
 
 
-def encode_clone_voice_bundle(source: TTSCloneVoiceBundle) -> bytes:
-    """Return the deterministic four-member ZIP for one canonical clone voice."""
-
+def _encode_bundle(source: TTSCloneVoiceBundle) -> bytes:
     if type(source) is not TTSCloneVoiceBundle:
         raise TTSVoiceBundleError("bundle_invalid")
     profile = _canonical_json(_profile_payload(source))
@@ -617,7 +624,9 @@ def _validate_profile(value: dict[str, object]) -> PortableTTSProfile:
             }
         ),
     )
-    if type(profile["schema_version"]) is not int or profile["schema_version"] != 1:
+    if type(profile["schema_version"]) is not int:
+        raise ValueError
+    if profile["schema_version"] != 1:
         raise TTSVoiceBundleError("unsupported_bundle")
     profile_id = profile["profile_id"]
     if type(profile_id) is not str:
@@ -674,11 +683,11 @@ def _validate_manifest(
             }
         ),
     )
-    if (
-        type(manifest["schema_version"]) is not int
-        or manifest["schema_version"] != 1
-        or manifest["bundle_format"] != "tldw_chatbook.clone_voice_bundle"
-    ):
+    if type(manifest["schema_version"]) is not int:
+        raise ValueError
+    if manifest["schema_version"] != 1:
+        raise TTSVoiceBundleError("unsupported_bundle")
+    if manifest["bundle_format"] != "tldw_chatbook.clone_voice_bundle":
         raise TTSVoiceBundleError("unsupported_bundle")
     declaration = _exact_object(
         manifest["declaration"],
@@ -753,10 +762,14 @@ def _decode_bundle(
     payload: bytes,
     sinks: TTSVoiceBundleSinks | None,
 ) -> TTSCloneVoiceBundle:
+    if sinks is None:
+        destinations = _default_sinks()
+    else:
+        if type(sinks) is not TTSVoiceBundleSinks:
+            raise ValueError
+        destinations = sinks
+        _validate_sinks(destinations)
     layouts = _validate_layout(payload)
-    destinations = sinks if type(sinks) is TTSVoiceBundleSinks else _default_sinks()
-    if sinks is not None and type(sinks) is not TTSVoiceBundleSinks:
-        raise ValueError
     members = {
         layout.name: _stream_member(
             payload,
@@ -794,35 +807,102 @@ def _decode_bundle(
     )
 
 
+def _validate_sinks(sinks: TTSVoiceBundleSinks) -> None:
+    destinations = (
+        sinks.manifest_json,
+        sinks.profile_json,
+        sinks.reference_wav,
+        sinks.reference_txt,
+    )
+    if len({id(destination) for destination in destinations}) != len(destinations):
+        raise ValueError
+    methods = (
+        "flush",
+        "read",
+        "readable",
+        "seek",
+        "seekable",
+        "truncate",
+        "write",
+        "writable",
+    )
+    for destination in destinations:
+        if any(not callable(getattr(destination, method, None)) for method in methods):
+            raise ValueError
+        if (
+            destination.readable() is not True
+            or destination.seekable() is not True
+            or destination.writable() is not True
+        ):
+            raise ValueError
+
+
+def _classify_and_sever(error: BaseException) -> _FailureCode:
+    if type(error) is asyncio.CancelledError:
+        code: _FailureCode = "cancelled"
+    elif type(error) is KeyboardInterrupt:
+        code = "keyboard_interrupt"
+    elif type(error) is SystemExit:
+        code = "system_exit"
+    elif type(error) is TTSVoiceBundleError:
+        code = error.code
+    else:
+        code = "bundle_invalid"
+    BaseException.__setattr__(error, "__traceback__", None)
+    BaseException.__setattr__(error, "__cause__", None)
+    BaseException.__setattr__(error, "__context__", None)
+    return code
+
+
+def _encode_outcome(source: TTSCloneVoiceBundle) -> bytes | _FailureCode:
+    try:
+        return _encode_bundle(source)
+    except BaseException as error:
+        code = _classify_and_sever(error)
+        return code if code in _CONTROL_FLOW_CODES else "bundle_invalid"
+
+
 def _inspect_outcome(
     payload: bytes,
-) -> TTSCloneVoiceBundle | TTSVoiceBundleErrorCode:
+) -> TTSCloneVoiceBundle | _FailureCode:
     try:
         if type(payload) is not bytes:
             raise ValueError
         return _decode_bundle(payload, None)
-    except TTSVoiceBundleError as error:
-        return error.code
-    except Exception:
-        return "bundle_invalid"
+    except BaseException as error:
+        return _classify_and_sever(error)
 
 
 def _inspect_outcome_with_sinks(
     payload: bytes,
     sinks: TTSVoiceBundleSinks,
-) -> TTSCloneVoiceBundle | TTSVoiceBundleErrorCode:
+) -> TTSCloneVoiceBundle | _FailureCode:
     try:
         if type(payload) is not bytes or type(sinks) is not TTSVoiceBundleSinks:
             raise ValueError
         return _decode_bundle(payload, sinks)
-    except TTSVoiceBundleError as error:
-        return error.code
-    except Exception:
-        return "bundle_invalid"
+    except BaseException as error:
+        return _classify_and_sever(error)
 
 
-def _raise_bundle_error(code: TTSVoiceBundleErrorCode) -> NoReturn:
+def _raise_failure(code: _FailureCode) -> NoReturn:
+    if code == "cancelled":
+        raise asyncio.CancelledError() from None
+    if code == "keyboard_interrupt":
+        raise KeyboardInterrupt() from None
+    if code == "system_exit":
+        raise SystemExit() from None
     raise TTSVoiceBundleError(code) from None
+
+
+def encode_clone_voice_bundle(source: TTSCloneVoiceBundle) -> bytes:
+    """Return the deterministic four-member ZIP for one canonical clone voice."""
+
+    outcome = _encode_outcome(source)
+    del source
+    if type(outcome) is str:
+        _raise_failure(outcome)
+    return cast(bytes, outcome)
 
 
 def inspect_clone_voice_bundle(
@@ -839,7 +919,7 @@ def inspect_clone_voice_bundle(
     )
     del payload, sinks
     if type(outcome) is str:
-        _raise_bundle_error(outcome)
+        _raise_failure(outcome)
     return cast(TTSCloneVoiceBundle, outcome)
 
 

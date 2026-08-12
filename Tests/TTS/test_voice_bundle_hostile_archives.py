@@ -312,6 +312,9 @@ def test_generated_declared_size_disagreement_is_rejected(delta: int) -> None:
         lambda value: {**value, "unexpected": True},
         lambda value: {**value, "schema_version": 2},
         lambda value: {**value, "schema_version": True},
+        lambda value: {**value, "schema_version": None},
+        lambda value: {**value, "schema_version": "1"},
+        lambda value: {**value, "schema_version": 1.0},
         lambda value: {**value, "bundle_format": "other"},
         lambda value: {
             **value,
@@ -367,6 +370,9 @@ def test_manifest_schema_dependency_facts_and_checksums_are_exact(
         lambda value: {**value, "unexpected": True},
         lambda value: {**value, "schema_version": 2},
         lambda value: {**value, "schema_version": True},
+        lambda value: {**value, "schema_version": None},
+        lambda value: {**value, "schema_version": "1"},
+        lambda value: {**value, "schema_version": 1.0},
         lambda value: {**value, "profile_id": "0123456789ab4cde8fab0123456789ab"},
         lambda value: {**value, "name": " leading"},
         lambda value: {**value, "provider_id": "openai"},
@@ -390,6 +396,40 @@ def test_profile_schema_is_exact_even_when_manifest_checksum_is_updated(
 
     with pytest.raises(TTSVoiceBundleError):
         inspect_clone_voice_bundle(_pack_members(values))
+
+
+@pytest.mark.parametrize("member", ["manifest.json", "profile.json"])
+@pytest.mark.parametrize(
+    ("version", "expected_code"),
+    [
+        (None, "bundle_invalid"),
+        (True, "bundle_invalid"),
+        ("1", "bundle_invalid"),
+        (1.0, "bundle_invalid"),
+        (2, "unsupported_bundle"),
+    ],
+)
+def test_schema_version_error_taxonomy_is_exact(
+    member: str,
+    version: object,
+    expected_code: str,
+) -> None:
+    values = _members()
+    changed = json.loads(values[member])
+    changed["schema_version"] = version
+    values[member] = _canonical_json(changed)
+    if member == "profile.json":
+        manifest = json.loads(values["manifest.json"])
+        manifest["entries"]["profile.json"] = {
+            "sha256": __import__("hashlib").sha256(values[member]).hexdigest(),
+            "size": len(values[member]),
+        }
+        values["manifest.json"] = _canonical_json(manifest)
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(_pack_members(values))
+
+    assert caught.value.code == expected_code
 
 
 @pytest.mark.parametrize(
