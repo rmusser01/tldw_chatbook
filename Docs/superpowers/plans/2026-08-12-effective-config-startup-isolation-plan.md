@@ -35,7 +35,7 @@ boundary; no new storage, security, runtime, or cross-module decision.
 - Verify unchanged: `tldw_chatbook/config.py`
 - Verify unchanged: `tldw_chatbook/app.py`
 
-- [ ] **Step 1: Write the isolated lifecycle test**
+- [x] **Step 1: Write the isolated lifecycle test**
 
 Create `Tests/ProductionApp/test_config_profile_isolation.py` with this intended
 shape (adjust only for observed Textual lifecycle details):
@@ -217,7 +217,7 @@ deliberately does not require `effective_config` bytes to change: a future
 idempotent persistence optimization is valid. The explicit selected-path boolean
 and sparse decoy make the production path mutation in Step 3 observable.
 
-- [ ] **Step 2: Run the unmodified characterization**
+- [x] **Step 2: Run the unmodified characterization**
 
 Run:
 
@@ -231,7 +231,7 @@ Expected: PASS on current `dev`. If it fails, stop and diagnose before changing
 production; the approved design is based on current behavior already satisfying
 the contract.
 
-- [ ] **Step 3: Mutation-prove the production boundary**
+- [x] **Step 3: Mutation-prove the production boundary**
 
 With `apply_patch`, temporarily replace the selection in
 `tldw_chatbook.config._get_effective_config_path()`:
@@ -249,7 +249,7 @@ candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
 
 Re-run the named test. Expected: PASS. Do not stage or commit the mutation.
 
-- [ ] **Step 4: Run the focused config controls**
+- [x] **Step 4: Run the focused config controls**
 
 Run:
 
@@ -265,7 +265,7 @@ Run:
 Expected: all selected tests pass. Do not expand to full test files or the full
 suite.
 
-- [ ] **Step 5: Commit the regression**
+- [x] **Step 5: Commit the regression**
 
 ```bash
 git add Tests/ProductionApp/test_config_profile_isolation.py
@@ -284,7 +284,7 @@ git commit -m "test: lock effective config lifecycle isolation"
 - Modify: `backlog/docs/lessons-live-verification.md`
 - Modify: `backlog/tasks/task-15674 - Honor-TLDW_CONFIG_PATH-when-persisting-startup-defaults.md`
 
-- [ ] **Step 1: Correct the UAT and parent-task wording**
+- [x] **Step 1: Correct the UAT and parent-task wording**
 
 Preserve the facts that a fingerprint change was observed and the validated
 snapshot was restored as a precaution. Replace the unsupported causal claim with
@@ -292,7 +292,7 @@ the controlled result: current `dev` persisted only the effective profile during
 fully isolated startup-to-approved-quit lifecycle, while the decoy default stayed
 byte-identical.
 
-- [ ] **Step 2: Record the generalizable lesson**
+- [x] **Step 2: Record the generalizable lesson**
 
 Rewrite the TASK-3401.14/TASK-15674 incident in
 `backlog/docs/lessons-live-verification.md` to explain that fingerprint drift proves
@@ -300,7 +300,7 @@ mutation, not writer identity. Retain the concrete incident: the original restor
 was appropriate, but a controlled decoy/effective-profile reproduction did not
 reproduce a cross-profile app write.
 
-- [ ] **Step 3: Prepare accurate TASK-15674 closeout notes**
+- [x] **Step 3: Prepare accurate TASK-15674 closeout notes**
 
 Update the task description to remove the reproduced-defect claim. Check all five
 acceptance criteria and add concise Implementation Notes containing:
@@ -324,7 +324,7 @@ Keep status In Progress until Task 3 verification passes.
 - Modify: `Docs/superpowers/plans/2026-08-12-effective-config-startup-isolation-plan.md`
 - Modify: `backlog/tasks/task-15674 - Honor-TLDW_CONFIG_PATH-when-persisting-startup-defaults.md`
 
-- [ ] **Step 1: Run touched-file test and static gates**
+- [x] **Step 1: Run touched-file test and static gates**
 
 Run the exact focused pytest command from Task 1, then:
 
@@ -336,7 +336,7 @@ Run the exact focused pytest command from Task 1, then:
 Compile the new Python test with `py_compile` to a `TemporaryDirectory`; do not
 write `.pyc` files into the repository.
 
-- [ ] **Step 2: Run repository hygiene checks**
+- [x] **Step 2: Run repository hygiene checks**
 
 Run `git diff --check`, then verify:
 
@@ -345,12 +345,12 @@ Run `git diff --check`, then verify:
 - `tldw_chatbook/config.py` and `tldw_chatbook/app.py` have no final diff;
 - the exact branch diff satisfies the spec and all five acceptance criteria.
 
-- [ ] **Step 3: Mark TASK-15674 Done**
+- [x] **Step 3: Mark TASK-15674 Done**
 
 After all gates pass, use Backlog.md CLI to set TASK-15674 to Done with final
 Implementation Notes and all five acceptance criteria checked.
 
-- [ ] **Step 4: Commit closeout documentation**
+- [x] **Step 4: Commit closeout documentation**
 
 Stage only the four documentation/task files plus this plan, verify the cached
 diff, and commit:
@@ -359,7 +359,7 @@ diff, and commit:
 git commit -m "docs: close config profile isolation task"
 ```
 
-- [ ] **Step 5: Verify final branch state**
+- [x] **Step 5: Verify final branch state**
 
 Confirm normal `git status --short` is clean, production code is unchanged from
 `origin/dev`, and the final report states focused test counts and warnings without
