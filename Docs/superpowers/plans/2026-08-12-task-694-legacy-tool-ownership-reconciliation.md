@@ -288,7 +288,7 @@ In ADR-032 and TASK-1354, make these exact distinctions:
 
 - both `web_search` and `web_fetch` remain ordinary permission-gated local tools;
 - `web_fetch` alone enforces public HTTP(S) target and redirect-hop validation;
-- `web_search` sends the query through the operator-configured search backend, and a configured Searx endpoint may be local;
+- for each `web_search` invocation, the caller/model selects one allowlisted search engine, which determines the destination; the operator supplies supported per-engine credentials and configurable endpoints where available; fixed-endpoint engines remain implementation-defined; a configured Searx endpoint may be local; and `web_search` does not apply public-target validation;
 - this is documentation truthfulness only, not an egress-policy change.
 
 Do not alter TASK-1354's Done status or checked ACs.

@@ -79,11 +79,13 @@ silent filesystem access, writes, or network egress.
 are ordinary `local:<name>` tools, not privileged built-ins. Fresh and missing
 permission state therefore remains `ask` for both tools; catalog availability
 never implies network authorization. For each `web_search` invocation, the
-caller/model chooses one allowlisted `search_engine`. The operator controls
-that engine's backend-specific endpoints and credentials; a configured Searx
-endpoint may be local. `web_search` does not public-target validate the selected
-backend. `web_fetch` accepts only HTTP(S) targets whose complete DNS answer is
-public and repeats that check for every redirect hop. Private, loopback,
+caller/model selects one allowlisted `search_engine`, and that selection
+determines the destination. The operator supplies supported per-engine
+credentials and configurable endpoints where available; fixed-endpoint engines
+remain implementation-defined. A configured Searx endpoint may be local.
+`web_search` does not apply public-target validation. `web_fetch` accepts only
+HTTP(S) targets whose complete DNS answer is public and repeats that check for
+every redirect hop. Private, loopback,
 link-local, reserved, multicast, unspecified, cloud-metadata, and unresolvable
 fetch targets fail before transport. There is no per-domain approval bypass in
 the local-tool contract.
