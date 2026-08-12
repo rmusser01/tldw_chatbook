@@ -44,9 +44,9 @@ _PYTHON_VERSION = re.compile(r"3\.12\.[0-9]+\Z")
 _RUN_URL = re.compile(
     rf"https://github\.com/{EXPECTED_REPOSITORY}/actions/runs/[0-9]{{1,20}}\Z"
 )
-_WINDOWS_PATH = re.compile(r"(?:^|\s)[A-Za-z]:[\\/]")
+_WINDOWS_PATH = re.compile(r"[A-Za-z]:[\\/]")
 _POSIX_PRIVATE_PATH = re.compile(
-    r"(?:^|\s)/(?:Users|home|private|tmp|var|opt|mnt|workspace|github)(?:/|\Z)"
+    r"/(?:Users|home|private|tmp|var|opt|mnt|workspace|github)(?:/|\Z)"
 )
 _PYTEST_OUTCOMES = frozenset({"success", "failure", "cancelled", "skipped"})
 _NODE_OUTCOMES = frozenset({"passed", "failed", "skipped"})
@@ -233,7 +233,7 @@ def validate_result(result: object, *, require_pass: bool) -> None:
     if not isinstance(evidence_name, str) or evidence_name not in EXPECTED_PLATFORMS:
         raise ValueError("evidence name is invalid")
     status = result["status"]
-    if status not in {"passed", "failed"}:
+    if not isinstance(status, str) or status not in {"passed", "failed"}:
         raise ValueError("status is invalid")
     if require_pass and status != "passed":
         raise ValueError("passing evidence is required")
@@ -249,7 +249,7 @@ def validate_result(result: object, *, require_pass: bool) -> None:
         "pytest",
     )
     outcome = pytest_result["outcome"]
-    if outcome not in _PYTEST_OUTCOMES:
+    if not isinstance(outcome, str) or outcome not in _PYTEST_OUTCOMES:
         raise ValueError("pytest outcome is invalid")
     _duration(pytest_result["duration_seconds"])
     required_nodes = pytest_result["required_nodes"]
@@ -257,7 +257,10 @@ def validate_result(result: object, *, require_pass: bool) -> None:
         raise ValueError("required nodes must be an object")
     if not set(required_nodes).issubset(REQUIRED_NODES):
         raise ValueError("required node identity is invalid")
-    if any(value not in _NODE_OUTCOMES for value in required_nodes.values()):
+    if any(
+        not isinstance(value, str) or value not in _NODE_OUTCOMES
+        for value in required_nodes.values()
+    ):
         raise ValueError("required node outcome is invalid")
 
     if status == "passed":
@@ -268,9 +271,11 @@ def validate_result(result: object, *, require_pass: bool) -> None:
         if required_nodes != dict.fromkeys(REQUIRED_NODES, "passed"):
             raise ValueError("all exact required nodes must pass once")
     else:
-        if result["failure_code"] not in _FAILURE_CODES:
+        failure_code = result["failure_code"]
+        if not isinstance(failure_code, str) or failure_code not in _FAILURE_CODES:
             raise ValueError("failure code is invalid")
-        if result["failure_stage"] not in _FAILURE_STAGES:
+        failure_stage = result["failure_stage"]
+        if not isinstance(failure_stage, str) or failure_stage not in _FAILURE_STAGES:
             raise ValueError("failure stage is invalid")
     _validate_privacy(result)
 

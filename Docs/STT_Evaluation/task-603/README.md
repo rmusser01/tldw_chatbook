@@ -77,10 +77,10 @@ not a retry of either red run.
 ## Local verification on the release candidate
 
 The exact required selection passed locally: `10 passed` with only existing
-dependency/deprecation warnings. The evidence/semantic ratchet file passed
-`46 passed`. The scoped network-guard suite passed `9 passed` when allowed to
-create its own temporary Unix and localhost sockets; its first sandboxed run
-was denied by the host before repository policy was involved.
+dependency/deprecation warnings. The final evidence/semantic ratchet file
+passed `53 passed`. The scoped network-guard suite passed `9 passed` when
+allowed to create its own temporary Unix and localhost sockets; its first
+sandboxed run was denied by the host before repository policy was involved.
 
 Scoped Ruff lint, changed-range Ruff format checks, `py_compile`, and
 `git diff --check` passed. Whole-file checks still report established unrelated

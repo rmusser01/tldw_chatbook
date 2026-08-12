@@ -325,6 +325,8 @@ def test_junit_duration_is_finite_and_bounded(
         ("traceback", "secret"),
         ("note", "/Users/example/private"),
         ("note", "C:\\Users\\example\\private"),
+        ("note", "prefix:/Users/example/private"),
+        ("note", "note(C:\\Users\\example\\private)"),
     ],
 )
 def test_validation_rejects_recursive_private_keys_and_paths(
@@ -366,6 +368,11 @@ def test_canonical_run_url_prefix_cannot_hide_a_private_suffix() -> None:
         lambda result: result["pytest"].update(outcome="failure"),
         lambda result: result["pytest"].update(duration_seconds=True),
         lambda result: result.update(failure_code="test_execution"),
+        lambda result: result.update(status=[]),
+        lambda result: result["pytest"].update(outcome={}),
+        lambda result: result["pytest"]["required_nodes"].update(
+            {REQUIRED_NODES[0]: []}
+        ),
     ],
 )
 def test_passed_result_schema_rejects_mismatched_fields(mutation) -> None:
@@ -375,6 +382,24 @@ def test_passed_result_schema_rejects_mismatched_fields(mutation) -> None:
 
     with pytest.raises(ValueError):
         evidence.validate_result(result, require_pass=True)
+
+
+@pytest.mark.parametrize("field", ["failure_code", "failure_stage"])
+def test_failed_result_rejects_unhashable_failure_fields_as_value_error(
+    field: str,
+) -> None:
+    evidence = _load_evidence()
+    result = _valid_result("linux-x86_64")
+    result.update(
+        status="failed",
+        failure_code="test_execution",
+        failure_stage="test_execution",
+    )
+    result["pytest"]["outcome"] = "failure"
+    result[field] = []
+
+    with pytest.raises(ValueError):
+        evidence.validate_result(result, require_pass=False)
 
 
 def test_aggregate_requires_all_five_platforms_and_same_run(tmp_path: Path) -> None:
