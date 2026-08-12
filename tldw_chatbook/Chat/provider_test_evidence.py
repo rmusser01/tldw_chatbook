@@ -423,6 +423,9 @@ class ProviderTestEvidenceStore:
         ):
             return False
         with self._lock:
+            evidence = self._evidence
+            if evidence is None or evidence.identity != tested_identity:
+                return False
             if bool(getattr(mutation_result, "conflict", False)):
                 self._evidence = None
                 self._current_token = None
@@ -430,9 +433,6 @@ class ProviderTestEvidenceStore:
             if not bool(getattr(mutation_result, "fully_applied", False)):
                 self._evidence = None
                 self._current_token = None
-                return False
-            evidence = self._evidence
-            if evidence is None or evidence.identity != tested_identity:
                 return False
             if evidence.endpoint == "testing" or not _same_saved_semantics(
                 tested_identity, saved_identity

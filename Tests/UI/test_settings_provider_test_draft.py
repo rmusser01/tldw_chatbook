@@ -62,6 +62,17 @@ def _settled_store(identity: ProviderDraftIdentity) -> ProviderTestEvidenceStore
     return store
 
 
+def _settle_identity(
+    store: ProviderTestEvidenceStore, identity: ProviderDraftIdentity
+) -> ProviderTestEvidence:
+    evidence = ProviderTestEvidence(
+        identity, "reachable", (f"model-{identity.draft_generation}",)
+    )
+    token = store.begin(identity)
+    assert store.settle(token, evidence)
+    return evidence
+
+
 def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
     tested = _semantic_identity(
         "https://example.test/proxy/v1/models", draft_generation=4
@@ -189,6 +200,77 @@ def test_conflict_invalidates_active_test_token():
         token,
         ProviderTestEvidence(tested, "reachable", ("model-a",)),
     )
+
+
+def test_late_partial_save_does_not_clear_newer_settled_evidence():
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    newer_evidence = _settle_identity(store, second)
+
+    assert not store.rebase_after_save(
+        first,
+        first,
+        ConfigMutationResult(False, False, "before_replace"),
+    )
+    assert store.evidence_for(second) == newer_evidence
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace", conflict=True),
+        ConfigMutationResult(True, True, None, conflict=True),
+    ],
+    ids=["conflict", "conflict-fully-applied"],
+)
+def test_late_conflict_does_not_clear_newer_settled_evidence(mutation):
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    newer_evidence = _settle_identity(store, second)
+
+    assert not store.rebase_after_save(first, first, mutation)
+    assert store.evidence_for(second) == newer_evidence
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, True, None, conflict=True),
+    ],
+    ids=["partial", "conflict"],
+)
+def test_stale_save_result_does_not_cancel_newer_active_test(mutation):
+    first = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    second = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    _settle_identity(store, first)
+    token = store.begin(second)
+
+    assert not store.rebase_after_save(first, first, mutation)
+    testing = store.evidence_for(second)
+    assert testing is not None
+    assert testing.endpoint == "testing"
+
+    settled = ProviderTestEvidence(second, "reachable", ("model-2",))
+    assert store.settle(token, settled)
+    assert store.evidence_for(second) == settled
 
 
 def test_successful_save_cannot_rebase_to_an_older_draft_generation():
