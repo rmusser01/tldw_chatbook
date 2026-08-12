@@ -25,7 +25,7 @@ user's paste-collapse preference (review W-2).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import hmac
 import json
@@ -265,6 +265,17 @@ class _DraftHistorySnapshot:
 ConsoleComposerUndoHistory = tuple[
     list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]
 ]
+
+
+@dataclass(frozen=True)
+class ComposerTransactionCheckpoint:
+    """Opaque rollback state for one coordinated composer mutation."""
+
+    draft: ComposerDraftSnapshot = field(repr=False)
+    undo_stack: tuple[_DraftHistorySnapshot, ...] = field(repr=False)
+    redo_stack: tuple[_DraftHistorySnapshot, ...] = field(repr=False)
+    improvement_undo: ComposerDraftSnapshot | None = field(repr=False)
+    coalescing_active: bool = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -825,6 +836,68 @@ class ConsoleComposerBar(Horizontal):
             fingerprint=fingerprint,
         )
 
+    def capture_transaction_checkpoint(self) -> ComposerTransactionCheckpoint:
+        """Capture draft and undo state for coordinated rollback.
+
+        Returns:
+            An opaque, repr-safe checkpoint accepted by
+            :meth:`rollback_transaction`.
+        """
+        return ComposerTransactionCheckpoint(
+            draft=self.capture_draft_snapshot(),
+            undo_stack=tuple(self._undo_stack),
+            redo_stack=tuple(self._redo_stack),
+            improvement_undo=self._improvement_undo,
+            coalescing_active=self._coalescing_active,
+        )
+
+    def rollback_transaction(
+        self,
+        checkpoint: ComposerTransactionCheckpoint,
+    ) -> None:
+        """Restore a checkpoint without exposing composer-owned histories.
+
+        Args:
+            checkpoint: A prior :meth:`capture_transaction_checkpoint` result.
+
+        Raises:
+            ComposerTransactionValidationError: If the checkpoint is not a
+                supported composer transaction checkpoint.
+        """
+        if not isinstance(checkpoint, ComposerTransactionCheckpoint):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint has an unsupported shape."
+            )
+        self._validate_snapshot_shape(checkpoint.draft)
+        if checkpoint.improvement_undo is not None:
+            self._validate_snapshot_shape(checkpoint.improvement_undo)
+        if (
+            type(checkpoint.undo_stack) is not tuple
+            or type(checkpoint.redo_stack) is not tuple
+            or type(checkpoint.coalescing_active) is not bool
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint history is invalid."
+            )
+        history_entries = (*checkpoint.undo_stack, *checkpoint.redo_stack)
+        if any(
+            not isinstance(entry, _DraftHistorySnapshot)
+            or type(entry.text) is not str
+            or type(entry.cursor_index) is not int
+            or not 0 <= entry.cursor_index <= len(entry.text)
+            for entry in history_entries
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer transaction checkpoint history is invalid."
+            )
+
+        self.restore_snapshot(checkpoint.draft)
+        self._undo_stack = list(checkpoint.undo_stack)
+        self._redo_stack = list(checkpoint.redo_stack)
+        self._improvement_undo = checkpoint.improvement_undo
+        self._coalescing_active = checkpoint.coalescing_active
+        self._sync_current_action_state()
+
     @staticmethod
     def _validate_request_nonce(request_nonce: str) -> None:
         """Reject empty, control-bearing, whitespace, or oversized nonces."""
@@ -1045,6 +1118,72 @@ class ConsoleComposerBar(Horizontal):
         self._segments = rebuilt
         self._segments_initialized = True
         self._cursor_index = len(self._canonical_draft_text())
+        self._clear_draft_selection()
+        self._mark_manual_draft_edit()
+        self._draft_generation += 1
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+        self._improvement_undo = snapshot
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        return snapshot
+
+    def replace_snapshot_as_paste(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        text: str,
+    ) -> ComposerDraftSnapshot | None:
+        """Replace one exact complete draft snapshot through paste semantics.
+
+        Args:
+            snapshot: Complete composer state captured before asynchronous work.
+            text: Final replacement payload; blank text clears the captured draft.
+
+        Returns:
+            The captured snapshot when applied, or ``None`` for empty-to-empty.
+
+        Raises:
+            ComposerTransactionValidationError: If the snapshot is stale or the
+                replacement payload is not text.
+        """
+        self._validate_snapshot_shape(snapshot)
+        if not isinstance(text, str):
+            raise ComposerTransactionValidationError(
+                "Prompt replacement text must be a string."
+            )
+        live = self.capture_draft_snapshot()
+        if (
+            snapshot.edit_serial != live.edit_serial
+            or snapshot.generation != live.generation
+            or not hmac.compare_digest(snapshot.fingerprint, live.fingerprint)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot is stale and cannot be applied."
+            )
+        if not snapshot.segments and not text:
+            return None
+
+        should_collapse = (
+            self.collapse_large_pastes_enabled
+            and len(text) > self.paste_collapse_threshold
+        )
+        rebuilt = (
+            [
+                _DraftSegment(
+                    text,
+                    origin="paste",
+                    collapse_state="collapsed" if should_collapse else "literal",
+                )
+            ]
+            if text
+            else []
+        )
+        self._segments = rebuilt
+        self._segments_initialized = True
+        self._cursor_index = len(text)
         self._clear_draft_selection()
         self._mark_manual_draft_edit()
         self._draft_generation += 1
@@ -1468,7 +1607,9 @@ class ConsoleComposerBar(Horizontal):
         Args:
             state: Current one-shot dictation lifecycle state.
         """
-        entering_recording = state == "recording" and self._dictation_state != "recording"
+        entering_recording = (
+            state == "recording" and self._dictation_state != "recording"
+        )
         entering_starting = state == "starting" and self._dictation_state != "starting"
         state_changed = state != self._dictation_state
         self._dictation_state = state
@@ -1572,9 +1713,7 @@ class ConsoleComposerBar(Horizontal):
                 message=resolve_glyph_text(self.VOICE_CHIP_TRANSCRIBING_LABEL),
             )
 
-    def set_dictation_availability(
-        self, *, available: bool, tooltip: str = ""
-    ) -> None:
+    def set_dictation_availability(self, *, available: bool, tooltip: str = "") -> None:
         """Record the last dictation availability probe and refresh the mic button.
 
         Args:
@@ -1787,9 +1926,7 @@ class ConsoleComposerBar(Horizontal):
         # caller in this module) regardless of `replace_whitespace`, which
         # only controls whether *other* whitespace becomes plain spaces.
         chunks = [
-            chunk
-            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8))
-            if chunk
+            chunk for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8)) if chunk
         ]
         chunks.reverse()
         lines: list[str] = []
@@ -2082,8 +2219,7 @@ class ConsoleComposerBar(Horizontal):
                 # never sees it, so a suggestion can never grow the bar.
                 ghost = ghost_suffix if caret_position == len(text) else ""
                 render_text = (
-                    f"{text[:caret_position]}{caret_cell}{text[caret_position:]}"
-                    f"{ghost}"
+                    f"{text[:caret_position]}{caret_cell}{text[caret_position:]}{ghost}"
                 )
                 if style_ranges:
                     style_ranges = cls._shift_style_ranges_for_caret(
@@ -2159,7 +2295,9 @@ class ConsoleComposerBar(Horizontal):
             return rendered
 
         if focused:
-            placeholder = Text(resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " ")
+            placeholder = Text(
+                resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " "
+            )
             placeholder.append(cls.DRAFT_PLACEHOLDER, style="bright_black")
             return placeholder
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
@@ -2709,7 +2847,9 @@ class ConsoleComposerBar(Horizontal):
         if coalesce and self._coalescing_active:
             return
         self._undo_stack.append(
-            _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+            _DraftHistorySnapshot(
+                text=self.draft_text(), cursor_index=self._cursor_index
+            )
         )
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
@@ -2811,7 +2951,9 @@ class ConsoleComposerBar(Horizontal):
         if not self._undo_stack:
             return False
         self._mark_manual_draft_edit()
-        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        current = _DraftHistorySnapshot(
+            text=self.draft_text(), cursor_index=self._cursor_index
+        )
         self._redo_stack.append(current)
         if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._redo_stack[0]
@@ -2832,7 +2974,9 @@ class ConsoleComposerBar(Horizontal):
         if not self._redo_stack:
             return False
         self._mark_manual_draft_edit()
-        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        current = _DraftHistorySnapshot(
+            text=self.draft_text(), cursor_index=self._cursor_index
+        )
         self._undo_stack.append(current)
         if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
             del self._undo_stack[0]
@@ -2853,9 +2997,7 @@ class ConsoleComposerBar(Horizontal):
         """
         return (list(self._undo_stack), list(self._redo_stack))
 
-    def restore_undo_history(
-        self, history: ConsoleComposerUndoHistory | None
-    ) -> None:
+    def restore_undo_history(self, history: ConsoleComposerUndoHistory | None) -> None:
         """Replace the undo/redo stacks wholesale (TASK-1281 session scoping).
 
         Args:

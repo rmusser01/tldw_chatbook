@@ -3,11 +3,41 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import re
 import threading
-from typing import Any
+from typing import Any, TypeGuard
 
 from ...runtime_policy.types import RuntimeSourceState
+
+
+_SYSTEM_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolePromptTargetProjection:
+    """Expose only the sanitized Console target needed by Prompt insertion.
+
+    Attributes:
+        target_session_id: Exact current Console session identity.
+        system_fingerprint: One-way fingerprint of exact current System text.
+    """
+
+    target_session_id: str
+    system_fingerprint: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.target_session_id) is not str
+            or not self.target_session_id.strip()
+            or self.target_session_id != self.target_session_id.strip()
+        ):
+            raise ValueError("Console prompt target session is invalid")
+        if (
+            not isinstance(self.system_fingerprint, str)
+            or _SYSTEM_FINGERPRINT.fullmatch(self.system_fingerprint) is None
+        ):
+            raise ValueError("Console prompt target System fingerprint is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +77,7 @@ class _SnapshotEnvelope:
     canonical_route: str
     snapshot: dict[str, Any]
     runtime_identity: RuntimeIdentity
+    console_prompt_target: ConsolePromptTargetProjection | None = None
 
 
 class ScreenStateStore:
@@ -94,6 +125,73 @@ class ScreenStateStore:
             return None
         return dict(envelope.snapshot)
 
+    def publish_console_prompt_target(
+        self,
+        route: str,
+        projection: ConsolePromptTargetProjection,
+        runtime_identity: RuntimeIdentity,
+    ) -> None:
+        """Publish a detached sanitized Console target for one route/runtime.
+
+        Args:
+            route: Canonical Console route.
+            projection: Sanitized live Console target projection.
+            runtime_identity: Authoritative runtime scope at publication.
+
+        Raises:
+            RuntimeError: If called outside the owner thread.
+            TypeError: If the projection or runtime identity has the wrong type.
+            ValueError: If the route is blank or has no compatible snapshot.
+        """
+        self._assert_owner_thread()
+        canonical_route = self._canonical_key(route)
+        if not isinstance(projection, ConsolePromptTargetProjection):
+            raise TypeError(
+                "Console prompt target must be a ConsolePromptTargetProjection"
+            )
+        self._require_runtime_identity(runtime_identity)
+        snapshot = self._entries.get(canonical_route)
+        if not self._compatible(
+            snapshot,
+            canonical_route=canonical_route,
+            runtime_identity=runtime_identity,
+        ):
+            self._entries.pop(canonical_route, None)
+            raise ValueError(
+                "Console prompt target requires a compatible screen snapshot"
+            )
+        snapshot.console_prompt_target = self._copy_projection(projection)
+
+    def restore_console_prompt_target(
+        self,
+        route: str,
+        runtime_identity: RuntimeIdentity,
+    ) -> ConsolePromptTargetProjection | None:
+        """Restore a detached compatible Console target, if one was published.
+
+        Args:
+            route: Canonical Console route.
+            runtime_identity: Authoritative runtime scope at restoration.
+
+        Returns:
+            A detached sanitized projection, or ``None`` when unavailable.
+        """
+        self._assert_owner_thread()
+        canonical_route = self._canonical_key(route)
+        self._require_runtime_identity(runtime_identity)
+        envelope = self._entries.get(canonical_route)
+        if not self._compatible(
+            envelope,
+            canonical_route=canonical_route,
+            runtime_identity=runtime_identity,
+        ):
+            self._entries.pop(canonical_route, None)
+            return None
+        projection = envelope.console_prompt_target
+        if projection is None:
+            return None
+        return self._copy_projection(projection)
+
     def discard(self, route: str) -> None:
         """Forget one canonical route, if present."""
         self._assert_owner_thread()
@@ -138,11 +236,27 @@ class ScreenStateStore:
         *,
         canonical_route: str,
         runtime_identity: RuntimeIdentity,
-    ) -> bool:
+    ) -> TypeGuard[_SnapshotEnvelope]:
         return (
             isinstance(envelope, _SnapshotEnvelope)
             and envelope.canonical_route == canonical_route
             and isinstance(envelope.snapshot, dict)
             and isinstance(envelope.runtime_identity, RuntimeIdentity)
             and envelope.runtime_identity == runtime_identity
+            and (
+                envelope.console_prompt_target is None
+                or isinstance(
+                    envelope.console_prompt_target,
+                    ConsolePromptTargetProjection,
+                )
+            )
+        )
+
+    @staticmethod
+    def _copy_projection(
+        projection: ConsolePromptTargetProjection,
+    ) -> ConsolePromptTargetProjection:
+        return ConsolePromptTargetProjection(
+            target_session_id=projection.target_session_id,
+            system_fingerprint=projection.system_fingerprint,
         )

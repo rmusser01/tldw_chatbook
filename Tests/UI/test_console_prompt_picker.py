@@ -10,11 +10,20 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Mapping
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.test_console_prompts_controller import (
+    ConsoleHarness,
+    _PromptScopeService,
+    _configure_native_ready_console,
+    _prompt_record,
+)
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     EMPTY_STORE_COPY,
     FILTER_INPUT_ID,
@@ -26,6 +35,12 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     ROW_ID_PREFIX,
     SEARCH_DEBOUNCE_SECONDS,
     ConsolePromptPickerModal,
+)
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    APPLY_BUTTON_ID as VARIABLES_APPLY_BUTTON_ID,
+    DESTINATION_COPY_ID,
+    VARIABLE_INPUT_CLASS,
+    PromptVariablesDialog,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -287,6 +302,97 @@ async def test_escape_dismisses_none() -> None:
         await pilot.press("escape")
 
     assert app.dismissed_with is None
+
+
+@pytest.mark.asyncio
+async def test_console_picker_captures_ordinary_segment_draft_at_opening() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService(
+        _prompt_record(
+            name="Picker",
+            system_prompt="",
+            user_prompt="Picked {customer}",
+        )
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("ordinary draft ")
+        composer.insert_file_segment("inline secret", "notes.txt · 13 B")
+        composer.insert_pasted_text(" tail")
+        captured = composer.capture_draft_snapshot()
+        composer.set_pending_attachment_label("photo.png · 240 KB")
+
+        await console._prompts._open_console_prompt_picker_for_insert("")
+        await _wait_for_search(pilot)
+        await pilot.click(f"#{ROW_ID_PREFIX}11")
+        await pilot.pause()
+
+        dialog = host.screen_stack[-1]
+        assert isinstance(dialog, PromptVariablesDialog)
+        assert (
+            str(dialog.query_one(f"#{DESTINATION_COPY_ID}", Static).renderable)
+            == "Replace the current Console draft"
+        )
+        assert (
+            "slash"
+            not in str(
+                dialog.query_one(f"#{DESTINATION_COPY_ID}", Static).renderable
+            ).lower()
+        )
+        assert composer.capture_draft_snapshot() == captured
+        dialog.query_one(f".{VARIABLE_INPUT_CLASS}", Input).value = "Acme"
+        await pilot.click(f"#{VARIABLES_APPLY_BUTTON_ID}")
+        await pilot.pause()
+
+        assert composer.draft_text() == "Picked Acme"
+        assert [
+            segment.origin for segment in composer.capture_draft_snapshot().segments
+        ] == ["paste"]
+        assert composer._pending_attachment_label == "photo.png · 240 KB"
+
+
+@pytest.mark.asyncio
+async def test_console_picker_refuses_when_draft_changes_after_opening() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService(
+        _prompt_record(
+            name="Picker",
+            system_prompt="",
+            user_prompt="Picked {customer}",
+        )
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("ordinary draft")
+        notify = Mock()
+        app.notify = notify
+
+        await console._prompts._open_console_prompt_picker_for_insert("")
+        await _wait_for_search(pilot)
+        composer.insert_text(" changed")
+        changed = composer.capture_draft_snapshot()
+        await pilot.click(f"#{ROW_ID_PREFIX}11")
+        await pilot.pause()
+        dialog = host.screen_stack[-1]
+        assert isinstance(dialog, PromptVariablesDialog)
+        dialog.query_one(f".{VARIABLE_INPUT_CLASS}", Input).value = "secret value"
+        await pilot.click(f"#{VARIABLES_APPLY_BUTTON_ID}")
+        await pilot.pause()
+
+        assert composer.capture_draft_snapshot() == changed
+        notify.assert_called_once()
+        assert notify.call_args.kwargs["severity"] == "warning"
+        assert "secret value" not in str(notify.call_args)
 
 
 @pytest.mark.asyncio

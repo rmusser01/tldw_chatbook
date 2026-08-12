@@ -86,6 +86,54 @@ prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
 paste token — click it (or press Enter on it) to unfurl.
 
+Saved Prompt System and User lanes may contain insertion-time variables such
+as `{customer}`. Names are case-sensitive and must match
+`[A-Za-z_][A-Za-z0-9_]*`: `{customer}` and `{Customer}` are different. The
+shared **Prompt variables** dialog lists each name once, in first-occurrence
+order across System then User, and reuses the one value everywhere that exact
+name appears. Blank values are valid. A value containing braces is inserted as
+text and is not scanned again.
+
+Use `{{` for a literal `{` and `}}` for a literal `}`. For example,
+`{{customer}}` inserts `{customer}`, while `{{{customer}}}` inserts the value
+inside literal braces. Invalid or unmatched forms such as `{first-name}`,
+`{ name }`, `{name`, and ordinary JSON object braces stay literal. A variable
+name may contain at most 64 characters, and one insertion may use at most 64
+unique names. If either limit is exceeded, **Apply** is disabled and the dialog
+says either `A Prompt variable name exceeds 64 characters.` or
+`This Prompt has more than 64 variables.`; **Use original placeholders**
+remains available.
+
+When a Prompt has a System lane, the dialog shows
+`Replace the current session System prompt with this System lane`, **Off** by
+default. Turning it on may add System-only variables without losing values
+already entered for shared or User-only variables. **Apply** inserts the filled
+active lanes; **Use original placeholders** inserts the selected lanes
+unchanged; **Cancel** changes nothing. A System-only Prompt, including one with
+a blank User lane, has no active lane until you turn this option on. If System
+is the only selected lane in a `/prompt` replacement, the captured draft is
+cleared as part of applying that Prompt. A variable-free User-only Prompt takes
+the direct guarded path without showing the dialog.
+
+Exact `/prompt` and picker insertion replace the complete draft captured when
+the command was dispatched or the picker opened, including its collapsed paste
+and inline-file segments. If that draft, the active session, or the authorized
+System prompt changes before application, nothing is applied and a warning asks
+you to open the Prompt and retry. Library **Use in Console** uses this same
+dialog but appends to the settled active draft instead of replacing it; a stale
+Library target session or authorized System prompt is likewise refused. A
+confirmed application expires if it has not been consumed at the 120-second
+boundary; a transient composer remount may retry only while that window remains
+open.
+
+Variable values and pending applications are memory-only: they are not saved as
+defaults or retained for the next insertion. Text you intentionally apply then
+follows the ordinary draft and session lifecycle. **Menu → Undo Prompt change**
+restores only the draft captured before the latest Prompt change; it does not
+undo a System change. If the live System change succeeds but its durable save
+does not, Console warns: `System prompt applied for this session, but the change
+could not be saved -- it may not survive a reload.`
+
 ### Response prefill (/prefill)
 
 A prefill is text the assistant's reply must continue from — useful for

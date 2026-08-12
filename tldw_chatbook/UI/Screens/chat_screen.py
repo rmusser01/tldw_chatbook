@@ -38,6 +38,7 @@ from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
 )
+from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
@@ -14852,6 +14853,16 @@ class ChatScreen(BaseAppScreen):
             state["native_console_state"] = native_console_state
             state["interface_type"] = "native_console"
         return state
+
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the sanitized live Prompt target owned by the controller.
+
+        Returns:
+            The active Console target projection, or ``None`` when unavailable.
+        """
+        return self._prompts.console_prompt_target_projection()
 
     def restore_state(self, state: Dict[str, Any]) -> None:
         """Restore only state owned by the native Console."""

@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import copy
 from dataclasses import dataclass, field
 from enum import StrEnum
+import math
 import re
 import threading
-from typing import Any, Generic, TypeVar
+import time
+from typing import Any, Generic, Literal, TypeAlias, TypeVar
 
 from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
+from ...Prompt_Management.prompt_variables import PromptVariableApplication
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -61,6 +64,7 @@ class HandoffValueError(ValueError):
 
 
 T = TypeVar("T")
+HandoffClaimStatus: TypeAlias = Literal["ready", "expired"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +74,11 @@ class HandoffClaim(Generic[T]):
     channel: HandoffChannel
     revision: int
     value: T = field(repr=False, compare=False)
+    status: HandoffClaimStatus = "ready"
+
+    def __post_init__(self) -> None:
+        if self.status not in ("ready", "expired"):
+            raise ValueError("handoff claim status is invalid")
 
 
 @dataclass(slots=True)
@@ -88,8 +97,15 @@ class _Slot:
 class PendingHandoffStore:
     """Own one latest pending value and one claim per typed channel."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not callable(monotonic_clock):
+            raise TypeError("pending handoff clock must be callable")
         self._owner_thread_id = threading.get_ident()
+        self._monotonic_clock = monotonic_clock
         self._slots = {channel: _Slot() for channel in HandoffChannel}
 
     def stage(self, channel: HandoffChannel, value: Any) -> int:
@@ -116,11 +132,17 @@ class PendingHandoffStore:
         if slot.in_flight is not None or slot.pending is None:
             return None
         revision, retained_value = slot.pending
+        status: HandoffClaimStatus = "ready"
+        if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+            now = self._monotonic_now()
+            if retained_value.is_expired(now_monotonic=now):
+                status = "expired"
         delivered_value = self._detached_value(channel, retained_value)
         claim = HandoffClaim(
             channel=channel,
             revision=revision,
             value=delivered_value,
+            status=status,
         )
         slot.pending = None
         slot.in_flight = _InFlight(
@@ -146,15 +168,79 @@ class PendingHandoffStore:
 
     def release(self, claim: HandoffClaim[Any]) -> bool:
         """Release an exact claim without overwriting a newer revision."""
+        released, _prompt_status = self._release_claim(claim)
+        return released
+
+    def release_prompt_claim(
+        self,
+        claim: HandoffClaim[PromptVariableApplication],
+    ) -> HandoffClaimStatus | None:
+        """Atomically retry or expire one exact Prompt claim.
+
+        Args:
+            claim: The Prompt claim being released after a transient failure.
+
+        Returns:
+            ``"ready"`` when the exact claim was requeued, ``"expired"``
+            when it was terminally settled by the injected clock, or ``None``
+            when the claim was not exact or a newer revision superseded it.
+
+        Raises:
+            RuntimeError: If called outside the owning thread.
+            TypeError: If ``claim`` is not a :class:`HandoffClaim`.
+            ValueError: If ``claim`` does not belong to the Prompt channel.
+        """
+        self._assert_owner_thread()
+        self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONSOLE_PROMPT_INSERT:
+            raise ValueError("release_prompt_claim requires a Prompt claim")
+        _released, prompt_status = self._release_claim(claim)
+        return prompt_status
+
+    def _release_claim(
+        self,
+        claim: HandoffClaim[Any],
+    ) -> tuple[bool, HandoffClaimStatus | None]:
+        """Settle one exact claim and report a Prompt retry outcome."""
         self._assert_owner_thread()
         slot = self._slot_for_claim(claim)
         current = slot.in_flight
         if current is None or current.claim is not claim:
-            return False
+            return False, None
         slot.in_flight = None
-        if slot.revision == claim.revision:
+        should_requeue = slot.revision == claim.revision
+        prompt_status: HandoffClaimStatus | None = None
+        if should_requeue and claim.channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+            should_requeue = claim.status == "ready" and self._prompt_is_unexpired(
+                current.retained_value
+            )
+            prompt_status = "ready" if should_requeue else "expired"
+        if should_requeue:
             slot.pending = (claim.revision, current.retained_value)
-        return True
+        return True, prompt_status
+
+    def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
+        try:
+            now = self._monotonic_now()
+        except HandoffValueError:
+            return False
+        return not value.is_expired(now_monotonic=now)
+
+    def _monotonic_now(self) -> float:
+        try:
+            value = self._monotonic_clock()
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError
+            normalized = float(value)
+            if not math.isfinite(normalized):
+                raise ValueError
+        except MemoryError:
+            raise
+        except Exception:
+            raise HandoffValueError(
+                "handoff clock must return a finite number"
+            ) from None
+        return normalized
 
     def _assert_owner_thread(self) -> None:
         if threading.get_ident() != self._owner_thread_id:
@@ -194,11 +280,19 @@ class PendingHandoffStore:
                 raise ValueError("invalid Console launch")
             return copied
         if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
-            if not isinstance(value, str):
-                raise TypeError("Console prompt must be text")
-            if not value.strip():
-                raise ValueError("Console prompt must be non-empty text")
-            return value
+            if not isinstance(value, PromptVariableApplication):
+                raise TypeError("Console prompt handoff must be typed")
+            return PromptVariableApplication(
+                system_text=value.system_text,
+                user_text=value.user_text,
+                apply_system=value.apply_system,
+                apply_user=value.apply_user,
+                destination=value.destination,
+                target_session_id=value.target_session_id,
+                composer_fingerprint=value.composer_fingerprint,
+                system_fingerprint=value.system_fingerprint,
+                created_monotonic=value.created_monotonic,
+            )
         if channel is HandoffChannel.CONSOLE_PROVIDER:
             if not isinstance(value, ConsoleProviderIntent):
                 raise TypeError("Console provider handoff must be typed")

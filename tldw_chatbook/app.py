@@ -407,7 +407,11 @@ from .UI.Navigation.pending_handoff_store import (
     HandoffValueError,
     PendingHandoffStore,
 )
-from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
+from .UI.Navigation.screen_state_store import (
+    ConsolePromptTargetProjection,
+    RuntimeIdentity,
+    ScreenStateStore,
+)
 from .UI.Navigation.screen_registry import (
     ScreenRoute,
     registered_screen_aliases,
@@ -418,6 +422,7 @@ from .UI.Navigation.screen_registry import (
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .Prompt_Management.prompt_variables import PromptVariableApplication
 
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
@@ -5408,26 +5413,22 @@ class TldwCli(
             return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def stage_console_prompt_insert(self, text: str) -> None:
-        """Stage a resolved Library prompt body for the Console composer and navigate there.
+    def stage_console_prompt_insert(
+        self,
+        application: PromptVariableApplication,
+    ) -> None:
+        """Stage a guarded Prompt application and then navigate to Console.
 
-        ``ChatHandoffPayload``-free direct route (Task 12): Library's prompt
-        editor "Use in Console" action only ever needs to land plain text
-        into the Console draft -- appended onto whatever the user was
-        already composing, never replacing it -- so this deliberately skips
-        ``open_chat_with_handoff``'s richer RAG-evidence-aware staging
-        machinery. Mirrors that method's stage-then-navigate shape, but the
-        payload is a bare string and there is no tabs-enabled gate: whether
-        the insert actually lands is decided by ``ChatScreen`` once it
-        settles this claim (it alone owns Console's provider/model
-        readiness state).
+        The typed, memory-only application carries the final selected lanes
+        plus destination/session/staleness guards. Console remains the only
+        owner allowed to settle the claim and mutate its active draft.
 
         Args:
-            text: The prompt's ``user_prompt`` body to insert.
+            application: Validated Prompt application to stage.
         """
         if not self._stage_handoff(
             HandoffChannel.CONSOLE_PROMPT_INSERT,
-            text,
+            application,
             recovery="Console prompt could not be staged. Review it and try again.",
         ):
             return
@@ -7695,6 +7696,20 @@ class TldwCli(
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
 
+    def console_prompt_target_projection(
+        self,
+    ) -> ConsolePromptTargetProjection | None:
+        """Return the app-owned Console Prompt target for the current runtime.
+
+        Returns:
+            The compatible sanitized projection, or ``None`` when Console has
+            not published one for the authoritative runtime snapshot.
+        """
+        return self.screen_state_store.restore_console_prompt_target(
+            TAB_CHAT,
+            self._current_runtime_identity(),
+        )
+
     def _screen_navigation_lock(self) -> asyncio.Lock:
         """Return the lock serializing `handle_screen_navigation` attempts.
 
@@ -8058,6 +8073,9 @@ class TldwCli(
                 if outgoing_screen_class is not None:
                     outgoing_key = resolved_outgoing_key
 
+        if outgoing_key == TAB_CHAT:
+            self.screen_state_store.discard(outgoing_key)
+
         save_state = getattr(current_screen, "save_state", None)
         if outgoing_key and callable(save_state):
             try:
@@ -8068,6 +8086,26 @@ class TldwCli(
                         state,
                         runtime_identity,
                     )
+                    if outgoing_key == TAB_CHAT:
+                        projection_getter = getattr(
+                            current_screen,
+                            "console_prompt_target_projection",
+                            None,
+                        )
+                        try:
+                            projection = (
+                                projection_getter()
+                                if callable(projection_getter)
+                                else None
+                            )
+                        except Exception:
+                            projection = None
+                        if isinstance(projection, ConsolePromptTargetProjection):
+                            self.screen_state_store.publish_console_prompt_target(
+                                outgoing_key,
+                                projection,
+                                runtime_identity,
+                            )
                     logger.debug(
                         "Saved screen snapshot for canonical route: {}",
                         outgoing_key,
