@@ -129,6 +129,11 @@ def _producer_dependency_cases():
             False,
         ),
         (
+            "applied-exact-saved-drift",
+            AudioCppGuidedDependencySnapshot("exact", 5, 3, 2, True, None, requirement),
+            False,
+        ),
+        (
             "missing-pending-settings",
             AudioCppGuidedDependencySnapshot("missing", 5, 3, 2, True, None, None),
             True,
@@ -867,7 +872,7 @@ async def test_export_preserves_substituted_temporary_and_publishes_nothing(
         substituted = temporary
 
     monkeypatch.setattr(bundle_service, "_test_boundary", substitute)
-    with pytest.raises(TTSVoiceBundleError, match="cleanup_failed"):
+    with pytest.raises(TTSVoiceBundleError, match="destination_changed"):
         await service.export(
             PROFILE_ID,
             destination,
@@ -1057,7 +1062,6 @@ async def test_inspect_preserves_unsupported_platform_code(
         ("provider_configuration_revision", -1),
         ("saved_generation", True),
         ("state", "pending"),
-        ("saved_requirement", None),
         ("applied_requirement", TTSCloneRecipeRequirement("other", 1, "other")),
     ),
 )
@@ -1434,7 +1438,178 @@ async def test_export_preserves_foreign_substitution_after_publication(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "mutation", ("replace", "overwrite", "overwrite_during_read", "chmod_on_fsync")
+)
+async def test_export_reverifies_after_every_post_ponr_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle, profile = _install_export_record(repository)
+    expected = encode_clone_voice_bundle(bundle)
+    foreign = b"F" * len(expected)
+
+    if mutation == "overwrite_during_read":
+        real_read = bundle_service.os.read
+        destination_reads = 0
+
+        def mutate_after_read(descriptor: int, size: int) -> bytes:
+            nonlocal destination_reads
+            data = real_read(descriptor, size)
+            if (
+                destination.exists()
+                and stat.S_ISREG(os.fstat(descriptor).st_mode)
+                and os.fstat(descriptor).st_ino == destination.stat().st_ino
+            ):
+                destination_reads += 1
+                if destination_reads == 3:
+                    original_mtime = destination.stat().st_mtime_ns
+                    destination.write_bytes(foreign)
+                    destination.chmod(0o600)
+                    os.utime(destination, ns=(original_mtime, original_mtime))
+            return data
+
+        monkeypatch.setattr(bundle_service.os, "read", mutate_after_read)
+    elif mutation == "chmod_on_fsync":
+        real_fsync = bundle_service.os.fsync
+        mutated = False
+
+        def mutate_during_parent_fsync(descriptor: int) -> None:
+            nonlocal mutated
+            real_fsync(descriptor)
+            if (
+                not mutated
+                and destination.exists()
+                and stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            ):
+                destination.chmod(0o644)
+                mutated = True
+
+        monkeypatch.setattr(bundle_service.os, "fsync", mutate_during_parent_fsync)
+    else:
+
+        def mutate_after_fsync(boundary: str) -> None:
+            if boundary != "destination_post_fsync":
+                return
+            if mutation == "replace":
+                replacement = tmp_path / "foreign-replacement"
+                replacement.write_bytes(foreign)
+                replacement.chmod(0o600)
+                os.replace(replacement, destination)
+            else:
+                destination.write_bytes(foreign)
+                destination.chmod(0o600)
+
+        monkeypatch.setattr(bundle_service, "_test_boundary", mutate_after_fsync)
+
+    with pytest.raises(TTSVoiceBundleError, match="cleanup_failed"):
+        await service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    if mutation == "replace":
+        assert destination.read_bytes() == foreign
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_export_path_never_uses_unlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle, profile = _install_export_record(repository)
+    unlink_calls: list[object] = []
+
+    def forbidden_unlink(*args, **kwargs):
+        unlink_calls.append((args, kwargs))
+        raise AssertionError("export must not unlink any pathname")
+
+    monkeypatch.setattr(bundle_service.os, "unlink", forbidden_unlink)
+    await service.export(
+        PROFILE_ID,
+        destination,
+        expected_generation=repository.generation,
+        expected_revision=profile.revision,
+        acknowledged=True,
+    )
+    assert unlink_calls == []
+    assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "boundary", ("destination_pre_publish", "destination_post_link")
+)
+async def test_export_temp_substitution_is_preserved_without_unlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle, profile = _install_export_record(repository)
+    foreign = b"foreign randomized temporary occupant"
+    substituted: Path | None = None
+
+    def substitute(observed: str) -> None:
+        nonlocal substituted
+        if boundary == "destination_post_link" and observed == "destination_pre_rename":
+            substituted = next(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
+            return
+        if observed != boundary:
+            return
+        temporary = (
+            substituted
+            if substituted is not None
+            else next(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
+        )
+        replacement = tmp_path / "replacement-temp"
+        replacement.write_bytes(foreign)
+        replacement.chmod(0o600)
+        os.replace(replacement, temporary)
+        substituted = temporary
+
+    def forbidden_unlink(*_args, **_kwargs):
+        raise AssertionError("export must not unlink substituted temp paths")
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", substitute)
+    monkeypatch.setattr(bundle_service.os, "unlink", forbidden_unlink)
+    if boundary == "destination_pre_publish":
+        with pytest.raises(TTSVoiceBundleError, match="destination_changed"):
+            await service.export(
+                PROFILE_ID,
+                destination,
+                expected_generation=repository.generation,
+                expected_revision=profile.revision,
+                acknowledged=True,
+            )
+        assert not destination.exists()
+    else:
+        await service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+        assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    assert substituted is not None
+    assert substituted.read_bytes() == foreign
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary",
+    ("destination_pre_publish", "destination_pre_rename", "destination_post_link"),
 )
 async def test_export_cancellation_respects_atomic_publication_ponr(
     tmp_path: Path,
@@ -1468,14 +1643,17 @@ async def test_export_cancellation_respects_atomic_publication_ponr(
     await asyncio.sleep(0)
     release.set()
 
-    if boundary == "destination_pre_publish":
+    if boundary != "destination_post_link":
         with pytest.raises(asyncio.CancelledError):
             await exporting
         assert not destination.exists()
+        retained = tuple(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
+        assert len(retained) == 1
+        assert stat.S_IMODE(retained[0].stat().st_mode) == 0o600
     else:
         await exporting
         assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
-    assert not tuple(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
+        assert not tuple(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
     await service.close()
 
 
@@ -1658,5 +1836,7 @@ async def test_export_destination_parent_substitution_fails_closed(
         )
     assert not destination.exists()
     assert (parent / "foreign-marker").read_bytes() == b"foreign"
-    assert list(moved.iterdir()) == []
+    retained = tuple(moved.glob(".portable.tldw-voice.zip.*.tmp"))
+    assert len(retained) == 1
+    assert stat.S_IMODE(retained[0].stat().st_mode) == 0o600
     await service.close()

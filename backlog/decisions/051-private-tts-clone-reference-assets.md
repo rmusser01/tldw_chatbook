@@ -227,7 +227,8 @@ changes availability only; it never assigns a character or changes a default.
 
 The snapshot's pending flag is generation/configuration evidence rather than
 an alias for its state. Exact, missing, and mismatch states may coexist with
-queued settings; pending state additionally requires an exact compatible saved
+queued settings; exact is determined by the applied requirement even when the
+saved requirement is missing or drifted, while pending state requires an exact compatible saved
 requirement. Bundle inspection and commit validate this producer cross-product
 without acquiring provider authority.
 
@@ -248,16 +249,23 @@ retained and joined across cancellation and shutdown.
 
 For bundle export, the successful atomic no-replace namespace publication is
 the explicit non-cancellable point of no return. Cancellation before that point
-propagates after the exact private temporary sibling is cleaned and no final
-exists. Cancellation after that point is deferred while the service converges
+propagates with no final; the randomized `0600` temporary sibling is retained
+rather than pathname-deleted from a user-selected parent. Cancellation after
+that point is deferred while the service converges
 the exact published inode through mode/content/identity verification and parent
-directory fsync, then returns successful publication. The service never unlinks
-the final pathname after publication. POSIX has no exact-inode
+directory fsync, then returns successful publication. Atomic no-clobber rename
+consumes the temporary sibling at publication, and the service never unlinks
+any export pathname. POSIX has no exact-inode
 unlink-by-descriptor primitive, so a pathname `stat` followed by `unlink` could
 delete a substituted foreign file; post-publication substitution is therefore
 preserved and reported as bounded cleanup/unavailability rather than rolled
 back. An owned final can accompany failure only when substitution or total
 storage failure makes convergence unverifiable.
+
+Bounded pre-publication recovery states that a hidden randomized sibling may
+remain and directs manual removal only after the user verifies that exact
+random filename; the service never guesses that a pathname still names its
+former inode.
 
 ## Context
 

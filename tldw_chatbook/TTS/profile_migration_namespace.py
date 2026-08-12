@@ -112,6 +112,16 @@ def _rename_noreplace(
         raise OSError(code, os.strerror(code))
 
 
+def rename_noreplace_at(
+    parent_fd: int,
+    source_leaf: str,
+    destination_leaf: str,
+) -> None:
+    """Atomically move one sibling leaf without replacing its destination."""
+
+    _rename_noreplace(parent_fd, source_leaf, destination_leaf)
+
+
 def _open_parent(path: Path, authority: ParentAuthority) -> int:
     parent_fd, _leaf = private_paths._open_verified_parent(
         path,
@@ -638,6 +648,7 @@ __all__ = [
     "move_exact_noreplace",
     "open_new_or_reused_private_file",
     "prepare_reusable_tombstone",
+    "rename_noreplace_at",
     "remove_zero_reusable_tombstone",
     "require_reusable_tombstone",
     "remove_exact",

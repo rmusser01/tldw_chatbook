@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import stat
 from collections.abc import Callable
@@ -22,6 +23,7 @@ except ImportError:  # pragma: no cover - Windows is intentionally unsupported.
 
 from tldw_chatbook.TTS.TTS_Generation import AudioCppGuidedDependencySnapshot
 from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
+from tldw_chatbook.TTS.profile_migration_namespace import rename_noreplace_at
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneRecipeRequirement,
@@ -715,6 +717,12 @@ def _published_file_matches(
     published_identity: tuple[int, int],
     payload: bytes,
 ) -> bool:
+    os.fsync(parent_fd)
+    if (
+        _parent_identity(os.fstat(parent_fd)) != parent_identity
+        or _parent_identity(os.lstat(destination.parent)) != parent_identity
+    ):
+        return False
     named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
     if _identity(named) != published_identity or not _private_file(named):
         return False
@@ -737,6 +745,8 @@ def _published_file_matches(
         _identity(opened) != published_identity
         or _identity(final_opened) != published_identity
         or _identity(final_named) != published_identity
+        or _source_identity(opened) != _source_identity(final_opened)
+        or _source_identity(final_opened) != _source_identity(final_named)
         or not _private_file(final_opened)
         or size != len(payload)
         or digest.digest() != sha256(payload).digest()
@@ -744,7 +754,6 @@ def _published_file_matches(
         or _parent_identity(os.lstat(destination.parent)) != parent_identity
     ):
         return False
-    os.fsync(parent_fd)
     return (
         _identity(os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False))
         == published_identity
@@ -769,25 +778,6 @@ def _converge_published_file(
                 published_identity,
                 payload,
             )
-        except OSError:
-            continue
-    return False
-
-
-def _unlink_exact_temporary_after_publication(
-    parent_fd: int,
-    temporary_leaf: str,
-    temporary_identity: tuple[int, int],
-) -> bool:
-    for _ in range(3):
-        try:
-            named = os.stat(temporary_leaf, dir_fd=parent_fd, follow_symlinks=False)
-            if _identity(named) != temporary_identity or not _private_file(
-                named, links=(2,)
-            ):
-                return False
-            os.unlink(temporary_leaf, dir_fd=parent_fd)
-            return True
         except OSError:
             continue
     return False
@@ -858,29 +848,42 @@ def _publish_sync(
             temporary_named
         ):
             raise TTSVoiceBundleError("destination_changed")
+        _test_boundary("destination_pre_rename")
+        if _parent_identity(os.lstat(destination.parent)) != parent_identity:
+            raise TTSVoiceBundleError("destination_changed")
+        temporary_named = os.stat(
+            temporary_leaf, dir_fd=parent_fd, follow_symlinks=False
+        )
+        if _identity(temporary_named) != temporary_identity or not _private_file(
+            temporary_named
+        ):
+            raise TTSVoiceBundleError("destination_changed")
+        if cancellation is not None and cancellation.is_set():
+            raise asyncio.CancelledError
         try:
-            os.link(
+            rename_noreplace_at(
+                parent_fd,
                 temporary_leaf,
                 destination.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-                follow_symlinks=False,
             )
-        except FileExistsError:
-            raise TTSVoiceBundleError("destination_changed") from None
+        except OSError as error:
+            if error.errno == errno.EEXIST:
+                raise TTSVoiceBundleError("destination_changed") from None
+            if error.errno in {
+                errno.ENOSYS,
+                errno.ENOTSUP,
+                getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+            }:
+                raise TTSVoiceBundleError("unsupported_platform") from None
+            raise
 
-        # The no-replace link is the publication PONR. The final pathname is
-        # never removed by this service after this point.
+        # The no-replace move is the publication PONR and consumes the temp.
         published_identity = temporary_identity
+        temporary_identity = None
         try:
             _test_boundary("destination_post_link")
         except Exception:
             pass
-        if not _unlink_exact_temporary_after_publication(
-            parent_fd, temporary_leaf, temporary_identity
-        ):
-            raise TTSVoiceBundleError("cleanup_failed")
-        temporary_identity = None
 
         if not _converge_published_file(
             parent_fd,
@@ -893,14 +896,15 @@ def _publish_sync(
         try:
             _test_boundary("destination_post_fsync")
         except Exception:
-            if not _converge_published_file(
-                parent_fd,
-                destination,
-                parent_identity,
-                published_identity,
-                payload,
-            ):
-                return _WorkerOutcome("cleanup_failed", None)
+            pass
+        if not _converge_published_file(
+            parent_fd,
+            destination,
+            parent_identity,
+            published_identity,
+            payload,
+        ):
+            return _WorkerOutcome("cleanup_failed", None)
         return _WorkerOutcome(None, True)
     except TTSVoiceBundleError as error:
         code = error.code
@@ -915,20 +919,6 @@ def _publish_sync(
         if temporary_fd >= 0:
             try:
                 os.close(temporary_fd)
-            except OSError:
-                code = "cleanup_failed"
-        if parent_fd >= 0 and temporary_identity is not None:
-            try:
-                named = os.stat(temporary_leaf, dir_fd=parent_fd, follow_symlinks=False)
-                if _identity(named) == temporary_identity and _private_file(
-                    named, links=(1, 2)
-                ):
-                    os.unlink(temporary_leaf, dir_fd=parent_fd)
-                    os.fsync(parent_fd)
-                else:
-                    code = "cleanup_failed"
-            except FileNotFoundError:
-                pass
             except OSError:
                 code = "cleanup_failed"
         if parent_fd >= 0:
@@ -1015,10 +1005,7 @@ def _valid_dependency_snapshot(
         snapshot.saved_generation != snapshot.applied_generation
     ):
         return None
-    if snapshot.state == "exact" and not (
-        snapshot.saved_requirement == requirement
-        and snapshot.applied_requirement == requirement
-    ):
+    if snapshot.state == "exact" and snapshot.applied_requirement != requirement:
         return None
     if snapshot.state == "missing" and (
         snapshot.saved_requirement is not None

@@ -581,7 +581,8 @@ disagreement returns `stale_inspection` plus safe refreshed facts; no partial
 write occurs. No character or default owner is in the call graph.
 
 Dependency snapshot validation follows the producer's full cross-product,
-not a state-to-pending shortcut. `exact` may still report queued unrelated
+not a state-to-pending shortcut. `exact` requires only the exact applied
+requirement and may report a missing/drifted saved requirement plus queued
 settings (`pending_configuration=true`); `missing` and `mismatch` may report
 either pending value; and `pending` requires queued configuration plus the
 exact saved requirement. The pending flag remains coherent with saved/applied
@@ -597,21 +598,25 @@ After acknowledgement and destination selection, export:
 - builds the complete ZIP in an owner-private temporary file in the validated
   destination directory;
 - requires the selected destination to remain absent;
-- fsyncs the file, publishes with an atomic no-replace primitive, and fsyncs
-  the directory where supported; and
-- removes only its exact temporary output if publication has not occurred.
+- fsyncs the file, publishes by atomically moving the sibling with the native
+  no-replace primitive, and fsyncs the directory where supported; and
+- retains a randomized `0600` sibling if failure occurs before that move,
+  because pathname deletion in a user-selected parent is not exact-safe; the
+  bounded recovery explains that this hidden random sibling may remain and may
+  be removed manually only after the user verifies its random filename.
 
 If the selected filename already exists, the user must choose a different name
 (or remove it outside this operation and reselect). A destination appearing or
 parent type/identity change before publication returns `destination_changed`.
 The final bundle is owner-private even when its user-selected parent is not.
 
-The successful no-replace link/rename is the export point of no return. Before
-it, cancellation propagates after exact temporary cleanup and leaves no final.
+The successful no-replace rename is the export point of no return. Before it,
+cancellation propagates and leaves no final; its randomized `0600` sibling is
+retained as harmless cleanup evidence rather than pathname-deleted.
 After it, cancellation is deferred and the retained worker completes exact
 final identity, mode, content, and parent-fsync verification before reporting
 successful publication. Ordinary post-publication faults are retried through
-that convergence path. The service never unlinks the final pathname: POSIX has
+that convergence path. The service never unlinks any export pathname: POSIX has
 no exact-inode unlink-by-descriptor operation, and a `stat`-then-`unlink` pair
 could delete a foreign substitution. If post-publication substitution or total
 storage failure makes verification impossible, the service preserves the
@@ -629,10 +634,10 @@ run as retained bundle-service work. Repository migration, backup, and commit
 remain retained repository-owned work.
 
 Cancellation joins a shielded blocking worker before propagating. Before bundle
-publication it cleans the exact private temporary sibling; after the export
-point of no return it defers cancellation and reports successful publication
-only after convergence. UI unmount prevents stale presentation but does not
-abandon work.
+publication it retains the randomized private temporary sibling; after the
+export point of no return it defers cancellation and reports successful
+publication only after convergence. UI unmount prevents stale presentation but
+does not abandon work.
 
 The bundle portability service closes before repository shutdown. Its close
 seals new import/export/session admission, invalidates handles, and joins
