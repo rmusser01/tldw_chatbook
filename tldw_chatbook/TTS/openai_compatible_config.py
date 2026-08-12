@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from urllib.parse import SplitResult, urlsplit, urlunsplit
+from urllib.parse import SplitResult, quote, unquote_to_bytes, urlsplit, urlunsplit
 
 import idna
 
@@ -35,6 +35,8 @@ _KNOWN_PATHS = {
 }
 _SCHEME_PATTERN = re.compile(r"(?i)https?://")
 _NUMERIC_IPV4_COMPONENT = re.compile(r"(?i)(?:[0-9]+|0x[0-9a-f]+)\Z")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_PATH_SAFE_CHARACTERS = "/:@!$&'()*+,;=-._~%"
 _UNICODE_DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 
 
@@ -51,6 +53,8 @@ def _canonical_hostname(parsed: SplitResult) -> tuple[str, bool]:
 
     hostname = raw_hostname.translate(_UNICODE_DOTS)
     if parsed.netloc.startswith("["):
+        if "%" in hostname:
+            raise _invalid_endpoint()
         try:
             return ipaddress.IPv6Address(hostname).compressed, True
         except ipaddress.AddressValueError as error:
@@ -81,6 +85,42 @@ def _canonical_hostname(parsed: SplitResult) -> tuple[str, bool]:
     except (UnicodeError, idna.IDNAError) as error:
         raise _invalid_endpoint() from error
     return canonical, False
+
+
+def _canonical_path(path: str) -> str:
+    if "\\" in path:
+        raise _invalid_endpoint()
+
+    canonical_parts: list[str] = []
+    index = 0
+    while index < len(path):
+        character = path[index]
+        if character != "%":
+            canonical_parts.append(character)
+            index += 1
+            continue
+        if (
+            index + 2 >= len(path)
+            or path[index + 1] not in _HEX_DIGITS
+            or path[index + 2] not in _HEX_DIGITS
+        ):
+            raise _invalid_endpoint()
+        canonical_parts.append("%" + path[index + 1 : index + 3].upper())
+        index += 3
+
+    canonical = "".join(canonical_parts)
+    for component in canonical.split("/"):
+        try:
+            decoded = unquote_to_bytes(component).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise _invalid_endpoint() from error
+        if decoded in {".", ".."} or any(
+            character in {"/", "\\"} or unicodedata.category(character) == "Cc"
+            for character in decoded
+        ):
+            raise _invalid_endpoint()
+
+    return quote(canonical, safe=_PATH_SAFE_CHARACTERS)
 
 
 def _normalized_authority(parsed: SplitResult) -> tuple[str, str, int | None]:
@@ -130,6 +170,7 @@ def normalize_openai_compatible_endpoint(raw: str) -> OpenAICompatibleEndpoint:
             or "//" in parsed.path
         ):
             raise _invalid_endpoint()
+        path = _canonical_path(parsed.path)
         authority, hostname, port = _normalized_authority(parsed)
     except ValueError as error:
         if str(error).startswith("OpenAI-compatible endpoint"):
@@ -138,14 +179,10 @@ def normalize_openai_compatible_endpoint(raw: str) -> OpenAICompatibleEndpoint:
 
     scheme = parsed.scheme.lower()
     origin = urlunsplit((scheme, authority, "", "", ""))
-    path_key = (
-        parsed.path[:-1]
-        if parsed.path != "/" and parsed.path.endswith("/")
-        else parsed.path
-    ).lower()
+    path_key = (path[:-1] if path != "/" and path.endswith("/") else path).lower()
     mapped = _KNOWN_PATHS.get(path_key)
     if mapped is None:
-        speech_path = parsed.path
+        speech_path = path
         catalog_url = None
     else:
         speech_path, catalog_path = mapped

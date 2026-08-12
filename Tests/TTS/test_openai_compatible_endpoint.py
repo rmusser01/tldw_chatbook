@@ -208,6 +208,19 @@ def test_idn_and_ipv6_equivalents_share_origin_and_fingerprint() -> None:
 @pytest.mark.parametrize(
     "raw",
     (
+        "http://[fe80::1%eth0]:8765/v1",
+        "http://[fe80::1%25eth0]:8765/v1",
+        "http://[fe80::1%2525eth0]:8765/v1",
+    ),
+)
+def test_scoped_ipv6_endpoints_are_rejected(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
         "https://example.test/v1//",
         "https://example.test//v1",
         "https://example.test/v1///audio/speech",
@@ -217,6 +230,52 @@ def test_idn_and_ipv6_equivalents_share_origin_and_fingerprint() -> None:
 def test_repeated_path_separators_are_rejected(raw) -> None:
     with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
         normalize_openai_compatible_endpoint(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "https://example.test/custom/../speech",
+        "https://example.test/custom/./speech",
+        "https://example.test/../speech",
+        "https://example.test/./speech",
+        "https://example.test/custom\\speech",
+        "https://example.test/custom/%",
+        "https://example.test/custom/%2",
+        "https://example.test/custom/%GG",
+        "https://example.test/custom/%2f/speech",
+        "https://example.test/custom/%2F/speech",
+        "https://example.test/custom/%5c/speech",
+        "https://example.test/custom/%5C/speech",
+        "https://example.test/custom/%2e/speech",
+        "https://example.test/custom/%2E%2e/speech",
+        "https://example.test/custom/.%2e/speech",
+        "https://example.test/custom/%2e./speech",
+        "https://example.test/custom/%00/speech",
+        "https://example.test/custom/%0a/speech",
+        "https://example.test/custom/%7f/speech",
+        "https://example.test/custom/%C2%80/speech",
+    ),
+)
+def test_endpoint_rejects_path_normalization_ambiguity(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
+
+
+def test_safe_percent_escapes_are_canonical_without_decoding_path_semantics() -> None:
+    lower = normalize_openai_compatible_endpoint(
+        "https://example.test/custom/%7evoice/%2eprofile"
+    )
+    upper = normalize_openai_compatible_endpoint(
+        "https://example.test/custom/%7Evoice/%2Eprofile"
+    )
+
+    assert lower.speech_url == "https://example.test/custom/%7Evoice/%2Eprofile"
+    assert lower.catalog_url is None
+    assert upper == lower
+    assert openai_destination_fingerprint(
+        "openai", lower
+    ) == openai_destination_fingerprint("openai", upper)
 
 
 @pytest.mark.parametrize(
@@ -318,6 +377,24 @@ async def _close_replaced_client(backend: OpenAITTSBackend) -> None:
     original = getattr(backend, "_original_client_for_cleanup", None)
     if original is not None:
         await original.aclose()
+
+
+@pytest.mark.asyncio
+async def test_allowed_custom_path_reaches_httpx_as_validated_raw_path() -> None:
+    requests: list[httpx.Request] = []
+    backend = _backend_with_transport(
+        {
+            "OPENAI_BASE_URL": "https://example.test/custom/%7evoice/%2eprofile",
+            "OPENAI_AUTH_MODE": "none",
+        },
+        requests,
+    )
+    await _close_replaced_client(backend)
+
+    chunks = await _generate(backend, model="pocket-tts", voice="alba")
+
+    assert chunks == [b"audio"]
+    assert requests[0].url.raw_path == b"/custom/%7Evoice/%2Eprofile"
 
 
 @pytest.mark.asyncio
