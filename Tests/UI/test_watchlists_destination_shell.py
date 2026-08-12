@@ -1322,9 +1322,21 @@ async def test_bracket_toggle_preserves_inspector_selection():
         await pilot.pause()
 
         rebuilt_inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
-        assert rebuilt_inspector is not inspector, "the inspector should have been rebuilt"
+        # task-15461 strengthened this from "rebuilt, and re-seeded correctly"
+        # to "never rebuilt at all". A left-rail toggle used to recompose the
+        # whole workbench, so the Inspector was torn down and rebuilt for a
+        # change on the other side of the screen and the seeding was the only
+        # thing standing between the user and a blank rail. Layout changes are
+        # now scoped to the region whose form moved (AC#3), so the same
+        # gesture leaves this instance -- and therefore the selection -- alone
+        # by construction. `test_a_rail_toggle_rebuilds_only_the_toggled_
+        # region` pins the scoping itself; this keeps pinning the outcome the
+        # user sees.
+        assert rebuilt_inspector is inspector, (
+            "a left-rail toggle must not rebuild the Inspector at all"
+        )
         assert rebuilt_inspector.selected_entity == screen.selected_entity, (
-            "the rebuilt inspector lost the screen's selection"
+            "the Inspector lost the screen's selection across a rail toggle"
         )
         # The empty state ("Select a source...") must NOT be showing, since a
         # real selection is still in effect after the rebuild.
@@ -2997,13 +3009,20 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
     """Review wave M1, the sibling of `test_a_failed_tree_write_start_...`.
 
     `_surface_refresh_draining` is lowered only by `_drain_surface_refresh`'s
-    `finally`, which never runs if `run_worker` raises synchronously. Arming
+    `finally`, which never runs if scheduling raises synchronously. Arming
     before scheduling would leave the flag stuck True for the life of the
     screen: every later request would queue and return, and the rail and
     centre header would silently stop following every background loader.
-    """
-    import inspect
 
+    task-15461 moved the scheduling from `run_worker(group=
+    "wc_surface_refresh")` to `call_next` -- so that anything waiting for the
+    message pump to go quiet also waits for the DOM swap, which the section
+    switch now rides on. The failure mode this test pins is unchanged, so the
+    seam it explodes moves with it. The "the un-awaited coroutine was closed"
+    half is gone with the coroutine: `call_next` is handed the bound method,
+    so nothing is constructed ahead of scheduling and there is nothing left
+    to leak.
+    """
     app = _build_test_app()
     service = app.watchlist_bundle_service
     host = DestinationHarness(app, "watchlists_collections")
@@ -3012,15 +3031,15 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
         screen = host.screen_stack[-1]
 
         exploded: list[Any] = []
-        real_run_worker = screen.run_worker
+        real_call_next = screen.call_next
 
-        def _exploding_run_worker(work, **kwargs):
-            if kwargs.get("group") == "wc_surface_refresh" and not exploded:
-                exploded.append(work)
-                raise RuntimeError("worker could not be scheduled")
-            return real_run_worker(work, **kwargs)
+        def _exploding_call_next(callback, *args, **kwargs):
+            if callback == screen._drain_surface_refresh and not exploded:
+                exploded.append(callback)
+                raise RuntimeError("callback could not be scheduled")
+            return real_call_next(callback, *args, **kwargs)
 
-        screen.run_worker = _exploding_run_worker
+        screen.call_next = _exploding_call_next
         screen._request_surface_refresh(screen._SURFACE_HEADER)
         await pilot.pause()
 
@@ -3028,10 +3047,6 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
         assert screen._surface_refresh_draining is False, (
             "a drain that never started must leave the guard down, or every "
             "later background refresh is silently swallowed"
-        )
-        assert inspect.getcoroutinestate(exploded[0]) == "CORO_CLOSED", (
-            "the un-awaited drain coroutine must be closed, not left to leak "
-            "a RuntimeWarning at collection time"
         )
 
         # ...and the next request really drains.
