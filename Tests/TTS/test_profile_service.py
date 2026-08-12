@@ -2719,12 +2719,34 @@ async def test_guided_dependency_snapshot_reports_pending_saved_configuration() 
 
 
 @pytest.mark.asyncio
-async def test_guided_dependency_snapshot_reports_unapplied_generation_as_pending() -> (
-    None
-):
-    config = _guided_clone_config()
+@pytest.mark.parametrize(
+    ("case", "expected_state"),
+    (
+        ("applied_exact_saved_exact", "exact"),
+        ("applied_absent_saved_exact", "pending"),
+        ("applied_absent_saved_absent", "missing"),
+        ("applied_absent_saved_drift", "mismatch"),
+        ("applied_exact_saved_drift", "exact"),
+    ),
+)
+async def test_guided_dependency_snapshot_applied_saved_precedence_matrix(
+    case: str,
+    expected_state: str,
+) -> None:
+    exact_config = _guided_clone_config()
+    drift_config = _guided_clone_config()
+    drift_config["guided_packages"][0]["projection"]["family"] = "drifted_family"
+    applied_config = exact_config if case.startswith("applied_exact") else {}
+    if case.endswith("saved_exact"):
+        saved_config = exact_config
+    elif case.endswith("saved_drift"):
+        saved_config = drift_config
+    else:
+        saved_config = {}
 
     class _PureRegistry:
+        acquire_calls = 0
+
         def descriptors(self) -> tuple[object, ...]:
             return ()
 
@@ -2734,24 +2756,25 @@ async def test_guided_dependency_snapshot_reports_unapplied_generation_as_pendin
             return TTSProviderConfigurationSnapshot(
                 revision=4,
                 applied_generation=1,
-                applied_config=config,
+                applied_config=applied_config,
                 staged_generation=2,
-                staged_config=config,
+                staged_config=saved_config,
             )
 
         async def acquire(self, _provider_id: str) -> object:
+            self.acquire_calls += 1
             raise AssertionError("dependency inspection acquired an adapter")
 
-    service = tts_generation.TTSService(cast(Any, _PureRegistry()))
+    registry = _PureRegistry()
+    service = tts_generation.TTSService(cast(Any, registry))
     service._settings_persisted_provider_generations["audio_cpp"] = 2
-    service._settings_persisted_provider_configs["audio_cpp"] = dict(config)
+    service._settings_persisted_provider_configs["audio_cpp"] = dict(saved_config)
 
     snapshot = await service.audio_cpp_guided_dependency_snapshot(_guided_requirement())
 
-    assert snapshot.state == "pending"
-    assert snapshot.saved_requirement == _guided_requirement()
-    assert snapshot.applied_requirement == _guided_requirement()
+    assert snapshot.state == expected_state
     assert snapshot.pending_configuration is True
+    assert registry.acquire_calls == 0
 
 
 @pytest.mark.asyncio

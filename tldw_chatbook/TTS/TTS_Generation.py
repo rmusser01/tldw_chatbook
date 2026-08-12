@@ -2359,15 +2359,15 @@ class TTSService:
             state: AudioCppGuidedDependencyState = "missing"
         elif installed.recipe_revision != exact_requirement.recipe_revision:
             state = "mismatch"
-        elif pending:
-            state = "pending"
+        elif applied_observation.state == "exact":
+            state = "exact"
         elif (
-            saved_observation.state == "mismatch"
-            or applied_observation.state == "mismatch"
+            applied_observation.state == "mismatch"
+            or saved_observation.state == "mismatch"
         ):
             state = "mismatch"
-        elif applied == exact_requirement:
-            state = "exact"
+        elif pending and saved_observation.state == "exact":
+            state = "pending"
         else:
             state = "missing"
         return AudioCppGuidedDependencySnapshot(
