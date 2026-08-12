@@ -228,6 +228,16 @@ def test_resolver_never_loads_download_layers_and_fails_without_installed_artifa
 ) -> None:
     from tldw_chatbook.STT import parakeet_dispatch
 
+    monkeypatch.delitem(
+        sys.modules,
+        "tldw_chatbook.Model_Artifacts.acquisition",
+        raising=False,
+    )
+    monkeypatch.delitem(
+        sys.modules,
+        "tldw_chatbook.Model_Artifacts.fetch",
+        raising=False,
+    )
     monkeypatch.setattr(
         parakeet_dispatch,
         "active_managed_parakeet_dir",

@@ -35,6 +35,11 @@ def _deterministic_models_mount(monkeypatch):
         return _real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
+    )
 
 
 async def _models_screen(pilot_app):

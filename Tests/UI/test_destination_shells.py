@@ -4071,6 +4071,7 @@ async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
 @pytest.mark.asyncio
 async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     from unittest.mock import MagicMock
 
@@ -4080,8 +4081,15 @@ async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
         ParakeetSourcePreference,
         ParakeetSourceRecord,
     )
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
+    )
 
     selected = (tmp_path / "private-parakeet-root").absolute()
     service = MagicMock()

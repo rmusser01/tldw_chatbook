@@ -87,6 +87,11 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
         return real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", no_splash)
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
+    )
     app = _build_test_app()
 
     def create_source_service() -> _Source:

@@ -161,6 +161,7 @@ async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
     monkeypatch,
 ) -> None:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from Tests.UI.app_factory import _build_test_app
 
@@ -186,6 +187,11 @@ async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
         lambda section, key=None, default=None: (
             False if (section, key) == ("splash_screen", "enabled") else default
         ),
+    )
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _window: False,
     )
 
     async with app.run_test(size=(80, 24)) as pilot:
