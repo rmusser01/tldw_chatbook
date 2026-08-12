@@ -5,8 +5,8 @@
 These are the Library's two doorways. **Import media** turns files, folders,
 and URLs into Library media — checked before they run, queued while they
 run, and searchable afterwards. **Export bundle (.zip)** packages your local
-media, conversations, and notes into a single portable `.zip` you can
-archive or share. Come here when you want the app to know about a
+media, conversations, notes, and Prompts/Recipes into a single portable `.zip`
+you can archive or share. Come here when you want the app to know about a
 document, a recording, or a web page — or when you want to carry your
 content somewhere else.
 
@@ -20,10 +20,10 @@ then either:
 - In the rail's **Import / Export** section, click **"Import…"** or
   **"Export"**.
 
-Scoped exports also arrive here on their own: pressing **"Export…"** or
-**"Export selected"** in the Media, Notes, or Conversations panels opens
-the same Export bundle (.zip) form, pre-limited to that content (see
-[Media & Conversations](media-and-conversations.md)).
+Scoped exports also arrive here on their own: use **"Export…"** in the Media,
+Notes, Conversations, or Prompts panels (or **"Export selected"** where a list
+offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
+content (see [Media & Conversations](media-and-conversations.md)).
 
 In server mode the **Export** rail row is disabled, with the tooltip
 "Export packages local content only."
@@ -113,8 +113,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
   once everything fits.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
-header, a scope line ("All media, conversations & notes: 128 media · 542 conversations · 87
-notes", or "Notes · 87 items" when you arrived scoped; "Counting…" while
+header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34
+prompts", or "Prompts · 34 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
 "quality: …" chooser with a helper line matching whichever option is
 actually selected (task-2859: "keeps a small preview image instead of the
@@ -208,7 +208,13 @@ the warnings the whole time.
    confirm the scope line says "Notes · N items", adjust the name, press
    "Choose destination…", pick where the `.zip` goes, then press "Export
    bundle (.zip)".
-6. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
+6. **Export all Prompts and Recipes** — In the rail click Browse ▸ Prompts,
+   press **Export…** in the list toolbar, confirm the scope says `Prompts · N
+   items`, choose a destination, then press **Export bundle (.zip)**. The count
+   covers every active local Prompt/Recipe, not only the visible page or selected
+   collection. Choose the rail's **Export** row for `Everything` when the bundle
+   should also include media, conversations, and notes.
+7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
    "Retry"; the new attempt shows a " · retry 1" suffix. No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
@@ -280,6 +286,12 @@ imported items afterwards.
 - **Export is local-only.** In server mode the rail's Export row is
   disabled ("Export packages local content only.") — switch the Library
   back to local to package content.
+- **Prompt records are portable, not database backups.** They preserve current
+  Prompt/Recipe content, separate System/User lanes, keywords, type/format/schema,
+  and stored definition. They exclude source IDs/UUIDs, versions, source
+  timestamps, deleted rows, retained history, collections, and usage state;
+  import assigns ordinary destination-owned identity and lifecycle state. Legacy
+  single-`content` Prompt records remain accepted.
 - **"Show details" is your first stop on a confusing failure** — it opens
   the full error behind the shortened reason on the row.
 
@@ -554,13 +566,11 @@ saying the gap affects imports on this machine only.*
 while its gate is closed the submit button reads "○ Export bundle (.zip)"
 — the Library's non-colour disabled marker — and renders at 7.25:1
 (measured live; it was 1.44:1), with its F-018 reason tooltip unchanged).*
-*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
-(task-4023 AC#7: the widest export scope reads "All media, conversations
-& notes: …" — the bundle never includes prompts, skills, or Collections,
-so it no longer claims "Everything"; the quality control is a "⇄" cycle
-button whose tooltip lists thumbnail → compressed → original; Escape on
-the Export canvas returns to the canvas whose Export… opened it, or to
-the hub when you came from the rail.)*
+*Verified for TASK-197 — 2026-08-12 (ADR-057: the widest export scope is
+`Everything` across media, conversations, notes, and Prompts/Recipes. Prompt
+scope uses uncapped active local IDs, while Skills and Prompt collection/history
+lifecycle state remain excluded. Escape returns to the canvas whose Export…
+opened the form, including Prompts, or to the hub when entered from the rail.)*
 *Verified against fix/ui-background-signal-bounds — 2026-08-10
 (task-14910): a 0-byte file is no longer uploaded to the server. The
 forecast has always counted one as a certain failure, which was true

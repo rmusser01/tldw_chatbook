@@ -519,6 +519,96 @@ def test_prompt_import_name_conflict_is_bounded_before_shared_database_logs(
         assert sentinel not in "\n".join(status.errors)
 
 
+def test_prompt_import_reusing_keyword_does_not_log_archive_value(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    keyword = "task197_archive_keyword_must_not_leak"
+    archive_path = tmp_path / "keyword.zip"
+    payload = {
+        "record_schema": "tldw-chatbook-prompt",
+        "record_version": 1,
+        "author": None,
+        "details": None,
+        "system_prompt": "System",
+        "user_prompt": None,
+        "keywords": [keyword],
+        "artifact_type": "prompt",
+        "prompt_format": "legacy",
+        "prompt_schema_version": None,
+        "prompt_definition": None,
+    }
+    manifest = ChatbookManifest(
+        version=ChatbookVersion.V1,
+        name="Shared keyword fixture",
+        description="Shared keyword fixture",
+    )
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for index in (1, 2):
+            item_id = f"item-{index:06d}"
+            record = {**payload, "name": f"Imported Prompt {index}"}
+            manifest.content_items.append(
+                ContentItem(
+                    id=item_id,
+                    type=ContentType.PROMPT,
+                    title=record["name"],
+                    file_path=f"content/prompts/prompt_{item_id}.json",
+                )
+            )
+            archive.writestr(
+                f"content/prompts/prompt_{item_id}.json",
+                json.dumps(record),
+            )
+        manifest.total_prompts = 2
+        archive.writestr("manifest.json", json.dumps(manifest.to_dict()))
+
+    destination_path = tmp_path / "destination.db"
+
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        success, message = _importer(destination_path, tmp_path).import_chatbook(
+            archive_path
+        )
+    finally:
+        logger.remove(sink)
+
+    rendered = "\n".join(messages + [record.getMessage() for record in caplog.records])
+    assert success is True, message
+    assert keyword not in rendered
+    assert "Traceback" not in rendered
+
+
+def test_prompt_keyword_failures_log_only_fixed_category(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    database = PromptsDatabase(tmp_path / "keywords.db", client_id="keyword-owner")
+    sentinel = "task197_keyword_failure_must_not_leak"
+    prompt_id, _ = _add_prompt(database, name="Keyword target", keywords=[])
+
+    def fail_keyword_update(*_args: Any, **_kwargs: Any) -> None:
+        raise sqlite3.OperationalError(sentinel)
+
+    monkeypatch.setattr(database, "_add_keyword_full", fail_keyword_update)
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        with pytest.raises(Exception):
+            database.update_keywords_for_prompt(prompt_id, [sentinel])
+    finally:
+        logger.remove(sink)
+        database.close_connection()
+
+    rendered = "\n".join(messages + [record.getMessage() for record in caplog.records])
+    assert (
+        "Prompt keyword membership update failed category=OperationalError" in rendered
+    )
+    assert sentinel not in rendered
+    assert "Traceback" not in rendered
+
+
 def test_malformed_prompt_manifest_id_is_rejected_before_path_or_log_use(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

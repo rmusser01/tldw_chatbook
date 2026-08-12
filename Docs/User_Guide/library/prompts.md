@@ -22,8 +22,9 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
-  ("sort: Newest" / "sort: Name" and "Import…"), and one row per prompt
-  showing its name, artifact/source/lane summary, and description and age when present.
+  ("sort: Newest" / "sort: Name", "Import…", and "Export…"), and one row per
+  prompt showing its name, artifact/source/lane summary, and description and age
+  when present.
   Lists longer than one 50-row page have **Previous** and **Next** controls
   plus an exact "Page … · showing … of …" line.
 - **Import row** — appears inline under the toolbar when you press
@@ -46,6 +47,7 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 | sort: Newest / sort: Name | Press to open a one-row strip of Newest / Name (✓ on the active one) in place of the toolbar; pick one directly (changing sort returns to page 1), or press Escape to cancel |
 | Previous / Next | Requests the adjacent exact 50-row page without changing search, collection, or sort |
 | Import… | Opens the inline Import row (below) |
+| Export… | Opens the local **Export bundle (.zip)** canvas scoped to every active Prompt and Recipe; this is separate from the editor's one-item Markdown export |
 | A prompt row | Opens that prompt in the editor |
 
 Search, collection, sort, and page form one exact local request. The header and
@@ -96,6 +98,33 @@ The outcome line reports, for example, "2 imported · 1 skipped
 A prompt whose name already exists is always **skipped** — imports never
 overwrite or rename. A bad path shows "Could not find that file or
 folder."
+
+### Bulk export with Chatbooks
+
+From the Prompts list, press **Export…** to open the existing **Export bundle
+(.zip)** canvas with the scope line `Prompts · N items`. The count is a fresh,
+uncapped query over all active local Prompts and Recipes, not just the visible
+50-row page or current search/collection filter. Choose a destination, then
+press **Export bundle (.zip)**. Progress, Cancel, Retry, overwrite disclosure,
+and the session's **Last export: …** receipt behave exactly like the Library's
+other bundle exports. In server mode this action is refused because Chatbook
+export packages local databases only.
+
+The `Everything` scope includes Prompts alongside media, conversations, and
+notes. Each new Chatbook Prompt record preserves the current portable artifact:
+name, author, details, separate System and User lanes, canonical keywords,
+Prompt or Recipe type, prompt format, schema version, and the exact stored
+definition (including compatibility-only definitions). Multiline text,
+Unicode, and markup-looking text remain literal.
+
+The bundle deliberately does not carry source row IDs, UUIDs, client IDs,
+versions, source timestamps, deleted rows, retained history, collection
+memberships, or usage state. Import creates ordinary destination-owned identity,
+timestamps, version, and lifecycle state. Older Chatbooks with the legacy
+single-`content` Prompt payload still import; that content remains the legacy
+Prompt's System lane. An unknown or invalid Prompt-record version fails closed.
+If any selected Prompt disappears or cannot be represented while exporting, the
+archive aborts instead of claiming a partial success.
 
 ### The prompt editor
 
@@ -279,14 +308,18 @@ prompt to the Library. See
 4. **Duplicate and tweak** — open a Prompt or losslessly representable Recipe,
    press **Duplicate prompt**, rename the "<name> (copy)" editor that opens,
    adjust the blocks, then use the enabled save action — the original is untouched.
-5. **Export a Prompt or Recipe as Markdown** — open a losslessly representable
+5. **Bulk-export all local Prompts and Recipes** — from the Prompts list, press
+   **Export…**, confirm `Prompts · N items`, choose a destination, then press
+   **Export bundle (.zip)**. Use the rail's **Export** row and `Everything` when
+   you also want media, conversations, and notes.
+6. **Export one Prompt or Recipe as Markdown** — open a losslessly representable
    artifact, press **Export…**, and pick a location; a notice confirms the export.
    A compatibility artifact or legacy Recipe that fails this check requires
    **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
-6. **Browse one collection** — press **collection: All prompts ▸**, choose a
+7. **Browse one collection** — press **collection: All prompts ▸**, choose a
    collection, then press **Done**. Search and paging now stay inside that exact
    collection until you explicitly choose **All prompts** or another collection.
-7. **Change a Prompt's memberships** — open a saved local Prompt, press **Manage
+8. **Change a Prompt's memberships** — open a saved local Prompt, press **Manage
    collections**, stage the checks you want, press **Done**, then press **Apply
    memberships**. Save any content edits separately with **Update original**.
 
@@ -323,9 +356,9 @@ prompt to the Library. See
   server collections, and it does not offer collection deletion.
 - **Size caps**: names up to 300 characters; the system prompt, user
   prompt, and description up to 2,000,000 characters each.
-- **No bulk export yet** — Export… lives in the editor and exports one
-  prompt at a time; exporting all prompts at once is an open backlog
-  item (task-197).
+- **Two Export… actions serve different formats** — the Prompts-list action
+  writes a multi-item Chatbook `.zip`; the editor action writes one Prompt or
+  Recipe as Markdown.
 
 —
 *TASK-198, TASK-202, and TASK-196 behavior in this guide was reverified against

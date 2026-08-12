@@ -419,7 +419,7 @@
     },
     {
       "call_count": 129,
-      "diagnostic_digest": "09de5b0b593d221a3adf",
+      "diagnostic_digest": "a3c22f36880693ba88e7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Prompts_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"

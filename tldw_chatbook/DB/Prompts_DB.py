@@ -1313,7 +1313,8 @@ class PromptsDatabase:
                         return kw_id, kw_uuid
                     else:  # Already active, just return its ID and UUID
                         logger.debug(
-                            f"Keyword '{normalized_keyword}' already exists and is active. Reusing ID: {kw_id}, UUID: {kw_uuid}"
+                            "Prompt keyword reused operation=add_keyword "
+                            "category=existing"
                         )
                         return kw_id, kw_uuid
                 else:  # New keyword
@@ -1346,14 +1347,14 @@ class PromptsDatabase:
                     )
                     self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
                     return kw_id, new_uuid
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error in add_keyword (prompt) for '{keyword_text}': {e}"
+        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as exc:
+            logger.error(
+                "Prompt keyword write failed operation=add_keyword category={}",
+                type(exc).__name__,
             )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to add/update prompt keyword: {e}") from e
+            if isinstance(exc, (InputError, ConflictError, DatabaseError)):
+                raise
+            raise DatabaseError("Failed to add or update Prompt keyword.") from None
 
     def get_active_keyword_by_text(self, keyword_text: str) -> Optional[Dict]:
         """
@@ -1827,19 +1828,19 @@ class PromptsDatabase:
                     )
 
             if ids_to_add or ids_to_remove:
-                logging.debug(
-                    f"Keywords updated for prompt {prompt_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
+                logger.debug(
+                    "Prompt keyword membership updated added={} removed={}",
+                    len(ids_to_add),
+                    len(ids_to_remove),
                 )
-        except (InputError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error updating keywords for prompt {prompt_id}: {e}"
+        except (InputError, DatabaseError, sqlite3.Error) as exc:
+            logger.error(
+                "Prompt keyword membership update failed category={}",
+                type(exc).__name__,
             )
-            if isinstance(e, (InputError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(
-                    f"Keyword update failed for prompt {prompt_id}: {e}"
-                ) from e
+            if isinstance(exc, (InputError, DatabaseError)):
+                raise
+            raise DatabaseError("Prompt keyword update failed.") from None
 
     def update_prompt_by_id(
         self,
