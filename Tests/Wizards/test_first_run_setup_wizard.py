@@ -3251,6 +3251,100 @@ class TestComposeCrashPolicy:
             assert all(step.parent is None for step in retired)
             assert container._failure_action_running is False
 
+    @pytest.mark.parametrize("failure_stage", ("mount", "refresh", "show"))
+    @pytest.mark.asyncio
+    async def test_partial_retry_failure_rolls_back_and_next_retry_succeeds(
+        self, monkeypatch, failure_stage
+    ):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
+
+        original_compose = ProviderStep.compose_step
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            failed_index = container.current_step
+            failed_step = container.steps[failed_index]
+            parent = failed_step.parent
+            assert parent is not None
+            injected = False
+
+            if failure_stage == "mount":
+                original_mount = parent.mount
+
+                def fail_replacement_mount(*widgets, **kwargs):
+                    nonlocal injected
+                    if not injected and any(
+                        isinstance(widget, ProviderStep) and widget is not failed_step
+                        for widget in widgets
+                    ):
+                        injected = True
+                        raise RuntimeError("bounded replacement mount failure")
+                    return original_mount(*widgets, **kwargs)
+
+                monkeypatch.setattr(parent, "mount", fail_replacement_mount)
+            elif failure_stage == "refresh":
+                original_refresh = container._refresh_active_ids
+
+                def fail_refresh_once():
+                    nonlocal injected
+                    if not injected:
+                        injected = True
+                        raise RuntimeError("bounded replacement refresh failure")
+                    return original_refresh()
+
+                monkeypatch.setattr(container, "_refresh_active_ids", fail_refresh_once)
+            else:
+                original_show = container.show_step
+
+                def fail_show_once(step_index):
+                    nonlocal injected
+                    if not injected:
+                        injected = True
+                        raise RuntimeError("bounded replacement show failure")
+                    return original_show(step_index)
+
+                monkeypatch.setattr(container, "show_step", fail_show_once)
+
+            monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
+            failed_step.query_one("#setup-step-retry", Button).press()
+            await pilot.pause(0.8)
+
+            assert injected is True
+            assert container._failure_action_running is False
+            assert container._failure_action is None
+            recovery_step = container.steps[failed_index]
+            assert recovery_step is not failed_step
+            assert recovery_step.compose_failure is failed_step.compose_failure
+            assert recovery_step.parent is parent
+            assert failed_step.parent is None
+            assert len(container.query(ProviderStep)) == 1
+            assert len(container.query("#setup-step-retry")) == 1
+            assert len(container.query("#setup-step-manual")) == 1
+            assert len(container.query("#setup-step-later")) == 1
+            assert wizard.query_one("#setup-step-retry", Button).disabled is False
+            assert wizard.query_one("#setup-step-manual", Button).disabled is False
+            assert wizard.query_one("#setup-step-later", Button).disabled is False
+            assert not any(
+                worker.group == "setup-step-recovery" and not worker.is_finished
+                for worker in app.workers
+            )
+
+            recovery_step.query_one("#setup-step-retry", Button).press()
+            await pilot.pause(0.8)
+
+            replacement = container.steps[failed_index]
+            assert replacement is not recovery_step
+            assert replacement.compose_failure is None
+            assert recovery_step.parent is None
+            assert len(container.query(ProviderStep)) == 1
+            assert container._failure_action_running is False
+            assert container._failure_action is None
+
     @pytest.mark.parametrize(
         ("action_selector", "outcome"),
         (

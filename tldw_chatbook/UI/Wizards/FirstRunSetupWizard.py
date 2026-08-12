@@ -252,6 +252,11 @@ class SetupStep(WizardStep):
             exception, yields the bounded required-recovery or optional-skip
             surface and records a ``SetupStepFailure``.
         """
+        if self.compose_failure is not None:
+            self.compose_failed = True
+            yield from self._failure_widgets(self.compose_failure)
+            return
+
         try:
             # Finding A: drain compose_step() through Textual's OWN
             # textual.compose.compose() helper -- NOT a plain list(...) --
@@ -4403,21 +4408,24 @@ class SetupWizardContainer(WizardContainer):
     def _release_failure_action(
         self,
         action: _SetupFailureAction,
-        *,
-        replacement: SetupStep | None = None,
     ) -> None:
         if self._failure_action is not action:
             return
-        still_current = (
-            self._failure_action_is_current(action)
-            if replacement is None
-            else self._retry_replacement_is_current(action, replacement)
-        )
-        if not still_current:
-            return
         self._failure_action = None
         self._failure_action_running = False
-        self._sync_action_controls()
+        try:
+            current = self.steps[self.current_step]
+            same_screen = (
+                self.is_mounted
+                and action.screen.is_mounted
+                and self.screen is action.screen
+                and action.screen.app.screen is action.screen
+                and action.screen.query_one(SetupWizardContainer) is self
+            )
+        except Exception:
+            return
+        if same_screen and current.is_mounted:
+            self._sync_action_controls()
 
     def _sync_action_controls(self) -> None:
         blocked = self._advancing or self._failure_action_running
@@ -4514,6 +4522,8 @@ class SetupWizardContainer(WizardContainer):
         """Replace only the active failed step with a clean factory instance."""
 
         replacement: SetupStep | None = None
+        parent: Widget | None = None
+        next_sibling: Widget | None = None
         try:
             if not self._failure_action_is_current(action):
                 return
@@ -4547,14 +4557,75 @@ class SetupWizardContainer(WizardContainer):
                 return
             self._refresh_active_ids()
             self.show_step(index)
-            self._release_failure_action(action, replacement=replacement)
         except Exception as exc:
             logger.error(
                 "Wizard step retry failed (category=recovery, error_type={})",
                 type(exc).__name__,
             )
+            if parent is not None:
+                await self._rollback_failed_step_retry(
+                    action,
+                    replacement,
+                    parent,
+                    next_sibling,
+                )
         finally:
             self._release_failure_action(action)
+
+    async def _rollback_failed_step_retry(
+        self,
+        action: _SetupFailureAction,
+        replacement: SetupStep | None,
+        parent: Widget,
+        next_sibling: Widget | None,
+    ) -> None:
+        """Restore one coherent failed step after a partial retry replacement."""
+
+        try:
+            same_screen = (
+                self._failure_action is action
+                and not self._finalized
+                and self.is_mounted
+                and action.screen.is_mounted
+                and self.screen is action.screen
+                and action.screen.app.screen is action.screen
+                and action.screen.query_one(SetupWizardContainer) is self
+                and self.current_step == action.index
+            )
+        except Exception:
+            return
+        if not same_screen:
+            return
+
+        recovery_step: SetupStep | None = None
+        try:
+            if replacement is not None and replacement.parent is not None:
+                await replacement.remove()
+            recovery_step = self._build_step(action.step.config)
+            recovery_step.step_number = action.step.step_number
+            recovery_step.compose_failed = True
+            recovery_step.compose_failure = action.failure
+            recovery_step.add_class("hidden")
+            mount_before = (
+                next_sibling
+                if next_sibling is not None and next_sibling.parent is parent
+                else None
+            )
+            if mount_before is None:
+                await parent.mount(recovery_step)
+            else:
+                await parent.mount(recovery_step, before=mount_before)
+            self.steps[action.index] = recovery_step
+            self._refresh_active_ids()
+            self.show_step(action.index)
+        except Exception as exc:
+            if recovery_step is not None and recovery_step.parent is parent:
+                self.steps[action.index] = recovery_step
+            logger.error(
+                "Wizard step retry rollback failed "
+                "(category=recovery, error_type={})",
+                type(exc).__name__,
+            )
 
     # -- commit-on-Next ----------------------------------------------------
     @on(Button.Pressed, "#wizard-next")
