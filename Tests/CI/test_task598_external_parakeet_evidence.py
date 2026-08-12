@@ -574,6 +574,32 @@ def test_normalized_failure_code_reports_only_bounded_external_verifier_codes(
     assert evidence._normalized_failure_code(error) == f"external_{code_value}"
 
 
+@pytest.mark.parametrize(
+    "diagnostic_code",
+    (
+        "ancestor_identity",
+        "file_path_identity",
+        "open_file_identity",
+        "post_read_file_identity",
+        "file_read",
+        "snapshot_identity",
+    ),
+)
+def test_normalized_failure_code_reports_bounded_changed_file_diagnostics(
+    diagnostic_code: str,
+) -> None:
+    evidence = _load_probe()
+    external = importlib.import_module("tldw_chatbook.STT.parakeet_external")
+    error = external.ExternalParakeetVerificationError(
+        external.ExternalParakeetErrorCode.CHANGED,
+        diagnostic_code=diagnostic_code,
+    )
+
+    assert evidence._normalized_failure_code(error) == (
+        f"external_changed_{diagnostic_code}"
+    )
+
+
 def test_facade_cleanup_failure_still_closes_native_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

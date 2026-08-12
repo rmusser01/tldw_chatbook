@@ -34,6 +34,16 @@ _SUPPORTED_MODELS = {
     "nemo-parakeet-tdt-0.6b-v3": "parakeet-v3",
 }
 _SUPPORTED_PRECISIONS = frozenset({"int8", "f32"})
+_CHANGED_DIAGNOSTIC_CODES = frozenset(
+    {
+        "ancestor_identity",
+        "file_path_identity",
+        "open_file_identity",
+        "post_read_file_identity",
+        "file_read",
+        "snapshot_identity",
+    }
+)
 
 
 class ExternalParakeetErrorCode(str, Enum):
@@ -95,14 +105,26 @@ class ExternalParakeetVerificationError(RuntimeError):
 
     code: ExternalParakeetErrorCode
 
-    def __init__(self, code: ExternalParakeetErrorCode) -> None:
+    def __init__(
+        self,
+        code: ExternalParakeetErrorCode,
+        *,
+        diagnostic_code: str | None = None,
+    ) -> None:
         """Create one stable, path-free verification failure.
 
         Args:
             code: Machine-readable failure category.
+            diagnostic_code: Optional path-free internal failure phase.
         """
 
+        if (
+            diagnostic_code is not None
+            and diagnostic_code not in _CHANGED_DIAGNOSTIC_CODES
+        ):
+            raise ValueError("unsupported external verification diagnostic")
         self.code = code
+        self.diagnostic_code = diagnostic_code
         super().__init__(f"External Parakeet verification failed: {code.value}")
 
 
@@ -145,8 +167,22 @@ def _directory_identity(metadata: os.stat_result) -> _DirectoryIdentity:
     )
 
 
-def _fail(code: ExternalParakeetErrorCode) -> None:
-    raise ExternalParakeetVerificationError(code) from None
+def _fail(
+    code: ExternalParakeetErrorCode,
+    *,
+    diagnostic_code: str | None = None,
+) -> None:
+    raise ExternalParakeetVerificationError(
+        code,
+        diagnostic_code=diagnostic_code,
+    ) from None
+
+
+def _fail_changed(diagnostic_code: str) -> None:
+    _fail(
+        ExternalParakeetErrorCode.CHANGED,
+        diagnostic_code=diagnostic_code,
+    )
 
 
 def _emit_progress(
@@ -243,12 +279,12 @@ def _require_unchanged_ancestors(
         try:
             metadata = path.lstat()
         except OSError:
-            _fail(ExternalParakeetErrorCode.CHANGED)
+            _fail_changed("ancestor_identity")
         if (
             not stat.S_ISDIR(metadata.st_mode)
             or _directory_identity(metadata) != before
         ):
-            _fail(ExternalParakeetErrorCode.CHANGED)
+            _fail_changed("ancestor_identity")
 
 
 def _require_unchanged_file(
@@ -261,13 +297,11 @@ def _require_unchanged_file(
         resolved = path.resolve(strict=True)
         resolved.relative_to(root)
     except (OSError, ValueError):
-        _fail(ExternalParakeetErrorCode.CHANGED)
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or resolved != path
-        or _file_identity(metadata) != before
-    ):
-        _fail(ExternalParakeetErrorCode.CHANGED)
+        _fail_changed("file_path_identity")
+    if not stat.S_ISREG(metadata.st_mode) or resolved != path:
+        _fail_changed("file_path_identity")
+    if _file_identity(metadata) != before:
+        _fail_changed("post_read_file_identity")
     _require_unchanged_ancestors(ancestors)
 
 
@@ -612,7 +646,7 @@ class ExternalParakeetVerifier:
                 descriptor_fd = os.open(path, flags)
                 with os.fdopen(descriptor_fd, "rb") as source:
                     if _file_identity(os.fstat(source.fileno())) != before:
-                        _fail(ExternalParakeetErrorCode.CHANGED)
+                        _fail_changed("open_file_identity")
                     while True:
                         if cancelled():
                             _fail(ExternalParakeetErrorCode.CANCELLED)
@@ -623,7 +657,7 @@ class ExternalParakeetVerifier:
                         bytes_done += len(chunk)
                         _emit_progress(progress, bytes_done, bytes_total)
             except OSError:
-                _fail(ExternalParakeetErrorCode.CHANGED)
+                _fail_changed("file_read")
 
             verified = (path, before, ancestors)
             _require_unchanged_file(root, verified)
@@ -635,12 +669,12 @@ class ExternalParakeetVerifier:
         try:
             snapshot = snapshot_local_source(verified_paths)
         except (LocalSourceChangedError, OSError):
-            _fail(ExternalParakeetErrorCode.CHANGED)
+            _fail_changed("snapshot_identity")
         if snapshot.paths != verified_paths or snapshot.identities != tuple(
             (identity[0], identity[1], identity[3], identity[4])
             for _path, identity, _ancestors in verified_files
         ):
-            _fail(ExternalParakeetErrorCode.CHANGED)
+            _fail_changed("snapshot_identity")
         for verified in verified_files:
             _require_unchanged_file(root, verified)
         return VerifiedExternalParakeet(

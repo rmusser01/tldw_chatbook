@@ -340,6 +340,7 @@ def test_opens_required_file_nonblocking_to_reject_fifo_swap(
         _descriptor(files),
         root,
     )
+    assert error.diagnostic_code == "open_file_identity"
     assert opened
     assert str(root.absolute()) not in "".join(traceback.format_exception(error))
 
@@ -392,12 +393,13 @@ def test_rejects_file_metadata_mutation_during_hashing(tmp_path: Path) -> None:
             )
             changed = True
 
-    _assert_error(
+    error = _assert_error(
         ExternalParakeetErrorCode.CHANGED,
         _descriptor(files),
         root,
         progress=mutate_after_first_chunk,
     )
+    assert error.diagnostic_code == "post_read_file_identity"
     assert changed
 
 

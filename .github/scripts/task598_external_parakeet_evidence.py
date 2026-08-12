@@ -72,6 +72,16 @@ _EXTERNAL_VERIFICATION_FAILURE_CODES = frozenset(
         "cancelled",
     }
 )
+_EXTERNAL_CHANGED_DIAGNOSTIC_CODES = frozenset(
+    {
+        "ancestor_identity",
+        "file_path_identity",
+        "open_file_identity",
+        "post_read_file_identity",
+        "file_read",
+        "snapshot_identity",
+    }
+)
 _WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
 _EMBEDDED_POSIX_ABSOLUTE = re.compile(r"(?:^|[\s=:'\"])/(?!/)[^\s'\"<>]+")
 
@@ -179,6 +189,13 @@ def _normalized_failure_code(error: BaseException) -> str:
             type(code_value) is str
             and code_value in _EXTERNAL_VERIFICATION_FAILURE_CODES
         ):
+            diagnostic_code = error.diagnostic_code
+            if (
+                code_value == "changed_file"
+                and type(diagnostic_code) is str
+                and diagnostic_code in _EXTERNAL_CHANGED_DIAGNOSTIC_CODES
+            ):
+                return f"external_changed_{diagnostic_code}"
             return f"external_{code_value}"
     if (
         isinstance(error, RuntimeError)
