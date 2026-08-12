@@ -38,6 +38,8 @@ _PROVIDER_ALIASES = {
     "custom_openai_api_2": "custom_2",
     "llama.cpp": "llama_cpp",
     "local llama.cpp": "local_llamacpp",
+    "OpenRouter": "openrouter",
+    "local-llamacpp": "local_llamacpp",
 }
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
@@ -282,7 +284,12 @@ def _canonicalize_path(path: str) -> str | None:
     while index < len(path):
         character = path[index]
         if character != "%":
-            canonical.append(character)
+            if character.isascii():
+                canonical.append(character)
+            else:
+                canonical.extend(
+                    f"%{octet:02X}" for octet in character.encode("utf-8")
+                )
             index += 1
             continue
 
@@ -313,7 +320,7 @@ def _percent_octets_contain_unsafe_unicode(octets: bytearray) -> bool:
     try:
         decoded = bytes(octets).decode("utf-8")
     except UnicodeDecodeError:
-        return any(0x80 <= octet <= 0x9F for octet in octets)
+        return True
     return _contains_unsafe_unicode(decoded)
 
 

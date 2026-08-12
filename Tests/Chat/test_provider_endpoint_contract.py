@@ -28,7 +28,9 @@ from tldw_chatbook.Chat import provider_endpoint_contract as contract
         ("local llama.cpp", "local_llamacpp"),
         ("vllm", "vllm"),
         ("openrouter", "openrouter"),
+        ("OpenRouter", "openrouter"),
         ("local_llamacpp", "local_llamacpp"),
+        ("local-llamacpp", "local_llamacpp"),
         ("custom__openai__api", "custom__openai__api"),
     ],
 )
@@ -50,8 +52,6 @@ def test_provider_aliases_resolve_to_canonical_config_keys(
         "custom---openai",
         "open router",
         "local--vllm",
-        "OpenRouter",
-        "local-llamacpp",
     ],
 )
 def test_unknown_provider_keys_must_already_be_canonical(provider: str) -> None:
@@ -318,6 +318,9 @@ def test_c0_controls_and_del_are_rejected_before_normalization(
         "https://example.test/proxy/%C2%85/v1",
         "https://example.test/proxy/%E2%80%AE/v1",
         "https://example.test/proxy/%ED%A0%80/v1",
+        "https://example.test/proxy/%C0%AF/v1",
+        "https://example.test/proxy/%C0%AE%C0%AE/v1",
+        "https://example.test/proxy/%FF%C2%AD/v1",
         "https://example.test/proxy/%2e%2e/v1",
         "https://example.test/proxy/.%2E/v1",
         "https://example.test/proxy/%2E/v1",
@@ -367,6 +370,28 @@ def test_percent_encoded_unreserved_path_has_same_canonical_identity() -> None:
     )
 
     assert encoded == plain
+
+
+def test_raw_unicode_path_is_serialized_as_uppercase_utf8_percent_escapes() -> None:
+    raw = contract.resolve_provider_endpoint(
+        "custom", "https://example.test/café/v1"
+    )
+    encoded = contract.resolve_provider_endpoint(
+        "custom", "https://example.test/caf%C3%A9/v1"
+    )
+
+    assert raw.normalized_input == "https://example.test/caf%C3%A9/v1"
+    assert raw.persisted_endpoint == (
+        "https://example.test/caf%C3%A9/v1/chat/completions"
+    )
+    assert raw.chat_url == encoded.chat_url
+    assert raw.models_url == encoded.models_url
+    assert raw == encoded
+    assert contract.canonical_connection_identity(
+        "custom", "https://example.test/café/v1"
+    ) == contract.canonical_connection_identity(
+        "custom", "https://example.test/caf%C3%A9/v1"
+    )
 
 
 @pytest.mark.parametrize(
