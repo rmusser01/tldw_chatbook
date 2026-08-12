@@ -19134,7 +19134,14 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompts-delete-undo")
     def handle_library_prompt_delete_undo(self, event: Button.Pressed) -> None:
-        """Restore the exact Prompt/Recipe named by the current receipt."""
+        """Start restoration for the Prompt/Recipe named by the receipt.
+
+        Args:
+            event: Press of the receipt's Undo button.
+
+        Returns:
+            None.
+        """
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
@@ -19152,7 +19159,14 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompt_delete_receipt_dismiss(
         self, event: Button.Pressed
     ) -> None:
-        """Dismiss only the Prompt recovery receipt."""
+        """Dismiss only the Prompt recovery receipt.
+
+        Args:
+            event: Press of the receipt's Dismiss button.
+
+        Returns:
+            None.
+        """
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
@@ -19163,7 +19177,14 @@ class LibraryScreen(BaseAppScreen):
     async def _undo_library_prompt_delete(
         self, receipt: LibraryPromptDeleteReceipt
     ) -> None:
-        """Conditionally resurrect one tombstone through the scope service."""
+        """Conditionally resurrect one tombstone through the scope service.
+
+        Args:
+            receipt: Immutable artifact identity and tombstone version to restore.
+
+        Returns:
+            None. Success or failure is reflected in Library state and feedback.
+        """
         restored = False
         try:
             service = getattr(self.app_instance, "prompt_scope_service", None)

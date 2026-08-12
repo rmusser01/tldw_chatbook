@@ -238,7 +238,21 @@ def soft_delete_prompt(
     *,
     expected_version: Optional[int] = None,
 ) -> bool:
-    """Soft deletes a prompt. See PromptsDatabase.soft_delete_prompt for details."""
+    """Soft-delete a Prompt/Recipe through the shared database instance.
+
+    Args:
+        prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
+        expected_version: Optional active-row version required for deletion.
+
+    Returns:
+        ``True`` when the artifact is soft-deleted.
+
+    Raises:
+        InputError: If the identifier or expected version is invalid.
+        ConflictError: If no active artifact matches the identifier.
+        ExpectedVersionConflictError: If the expected version is stale.
+        DatabaseError: If persistence fails.
+    """
     db = get_db_instance()
     return db.soft_delete_prompt(
         prompt_id_or_name_or_uuid, expected_version=expected_version

@@ -637,6 +637,21 @@ class LocalPromptService:
         *,
         expected_version: int | None = None,
     ) -> Any:
+        """Soft-delete one local Prompt/Recipe conditionally.
+
+        Args:
+            prompt_identifier: Numeric id, UUID, or name of the artifact.
+            expected_version: Optional active-row version required for deletion.
+
+        Returns:
+            The local database delete result.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ConflictError: If no active artifact matches the identifier.
+            ExpectedVersionConflictError: If the expected version is stale.
+            DatabaseError: If persistence fails.
+        """
         return self.prompt_db.soft_delete_prompt(
             prompt_identifier, expected_version=expected_version
         )
@@ -644,6 +659,20 @@ class LocalPromptService:
     def restore_deleted_prompt(
         self, prompt_identifier: str | int, *, expected_version: int
     ) -> Any:
+        """Restore one exact local Prompt/Recipe tombstone.
+
+        Args:
+            prompt_identifier: Numeric id, UUID, or name of the tombstone.
+            expected_version: Exact deleted-row version required for restore.
+
+        Returns:
+            The restored Prompt/Recipe record with canonical keywords.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ExpectedVersionConflictError: If the tombstone version is stale.
+            DatabaseError: If recovery metadata is unavailable or persistence fails.
+        """
         return self.prompt_db.restore_deleted_prompt(
             prompt_identifier, expected_version=expected_version
         )
@@ -1534,6 +1563,21 @@ class PromptScopeService:
         prompt_identifier: str | int,
         expected_version: int | None = None,
     ) -> bool:
+        """Delete a Prompt/Recipe through its selected backend.
+
+        Args:
+            mode: Backend selection; defaults to the service's configured mode.
+            prompt_identifier: Backend-specific identifier for the artifact.
+            expected_version: Optional local version required for deletion.
+
+        Returns:
+            ``True`` when the backend reports a successful deletion.
+
+        Raises:
+            ValueError: If the mode or backend service is unavailable.
+            PolicyDeniedError: If policy rejects the delete action.
+            ExpectedVersionConflictError: If a local expected version is stale.
+        """
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
@@ -1563,6 +1607,20 @@ class PromptScopeService:
         an equivalent contract. It is governed as an ordinary conditional
         update and returned through the same normalized record envelope used
         by the rest of the Library Prompt surface.
+
+        Args:
+            mode: Backend selection, which must resolve to the local backend.
+            prompt_identifier: Numeric id, UUID, or name of the tombstone.
+            expected_version: Exact deleted-row version required for restore.
+
+        Returns:
+            The normalized restored Prompt/Recipe record.
+
+        Raises:
+            ValueError: If restore is requested outside the local backend or
+                the local service does not expose restore capability.
+            PolicyDeniedError: If policy rejects the conditional update.
+            ExpectedVersionConflictError: If the tombstone version is stale.
         """
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != PromptBackend.LOCAL:

@@ -2110,6 +2110,21 @@ class PromptsDatabase:
         *,
         expected_version: Optional[int] = None,
     ) -> bool:
+        """Soft-delete one active Prompt/Recipe and record its tombstone.
+
+        Args:
+            prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
+            expected_version: Optional active-row version required for deletion.
+
+        Returns:
+            ``True`` when the artifact is soft-deleted.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ConflictError: If no active artifact matches the identifier.
+            ExpectedVersionConflictError: If the expected version is stale.
+            DatabaseError: If persistence fails.
+        """
         start_time = time.time()
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
