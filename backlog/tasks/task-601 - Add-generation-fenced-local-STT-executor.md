@@ -1,11 +1,11 @@
 ---
 id: TASK-601
 title: Add generation-fenced local STT executor
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-12 08:47'
+updated_date: '2026-08-12 08:52'
 labels:
   - stt
   - processes
@@ -42,7 +42,7 @@ Create one app-owned heavy-media process boundary that gives batch transcription
 - [x] #3 The worker owns root and loaded-dependency leases for the full resident-model lifetime, including idle reuse, and releases them only on close or process exit.
 - [x] #4 Every request, progress event, result, and error carries attempt and executor-generation identity; detached-generation callbacks cannot reach the single-writer stage.
 - [x] #5 Cooperative cancellation and force stop produce exactly one terminal state, recycle only the heavy pool, and leave light parse workers unaffected.
-- [ ] #6 FFmpeg and other preparation subprocesses are owned and terminated as a platform process tree before temporary cleanup on Windows, macOS, and Linux.
+- [x] #6 FFmpeg and other preparation subprocesses are owned and terminated as a platform process tree before temporary cleanup on Windows, macOS, and Linux.
 - [x] #7 Process tests cover same-model reuse, identity recycle, idle leases, crash release, stale callbacks, child cleanup, CPU retry in a fresh worker, and shutdown.
 <!-- AC:END -->
 
@@ -86,4 +86,6 @@ Native three-platform evidence and its evidence-related documentation and valida
 Task 5 final review completed. Independent correctness review approved the complete origin/dev...HEAD range with no Critical, Important, or Minor findings and independently confirmed the checked-in aggregate reproduces the successful three-platform artifacts for frozen executable commit 5c6a446c8d050587f141561319e58e1ce72c528d. Final Ponytail review found no blocking complexity; its optional deletion of redundant CLI test coverage is intentionally deferred because changing executable/test content after native evidence would violate the frozen-evidence boundary. A fresh final local gate passed 98 tests with one intentional host-only skip; aggregate validation, Ruff check and format check, py_compile, and origin/dev...HEAD diff check passed. All acceptance criteria and the full applicable Definition of Done are complete.
 
 PR #1561 review after the initial evidence closeout identified a real Windows failure-finalizer hazard: the test reopened captured raw PIDs for cleanup, permitting PID-reuse termination of an unrelated process, and its helper conflated WAIT_TIMEOUT with Win32 failure. TASK-601 and AC6 are reopened before remediation. The fix is test-only and will use only the owned multiprocessing.Process API; because selected native-test content changes, a brand-new three-platform run and replacement aggregate are required before completion.
+
+PR review remediation is complete. Commit 0e34f7462e4dbd5a724fbe9a6f93ded959623d3e removed raw-PID Windows cleanup, uses only the owned multiprocessing.Process and kill-on-close Job Object handles, added a RED/GREEN regression, and completed Google-style documentation for public evidence-script functions. Review comments about central app path validation and pytest-function docstrings were resolved without code changes: this is an intentionally standard-library-only trusted CI/operator tool with runner-temporary paths, and pytest tests are not package public APIs. Replacement workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31580179256 passed Linux x86_64, Windows x86_64, and macOS x86_64 against the exact remediation SHA; all three downloaded records validated and regenerated the checked-in aggregate through the repository script. AC6 and TASK-601 are complete again.
 <!-- SECTION:NOTES:END -->
