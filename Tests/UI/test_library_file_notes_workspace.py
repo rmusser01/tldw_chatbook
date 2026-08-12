@@ -3471,8 +3471,20 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         retained.query_one("#file-notes-reload", Button).press()
         await _wait_until(
             pilot,
-            lambda: retained.save_state == "saved",
-            "reload did not clear the source-switch veto",
+            lambda: retained.reload_confirmation_active,
+            "reload confirmation did not open before clearing the veto",
+        )
+        assert retained.save_state == "conflict"
+        assert editor.text == "draft"
+        retained.query_one("#file-notes-reload-confirm", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                not retained.reload_confirmation_active
+                and retained.save_state == "saved"
+                and editor.text == "external"
+            ),
+            "confirmed reload did not clear the source-switch veto",
         )
         _replace_editor_text(editor, "saved before hiding")
         await _wait_until(
