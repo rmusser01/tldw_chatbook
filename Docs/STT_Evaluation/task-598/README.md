@@ -69,12 +69,14 @@ transcription and ordered shutdown still completed.
 ## Exact changed-test union
 
 The union was derived from
-`git diff --name-only --diff-filter=ACMR origin/dev...HEAD` and contained the
-24 changed Python test files recorded in the JSON. Each run used one explicit
-command with the repository virtual environment and no keyword filtering:
+`git diff --name-only --diff-filter=ACMR origin/dev...HEAD`. The initial
+evidence run contained the 24 changed Python test files recorded in the JSON;
+the final closeout union contained 25 after the CI evidence test was added.
+Each run used one explicit command with the repository virtual environment and
+no keyword filtering:
 
 ```text
-../../.venv/bin/python -m pytest Tests/App/test_submit_library_ingest_job.py Tests/Library/test_library_ingest_runner.py Tests/Local_Ingestion/test_parakeet_v2_artifact.py Tests/Local_Ingestion/test_transcription_service_parakeet_buffer_wav.py Tests/Model_Artifacts/test_service.py Tests/STT/test_dispatch_coordinator.py Tests/STT/test_local_stt_executor.py Tests/STT/test_parakeet_dispatch.py Tests/STT/test_parakeet_external.py Tests/STT/test_parakeet_onnx.py Tests/STT/test_parakeet_sources.py Tests/STT/test_transcription_service_facade.py Tests/UI/test_destination_shells.py Tests/UI/test_first_run_wizard_live_contract.py Tests/UI/test_library_ingest_canvas.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_model_artifact_widgets.py Tests/UI/test_model_browser_state.py Tests/UI/test_model_curated_view.py Tests/UI/test_model_external_view.py Tests/UI/test_model_installed_view.py Tests/UI/test_parakeet_v2_install_ui.py Tests/Wizards/test_first_run_speech_step.py Tests/Wizards/test_first_run_speech_step_state.py -q
+../../.venv/bin/python -m pytest -q Tests/App/test_submit_library_ingest_job.py Tests/CI/test_task598_external_parakeet_evidence.py Tests/Library/test_library_ingest_runner.py Tests/Local_Ingestion/test_parakeet_v2_artifact.py Tests/Local_Ingestion/test_transcription_service_parakeet_buffer_wav.py Tests/Model_Artifacts/test_service.py Tests/STT/test_dispatch_coordinator.py Tests/STT/test_local_stt_executor.py Tests/STT/test_parakeet_dispatch.py Tests/STT/test_parakeet_external.py Tests/STT/test_parakeet_onnx.py Tests/STT/test_parakeet_sources.py Tests/STT/test_transcription_service_facade.py Tests/UI/test_destination_shells.py Tests/UI/test_first_run_wizard_live_contract.py Tests/UI/test_library_ingest_canvas.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_model_artifact_widgets.py Tests/UI/test_model_browser_state.py Tests/UI/test_model_curated_view.py Tests/UI/test_model_external_view.py Tests/UI/test_model_installed_view.py Tests/UI/test_parakeet_v2_install_ui.py Tests/Wizards/test_first_run_speech_step.py Tests/Wizards/test_first_run_speech_step_state.py
 ```
 
 Initial evidence result at `e18a4e4d7`: **6 failed, 1248 passed, 1 skipped,
@@ -95,6 +97,14 @@ focused run (**89 passed**), and the two final standalone mounted nodes passed
 together. The earlier dispatch import assertion was made suite-order
 independent and passes in the union.
 
+Final closeout at `37dfd74c9` reached **1361 passed, 2 failed, 1 skipped, and
+10 warnings in 364.05 seconds**. Both failures were the localhost artifact
+fixtures being denied permission to bind an ephemeral `127.0.0.1` port by the
+sandbox; they were the only non-passes. The exact two nodes then passed
+**2 passed in 1.31 seconds** when localhost binding was permitted. The MCP
+workspace-save tooltip baseline was resolved separately under TASK-15531, and
+both route aliases pass in the final union.
+
 ## Static verification
 
 - Ruff check on all 49 changed Python files retained two findings in
@@ -113,7 +123,7 @@ independent and passes in the union.
 ## Status
 
 All TASK-598 behavior and all five wheel-supported platform gates are now
-evidenced. AC7 is satisfied. The Backlog task remains **In Progress** rather
-than being marked Done because the exact changed-test union still includes the
-two unrelated, reproducible MCP tooltip baseline failures described above;
-this evidence update does not hide or broaden scope to repair them.
+evidenced. AC1-7 are satisfied and the Backlog task is **Done**. The final
+changed-test union has no product failure: its only two failures were sandbox
+socket-bind denials, and both exact localhost nodes pass when that permission
+is available.

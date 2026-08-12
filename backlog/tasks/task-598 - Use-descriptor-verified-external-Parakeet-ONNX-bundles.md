@@ -1,11 +1,11 @@
 ---
 id: TASK-598
 title: Use descriptor-verified external Parakeet ONNX bundles
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-08-12 02:36'
+updated_date: '2026-08-12 03:05'
 labels:
   - stt
   - artifacts
@@ -69,9 +69,7 @@ Detailed plan: Docs/superpowers/plans/2026-08-09-task-598-external-parakeet-bund
 <!-- SECTION:NOTES:BEGIN -->
 Implemented descriptor-verified, user-owned external Parakeet v2/v3 INT8/F32 selection across First Run, Lab Models, and Library job overrides under ADR-050. External roots are verified and used in place; Chatbook owns only the exact managed Silero VAD, deterministic source resolution, path-private null-root provenance, resident identity/revalidation, optional install-only managed copy, and explicit later activation.
 
-The isolated macOS arm64 production-path smoke is recorded in Docs/STT_Evaluation/task-598/macos-evidence.json. GitHub Actions run 31553729188 tested commit 9e006d3e6 on Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64. Every lane passed v2/v3 INT8 descriptor verification, optional managed-copy deletion, CPU inference, exact-VAD/null-root provenance, external/cache/store/preference invariants, VAD-only final-store checks, and clean shutdown. Normalized evidence is in platform-evidence.json; all five wheel-supported platform gates now pass and AC1-7 are checked.
+The isolated macOS arm64 production-path smoke is recorded in Docs/STT_Evaluation/task-598/macos-evidence.json. GitHub Actions run 31553729188 tested commit 9e006d3e6 on Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64. Every lane passed v2/v3 INT8 descriptor verification, optional managed-copy deletion, CPU inference, exact-VAD/null-root provenance, external/cache/store/preference invariants, VAD-only final-store checks, and clean shutdown. Normalized evidence is in platform-evidence.json; all five wheel-supported platform gates pass.
 
-Correctness and Ponytail review added managed-VAD revalidation on resident reuse, off-loop managed-copy planning, shared path-private recovery copy, and lean callback forwarding. Focused production/UI suites and mutation checks pass. The final 25-file changed-test union reached 1361 passed, 2 failed, 1 skipped, 11 warnings, and 2 teardown errors in 348.52 seconds. Both TASK-598 teardown errors were periodic-Ollama test-fixture omissions and now pass after test-only stubs; the two remaining failures are the unrelated mcp-tools-workspace-save tooltip audit for two route aliases, reproduce independently, and are unchanged from origin/dev. Ruff retains only proven origin/dev findings/format debt; scoped lint, compile, JSON, privacy, and diff checks pass.
-
-TASK-598 remains In Progress rather than claiming repository Definition of Done while that exact union retains the unrelated two-node red baseline.
+Correctness and Ponytail review added managed-VAD revalidation on resident reuse, off-loop managed-copy planning, shared path-private recovery copy, and lean callback forwarding. Focused production/UI suites and mutation checks pass. The final 25-file changed-test union at 37dfd74c9 reached 1361 passed, 2 failed, 1 skipped, and 10 warnings in 364.05 seconds; both failures were sandbox PermissionError denials while binding ephemeral localhost artifact fixtures. Those exact two nodes passed 2/2 in 1.31 seconds when localhost binding was permitted. TASK-15531 separately resolved the pre-existing MCP workspace-save tooltip audit, and both route aliases pass in the final union. Scoped lint, compile, JSON, privacy, detector, and diff checks pass; retained Ruff/format findings are proven origin/dev debt. AC1-7 and the ADR-050 evidence gates are complete.
 <!-- SECTION:NOTES:END -->
