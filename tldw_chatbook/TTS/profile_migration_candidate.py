@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeAlias
 
 import tldw_chatbook.TTS.profile_schema as _profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -35,10 +36,24 @@ class ProfileMigrationCandidateResult:
     boundaries: tuple[ProfileMigrationBoundaryRequest, ...]
 
 
+_ProfileDomain: TypeAlias = tuple[
+    tuple[tuple[object, ...], ...],
+    tuple[tuple[object, ...], ...],
+]
+_ReferenceDomain: TypeAlias = tuple[tuple[object, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundaryEvidence:
+    schema_version: int
+    profile_domain: _ProfileDomain
+    reference_domain: _ReferenceDomain
+
+
 @dataclass(slots=True)
 class _SnapshotCapabilityState:
-    source: sqlite3.Connection
-    schema_version: int
+    snapshot: sqlite3.Connection
+    evidence: _BoundaryEvidence
     used: bool = False
 
 
@@ -79,10 +94,11 @@ class ProfileMigrationBoundarySnapshot:
             state.used = True
             if (
                 not isinstance(destination, sqlite3.Connection)
-                or destination is state.source
+                or destination is state.snapshot
                 or destination.in_transaction
             ):
                 raise ValueError
+            _require_boundary_evidence(state.snapshot, state.evidence)
             destination.row_factory = sqlite3.Row
             destination.execute("PRAGMA foreign_keys = ON")
             database_rows = list(destination.execute("PRAGMA database_list"))
@@ -103,11 +119,8 @@ class ProfileMigrationBoundarySnapshot:
                 or objects_row[0] != 0
             ):
                 raise ValueError
-            state.source.backup(destination)
-            _profile_schema.validate_profile_store_version(
-                destination,
-                state.schema_version,
-            )
+            state.snapshot.backup(destination)
+            _require_boundary_evidence(destination, state.evidence)
         except ProfileRepositoryError:
             raise ProfileRepositoryError("migration_failed") from None
         except BaseException as error:
@@ -169,9 +182,13 @@ def step_profile_migration_candidate(
             request = _boundary_request(version)
             if request is not None:
                 boundaries.append(request)
-                if boundary_sink is not None:
-                    _emit_boundary(connection, request, boundary_sink)
-                _validate_candidate_version(connection, version)
+                evidence = _capture_boundary_evidence(connection, version)
+                _run_boundary_callback(
+                    connection,
+                    request,
+                    evidence,
+                    boundary_sink,
+                )
 
             migration_started = True
             _step_candidate(connection, version)
@@ -257,28 +274,105 @@ def _boundary_request(version: int) -> ProfileMigrationBoundaryRequest | None:
     return None
 
 
+def _capture_boundary_evidence(
+    connection: sqlite3.Connection,
+    version: int,
+) -> _BoundaryEvidence:
+    _validate_candidate_version(connection, version)
+    return _BoundaryEvidence(
+        schema_version=version,
+        profile_domain=_profile_schema._migration_domain_snapshot(connection),
+        reference_domain=(
+            _profile_schema._migration_reference_snapshot(connection)
+            if version >= 3
+            else ()
+        ),
+    )
+
+
+def _require_boundary_evidence(
+    connection: sqlite3.Connection,
+    evidence: _BoundaryEvidence,
+) -> None:
+    _validate_candidate_version(connection, evidence.schema_version)
+    if (
+        _profile_schema._migration_domain_snapshot(connection)
+        != evidence.profile_domain
+        or (
+            _profile_schema._migration_reference_snapshot(connection)
+            if evidence.schema_version >= 3
+            else ()
+        )
+        != evidence.reference_domain
+    ):
+        raise ProfileRepositoryError("migration_failed")
+
+
+def _raise_boundary_errors(*errors: BaseException | None) -> None:
+    for error in errors:
+        if error is not None and not isinstance(error, Exception):
+            raise error
+    if any(error is not None for error in errors):
+        raise ProfileRepositoryError("migration_failed") from None
+
+
+def _run_boundary_callback(
+    connection: sqlite3.Connection,
+    request: ProfileMigrationBoundaryRequest,
+    evidence: _BoundaryEvidence,
+    sink: ProfileMigrationBoundarySink | None,
+) -> None:
+    callback_error: BaseException | None = None
+    live_validation_error: BaseException | None = None
+    if sink is not None:
+        try:
+            _emit_boundary(connection, evidence, request, sink)
+        except BaseException as error:
+            callback_error = error
+    try:
+        _require_boundary_evidence(connection, evidence)
+    except BaseException as error:
+        live_validation_error = error
+    _raise_boundary_errors(callback_error, live_validation_error)
+
+
 def _emit_boundary(
     connection: sqlite3.Connection,
+    evidence: _BoundaryEvidence,
     request: ProfileMigrationBoundaryRequest,
     sink: ProfileMigrationBoundarySink,
 ) -> None:
+    snapshot: sqlite3.Connection | None = None
     key = object()
-    _CAPABILITY_STATES[key] = _SnapshotCapabilityState(
-        source=connection,
-        schema_version=request.schema_version,
-    )
-    capability = ProfileMigrationBoundarySnapshot(_CAPABILITY_FACTORY_TOKEN, key)
     body_error: BaseException | None = None
+    validation_error: BaseException | None = None
+    close_error: BaseException | None = None
     try:
+        snapshot = sqlite3.connect(":memory:", isolation_level=None)
+        snapshot.row_factory = sqlite3.Row
+        snapshot.execute("PRAGMA foreign_keys = ON")
+        connection.backup(snapshot)
+        _require_boundary_evidence(snapshot, evidence)
+        _CAPABILITY_STATES[key] = _SnapshotCapabilityState(
+            snapshot=snapshot,
+            evidence=evidence,
+        )
+        capability = ProfileMigrationBoundarySnapshot(_CAPABILITY_FACTORY_TOKEN, key)
         sink(capability, request)
     except BaseException as error:
         body_error = error
     finally:
         _CAPABILITY_STATES.pop(key, None)
-    if body_error is not None and not isinstance(body_error, Exception):
-        raise body_error
-    if body_error is not None:
-        raise ProfileRepositoryError("migration_failed") from None
+    if snapshot is not None:
+        try:
+            _require_boundary_evidence(snapshot, evidence)
+        except BaseException as error:
+            validation_error = error
+        try:
+            snapshot.close()
+        except BaseException as error:
+            close_error = error
+    _raise_boundary_errors(body_error, validation_error, close_error)
 
 
 def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
