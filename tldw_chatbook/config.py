@@ -3258,6 +3258,15 @@ strip_thinking_tags = true
 prune_high_watermark = 20000
 prune_low_watermark = 12000
 
+# Console transcript load window: opening or switching to a conversation
+# mounts only a tail of it, and scrolling to the top of that tail prepends
+# more. Both values are FLOORS in terminal rows -- the effective budget is the
+# larger of the floor and the mounted viewport (6x for the initial window, 4x
+# per scrollback step). Set transcript_window_lines <= 0 to mount the whole
+# history at load, as before.
+transcript_window_lines = 144
+transcript_scrollback_lines = 96
+
 # Render assistant replies as full markdown (code blocks, tables, lists,
 # links) in the Console transcript. Set false to restore the lightweight
 # span renderer, which keeps roleplay speech/action flavor colors.

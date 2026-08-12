@@ -149,6 +149,22 @@ composer-level strip below shows once setup completes.
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
 
+### Long conversations
+
+Opening or switching to a long conversation shows the most recent stretch of it
+first, rather than mounting the whole history up front — a 500-message session
+opens in about a second instead of tens of seconds. Scroll to the top of what is
+shown (wheel, Page Up, or the scrollbar) and the previous chunk is prepended
+under you, keeping the same message in view; the jump-to-latest pill or a new
+send takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
+context sent to the model always use the full history. Very long sessions still
+stop growing the view at the height watermarks, and once the mounted view
+reaches that limit scrolling further back stops loading more (the alternative is
+the view churning rows in and out indefinitely). Tune it under `[chat_defaults]`
+in `config.toml` — `transcript_window_lines` (rows kept at load; set it to `0`
+to mount everything, as before), `transcript_scrollback_lines` (rows added per
+step), and the `prune_*_watermark` pair.
+
 ### Composer
 
 Editing keys, send/stream/stop, attachments, and Mic dictation live in
@@ -273,4 +289,7 @@ outranks that provider's environment variable. Verified against
 42b28089f — 2026-08-06 (task-2852: live check on a fresh profile — a
 Library Search/RAG handoff staged while locked now shows a receipt line
 on the Get started card, and the same handoff on a configured Console
-still lands on the unchanged staged-evidence strip).*
+still lands on the unchanged staged-evidence strip). "Long conversations"
+verified against the TASK-15455 windowing (PR #1538) plus its reconciliation
+delta — shipped tests and an isolated 500-message load probe; not re-checked
+live.*

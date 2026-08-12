@@ -170,6 +170,38 @@ def get_console_prune_watermarks(
     return low, high
 
 
+def get_console_transcript_window_lines(
+    app_config: Mapping[str, object] | None,
+) -> tuple[int, int]:
+    """Resolve the transcript window line floors from config.
+
+    Reads ``[chat_defaults] transcript_window_lines`` /
+    ``transcript_scrollback_lines``, falling back to
+    :data:`DEFAULT_INITIAL_WINDOW_LINES` / :data:`DEFAULT_SCROLLBACK_CHUNK_LINES`
+    when missing or invalid. Both are FLOORS: the effective budget is the
+    larger of the floor and the viewport-derived value. A
+    ``transcript_window_lines <= 0`` disables windowing entirely (the kill
+    switch: every message mounts at load, as it did before TASK-15455).
+
+    Args:
+        app_config: The loaded application config dict (``app.app_config``).
+
+    Returns:
+        Tuple of ``(initial_window_lines, scrollback_chunk_lines)``.
+    """
+    chat_defaults = (app_config or {}).get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
+    initial_lines = _coerce_prune_int(
+        chat_defaults.get("transcript_window_lines"), DEFAULT_INITIAL_WINDOW_LINES
+    )
+    chunk_lines = _coerce_prune_int(
+        chat_defaults.get("transcript_scrollback_lines"),
+        DEFAULT_SCROLLBACK_CHUNK_LINES,
+    )
+    return initial_lines, max(1, chunk_lines)
+
+
 def _message_role_label(message: ConsoleChatMessage) -> str:
     role = message.role.value if hasattr(message.role, "value") else str(message.role)
     return role.title()
@@ -1811,17 +1843,29 @@ class ConsoleTranscript(VerticalScroll):
         """Return a stable viewport height for line-budget calculations."""
         return max(1, int(self.size.height or 24))
 
+    def _window_line_settings(self) -> tuple[int, int]:
+        """Return the configured ``(initial, scrollback)`` line floors."""
+        try:
+            app_config = getattr(self.app, "app_config", None)
+        except NoActiveAppError:
+            app_config = None
+        return get_console_transcript_window_lines(app_config)
+
+    def _windowing_enabled(self) -> bool:
+        """Return False when the config kill switch asks for the whole history."""
+        return self._window_line_settings()[0] > 0
+
     def _initial_window_line_budget(self) -> int:
         """Return the tail-first render budget in estimated terminal lines."""
         return max(
-            DEFAULT_INITIAL_WINDOW_LINES,
+            self._window_line_settings()[0],
             self._window_viewport_height() * 6,
         )
 
     def _scrollback_chunk_line_budget(self) -> int:
         """Return the amount of earlier history prepended per boundary request."""
         return max(
-            DEFAULT_SCROLLBACK_CHUNK_LINES,
+            self._window_line_settings()[1],
             self._window_viewport_height() * 4,
         )
 
@@ -1884,7 +1928,23 @@ class ConsoleTranscript(VerticalScroll):
         }
 
     def _schedule_scrollback_hydration(self) -> None:
-        """Coalesce one lazy prepend after explicit detached upward scrolling."""
+        """Coalesce one lazy prepend after explicit detached upward scrolling.
+
+        TASK-15455 (reconciliation): automatic hydration is additionally
+        refused once the mounted height reaches the LOW watermark. Without
+        that gate, hydration and the watermark walk chase each other forever
+        — measured on a 180-message transcript with a 45/70 configuration and
+        the reader at the boundary: the hidden prefix oscillated between 169
+        and 152 messages (height 47 <-> 115) across every idle frame, because
+        the prune's own scroll restoration lands back at the boundary and
+        re-triggers the hydration that produced it.
+
+        The gate makes the loop impossible rather than unlikely: the walk only
+        fires ABOVE the high mark and always leaves the remainder ABOVE the low
+        mark, so a prune can never restore a hydratable state. An explicit
+        ``_hydrate_scrollback()`` call is deliberately NOT gated — a caller
+        asking for one chunk is not a loop.
+        """
         if (
             self._scrollback_hydration_scheduled
             or self._hydrating_scrollback
@@ -1892,6 +1952,9 @@ class ConsoleTranscript(VerticalScroll):
             or self._is_following_tail()
             or self._first_visible_message_index() <= 0
         ):
+            return
+        low_mark, high_mark = self._prune_watermarks()
+        if high_mark > 0 and self.virtual_size.height >= low_mark:
             return
         self._scrollback_hydration_scheduled = True
         self.call_later(self._hydrate_scrollback)
@@ -2007,7 +2070,13 @@ class ConsoleTranscript(VerticalScroll):
             if message_id in index_by_id
         ]
         preserved_start = min(preserved_indices) if preserved_indices else None
-        if preserved_start is None:
+        if not self._windowing_enabled():
+            # TASK-15455 (reconciliation): `[chat_defaults]
+            # transcript_window_lines = 0` mounts the whole history, the
+            # behaviour that shipped before this task. The escape hatch is the
+            # point: a windowing bug must be switchable off without a release.
+            window_start = 0
+        elif preserved_start is None:
             window_start = self._tail_window_start(
                 self._messages,
                 line_budget=self._initial_window_line_budget(),
@@ -2371,21 +2440,41 @@ class ConsoleTranscript(VerticalScroll):
         """
         return self._message_by_id(message_id)
 
+    def reveal_message(self, message_id: str) -> bool:
+        """Extend the mounted window back through ``message_id`` when hidden.
+
+        The single implementation behind every "jump to a message the window
+        does not currently show" path: selection, the task-501 swipe handoff,
+        and reading-state restore. Extending the SAME contiguous boundary is
+        what keeps mounted rows one unbroken suffix of the history — no
+        islands, so no gap markers are needed anywhere.
+
+        Args:
+            message_id: Identifier of the message that must have a row.
+
+        Returns:
+            True when the window moved (a refresh is required to see it),
+            False when the message was already mounted or is not in this
+            transcript. Deliberately does NOT refresh: callers already own a
+            refresh, and the restore path needs to sequence its own.
+        """
+        for index, message in enumerate(self._messages):
+            if message.id != message_id:
+                continue
+            if index >= self._first_visible_message_index():
+                return False
+            self._set_hidden_prefix(self._turn_aligned_start(self._messages, index))
+            return True
+        return False
+
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
-        index_by_id = {
-            message.id: index for index, message in enumerate(self._messages)
-        }
-        if message_id not in index_by_id:
+        if not any(message.id == message_id for message in self._messages):
             return
-        selected_index = index_by_id[message_id]
-        if selected_index < self._first_visible_message_index():
-            # Keep the public pre-windowing contract: callers may select any
-            # message in the complete transcript model.  Reveal the contiguous
-            # prefix through that turn before mounting its action row.
-            self._set_hidden_prefix(
-                self._turn_aligned_start(self._messages, selected_index)
-            )
+        # Keep the public pre-windowing contract: callers may select any
+        # message in the complete transcript model.  Reveal the contiguous
+        # prefix through that turn before mounting its action row.
+        self.reveal_message(message_id)
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
