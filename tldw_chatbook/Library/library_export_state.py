@@ -82,6 +82,7 @@ def media_quality_helper_copy(media_quality: str) -> str:
         media_quality, _MEDIA_QUALITY_HELPER_COPY["original"]
     )
 
+
 # Scope kinds whose export includes media at all -- everything and
 # media-scoped exports show the quality control + helper line;
 # conversations/notes-only scopes never touch media, so those rows would
@@ -144,9 +145,9 @@ class LibraryExportFormState:
             destination, and no export already running.
         show_media_fields: Whether the quality control + its helper line
             should render at all -- only for scopes that can contain
-            media (``"everything"``/``"media"``); a conversations- or
-            notes-only scope never touches media, so the quality control
-            would be a dead knob.
+            media (``"everything"``/``"media"``); a conversations-,
+            notes-, or Prompts-only scope never touches media, so the
+            quality control would be a dead knob.
         empty_scope_line: ``EMPTY_SCOPE_COPY`` once counts have landed and
             total to zero, else ``""``.
         overwrite_line: ``"Overwrites {destination filename}"`` when the
@@ -203,9 +204,9 @@ def build_library_export_form_state(
     Args:
         scope: What this export will include.
         counts: The full-query counts for ``scope`` (keys "media"/
-            "conversations"/"notes"), or ``None`` while the counts worker
-            is still running -- ``counts_loading`` and the ``"Counting…"``
-            scope line both derive from this being ``None``.
+            "conversations"/"notes"/"prompts"), or ``None`` while the
+            counts worker is still running -- ``counts_loading`` and the
+            ``"Counting…"`` scope line both derive from this being ``None``.
         name: The export name field's current text.
         description: The description field's current text.
         media_quality: The quality control's current value.
