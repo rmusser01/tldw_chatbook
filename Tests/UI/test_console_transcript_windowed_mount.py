@@ -391,7 +391,7 @@ def test_window_settings_defaults_and_kill_switch():
 
 
 @pytest.mark.asyncio
-async def test_load_mounts_only_the_tail_window(): 
+async def test_load_mounts_only_the_tail_window():
     """AC#1: a 500-message load mounts the newest window, not the history."""
     app = WindowHarness()
     async with app.run_test() as pilot:
