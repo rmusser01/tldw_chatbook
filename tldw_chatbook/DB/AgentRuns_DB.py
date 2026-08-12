@@ -224,6 +224,17 @@ class AgentRunsDB(BaseDB):
                     tracking_error TEXT NOT NULL DEFAULT '',
                     untracked_oversize INTEGER NOT NULL DEFAULT 0,
                     nested_repos TEXT NOT NULL DEFAULT '[]',
+                    -- v5->v6 (PR3a-1 Task 6c): which WINDOW this row
+                    -- covers. 'turn' is the turn's own B/E window;
+                    -- 'turn_concurrent_subagent' is the same window taken
+                    -- while a sub-agent from an EARLIER turn was writing
+                    -- (so the diff may include changes this turn's agent
+                    -- did not make -- disclosed, never implied);
+                    -- 'subagent_post_turn' is the window AFTER a turn's E
+                    -- during which its surviving sub-agents were still
+                    -- working. The default keeps every pre-existing row
+                    -- reading as what it was.
+                    kind TEXT NOT NULL DEFAULT 'turn',
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
@@ -293,6 +304,14 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_snapshots ADD COLUMN "
                     "nested_repos TEXT NOT NULL DEFAULT '[]'"
                 )
+            # v5->v6 (PR3a-1 Task 6c): the window a row covers -- same
+            # idempotent-ALTER mechanism. The DEFAULT is what makes every
+            # row written before this column existed read as 'turn'.
+            if "kind" not in snapshot_columns:
+                conn.execute(
+                    "ALTER TABLE change_snapshots ADD COLUMN "
+                    "kind TEXT NOT NULL DEFAULT 'turn'"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -302,6 +321,9 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (5)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (6)"
             )
 
     def record_change_snapshot(
@@ -317,6 +339,7 @@ class AgentRunsDB(BaseDB):
         tracking_error: str = "",
         untracked_oversize: int = 0,
         nested_repos: "Sequence[str]" = (),
+        kind: str = "turn",
     ) -> None:
         """Record one root's turn snapshot pair (TASK-1971).
 
@@ -333,6 +356,11 @@ class AgentRunsDB(BaseDB):
                 the turn's end (TASK-1975 disclosure).
             nested_repos: Root-relative nested repos excluded from tracking
                 (TASK-1976 disclosure).
+            kind: Which window this row covers — ``"turn"``,
+                ``"turn_concurrent_subagent"`` (a turn whose window
+                overlapped an earlier turn's still-running sub-agent) or
+                ``"subagent_post_turn"`` (the window after a turn's E,
+                while its survivors kept working). PR3a-1 Task 6c.
         """
         with self.transaction() as conn:
             conn.execute(
@@ -340,8 +368,8 @@ class AgentRunsDB(BaseDB):
                 INSERT INTO change_snapshots
                     (run_id, root, baseline_sha, end_sha, files_changed,
                      adds, dels, tracking_error, untracked_oversize,
-                     nested_repos, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     nested_repos, kind, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -354,6 +382,7 @@ class AgentRunsDB(BaseDB):
                     tracking_error,
                     untracked_oversize,
                     json.dumps(list(nested_repos)),
+                    kind,
                     _now_iso(),
                 ),
             )
