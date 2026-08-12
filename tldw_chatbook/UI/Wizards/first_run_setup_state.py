@@ -14,12 +14,33 @@ actively wrong -- the shipped config.toml template ships ~12 default
 
 from __future__ import annotations
 
+import json
+import math
+import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 WIZARD_STATE_SECTION = "first_run"
 SETUP_STARTED_KEY = "setup_started"
 SETUP_COMPLETED_KEY = "setup_completed"
+SETUP_DRAFT_VERSION = 1
+
+DRAFT_VERSION_KEY = "draft_version"
+DRAFT_TRACK_KEY = "draft_track"
+DRAFT_ACTIVE_STEP_KEY = "active_step_id"
+DRAFT_VALUES_KEY = "draft_values"
+DRAFT_RESUME_ATTEMPTED_KEY = "resume_attempted"
+SETUP_DRAFT_KEYS = (
+    DRAFT_VERSION_KEY,
+    DRAFT_TRACK_KEY,
+    DRAFT_ACTIVE_STEP_KEY,
+    DRAFT_VALUES_KEY,
+    DRAFT_RESUME_ATTEMPTED_KEY,
+)
+
+_MAX_SETUP_DRAFT_FIELDS = 64
+_MAX_SETUP_DRAFT_BYTES = 16 * 1024
+_SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
 
 _PLACEHOLDER_MARKERS = ("<", ">")
 
@@ -245,6 +266,229 @@ _FULL_TRACK = (
     STEP_TOOLS, STEP_NOTES, STEP_APPEARANCE, STEP_PROTECT, STEP_SUMMARY,
 )
 _QUICK_TRACK = (STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY)
+
+_SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
+    STEP_WELCOME: {"track": str},
+    STEP_PROVIDER: {"provider_key": str, "provider_value": str},
+    STEP_MODEL: {"model_id": str},
+    STEP_RAG: {"embedding_model": str},
+    STEP_SPEECH: {},
+    STEP_TOOLS: {},
+    STEP_NOTES: {"auto_sync_enabled": bool},
+    STEP_APPEARANCE: {"theme": str, "splash_card": str},
+    STEP_PROTECT: {"encryption_enabled": bool},
+    STEP_SUMMARY: {},
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SetupDraft:
+    """Bounded, non-secret checkpoint for resuming first-run setup."""
+
+    version: int
+    track: str
+    active_step_id: str
+    values: Mapping[str, Mapping[str, object]]
+    resume_attempted: bool = False
+
+
+def _normalized_field_name(name: object) -> str:
+    if not isinstance(name, str):
+        return ""
+    with_word_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return re.sub(r"[^a-z0-9]+", "_", with_word_boundaries.casefold()).strip("_")
+
+
+def _contains_secret_field_name(name: object) -> bool:
+    normalized = _normalized_field_name(name)
+    return any(token in normalized for token in _SECRET_FIELD_TOKENS)
+
+
+def _canonical_setup_draft_size(payload: Mapping[str, object]) -> int | None:
+    try:
+        serialized = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return None
+    return len(serialized.encode("utf-8"))
+
+
+def _validated_setup_draft(
+    *,
+    version: object,
+    track: object,
+    active_step_id: object,
+    values: object,
+    resume_attempted: object,
+) -> SetupDraft | None:
+    if type(version) is not int or version != SETUP_DRAFT_VERSION:
+        return None
+    if track not in (TRACK_QUICK, TRACK_FULL):
+        return None
+    if not isinstance(active_step_id, str):
+        return None
+    allowed_steps = active_step_ids(str(track), key_entered=True)
+    if active_step_id not in allowed_steps:
+        return None
+    if not isinstance(resume_attempted, bool) or not isinstance(values, Mapping):
+        return None
+
+    field_count = 0
+    clean_values: dict[str, dict[str, object]] = {}
+    for step_id, step_values in values.items():
+        if not isinstance(step_id, str) or step_id not in _SETUP_DRAFT_FIELD_TYPES:
+            return None
+        if step_id not in allowed_steps or not isinstance(step_values, Mapping):
+            return None
+        allowed_fields = _SETUP_DRAFT_FIELD_TYPES[step_id]
+        clean_step: dict[str, object] = {}
+        for field_name, value in step_values.items():
+            field_count += 1
+            if field_count > _MAX_SETUP_DRAFT_FIELDS:
+                return None
+            if _contains_secret_field_name(field_name):
+                return None
+            if not isinstance(field_name, str) or field_name not in allowed_fields:
+                return None
+            expected_type = allowed_fields[field_name]
+            if expected_type is bool:
+                if not isinstance(value, bool):
+                    return None
+            elif not isinstance(value, expected_type) or isinstance(value, bool):
+                return None
+            if isinstance(value, float) and not math.isfinite(value):
+                return None
+            clean_step[field_name] = value
+        clean_values[step_id] = clean_step
+
+    payload = {
+        DRAFT_VERSION_KEY: version,
+        DRAFT_TRACK_KEY: track,
+        DRAFT_ACTIVE_STEP_KEY: active_step_id,
+        DRAFT_VALUES_KEY: clean_values,
+        DRAFT_RESUME_ATTEMPTED_KEY: resume_attempted,
+    }
+    size = _canonical_setup_draft_size(payload)
+    if size is None or size > _MAX_SETUP_DRAFT_BYTES:
+        return None
+    welcome_values = clean_values.get(STEP_WELCOME)
+    if welcome_values is not None and welcome_values.get("track") != track:
+        return None
+    return SetupDraft(
+        version=version,
+        track=str(track),
+        active_step_id=active_step_id,
+        values=clean_values,
+        resume_attempted=resume_attempted,
+    )
+
+
+def read_setup_draft(app_config: Mapping[str, object]) -> SetupDraft | None:
+    """Parse a setup checkpoint defensively; malformed drafts fail closed."""
+
+    try:
+        first_run = app_config.get(WIZARD_STATE_SECTION)
+        if not isinstance(first_run, Mapping):
+            return None
+        return _validated_setup_draft(
+            version=first_run.get(DRAFT_VERSION_KEY),
+            track=first_run.get(DRAFT_TRACK_KEY),
+            active_step_id=first_run.get(DRAFT_ACTIVE_STEP_KEY),
+            values=first_run.get(DRAFT_VALUES_KEY),
+            resume_attempted=first_run.get(DRAFT_RESUME_ATTEMPTED_KEY, False),
+        )
+    except Exception:
+        return None
+
+
+def setup_draft_checkpoint(
+    *,
+    track: str,
+    active_step_id: str,
+    values: Mapping[str, Mapping[str, object]],
+    resume_attempted: bool = False,
+) -> SetupDraft:
+    """Select allowlisted checkpoint fields from completed wizard-step data."""
+
+    clean_values: dict[str, dict[str, object]] = {}
+    allowed_steps = set(active_step_ids(track, key_entered=True))
+    for step_id, allowed_fields in _SETUP_DRAFT_FIELD_TYPES.items():
+        if step_id not in allowed_steps:
+            continue
+        raw_step = values.get(step_id)
+        if not isinstance(raw_step, Mapping):
+            continue
+        clean_step: dict[str, object] = {}
+        for field_name, expected_type in allowed_fields.items():
+            value = raw_step.get(field_name)
+            if expected_type is bool:
+                valid = isinstance(value, bool)
+            else:
+                valid = isinstance(value, expected_type) and not isinstance(value, bool)
+            if valid:
+                clean_step[field_name] = value
+        if clean_step:
+            clean_values[step_id] = clean_step
+
+    draft = _validated_setup_draft(
+        version=SETUP_DRAFT_VERSION,
+        track=track,
+        active_step_id=active_step_id,
+        values=clean_values,
+        resume_attempted=resume_attempted,
+    )
+    if draft is None:
+        raise ValueError("setup draft checkpoint is invalid")
+    return draft
+
+
+def build_setup_draft_mutation(
+    draft: SetupDraft | None,
+) -> tuple[dict[str, dict[str, object]], dict[str, tuple[str, ...]]]:
+    """Build the isolated first-run set/delete mutation for a checkpoint."""
+
+    if draft is None:
+        return {}, {WIZARD_STATE_SECTION: SETUP_DRAFT_KEYS}
+    validated = _validated_setup_draft(
+        version=draft.version,
+        track=draft.track,
+        active_step_id=draft.active_step_id,
+        values=draft.values,
+        resume_attempted=draft.resume_attempted,
+    )
+    if validated is None:
+        raise ValueError("setup draft is invalid")
+    return {
+        WIZARD_STATE_SECTION: {
+            DRAFT_VERSION_KEY: validated.version,
+            DRAFT_TRACK_KEY: validated.track,
+            DRAFT_ACTIVE_STEP_KEY: validated.active_step_id,
+            DRAFT_VALUES_KEY: {key: dict(value) for key, value in validated.values.items()},
+            DRAFT_RESUME_ATTEMPTED_KEY: validated.resume_attempted,
+        }
+    }, {}
+
+
+def setup_recovery_action(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> Literal["offer", "prompt", "home", "none"]:
+    """Choose the single startup action for setup or recovery."""
+
+    if should_offer_wizard(app_config, environ):
+        return "offer"
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return "none"
+    if not _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return "none"
+    draft = read_setup_draft(app_config)
+    if draft is None:
+        return "none"
+    return "home" if draft.resume_attempted else "prompt"
 
 WIZARD_OWNED_SECTIONS = frozenset(
     {"chat_defaults", "embedding_config", "tools", "notes", "general",

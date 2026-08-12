@@ -1,5 +1,9 @@
 """Unit tests for the pure first-run setup wizard state module."""
 
+from copy import deepcopy
+
+import pytest
+
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     any_provider_configured,
     coerce_wizard_flag,
@@ -91,6 +95,209 @@ class TestShouldShowResumeToast:
 
     def test_never_started_never_shows_toast(self):
         assert should_show_resume_toast(_config(), {}) is False
+
+
+def _resume_draft_config(**overrides):
+    first_run = {
+        "setup_started": True,
+        "setup_completed": False,
+        "draft_version": 1,
+        "draft_track": "quick",
+        "active_step_id": "model",
+        "draft_values": {
+            "welcome": {"track": "quick"},
+            "provider": {
+                "provider_key": "openai",
+                "provider_value": "openai",
+            },
+        },
+        "resume_attempted": False,
+    }
+    first_run.update(overrides)
+    return {"first_run": first_run}
+
+
+class TestSetupResumeDraft:
+    def test_resume_draft_accepts_allowlisted_non_secret_values(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            SETUP_DRAFT_VERSION,
+            read_setup_draft,
+        )
+
+        draft = read_setup_draft(_resume_draft_config())
+
+        assert draft is not None
+        assert draft.version == SETUP_DRAFT_VERSION == 1
+        assert draft.track == "quick"
+        assert draft.active_step_id == "model"
+        assert draft.resume_attempted is False
+        assert draft.values["provider"] == {
+            "provider_key": "openai",
+            "provider_value": "openai",
+        }
+
+    @pytest.mark.parametrize(
+        "secret_field",
+        ["api_key", "API-Key", "saved_credential", "masterPassword", "access_token", "client_secret"],
+    )
+    def test_resume_draft_rejects_secret_shaped_fields(self, secret_field):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        config = _resume_draft_config(
+            draft_values={"provider": {secret_field: "must-not-survive"}}
+        )
+        assert read_setup_draft(config) is None
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"draft_version": 2},
+            {"draft_track": "expert"},
+            {"active_step_id": "voice-from-the-future"},
+            {"draft_values": {"unknown-step": {}}},
+            {"draft_values": {"model": {"unknown_field": "value"}}},
+        ],
+    )
+    def test_resume_draft_rejects_unknown_version_track_step_or_field(self, overrides):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        assert read_setup_draft(_resume_draft_config(**overrides)) is None
+
+    def test_resume_draft_rejects_oversized_serialized_data(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        config = _resume_draft_config(
+            draft_values={"model": {"model_id": "x" * (16 * 1024)}}
+        )
+        assert read_setup_draft(config) is None
+
+    def test_resume_draft_rejects_more_than_64_fields(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        config = _resume_draft_config(
+            draft_values={"appearance": {f"field_{index}": index for index in range(65)}}
+        )
+        assert read_setup_draft(config) is None
+
+    def test_isolated_draft_mutation_owns_only_first_run(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            SetupDraft,
+            build_setup_draft_mutation,
+        )
+
+        settings, delete_keys = build_setup_draft_mutation(
+            SetupDraft(
+                1,
+                "quick",
+                "model",
+                {"provider": {"provider_value": "openai"}},
+                False,
+            )
+        )
+
+        assert set(settings) == {"first_run"}
+        assert set(settings["first_run"]) == {
+            "draft_version",
+            "draft_track",
+            "active_step_id",
+            "draft_values",
+            "resume_attempted",
+        }
+        assert delete_keys == {}
+        assert not ({"chat_defaults", "api_settings", "app_tts"} & set(settings))
+
+    def test_none_draft_mutation_returns_exact_draft_deletes(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            SETUP_DRAFT_KEYS,
+            build_setup_draft_mutation,
+        )
+
+        settings, delete_keys = build_setup_draft_mutation(None)
+
+        assert settings == {}
+        assert delete_keys == {"first_run": SETUP_DRAFT_KEYS}
+        assert "setup_started" not in SETUP_DRAFT_KEYS
+        assert "setup_completed" not in SETUP_DRAFT_KEYS
+
+    def test_checkpoint_sanitizes_credentials_transport_and_non_scalar_values(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            setup_draft_checkpoint,
+        )
+
+        draft = setup_draft_checkpoint(
+            track="quick",
+            active_step_id="model",
+            values={
+                "welcome": {"track": "quick"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                    "api_key": "never-copy",
+                    "entered_key": True,
+                    "api_url": "https://user:secret@example.test/v1?token=hidden",
+                },
+                "tools": {"enabled_gates": ["write_file"]},
+            },
+        )
+
+        assert draft.values == {
+            "welcome": {"track": "quick"},
+            "provider": {
+                "provider_key": "openai",
+                "provider_value": "openai",
+            },
+        }
+        assert "never-copy" not in repr(draft)
+        assert "example.test" not in repr(draft)
+
+    def test_resume_parsing_does_not_mutate_active_configuration(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+        config = _resume_draft_config()
+        config.update(
+            {
+                "chat_defaults": {"provider": "anthropic", "model": "claude"},
+                "api_settings": {"anthropic": {"api_key": "active-secret"}},
+                "app_tts": {"provider": "local", "voice": "active-voice"},
+            }
+        )
+        before = deepcopy(config)
+
+        assert read_setup_draft(config) is not None
+        assert config == before
+
+
+class TestSetupRecoveryAction:
+    def test_offer_for_pristine_first_run(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
+
+        assert setup_recovery_action({}, {}) == "offer"
+
+    def test_prompt_for_unfinished_unattempted_draft(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
+
+        assert setup_recovery_action(_resume_draft_config(), {}) == "prompt"
+
+    def test_home_for_uncleared_resume_attempt(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
+
+        assert setup_recovery_action(
+            _resume_draft_config(resume_attempted=True), {}
+        ) == "home"
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"first_run": {"setup_started": True}},
+            _resume_draft_config(draft_version=99),
+            {"first_run": {"setup_completed": True}},
+            {"api_settings": {"openai": {"api_key": "configured"}}},
+        ],
+    )
+    def test_none_without_a_valid_unfinished_draft(self, config):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_recovery_action
+
+        assert setup_recovery_action(config, {}) == "none"
 
 
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (

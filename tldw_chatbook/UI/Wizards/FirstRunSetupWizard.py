@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -3594,8 +3595,15 @@ class SummaryStep(SetupStep):
 class SetupWizardContainer(WizardContainer):
     """Navigates over the active-step subset; commits on Next via one worker."""
 
-    def __init__(self, app_instance, rerun: bool = False, **kwargs):
+    def __init__(
+        self,
+        app_instance,
+        rerun: bool = False,
+        resume_draft: wizard_state.SetupDraft | None = None,
+        **kwargs,
+    ):
         self.rerun = rerun
+        self.resume_draft = resume_draft
         self.key_entered = False
         # (task-2040) MUST be set before ``_create_steps()``: step
         # constructors read ``self.wizard.app_instance`` (SpeechSetupStep
@@ -3609,7 +3617,9 @@ class SetupWizardContainer(WizardContainer):
         # (recommended) Welcome option, so the progress row anchors at
         # "Step 1 of 4" instead of front-loading all nine steps before
         # the user has chosen anything. Picking Full expands it.
-        self.track = wizard_state.TRACK_QUICK
+        self.track = (
+            resume_draft.track if resume_draft is not None else wizard_state.TRACK_QUICK
+        )
         steps = self._create_steps()
         super().__init__(
             app_instance=app_instance,
@@ -3625,6 +3635,11 @@ class SetupWizardContainer(WizardContainer):
         # F3 hardening: guards _dismiss_screen/_finalize against ever
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
+        if resume_draft is not None:
+            self.wizard_data = {
+                step_id: dict(step_values)
+                for step_id, step_values in resume_draft.values.items()
+            }
 
     def _post_mount_hook(self) -> None:
         """TASK-1499: base on_mount renders the progress row from the FULL
@@ -3670,6 +3685,149 @@ class SetupWizardContainer(WizardContainer):
             cancel.variant = "default"
         except NoMatches:
             pass
+        self._restore_resume_target()
+
+    def _restore_resume_target(self) -> None:
+        """Show a validated resume target and clear its marker after paint."""
+
+        draft = self.resume_draft
+        if draft is None or draft.active_step_id not in self.active_ids:
+            return
+        self._restore_resume_controls(draft)
+        target_index = self._step_index_for_id(draft.active_step_id)
+        if target_index is None:
+            return
+        target = self.steps[target_index]
+        if getattr(target, "compose_failed", False):
+            return
+        try:
+            self.show_step(target_index)
+        except Exception:
+            logger.warning(
+                "Setup resume target mount failed (step_id={})", draft.active_step_id
+            )
+            return
+        current = self.steps[self.current_step]
+        if (
+            current.config is None
+            or current.config.id != draft.active_step_id
+            or not current.is_mounted
+        ):
+            return
+        screen = self.screen
+        if isinstance(screen, FirstRunSetupWizard):
+            screen.call_after_refresh(screen._clear_resume_attempt_after_target_mount)
+
+    def _restore_resume_controls(self, draft: wizard_state.SetupDraft) -> None:
+        """Apply allowlisted checkpoint values to mounted step controls/state."""
+
+        try:
+            track_choice = self.query_one("#setup-track-choice", RadioSet)
+            self._restore_radio_selection(
+                track_choice,
+                lambda button: button.id
+                == (
+                    "setup-track-full"
+                    if draft.track == wizard_state.TRACK_FULL
+                    else "setup-track-quick"
+                ),
+            )
+
+            provider_values = draft.values.get(wizard_state.STEP_PROVIDER, {})
+            provider_key = str(provider_values.get("provider_key") or "")
+            provider_value = str(provider_values.get("provider_value") or "")
+            provider_step = self.steps[
+                self._step_index_for_id(wizard_state.STEP_PROVIDER)
+            ]
+            if isinstance(provider_step, ProviderStep):
+                provider_step.selected_provider_key = provider_key
+                provider_step.provider_value_for_chat_defaults = provider_value
+                choices = provider_step.query_one(
+                    "#setup-provider-choice", OptionList
+                )
+                for index in range(choices.option_count):
+                    option = choices.get_option_at_index(index)
+                    if getattr(option, "provider_key", None) == provider_key:
+                        choices.highlighted = index
+                        break
+
+            model_values = draft.values.get(wizard_state.STEP_MODEL, {})
+            model_id = str(model_values.get("model_id") or "")
+            model_step = self.steps[self._step_index_for_id(wizard_state.STEP_MODEL)]
+            if isinstance(model_step, ModelStep):
+                model_step.selected_model_id = model_id
+                model_step._model_id_from_custom_input = bool(model_id)
+                model_step.query_one("#setup-model-custom", Input).value = model_id
+
+            rag_values = draft.values.get(wizard_state.STEP_RAG, {})
+            embedding_model = str(rag_values.get("embedding_model") or "")
+            rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
+            if isinstance(rag_step, RagStep):
+                rag_step.selected_embedding_model = embedding_model
+                self._restore_radio_selection(
+                    rag_step.query_one("#setup-rag-model-choice", RadioSet),
+                    lambda button: str(button.label) == embedding_model,
+                )
+
+            notes_values = draft.values.get(wizard_state.STEP_NOTES, {})
+            notes_enabled = notes_values.get("auto_sync_enabled")
+            notes_step = self.steps[self._step_index_for_id(wizard_state.STEP_NOTES)]
+            if isinstance(notes_step, NotesSyncStep) and isinstance(notes_enabled, bool):
+                notes_step.query_one("#setup-notes-enable", Switch).value = notes_enabled
+
+            appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
+            theme = str(appearance_values.get("theme") or "")
+            splash_card = str(appearance_values.get("splash_card") or "")
+            appearance_step = self.steps[
+                self._step_index_for_id(wizard_state.STEP_APPEARANCE)
+            ]
+            if isinstance(appearance_step, AppearanceStep):
+                appearance_step.selected_theme = theme
+                appearance_step.selected_splash_card = splash_card
+                appearance_step._picked_surprise_me = False
+                self._restore_radio_selection(
+                    appearance_step.query_one("#setup-theme-choice", RadioSet),
+                    lambda button: getattr(button, "_theme_name", "") == theme,
+                )
+                self._restore_radio_selection(
+                    appearance_step.query_one("#setup-splash-choice", RadioSet),
+                    lambda button: (
+                        str(button.label) == splash_card
+                        if splash_card
+                        else str(button.label).startswith("Surprise me")
+                    ),
+                )
+
+            protect_values = draft.values.get(wizard_state.STEP_PROTECT, {})
+            encryption_enabled = protect_values.get("encryption_enabled")
+            protect_step = self.steps[
+                self._step_index_for_id(wizard_state.STEP_PROTECT)
+            ]
+            if isinstance(protect_step, ProtectKeysStep) and isinstance(
+                encryption_enabled, bool
+            ):
+                protect_step.encryption_enabled = encryption_enabled
+                if encryption_enabled:
+                    protect_step.query_one("#setup-protect-status", Static).update(
+                        "Encryption enabled."
+                    )
+        except Exception:
+            logger.warning("Setup resume control restore failed (category=runtime)")
+
+    @staticmethod
+    def _restore_radio_selection(
+        radio_set: RadioSet,
+        matches: Callable[[RadioButton], bool],
+    ) -> None:
+        """Restore one RadioSet selection without emitting user-change events."""
+
+        buttons = list(radio_set.query(RadioButton))
+        selected = next((button for button in buttons if matches(button)), None)
+        with radio_set.prevent(RadioButton.Changed):
+            for button in buttons:
+                button.value = button is selected
+        radio_set._pressed_button = selected
+        radio_set._selected = buttons.index(selected) if selected is not None else None
 
     # -- step construction -------------------------------------------------
     def _create_steps(self) -> List[WizardStep]:
@@ -4018,6 +4176,17 @@ class SetupWizardContainer(WizardContainer):
             self.wizard_data[step_id] = step.get_step_data()
             step.is_complete = True
             next_index = self._next_active_index(self.current_step)
+            if step_id != wizard_state.STEP_SUMMARY:
+                next_step_id = (
+                    self.steps[next_index].config.id
+                    if next_index is not None and self.steps[next_index].config is not None
+                    else step_id
+                )
+                if not await self.persist_setup_checkpoint(next_step_id):
+                    step.show_step_error(
+                        "Saving setup progress failed. Retry before continuing."
+                    )
+                    return
             if next_index is None:
                 self.complete_wizard()
             else:
@@ -4077,30 +4246,77 @@ class SetupWizardContainer(WizardContainer):
         self.run_worker(self._skip_entirely(), exclusive=True, group="setup-wizard-advance")
 
     async def _skip_entirely(self) -> None:
+        _, delete_keys = wizard_state.build_setup_draft_mutation(None)
         await self.commit_config(
-            wizard_state.build_wizard_state_commit(completed=True)
+            wizard_state.build_wizard_state_commit(completed=True),
+            delete_keys=delete_keys,
         )
         self._dismiss_screen({"completed": True, "exit_route": None})
+
+    async def persist_setup_checkpoint(self, active_step_id: str) -> bool:
+        """Persist one allowlisted checkpoint after a successful step commit."""
+
+        try:
+            draft = wizard_state.setup_draft_checkpoint(
+                track=self.track,
+                active_step_id=active_step_id,
+                values=self.wizard_data,
+            )
+            settings, delete_keys = wizard_state.build_setup_draft_mutation(draft)
+        except (TypeError, ValueError):
+            logger.warning("Setup checkpoint rejected (category=validation)")
+            return False
+        if delete_keys:
+            saved = await self.commit_config(settings, delete_keys=delete_keys)
+        else:
+            saved = await self.commit_config(settings)
+        if saved:
+            self.resume_draft = draft
+            return True
+        return False
+
+    async def persist_current_checkpoint(self) -> bool:
+        """Persist the latest completed values with the currently visible target."""
+
+        step = self.steps[self.current_step]
+        if step.config is None:
+            return False
+        return await self.persist_setup_checkpoint(step.config.id)
 
     # -- persistence (the only write path for steps) -----------------------
     async def commit_config(
         self,
         section_values: dict,
         *,
+        delete_keys: Mapping[str, tuple[str, ...]] | None = None,
         after_write: Callable[[], None] | None = None,
     ) -> bool:
         """Serialize every config write through one worker-side call."""
-        if not section_values:
+        requested_deletes = {} if delete_keys is None else dict(delete_keys)
+        if not section_values and not requested_deletes:
             return True
         if not wizard_state.commit_sections_allowed(section_values):
             logger.error("Wizard commit rejected non-owned sections")
+            return False
+        if not wizard_state.commit_sections_allowed(
+            {section: {} for section in requested_deletes}
+        ):
+            logger.error(
+                "Wizard delete rejected non-owned sections: {}",
+                list(requested_deletes),
+            )
             return False
         import asyncio
 
         from tldw_chatbook.config import save_settings_to_cli_config
 
         def _write() -> tuple[bool, Exception | None]:
-            ok = save_settings_to_cli_config(section_values)
+            if requested_deletes:
+                ok = save_settings_to_cli_config(
+                    section_values, delete_keys=requested_deletes
+                )
+            else:
+                ok = save_settings_to_cli_config(section_values)
             callback_error: Exception | None = None
             if ok and after_write is not None:
                 try:
@@ -4113,12 +4329,16 @@ class SetupWizardContainer(WizardContainer):
             None, _write
         )
         if ok:
-            self._mirror_into_app_config(section_values)
+            self._mirror_into_app_config(section_values, requested_deletes)
         if callback_error is not None:
             raise callback_error
         return ok
 
-    def _mirror_into_app_config(self, section_values: dict) -> None:
+    def _mirror_into_app_config(
+        self,
+        section_values: Mapping[str, Mapping[str, object]],
+        delete_keys: Mapping[str, tuple[str, ...]] | None = None,
+    ) -> None:
         """Keep the in-memory app_config consistent (chat_screen.py pattern)."""
         app_config = getattr(self.app_instance, "app_config", None)
         if not isinstance(app_config, dict):
@@ -4132,6 +4352,15 @@ class SetupWizardContainer(WizardContainer):
                     target[part] = nxt
                 target = nxt
             target.update(values)
+        for dotted_section, keys in (delete_keys or {}).items():
+            target = app_config
+            for part in dotted_section.split("."):
+                target = target.get(part)
+                if not isinstance(target, dict):
+                    break
+            if isinstance(target, dict):
+                for key in keys:
+                    target.pop(key, None)
 
     # -- completion / cancel ----------------------------------------------
     def _handle_complete(self, wizard_data: Dict[str, Any]) -> None:
@@ -4175,7 +4404,11 @@ class SetupWizardContainer(WizardContainer):
         """
         if self._finalized:
             return
-        await self.commit_config(wizard_state.build_wizard_state_commit(completed=True))
+        _, delete_keys = wizard_state.build_setup_draft_mutation(None)
+        await self.commit_config(
+            wizard_state.build_wizard_state_commit(completed=True),
+            delete_keys=delete_keys,
+        )
         self._dismiss_screen({"completed": True, "exit_route": exit_route})
 
     def _dismiss_screen(self, result: Optional[dict]) -> None:
@@ -4264,12 +4497,22 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
 class FirstRunSetupWizard(WizardScreen):
     """Full-screen first-run setup wizard. Dismisses dict | None."""
 
-    def __init__(self, app_instance, rerun: bool = False):
+    def __init__(
+        self,
+        app_instance,
+        rerun: bool = False,
+        resume_draft: wizard_state.SetupDraft | None = None,
+    ):
         super().__init__(app_instance)
         self.rerun = rerun
+        self.resume_draft = resume_draft
 
     def compose(self) -> ComposeResult:
-        yield SetupWizardContainer(self.app_instance, rerun=self.rerun)
+        yield SetupWizardContainer(
+            self.app_instance,
+            rerun=self.rerun,
+            resume_draft=self.resume_draft,
+        )
         # TASK-1505: the wizard's keys are otherwise undiscoverable — one
         # quiet, always-visible line names them.
         yield Static(
@@ -4323,4 +4566,48 @@ class FirstRunSetupWizard(WizardScreen):
                 self.query_one(AppearanceStep).revert_preview()
             except Exception:
                 pass
-            self.dismiss(None)
+            self.run_worker(
+                self._finish_later(),
+                exclusive=True,
+                group="setup-wizard-finish-later",
+            )
+
+    async def _finish_later(self) -> None:
+        try:
+            container = self.query_one(SetupWizardContainer)
+            saved = await container.persist_current_checkpoint()
+        except Exception:
+            logger.warning("Setup finish-later checkpoint failed (category=runtime)")
+            saved = False
+        if not saved:
+            self.notify(
+                "Setup progress could not be saved. Retry Finish later.",
+                severity="error",
+            )
+            return
+        self.dismiss(None)
+
+    def _clear_resume_attempt_after_target_mount(self) -> None:
+        self.run_worker(
+            self._clear_resume_attempt(),
+            exclusive=True,
+            group="setup-wizard-resume-clear",
+        )
+
+    async def _clear_resume_attempt(self) -> None:
+        draft = wizard_state.read_setup_draft(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+        if draft is None or not draft.resume_attempted:
+            return
+        if (
+            self.resume_draft is None
+            or draft.active_step_id != self.resume_draft.active_step_id
+        ):
+            return
+        cleared = replace(draft, resume_attempted=False)
+        settings, delete_keys = wizard_state.build_setup_draft_mutation(cleared)
+        container = self.query_one(SetupWizardContainer)
+        if await container.commit_config(settings, delete_keys=delete_keys):
+            self.resume_draft = cleared
+            container.resume_draft = cleared

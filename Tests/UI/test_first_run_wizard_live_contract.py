@@ -44,7 +44,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Input, RadioButton, Static
+from textual.widgets import Button, Input, OptionList, RadioButton, Static
 
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -54,12 +54,16 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    FirstRunSetupWizard,
+    ModelStep,
     SpeechSetupStep,
     SetupWizardContainer,
     _SettlingGuardedConfirmationDialog,
 )
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    SETUP_COMPLETED_KEY,
+    SETUP_DRAFT_KEYS,
     STEP_MODEL,
     STEP_PROVIDER,
     STEP_SUMMARY,
@@ -165,7 +169,7 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
 
 
 @pytest.mark.asyncio
-async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
+async def test_escape_finish_later_dismisses_and_next_boot_offers_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
@@ -219,32 +223,377 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
     )
 
     # Next boot: a fresh TldwCli instance reading that SAME real persisted
-    # state (setup_started True, setup_completed absent) must show the
-    # resume toast and must NOT re-push the wizard.
+    # checkpoint must offer bounded recovery and must NOT directly re-push
+    # the wizard.
     app2 = _build_test_app(first_run_setup_completed=False)
     app2.app_config = persisted_config
     app2._initial_tab_value = "chat"
-
-    notifications: list[dict] = []
-
-    def record_notify(message, *args, **kwargs):
-        notifications.append({"message": str(message), "severity": kwargs.get("severity")})
-
-    monkeypatch.setattr(app2, "notify", record_notify)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app2.run_test(size=(140, 40)) as pilot2:
             await _wait_until(
                 pilot2,
-                lambda: getattr(app2, "_initial_screen_pushed", False) is True,
+                lambda: type(app2.screen).__name__ == "SetupRecoveryDialog",
             )
-            await pilot2.pause(0.3)
             assert type(app2.screen).__name__ != "FirstRunSetupWizard"
-            assert any(
-                "Finish setup" in note["message"]
-                or "Settings" in note["message"]
-                for note in notifications
-            ), notifications
+            assert app2.current_tab == "home"
+
+
+@pytest.mark.asyncio
+async def test_recovery_dialog_returns_only_bounded_actions_and_names_credential_reentry():
+    from textual.app import App
+    from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import SetupRecoveryDialog
+
+    class RecoveryHost(App):
+        def on_mount(self):
+            self.push_screen(SetupRecoveryDialog())
+
+    app = RecoveryHost()
+    async with app.run_test(size=(60, 20)):
+        dialog = app.screen
+        actions = {
+            button.id.removeprefix("setup-recovery-")
+            for button in dialog.query(Button)
+        }
+
+        assert actions == {"resume", "start_over", "later"}
+        assert "credentials" in dialog.message.lower()
+        assert "not retained" in dialog.message.lower()
+        assert "re-enter" in dialog.message.lower()
+        assert dialog.query_one("Container").region.width <= app.size.width
+
+
+@pytest.mark.asyncio
+async def test_successful_step_checkpoints_once_after_commit_before_navigation():
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_PROVIDER
+
+    events: list[str] = []
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+
+    async def commit():
+        events.append("commit")
+        return True, ""
+
+    step.commit = commit
+    step.get_step_data = lambda: {"provider_value": "openai"}
+    container.current_step = container._step_index_for_id(STEP_PROVIDER)
+    container.wizard_data = {}
+    container.track = TRACK_QUICK
+    container.active_ids = (STEP_PROVIDER, STEP_MODEL)
+    container._set_advancing = lambda active: None
+    container._next_active_index = lambda current: container._step_index_for_id(STEP_MODEL)
+    container.show_step = lambda index: events.append("navigate")
+
+    async def checkpoint(next_step_id):
+        events.append(f"checkpoint:{next_step_id}")
+        return True
+
+    container.persist_setup_checkpoint = checkpoint
+
+    await container._advance()
+
+    assert events == ["commit", f"checkpoint:{STEP_MODEL}", "navigate"]
+
+
+@pytest.mark.asyncio
+async def test_failed_step_commit_does_not_checkpoint_or_navigate():
+    events: list[str] = []
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+
+    async def commit():
+        events.append("commit")
+        return False, "save failed"
+
+    step.commit = commit
+    step.get_step_data = lambda: {"provider_value": "openai"}
+    step.show_step_error = lambda message: events.append("error")
+    container.current_step = container._step_index_for_id(STEP_PROVIDER)
+    container.wizard_data = {}
+    container.track = TRACK_QUICK
+    container._set_advancing = lambda active: None
+
+    async def checkpoint(next_step_id):
+        events.append("checkpoint")
+        return True
+
+    container.persist_setup_checkpoint = checkpoint
+    container.show_step = lambda index: events.append("navigate")
+
+    await container._advance()
+
+    assert events == ["commit", "error"]
+
+
+@pytest.mark.asyncio
+async def test_completion_marks_complete_and_clears_draft_atomically():
+    calls = []
+    container = object.__new__(SetupWizardContainer)
+    container._finalized = False
+    container._dismiss_screen = lambda result: calls.append(("dismiss", result))
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        calls.append(("commit", settings, delete_keys))
+        return True
+
+    container.commit_config = commit_config
+
+    await container._finalize(None)
+
+    assert calls[0] == (
+        "commit",
+        {"first_run": {SETUP_COMPLETED_KEY: True}},
+        {"first_run": SETUP_DRAFT_KEYS},
+    )
+    assert calls[1][0] == "dismiss"
+
+
+@pytest.mark.asyncio
+async def test_resume_marks_attempt_before_pushing_restored_wizard(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    app_config = {
+        "first_run": {
+            "setup_started": True,
+            "draft_version": 1,
+            "draft_track": "quick",
+            "active_step_id": "model",
+            "draft_values": {
+                "welcome": {"track": "quick"},
+                "provider": {"provider_value": "openai"},
+            },
+            "resume_attempted": False,
+        }
+    }
+    events = []
+    fake = SimpleNamespace(app_config=app_config)
+    fake._mirror_first_run_setup_mutation = lambda settings, deletes: events.append(
+        ("mirror", settings, deletes)
+    )
+    fake._handle_first_run_wizard_result = lambda result: None
+    fake.push_screen = lambda screen, callback: events.append(("push", screen, callback))
+
+    def save(settings, *, delete_keys=None):
+        events.append(("save", settings, delete_keys))
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "resume")
+
+    assert [event[0] for event in events] == ["save", "mirror", "push"]
+    assert events[0][1]["first_run"]["resume_attempted"] is True
+    pushed_wizard = events[2][1]
+    assert pushed_wizard.resume_draft.active_step_id == STEP_MODEL
+    assert pushed_wizard.resume_draft.resume_attempted is True
+    assert pushed_wizard.resume_draft.values["provider"] == {
+        "provider_value": "openai"
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_over_deletes_only_draft_keys_and_pushes_clean_wizard(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(
+        app_config={
+            "first_run": {
+                "setup_started": True,
+                "setup_completed": False,
+                "unrelated": "keep",
+                **{key: "stale" for key in SETUP_DRAFT_KEYS},
+            }
+        }
+    )
+    events = []
+    fake._mirror_first_run_setup_mutation = lambda settings, deletes: (
+        TldwCli._mirror_first_run_setup_mutation(fake, settings, deletes)
+    )
+    fake._handle_first_run_wizard_result = lambda result: None
+    fake.push_screen = lambda screen, callback: events.append((screen, callback))
+
+    mutations = []
+
+    def save(settings, *, delete_keys=None):
+        mutations.append((settings, delete_keys))
+        return True
+
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "start_over")
+
+    assert mutations == [({}, {"first_run": SETUP_DRAFT_KEYS})]
+    assert fake.app_config["first_run"] == {
+        "setup_started": True,
+        "setup_completed": False,
+        "unrelated": "keep",
+    }
+    assert len(events) == 1
+    assert events[0][0].resume_draft is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_later_performs_no_mutation_or_push(monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(app_config={})
+    fake.push_screen = MagicMock()
+    save = MagicMock()
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
+
+    await TldwCli._apply_first_run_recovery_result(fake, "later")
+
+    save.assert_not_called()
+    fake.push_screen.assert_not_called()
+
+
+def _attempted_model_resume_config():
+    return {
+        "first_run": {
+            "setup_started": True,
+            "setup_completed": False,
+            "draft_version": 1,
+            "draft_track": "quick",
+            "active_step_id": "model",
+            "draft_values": {
+                "welcome": {"track": "quick"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                },
+            },
+            "resume_attempted": True,
+        }
+    }
+
+
+def _attempted_full_rag_resume_config():
+    return {
+        "first_run": {
+            "setup_started": True,
+            "setup_completed": False,
+            "draft_version": 1,
+            "draft_track": "full",
+            "active_step_id": "rag",
+            "draft_values": {
+                "welcome": {"track": "full"},
+                "provider": {
+                    "provider_key": "openai",
+                    "provider_value": "openai",
+                },
+                "model": {"model_id": "gpt-resume-test"},
+            },
+            "resume_attempted": True,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_resumed_target_restores_then_clears_attempt_after_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_full_rag_resume_config()
+    app._initial_tab_value = "chat"
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                and app.screen.query_one(SetupWizardContainer)
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                .config.id
+                == "rag",
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            assert container.track == "full"
+            assert container.wizard_data[STEP_PROVIDER]["provider_value"] == "openai"
+            assert app.screen.query_one("#setup-track-full", RadioButton).value is True
+            assert app.screen.query_one("#setup-track-quick", RadioButton).value is False
+
+            provider_step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+            assert provider_step.selected_provider_key == "openai"
+            provider_choice = provider_step.query_one(
+                "#setup-provider-choice", OptionList
+            )
+            assert provider_choice.highlighted_option.provider_key == "openai"
+
+            model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+            assert model_step.selected_model_id == "gpt-resume-test"
+            assert (
+                model_step.query_one("#setup-model-custom", Input).value
+                == "gpt-resume-test"
+            )
+            await _wait_until(
+                pilot,
+                lambda: app.app_config["first_run"]["resume_attempted"] is False,
+            )
+
+
+@pytest.mark.asyncio
+async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        read_setup_draft,
+        setup_recovery_action,
+    )
+
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config = _attempted_model_resume_config()
+    app._initial_tab_value = "chat"
+    draft = read_setup_draft(app.app_config)
+    assert draft is not None
+
+    def fail_model_compose(self):
+        raise RuntimeError("bounded test mount failure")
+
+    monkeypatch.setattr(ModelStep, "compose_step", fail_model_compose)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
+            )
+            await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard",
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            model = container.steps[container._step_index_for_id(STEP_MODEL)]
+            await _wait_until(pilot, lambda: model.compose_failed)
+            await pilot.pause(0.2)
+            assert app.app_config["first_run"]["resume_attempted"] is True
+
+    assert setup_recovery_action(app.app_config, {}) == "home"
+
+    app2 = _build_test_app(first_run_setup_completed=False)
+    app2.app_config = app.app_config
+    app2._initial_tab_value = "chat"
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app2.run_test(size=(120, 40)) as pilot2:
+            await _wait_until(
+                pilot2, lambda: getattr(app2, "_initial_screen_pushed", False) is True
+            )
+            await pilot2.pause(0.2)
+            assert app2.current_tab == TAB_HOME
+            assert type(app2.screen).__name__ not in {
+                "FirstRunSetupWizard",
+                "SetupRecoveryDialog",
+            }
 
 
 # ---------------------------------------------------------------------------
