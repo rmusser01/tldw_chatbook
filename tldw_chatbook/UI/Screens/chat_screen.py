@@ -3272,6 +3272,20 @@ class ChatScreen(BaseAppScreen):
     # Reactive property for sidebar state persistence
     sidebar_state = reactive({}, layout=False)
 
+    #: task-15475: one-shot "the mount already did this visit's refreshes"
+    #: token. Textual posts ``ScreenResume`` when a screen is PUSHED, so
+    #: ``on_mount`` and the mount's own ``on_screen_resume`` both fire on the
+    #: first visit -- and both used to dispatch the (non-exclusive, so
+    #: uncancelled) skill-candidate worker and both used to sync task-resume
+    #: state. ``on_mount`` sets this; the very next resume consumes it and
+    #: skips. Every LATER resume still refreshes, which is the point: a skill
+    #: may have been installed, or an approval may have landed, while Console
+    #: was suspended.
+    #:
+    #: Class-level default so it is readable on a screen built by ``__new__``
+    #: (several Console tests construct one without running ``__init__``).
+    _console_mount_visit_refreshed: bool = False
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
@@ -14426,6 +14440,9 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        # task-15475: claim this visit's refreshes; the ScreenResume Textual
+        # posts for this very mount consumes the token and skips its own copy.
+        self._console_mount_visit_refreshed = True
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toast reporting a fleet the LAST Console instance lost.
@@ -21325,6 +21342,13 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # task-15475: consume the mount's one-shot token. On the FIRST visit
+        # this resume is the mount's own, and on_mount already dispatched the
+        # skill-candidate worker and scheduled the task-resume sync; running
+        # them again here just doubled the work. Consumed (not merely read),
+        # so every subsequent resume refreshes normally.
+        mount_already_refreshed = self._console_mount_visit_refreshed
+        self._console_mount_visit_refreshed = False
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -21334,7 +21358,8 @@ class ChatScreen(BaseAppScreen):
         # stale block and the modal could stick even after setup completed
         # elsewhere.
         self._sync_console_transcript_guidance()
-        self.sync_task_resume_state()
+        if not mount_already_refreshed:
+            self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
         # Delayed exactly like the `on_mount` consumption below, to give the
         # native composer a chance to finish mounting on first navigation to
@@ -21354,7 +21379,8 @@ class ChatScreen(BaseAppScreen):
             and not self._consume_pending_console_identity_refresh()
         ):
             self._dispatch_active_console_roleplay_refresh()
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        if not mount_already_refreshed:
+            self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
