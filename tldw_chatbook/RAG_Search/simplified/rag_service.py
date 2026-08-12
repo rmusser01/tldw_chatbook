@@ -53,7 +53,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
+from .config import RAGConfig, SearchConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
@@ -181,12 +181,14 @@ FTS_MATCH_AND = "and"
 FTS_MATCH_OR = "or"
 
 # A small fixed English function-word list, consulted by every construction
-# EXCEPT the shipped `and` -- the two content-token forms (`and_stopword_
-# trim`'s trimmed AND and the OR form used by `or`/`and_then_or`'s
-# fallback). The shipped AND never consults it: an implicit AND over
-# function words is harmless, and TASK-15400's census measured that trimming
-# them rescues just 1 of the 40 zero-row golden queries (`pm-vendor-chaser`,
-# blocked solely by "about"). Where the list is actually load-bearing is the
+# EXCEPT the full AND (`and`, the pre-TASK-15400 construction) -- so it IS
+# consulted on the shipped default path, `and_stopword_trim`'s trimmed AND,
+# and on the OR form used by `or`/`and_then_or`'s fallback. The FULL AND
+# never consults it: an implicit AND over function words is harmless, and
+# TASK-15400's census measured that trimming them rescues 1 of the 40
+# zero-row golden queries (`pm-vendor-chaser`, blocked solely by "about") --
+# the +1 that made `and_stopword_trim` the sweep's winner and the shipped
+# default. Where the list is more load-bearing still is the
 # OR form: a raw OR of every token matches every document containing "the",
 # and bm25's IDF discounts a ubiquitous term in the RANKING but not in the
 # row COUNT, so the junk rows still enter fusion. Fixed and small on purpose
@@ -1596,7 +1598,9 @@ class RAGService:
         # path or acquiring a connection -- no FTS5 call, no DB touch.
         # TASK-15400: read the ACTIVE construction's primary expression, so
         # the `or` construction's all-stopword emptiness short-circuits here
-        # too. Under the shipped `and` this is `_escape_fts5_query` verbatim.
+        # too. Under `and` this is `_escape_fts5_query` verbatim; under the
+        # shipped `and_stopword_trim` an all-stopword query falls back to
+        # that same full AND, so neither can short-circuit on emptiness.
         if not self._fts5_match_expressions(query)[0]:
             logger.debug(
                 "Keyword search query has no FTS5-searchable tokens after "
@@ -3246,23 +3250,46 @@ class RAGService:
           words -- the census's measured blockers are absent CONTENT words
           (``template``, ``building``, ``rough``, ``turns``, ``pulls``,
           ``builds``), which no stopword list removes -- and it belongs to
-          the RE-SCOPED follow-up filed off TASK-15400; see the next point
-          for why that is a merge problem rather than a MATCH problem.
-        * **The OR forms were measured and DISQUALIFIED -- on the merge,
-          not on the join.** ``or`` (census 28) and ``and_then_or`` (census
-          29) both scored far higher AND both lost the golden set's
-          vector-blind fixture's hybrid rescue, with scoped recall
-          1.000 -> 0.429. The mechanism, for ``and_then_or``, is not that
-          the fixture's own sub-leg widened -- it did not, its row is still
-          an AND row. ``_keyword_search`` merges the four FTS sub-legs with
-          ``interleave_rankings`` (round-robin, NOT a score merge), so when
-          OTHER sub-legs fall back they inject rows that displace the
-          untouched AND row from leg rank 1 to 2 -- and hybrid fusion
-          consumes LEG RANK. The same displacement decomposes the scoped
-          collapse exactly (the 4 note-targeted scoped queries fall behind a
-          media fallback row; media is first in the round-robin; 3 of 7 =
-          0.429). Any future widening therefore has to fix the MERGE first;
-          widening the MATCH form alone cannot satisfy the constraint.
+          the RE-SCOPED merge-level follow-up filed off TASK-15400
+          (**TASK-15400-FOLLOWUP-ID-TBD**: the id is backfilled when that
+          task is filed; see the next point for why it is a merge problem
+          rather than a MATCH problem).
+        * **What else was measured, so these four rows do not read as the
+          only options.** Reusing the Library four-seam path's
+          ``build_fts_match_query`` was measured at authoring time and
+          rescues 1 of the 40 (it is AND-joined too). Two report-only probes
+          ran over the same 40 zero-row queries: proximity (``NEAR``)
+          rescues 0 -- it can only narrow, so it is a subset of the trimmed
+          AND by construction -- and prefix matching rescues 3, the only
+          unexplored variant beating the winner, held back by the arc's
+          pre-registered promotion bar and carrying the same unmeasured
+          displacement risk as the OR forms.
+        * **The OR forms were measured and DISQUALIFIED -- for two
+          DIFFERENT reasons, one of them the merge.** ``or`` (census 28) and
+          ``and_then_or`` (census 29) both scored far higher AND both lost
+          the golden set's vector-blind fixture's hybrid rescue, with scoped
+          recall 1.000 -> 0.429 -- but not by the same mechanism, and the
+          distinction is the whole finding:
+
+          - Under ``or`` the JOIN itself loses the fixture: the leg returns
+            ten OR rows and the target is not among them (leg rank 11 in the
+            k=20 fusion window, fused 0.0188, an order below the cut). No
+            merge behaviour is implicated.
+          - Under ``and_then_or`` the fixture's own sub-leg is UNTOUCHED --
+            its row is still an AND row at leg rank 2 -- and it is the MERGE
+            that loses it. ``_keyword_search`` merges the four FTS sub-legs
+            with ``interleave_rankings`` (round-robin, NOT a score merge),
+            so when OTHER sub-legs fall back they inject rows that displace
+            the untouched AND row from leg rank 1 to 2, and hybrid fusion
+            consumes LEG RANK. That one position is the whole distance
+            between rescued and gone. The same displacement decomposes the
+            scoped collapse exactly (the 4 note-targeted scoped queries fall
+            behind a media fallback row; media is first in the round-robin;
+            3 of 7 = 0.429).
+
+          So a widening construction that keeps its own AND rows still has
+          to fix the MERGE; and one that does not keep them (``or``) fails
+          before the merge is even reached.
 
         Whatever changes here, keep each token individually quoted (the
         injection property above, pinned by
@@ -3316,9 +3343,10 @@ class RAGService:
     def _is_fts5_stopword(token: str) -> bool:
         """Whether a raw query token is a function word.
 
-        Consulted by every construction except the shipped ``and`` -- both
-        the content-token AND (``and_stopword_trim``) and the content-token
-        OR (``or`` / ``and_then_or``'s fallback).
+        Consulted by every construction except the full AND (``and``, the
+        pre-TASK-15400 one) -- so it runs on the SHIPPED default path, the
+        content-token AND (``and_stopword_trim``), as well as on the
+        content-token OR (``or`` / ``and_then_or``'s fallback).
 
         Compared on the token's alphanumeric runs, because that is how FTS5
         reads a quoted token: ``About,`` indexes and matches exactly as
@@ -3358,11 +3386,17 @@ class RAGService:
         """The active MATCH construction, or ``"and"`` for anything unknown.
 
         Resolved at use time (like ``resolve_rrf_k`` and
-        ``resolve_hybrid_alpha``), so an unrecognized value degrades to the
-        SHIPPED behaviour with one warning instead of crashing a search or
-        silently retrieving differently. Warned once per service instance
-        per bad value -- this runs on every search, and a per-call warning
-        would bury the log.
+        ``resolve_hybrid_alpha``), so an unrecognized value degrades with one
+        warning instead of crashing a search or silently retrieving
+        differently. Warned once per service instance per bad value -- this
+        runs on every search, and a per-call warning would bury the log.
+
+        NOTE the fail-safe target is ``"and"``, the PRE-TASK-15400 full AND
+        -- deliberately NOT the shipped default (``and_stopword_trim`` since
+        2026-08-11). A bad value should land on the most conservative
+        construction the engine has, which is the one that never widens a
+        query; and it keeps this fail-safe stable if the measured default
+        moves again.
 
         Returns:
             One of ``FTS_MATCH_CONSTRUCTIONS``.
@@ -3376,10 +3410,12 @@ class RAGService:
         if construction not in self._warned_fts_constructions:
             self._warned_fts_constructions.add(construction)
             logger.warning(
-                "Unknown fts_match_construction {!r}; the keyword leg is using "
-                "the shipped {!r} construction. Valid values: {}.",
+                "Unknown fts_match_construction {!r}; the keyword leg is "
+                "falling back to the {!r} construction (the conservative "
+                "full AND, NOT the shipped default {!r}). Valid values: {}.",
                 construction,
                 FTS_MATCH_CONSTRUCTION_AND,
+                SearchConfig.fts_match_construction,
                 ", ".join(FTS_MATCH_CONSTRUCTIONS),
             )
         return FTS_MATCH_CONSTRUCTION_AND
@@ -3395,9 +3431,11 @@ class RAGService:
         The four pre-registered candidates
         (``SearchConfig.fts_match_construction``):
 
-        * ``and`` (shipped) -- implicit AND over every token. Byte-identical
-          to ``_escape_fts5_query``, which it delegates to.
-        * ``and_stopword_trim`` -- implicit AND over the CONTENT tokens,
+        * ``and`` (pre-TASK-15400; still the fail-safe for an unrecognized
+          value) -- implicit AND over every token. Byte-identical to
+          ``_escape_fts5_query``, which it delegates to.
+        * ``and_stopword_trim`` (**the shipped default since 2026-08-11**,
+          the sweep's winner) -- implicit AND over the CONTENT tokens,
           falling back to the full AND when trimming empties the token list
           (an empty MATCH expression is an FTS5 syntax error, not "no
           results").
@@ -3408,8 +3446,12 @@ class RAGService:
           contract), never a syntax error.
         * ``and_then_or`` -- both: the AND form as primary, the OR form as
           the fallback each sub-leg runs ONLY when its own primary returns
-          zero rows. A non-empty AND is therefore never widened, which is
-          what preserves every hit the shipped construction finds today.
+          zero rows. A non-empty AND is therefore never widened, which
+          preserves every hit the full AND finds within a SUB-LEG -- but
+          NOT, as the sweep measured, every hit the LEG contributes to
+          fusion: the round-robin merge re-ranks the untouched rows. That
+          is why this candidate was disqualified (see
+          ``_escape_fts5_query``).
 
         The fallback is suppressed when it cannot widen anything -- when
         both forms reduce to the same single FTS5 term -- since re-running
@@ -3437,7 +3479,9 @@ class RAGService:
         quoted = [self._quote_fts5_token(token) for token in content_tokens]
 
         if construction == FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM:
-            # Trimming everything away leaves the shipped form, not "".
+            # Trimming everything away leaves the FULL AND, not "" -- so an
+            # only-function-word query is byte-identical to the pre-arc
+            # construction rather than a syntax error or an empty answer.
             return " ".join(quoted) or and_expression, None
 
         or_expression = " OR ".join(quoted)
@@ -3605,8 +3649,10 @@ class RAGService:
             List of search results
         """
         # Properly escape the query for FTS5, in whichever MATCH
-        # construction is active (TASK-15400). Under the shipped `and` this
-        # is `_escape_fts5_query` verbatim with no fallback.
+        # construction is active (TASK-15400). Under `and` this is
+        # `_escape_fts5_query` verbatim with no fallback; under the shipped
+        # `and_stopword_trim` it is the content-token AND, also with no
+        # fallback (only `and_then_or` ever returns a second expression).
         expressions = self._fts5_match_expressions(query)
 
         # Validate limit parameter

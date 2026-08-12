@@ -160,7 +160,8 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     test keeps its job in its third form: the four remaining misses are
     still EXPLAINED by the paragraph above — absent CONTENT words, which no
     stopword list removes — and they are part of the residual "39 of 60
-    zero-row queries" bound the arc's re-scoped follow-up owns, because
+    zero-row queries" bound the arc's re-scoped merge-level follow-up owns
+    (**TASK-15400-FOLLOWUP-ID-TBD** — backfill the id when it is filed), because
     widening the MATCH form further was measured to break the leg's
     round-robin merge rather than help. The one hit is asserted rather than
     tolerated: if it silently reverted, the winner would not be doing what
@@ -193,9 +194,14 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
 
     corpus, golden = load_fixtures()
     prompts = [query for query in golden if query.category == "prompt"]
-    assert len(prompts) >= 4, (
-        f"only {len(prompts)} prompt fixtures; the number this pins needs "
-        "the category's floor"
+    # DENOMINATOR (2026-08-11, TASK-15400 Task 4): pinned EXACTLY, where it
+    # used to be a `>= 4` floor. The cell this test stands behind is
+    # `prompt/recall == 0.200`, which is 1 of 5 — a floor pins the numerator
+    # while letting the denominator drift, and 1-of-6 would keep every
+    # assertion below green while the baselined cell moved to 0.167.
+    assert len(prompts) == 5, (
+        f"{len(prompts)} prompt fixtures, not 5; the gated prompt cell is "
+        "1/5 = 0.200. Re-run the eval and re-stamp before moving this."
     )
     reachability = GoldenQuery(
         "pm-reachability-probe",
@@ -253,6 +259,22 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
                 f"{fusion}"
             )
 
+    # THE SPLIT, asserted BEFORE the per-query loop so that it is the oracle
+    # that speaks first about the category's shape: exactly one of the five
+    # is a hybrid hit, and it is the one the shipped construction was chosen
+    # for. Ordered deliberately — the per-mode loop below reds on a second
+    # rescue too, but it reports it as "a mode stopped missing", which reads
+    # like a broken pin rather than a moved cell.
+    hybrid_hits = {
+        result.query_id for result in results if not result.cell("hybrid").is_miss
+    }
+    assert hybrid_hits == {STOPWORD_TRIM_RESCUED_PROMPT_ID}, (
+        f"hybrid answers {sorted(hybrid_hits)} of the prompt category, not "
+        f"just {STOPWORD_TRIM_RESCUED_PROMPT_ID!r}. With the denominator "
+        "pinned at 5 above, this set IS the committed prompt/recall 0.200. "
+        "Re-run the construction sweep and re-stamp before moving this pin."
+    )
+
     for result in results:
         # The flip: this one id is a hybrid HIT under the shipped
         # `and_stopword_trim` and was a miss under the pre-arc `and`.
@@ -282,18 +304,6 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
         assert result.cell("hybrid").docs_returned > 0, (
             f"{result.query_id}: hybrid returned no rows at all"
         )
-
-    # ...and the split is EXACTLY one of five, which is the gated cell:
-    # recall 0.200. A second rescue would be a real improvement and would
-    # still red here, because the number it moves is baselined.
-    hybrid_hits = {
-        result.query_id for result in results if not result.cell("hybrid").is_miss
-    }
-    assert hybrid_hits == {STOPWORD_TRIM_RESCUED_PROMPT_ID}, (
-        f"hybrid answers {sorted(hybrid_hits)} of the prompt category; the "
-        "committed baseline's prompt/recall 0.200 is 1 of 5. Re-run the "
-        "construction sweep and re-stamp before moving this pin."
-    )
 
     # THE REACHABILITY HALF. Same runtime, same seam, keyword-shaped query.
     hybrid = reachable.cell("hybrid")

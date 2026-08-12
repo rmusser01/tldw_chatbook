@@ -394,7 +394,16 @@ def test_every_token_stays_individually_quoted_in_every_construction():
 
 
 def test_an_invalid_construction_warns_once_and_behaves_as_and():
-    """Fail-safe to the shipped behaviour -- never a crash, never silence."""
+    """Fail-safe to the FULL AND -- never a crash, never silence.
+
+    DISCLOSED (2026-08-11, TASK-15400 Task 4): this used to read "fail-safe
+    to the shipped behaviour", which was the same thing when `and` shipped.
+    It is not any more — the fail-safe deliberately stays on the pre-arc
+    full AND (the most conservative construction, the one that never widens
+    a query) while the shipped default is `and_stopword_trim`. The
+    assertion below is unchanged and is what pins that: an invalid value
+    emits `'"notes" "about" "the" "vendor"'`, NOT the trimmed default.
+    """
     service = _make_service(construction="or_of_ands_probably")
 
     with _captured_warnings() as warnings:
