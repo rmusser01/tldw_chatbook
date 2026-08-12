@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import struct
+from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from uuid import UUID
@@ -212,3 +213,83 @@ def test_bundle_codec_is_available_from_the_tts_domain_boundary() -> None:
     assert tts.TTSVoiceBundleSinks is TTSVoiceBundleSinks
     assert tts.encode_clone_voice_bundle is encode_clone_voice_bundle
     assert tts.inspect_clone_voice_bundle is inspect_clone_voice_bundle
+
+
+def test_public_failure_traceback_has_no_private_codec_frame_locals() -> None:
+    private_archive = b"PK PRIVATE ARCHIVE CANARY"
+    private_transcript = "PRIVATE TRANSCRIPT CANARY"
+    private_path = "/private/staging/PRIVATE-PATH-CANARY"
+
+    class PrivateSink(BytesIO):
+        def __repr__(self) -> str:
+            return private_path
+
+    private_sink = PrivateSink(private_transcript.encode())
+    sinks = TTSVoiceBundleSinks(
+        manifest_json=private_sink,
+        profile_json=PrivateSink(),
+        reference_wav=PrivateSink(),
+        reference_txt=PrivateSink(),
+    )
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(private_archive, sinks=sinks)
+
+    traceback_locals: list[str] = []
+    current = caught.value.__traceback__
+    while current is not None:
+        if current.tb_frame.f_globals.get("__name__") == (
+            "tldw_chatbook.TTS.voice_bundle_codec"
+        ):
+            traceback_locals.append(repr(current.tb_frame.f_locals))
+        current = current.tb_next
+    rendered = "\n".join(traceback_locals)
+    assert private_archive.hex() not in rendered
+    assert repr(private_archive) not in rendered
+    assert private_transcript not in rendered
+    assert private_path not in rendered
+    assert "PrivateSink" not in rendered
+
+
+def test_sink_collaborator_failure_severs_private_traceback_locals_and_graph() -> None:
+    private_transcript = "PRIVATE TRANSCRIPT IN VALID BUNDLE"
+    private_path = "/private/staging/PRIVATE-SINK-PATH"
+    source = canonical_bundle()
+    source = replace(
+        source,
+        reference=replace(source.reference, reference_text=private_transcript),
+    )
+    private_archive = encode_clone_voice_bundle(source)
+
+    class FailingSink(BytesIO):
+        def __repr__(self) -> str:
+            return private_path
+
+        def seek(self, *_args, **_kwargs):
+            raise RuntimeError(f"{private_path}: {private_transcript}")
+
+    sinks = TTSVoiceBundleSinks(
+        manifest_json=FailingSink(),
+        profile_json=BytesIO(),
+        reference_wav=BytesIO(),
+        reference_txt=BytesIO(),
+    )
+
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(private_archive, sinks=sinks)
+
+    codec_locals: list[str] = []
+    current = caught.value.__traceback__
+    while current is not None:
+        if current.tb_frame.f_globals.get("__name__") == (
+            "tldw_chatbook.TTS.voice_bundle_codec"
+        ):
+            codec_locals.append(repr(current.tb_frame.f_locals))
+        current = current.tb_next
+    rendered = "\n".join(codec_locals)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert repr(private_archive) not in rendered
+    assert private_transcript not in rendered
+    assert private_path not in rendered
+    assert "FailingSink" not in rendered

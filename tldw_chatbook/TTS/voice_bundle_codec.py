@@ -6,15 +6,19 @@ import json
 import re
 import stat
 import struct
+import unicodedata
+import zlib
+from binascii import crc32
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
-from typing import BinaryIO, Final, Literal, cast
+from typing import BinaryIO, Final, Literal, NoReturn, cast
 from uuid import UUID
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
+from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
 from tldw_chatbook.TTS.profile_reference_audio import validate_canonical_reference_wav
 from tldw_chatbook.TTS.profile_reference_types import (
@@ -80,6 +84,11 @@ class TTSCloneVoiceBundle:
             or type(self.recipe_requirement) is not TTSCloneRecipeRequirement
             or self.profile.draft.provider_id != "audio_cpp"
             or self.profile.draft.model_id != self.recipe_requirement.model_id
+            or not _voice_id_is_safe(self.profile.draft.voice_id)
+            or not _installed_recipe_admits(
+                self.recipe_requirement,
+                has_voice=self.profile.draft.voice_id is not None,
+            )
         ):
             raise TTSVoiceBundleError("bundle_invalid")
         try:
@@ -129,7 +138,45 @@ class _MemberLayout:
     compressed_size: int
     uncompressed_size: int
     local_offset: int
+    data_offset: int
     data_end: int
+
+
+def _voice_id_is_safe(value: str | None) -> bool:
+    if value is None:
+        return True
+    if type(value) is not str or not value or len(value) > 256:
+        return False
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        return False
+    for character in value:
+        code_point = ord(character)
+        if (
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+            or 0xFDD0 <= code_point <= 0xFDEF
+            or code_point & 0xFFFF in (0xFFFE, 0xFFFF)
+        ):
+            return False
+    return True
+
+
+def _installed_recipe_admits(
+    requirement: TTSCloneRecipeRequirement,
+    *,
+    has_voice: bool,
+) -> bool:
+    for recipe in AUDIO_CPP_RECIPE_REGISTRY.recipes:
+        if (
+            recipe.recipe_id == requirement.recipe_id
+            and recipe.recipe_revision == requirement.recipe_revision
+        ):
+            return recipe.admits_voice_reference(
+                has_voice=has_voice,
+                has_reference=True,
+            )
+    return True
 
 
 def _canonical_json(value: object) -> bytes:
@@ -312,7 +359,9 @@ def _metadata_is_accepted(
 
 
 def _validate_layout(payload: bytes) -> tuple[_MemberLayout, ...]:
-    if not 0 < len(payload) <= MAX_BUNDLE_ARCHIVE_BYTES:
+    if not payload:
+        raise ValueError
+    if len(payload) > MAX_BUNDLE_ARCHIVE_BYTES:
         raise TTSVoiceBundleError("bundle_limit_exceeded")
     if len(payload) < _EOCD.size:
         raise ValueError
@@ -391,10 +440,10 @@ def _validate_layout(payload: bytes) -> tuple[_MemberLayout, ...]:
             )
         ):
             raise ValueError
+        if compressed_size <= 0 or uncompressed_size <= 0:
+            raise ValueError
         if (
-            compressed_size <= 0
-            or uncompressed_size <= 0
-            or uncompressed_size > _MEMBER_LIMITS[expected_name]
+            uncompressed_size > _MEMBER_LIMITS[expected_name]
             or compressed_size > MAX_BUNDLE_ARCHIVE_BYTES
             or uncompressed_size > compressed_size * MAX_BUNDLE_EXPANSION_RATIO
             or (compression == ZIP_STORED and compressed_size != uncompressed_size)
@@ -444,6 +493,7 @@ def _validate_layout(payload: bytes) -> tuple[_MemberLayout, ...]:
                 compressed_size=compressed_size,
                 uncompressed_size=uncompressed_size,
                 local_offset=local_offset,
+                data_offset=data_offset,
                 data_end=data_end,
             )
         )
@@ -478,29 +528,60 @@ def _default_sinks() -> TTSVoiceBundleSinks:
 
 
 def _stream_member(
-    archive: ZipFile,
-    info: ZipInfo,
+    payload: bytes,
+    layout: _MemberLayout,
     sink: BinaryIO,
-    declared_size: int,
     limit: int,
 ) -> bytes:
     sink.seek(0)
     sink.truncate(0)
     total = 0
-    with archive.open(info, "r") as source:
-        while True:
-            chunk = source.read(min(_JSON_CHUNK_BYTES, limit + 1 - total))
-            if type(chunk) is not bytes:
-                raise ValueError
-            if not chunk:
-                break
+    checksum = 0
+
+    def write(chunk: bytes) -> None:
+        nonlocal checksum, total
+        if chunk:
             total += len(chunk)
-            if total > limit or total > declared_size:
+            if total > limit:
                 raise TTSVoiceBundleError("bundle_limit_exceeded")
+            if total > layout.uncompressed_size:
+                raise ValueError
             written = sink.write(chunk)
             if written is not None and written != len(chunk):
                 raise ValueError
-    if total != declared_size:
+            checksum = crc32(chunk, checksum)
+
+    raw = memoryview(payload)[layout.data_offset : layout.data_end]
+    if len(raw) != layout.compressed_size:
+        raise ValueError
+    if layout.compression == ZIP_STORED:
+        for offset in range(0, len(raw), _JSON_CHUNK_BYTES):
+            write(bytes(raw[offset : offset + _JSON_CHUNK_BYTES]))
+    else:
+        decompressor = zlib.decompressobj(-15)
+        consumed = 0
+        while consumed < len(raw):
+            chunk = bytes(raw[consumed : consumed + _JSON_CHUNK_BYTES])
+            consumed += len(chunk)
+            pending = chunk
+            while pending:
+                output = decompressor.decompress(
+                    pending,
+                    min(_JSON_CHUNK_BYTES, limit + 1 - total),
+                )
+                pending = decompressor.unconsumed_tail
+                write(output)
+                if decompressor.unused_data:
+                    raise ValueError
+                if decompressor.eof and (pending or consumed != len(raw)):
+                    raise ValueError
+        if (
+            not decompressor.eof
+            or decompressor.unused_data
+            or decompressor.unconsumed_tail
+        ):
+            raise ValueError
+    if total != layout.uncompressed_size or checksum & 0xFFFFFFFF != layout.crc:
         raise ValueError
     sink.flush()
     sink.seek(0)
@@ -676,33 +757,15 @@ def _decode_bundle(
     destinations = sinks if type(sinks) is TTSVoiceBundleSinks else _default_sinks()
     if sinks is not None and type(sinks) is not TTSVoiceBundleSinks:
         raise ValueError
-    with ZipFile(BytesIO(payload), "r", allowZip64=False) as archive:
-        infos = archive.infolist()
-        if (
-            tuple(archive.namelist()) != EXPECTED_MEMBER_ORDER
-            or len(infos) != len(layouts)
-            or any(
-                info.filename != layout.name
-                or info.flag_bits != layout.flags
-                or info.compress_type != layout.compression
-                or info.CRC != layout.crc
-                or info.compress_size != layout.compressed_size
-                or info.file_size != layout.uncompressed_size
-                or info.header_offset != layout.local_offset
-                for info, layout in zip(infos, layouts)
-            )
-        ):
-            raise ValueError
-        members = {
-            info.filename: _stream_member(
-                archive,
-                info,
-                destinations.for_member(info.filename),
-                layout.uncompressed_size,
-                _MEMBER_LIMITS[info.filename],
-            )
-            for info, layout in zip(infos, layouts)
-        }
+    members = {
+        layout.name: _stream_member(
+            payload,
+            layout,
+            destinations.for_member(layout.name),
+            _MEMBER_LIMITS[layout.name],
+        )
+        for layout in layouts
+    }
     profile_data = _strict_json(members["profile.json"])
     manifest = _strict_json(members["manifest.json"])
     transcript_bytes = members["reference.txt"]
@@ -731,6 +794,37 @@ def _decode_bundle(
     )
 
 
+def _inspect_outcome(
+    payload: bytes,
+) -> TTSCloneVoiceBundle | TTSVoiceBundleErrorCode:
+    try:
+        if type(payload) is not bytes:
+            raise ValueError
+        return _decode_bundle(payload, None)
+    except TTSVoiceBundleError as error:
+        return error.code
+    except Exception:
+        return "bundle_invalid"
+
+
+def _inspect_outcome_with_sinks(
+    payload: bytes,
+    sinks: TTSVoiceBundleSinks,
+) -> TTSCloneVoiceBundle | TTSVoiceBundleErrorCode:
+    try:
+        if type(payload) is not bytes or type(sinks) is not TTSVoiceBundleSinks:
+            raise ValueError
+        return _decode_bundle(payload, sinks)
+    except TTSVoiceBundleError as error:
+        return error.code
+    except Exception:
+        return "bundle_invalid"
+
+
+def _raise_bundle_error(code: TTSVoiceBundleErrorCode) -> NoReturn:
+    raise TTSVoiceBundleError(code) from None
+
+
 def inspect_clone_voice_bundle(
     payload: bytes,
     *,
@@ -738,20 +832,15 @@ def inspect_clone_voice_bundle(
 ) -> TTSCloneVoiceBundle:
     """Validate one hostile bundle without extracting archive paths."""
 
-    failure: TTSVoiceBundleErrorCode | None = None
-    result: TTSCloneVoiceBundle | None = None
-    try:
-        if type(payload) is not bytes:
-            raise ValueError
-        result = _decode_bundle(payload, sinks)
-    except TTSVoiceBundleError as error:
-        failure = error.code
-    except Exception:
-        failure = "bundle_invalid"
-    if failure is not None:
-        raise TTSVoiceBundleError(failure) from None
-    assert result is not None
-    return result
+    outcome = (
+        _inspect_outcome(payload)
+        if sinks is None
+        else _inspect_outcome_with_sinks(payload, sinks)
+    )
+    del payload, sinks
+    if type(outcome) is str:
+        _raise_bundle_error(outcome)
+    return cast(TTSCloneVoiceBundle, outcome)
 
 
 __all__ = [

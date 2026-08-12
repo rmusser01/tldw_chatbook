@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import struct
 import json
+import struct
+import unicodedata
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
@@ -424,25 +425,18 @@ def test_metadata_and_streaming_quota_guards_return_bounded_limit_code(
     assert caught.value.code == "bundle_limit_exceeded"
 
 
-def test_stream_counter_does_not_trust_declared_member_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _valid()
-    original_open = ZipFile.open
-
-    def dishonest_open(self, name, mode="r", pwd=None, *, force_zip64=False):
-        stream = original_open(self, name, mode, pwd, force_zip64=force_zip64)
-        filename = name.filename if isinstance(name, ZipInfo) else name
-        if filename != "reference.txt":
-            return stream
-        return BytesIO(stream.read() + b"extra")
-
-    monkeypatch.setattr(ZipFile, "open", dishonest_open)
+def test_stream_counter_does_not_trust_declared_member_size() -> None:
+    payload = _repack(compression=ZIP_DEFLATED)
+    central = _central_offsets(payload)[-1]
+    local = _local_offset(payload, central)
+    declared = struct.unpack_from("<L", payload, central + 24)[0] - 1
+    payload = _patch_u32(payload, central + 24, declared)
+    payload = _patch_u32(payload, local + 22, declared)
 
     with pytest.raises(TTSVoiceBundleError) as caught:
         inspect_clone_voice_bundle(payload)
 
-    assert caught.value.code == "bundle_limit_exceeded"
+    assert caught.value.code == "bundle_invalid"
 
 
 def _refresh_entry(manifest: dict, name: str, payload: bytes) -> None:
@@ -601,3 +595,195 @@ def test_invalid_dos_timestamp_is_rejected() -> None:
 
     with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
         inspect_clone_voice_bundle(changed)
+
+
+def _deflate_with_trailing_member_junk() -> bytes:
+    payload = _repack(compression=ZIP_DEFLATED)
+    directory = struct.unpack_from("<L", payload, len(payload) - 6)[0]
+    central = _central_offsets(payload)[-1]
+    local = _local_offset(payload, central)
+    compressed = struct.unpack_from("<L", payload, central + 20)[0]
+    name_length, extra_length = struct.unpack_from("<2H", payload, local + 26)
+    data_end = local + 30 + name_length + extra_length + compressed
+    assert data_end == directory
+    junk = b"TRAILING-COMPRESSED-JUNK"
+    changed = bytearray(payload[:data_end] + junk + payload[data_end:])
+    shifted_central = central + len(junk)
+    shifted_eocd = len(changed) - 22
+    struct.pack_into("<L", changed, local + 18, compressed + len(junk))
+    struct.pack_into("<L", changed, shifted_central + 20, compressed + len(junk))
+    struct.pack_into("<L", changed, shifted_eocd + 16, directory + len(junk))
+    return bytes(changed)
+
+
+def test_deflate_stream_rejects_trailing_raw_data_with_consistent_layout() -> None:
+    with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
+        inspect_clone_voice_bundle(_deflate_with_trailing_member_junk())
+
+
+def test_deflate_does_not_delegate_decompression_to_zipfile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _repack(compression=ZIP_DEFLATED)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("ZipFile.open must not decompress admitted members")
+
+    monkeypatch.setattr(ZipFile, "open", forbidden)
+
+    assert inspect_clone_voice_bundle(payload) == canonical_bundle()
+
+
+@pytest.mark.parametrize(
+    "voice_id", ["unsafe\x00voice", "unsafe\nvoice", "unsafe\u202evoice"]
+)
+def test_bundle_voice_id_rejects_control_and_format_characters(
+    voice_id: str,
+) -> None:
+    values = _members()
+    profile = json.loads(values["profile.json"])
+    profile["voice_id"] = voice_id
+    profile_bytes = _canonical_json(profile)
+    values["profile.json"] = profile_bytes
+    manifest = json.loads(values["manifest.json"])
+    _refresh_entry(manifest, "profile.json", profile_bytes)
+    values["manifest.json"] = _canonical_json(manifest)
+
+    with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
+        inspect_clone_voice_bundle(_pack_members(values))
+
+
+def test_bundle_voice_id_preserves_safe_unicode_without_normalizing() -> None:
+    voice_id = "Cafe\u0301"
+    assert unicodedata.normalize("NFC", voice_id) != voice_id
+    values = _members()
+    profile = json.loads(values["profile.json"])
+    profile["voice_id"] = voice_id
+    profile_bytes = _canonical_json(profile)
+    values["profile.json"] = profile_bytes
+    manifest = json.loads(values["manifest.json"])
+    _refresh_entry(manifest, "profile.json", profile_bytes)
+    values["manifest.json"] = _canonical_json(manifest)
+
+    inspected = inspect_clone_voice_bundle(_pack_members(values))
+
+    assert inspected.profile.draft.voice_id == voice_id
+
+
+def _with_dependency(
+    *,
+    recipe_id: str,
+    recipe_revision: int,
+    model_id: str,
+    voice_id: str | None,
+) -> bytes:
+    values = _members()
+    profile = json.loads(values["profile.json"])
+    profile["model_id"] = model_id
+    profile["voice_id"] = voice_id
+    profile_bytes = _canonical_json(profile)
+    values["profile.json"] = profile_bytes
+    manifest = json.loads(values["manifest.json"])
+    manifest["dependency"] = {
+        "model_id": model_id,
+        "provider_id": "audio_cpp",
+        "recipe_id": recipe_id,
+        "recipe_revision": recipe_revision,
+    }
+    _refresh_entry(manifest, "profile.json", profile_bytes)
+    values["manifest.json"] = _canonical_json(manifest)
+    return _pack_members(values)
+
+
+@pytest.mark.parametrize(
+    ("recipe_id", "revision", "model_id", "voice_id", "accepted"),
+    [
+        (
+            "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+            1,
+            "supertonic-3-orig",
+            None,
+            False,
+        ),
+        (
+            "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_q8_0",
+            2,
+            "pocket-tts-english-q8-0",
+            None,
+            True,
+        ),
+        (
+            "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_q8_0",
+            2,
+            "pocket-tts-english-q8-0",
+            "amy",
+            False,
+        ),
+        (
+            "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_safetensors",
+            1,
+            "pocket-tts-english-safetensors",
+            None,
+            True,
+        ),
+        (
+            "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_safetensors",
+            1,
+            "pocket-tts-english-safetensors",
+            "amy",
+            False,
+        ),
+        ("future-recipe", 1, "future-model", "amy", True),
+        (
+            "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+            2,
+            "future-supertonic",
+            "amy",
+            True,
+        ),
+    ],
+)
+def test_exact_installed_recipe_voice_reference_policy_is_purely_enforced(
+    recipe_id: str,
+    revision: int,
+    model_id: str,
+    voice_id: str | None,
+    accepted: bool,
+) -> None:
+    payload = _with_dependency(
+        recipe_id=recipe_id,
+        recipe_revision=revision,
+        model_id=model_id,
+        voice_id=voice_id,
+    )
+    if accepted:
+        assert (
+            inspect_clone_voice_bundle(payload).recipe_requirement.recipe_id
+            == recipe_id
+        )
+    else:
+        with pytest.raises(TTSVoiceBundleError, match="bundle_invalid"):
+            inspect_clone_voice_bundle(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (b"", "bundle_invalid"),
+        (_pack_members({**_members(), "reference.txt": b""}), "bundle_invalid"),
+    ],
+)
+def test_empty_archive_or_member_is_malformed(payload: bytes, code: str) -> None:
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(payload)
+    assert caught.value.code == code
+
+
+def test_only_true_archive_upper_bound_uses_limit_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _valid()
+    monkeypatch.setattr(codec, "MAX_BUNDLE_ARCHIVE_BYTES", len(payload) - 1)
+    with pytest.raises(TTSVoiceBundleError) as caught:
+        inspect_clone_voice_bundle(payload)
+    assert caught.value.code == "bundle_limit_exceeded"
