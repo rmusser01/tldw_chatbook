@@ -1958,7 +1958,10 @@ async def test_save_status_names_local_folder_and_preserved_draft(
         )
         save_copy = workspace.query_one("#file-notes-save-copy", Button)
         assert str(save_copy.label) == "Save draft as copy"
-        assert save_copy.display
+        assert not save_copy.display
+        resolve = workspace.query_one("#file-notes-resolve-conflict", Button)
+        assert resolve.display
+        assert str(resolve.label) == "Resolve conflict"
         assert workspace.query_one("#file-notes-save-status").display
 
     await workspace.shutdown()
@@ -2366,7 +2369,13 @@ async def test_conflict_reload_save_copy_and_leave_guards_preserve_draft(
         assert not await workspace.flush_pending_work()
 
         workspace.query_one("#file-notes-path", Input).value = "copy.md"
-        workspace.query_one("#file-notes-save-copy", Button).press()
+        workspace.query_one("#file-notes-resolve-conflict", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "conflict choices did not open",
+        )
+        workspace.query_one("#file-notes-resolution-save-new", Button).press()
         await _wait_until(
             pilot,
             lambda: workspace.current_path == "copy.md",
@@ -2650,6 +2659,267 @@ async def test_conflict_compare_rejects_a_late_editor_session(
         status = _static_text(workspace, "#file-notes-action-status")
         assert "editing session changed" in status
         assert "Draft preserved" in status
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+@pytest.mark.parametrize("size", [(40, 20), (120, 40)])
+async def test_conflict_resolution_discloses_only_safe_choices(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Conflict choices stay explicit, bounded, and non-resolving by default."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("base", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        resolve = workspace.query_one("#file-notes-resolve-conflict", Button)
+        assert not resolve.display
+
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("latest disk", encoding="utf-8")
+        await workspace.refresh_files()
+        assert workspace.save_state == "conflict"
+        assert resolve.display and not resolve.disabled
+        assert not workspace.query_one("#file-notes-save-copy", Button).display
+
+        resolve.focus()
+        resolve.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "conflict choices did not open",
+        )
+        keep = workspace.query_one("#file-notes-resolution-keep", Button)
+        save_new = workspace.query_one(
+            "#file-notes-resolution-save-new",
+            Button,
+        )
+        discard = workspace.query_one(
+            "#file-notes-resolution-discard",
+            Button,
+        )
+        choices = (keep, save_new, discard)
+        assert [str(choice.label) for choice in choices] == [
+            "Keep editing",
+            "Save draft as new note",
+            "Discard draft and load disk",
+        ]
+        assert all("overwrite" not in str(choice.label).lower() for choice in choices)
+        await _wait_until(
+            pilot,
+            lambda: keep.has_focus,
+            "resolution choices did not focus Keep editing",
+        )
+        assert _static_text(workspace, "#file-notes-resolution-copy") == (
+            "Choose a safe next step. No option overwrites the disk file."
+        )
+        assert _static_text(workspace, "#file-notes-path-label") == "New note path"
+        assert workspace.query_one("#file-notes-compare", Button).display
+        assert not workspace.query_one("#file-notes-delete", Button).display
+        for choice in choices:
+            assert choice.display and not choice.disabled
+            assert choice.render_line(0).text.strip() == str(choice.label)
+            assert choice.region.right <= workspace.region.right
+            assert choice.region.bottom <= workspace.region.bottom
+
+        keep.press()
+        await _wait_until(
+            pilot,
+            lambda: not workspace.conflict_resolution_active,
+            "Keep editing did not close the choices",
+        )
+        await _wait_until(
+            pilot,
+            lambda: resolve.has_focus,
+            "Keep editing did not return focus to Resolve conflict",
+        )
+        assert workspace.save_state == "conflict"
+        assert editor.text == "retained draft"
+        assert source.read_text(encoding="utf-8") == "latest disk"
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_conflict_resolution_saves_draft_as_new_note_without_clobber(
+    tmp_path: Path,
+) -> None:
+    """Save draft as new note preserves source Disk and exact body style."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_bytes(b"\xef\xbb\xbf---\r\ntitle: Base\r\n---\r\nbase\r\n")
+    occupied = root / "occupied.md"
+    occupied.write_text("do not replace", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained\ndraft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_bytes(b"\xef\xbb\xbf---\r\ntitle: Disk\r\n---\r\nlatest\r\n")
+        disk_bytes = source.read_bytes()
+        await workspace.refresh_files()
+        workspace.query_one("#file-notes-resolve-conflict", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "conflict choices did not open",
+        )
+        path = workspace.query_one("#file-notes-path", Input)
+        save_new = workspace.query_one(
+            "#file-notes-resolution-save-new",
+            Button,
+        )
+
+        path.value = "occupied.md"
+        save_new.press()
+        await _wait_until(
+            pilot,
+            lambda: "already exists" in _static_text(
+                workspace,
+                "#file-notes-action-status",
+            ).lower(),
+            "existing destination did not fail closed",
+        )
+        assert occupied.read_text(encoding="utf-8") == "do not replace"
+        assert source.read_bytes() == disk_bytes
+        assert editor.text == "retained\ndraft"
+        assert workspace.save_state == "conflict"
+        assert workspace.conflict_resolution_active
+
+        path.value = "recovered.md"
+        save_new.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.current_path == "recovered.md",
+            "safe draft copy did not open as the current note",
+        )
+        assert (root / "recovered.md").read_bytes() == (
+            b"\xef\xbb\xbf---\r\ntitle: Base\r\n---\r\nretained\r\ndraft\r\n"
+        )
+        assert source.read_bytes() == disk_bytes
+        assert workspace.save_state == "saved"
+        assert not workspace.conflict_resolution_active
+        assert editor.has_focus
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_conflict_resolution_discard_keeps_cancel_first_confirmation(
+    tmp_path: Path,
+) -> None:
+    """Discard routes through the existing revalidated, safe-default decision."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("base", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(80, 24)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("latest disk", encoding="utf-8")
+        await workspace.refresh_files()
+        workspace.query_one("#file-notes-resolve-conflict", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.conflict_resolution_active,
+            "conflict choices did not open",
+        )
+        discard = workspace.query_one(
+            "#file-notes-resolution-discard",
+            Button,
+        )
+        discard.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "discard did not open the destructive confirmation",
+        )
+        cancel = workspace.query_one("#file-notes-reload-cancel", Button)
+        assert cancel.has_focus
+        assert editor.text == "retained draft"
+        assert workspace.save_state == "conflict"
+
+        cancel.press()
+        await _wait_until(
+            pilot,
+            lambda: not workspace.reload_confirmation_active,
+            "Cancel did not close destructive confirmation",
+        )
+        await _wait_until(
+            pilot,
+            lambda: discard.has_focus,
+            "Cancel did not return focus to the resolution choice",
+        )
+        assert workspace.conflict_resolution_active
+        assert editor.text == "retained draft"
+
+        discard.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.reload_confirmation_active,
+            "second discard did not reopen confirmation",
+        )
+        workspace.query_one("#file-notes-reload-confirm", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.save_state == "saved"
+                and editor.text == "latest disk"
+            ),
+            "confirmed discard did not load the captured disk state",
+        )
+        assert not workspace.conflict_resolution_active
 
     replica.close()
 

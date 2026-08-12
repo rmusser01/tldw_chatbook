@@ -199,6 +199,7 @@ class _ReloadConfirmation:
     opened: OpenedFileNote
     save_state: Literal["conflict", "error"]
     disk_content_hash: str
+    opener_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -737,6 +738,20 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
+    #file-notes-resolution-copy {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $warning;
+        text-style: bold;
+        text-wrap: wrap;
+    }
+
+    #file-notes-resolution-copy,
+    #file-notes-resolution-actions {
+        display: none;
+    }
+
     LibraryFileNotesWorkspace.-reload-confirming #file-notes-path-row {
         display: none;
     }
@@ -811,6 +826,18 @@ class LibraryFileNotesWorkspace(Vertical):
     LibraryFileNotesWorkspace.-stack-editor-actions
     #file-notes-maintenance-toggle {
         column-span: 2;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-resolution-actions {
+        grid-size: 1;
+        grid-columns: 1fr;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-resolution-actions Button {
+        width: 1fr;
+        padding: 0;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
@@ -900,6 +927,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_state: SaveState = "idle"
         self._save_detail = ""
         self._reload_confirmation: _ReloadConfirmation | None = None
+        self._conflict_resolution_active = False
         self._delete_confirmation_path = ""
         self._search_generation = 0
         self._search_query = ""
@@ -1027,6 +1055,11 @@ class LibraryFileNotesWorkspace(Vertical):
         return self._reload_confirmation is not None
 
     @property
+    def conflict_resolution_active(self) -> bool:
+        """Return whether the bounded conflict choices are disclosed."""
+        return self._conflict_resolution_active
+
+    @property
     def leave_allowed(self) -> bool:
         """Return whether the retained draft can be left without a flush."""
         binding = self._session_binding
@@ -1072,6 +1105,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _path_field_label_copy(self) -> str:
         """Describe the action context currently represented by the path field."""
+        if self._conflict_resolution_active:
+            return "New note path"
         if self._selected_deleted_path:
             return "Restore path"
         if self._opened is not None:
@@ -1208,6 +1243,11 @@ class LibraryFileNotesWorkspace(Vertical):
                         compact=True,
                     )
                     yield Button(
+                        "Resolve conflict",
+                        id="file-notes-resolve-conflict",
+                        compact=True,
+                    )
+                    yield Button(
                         "Save draft as copy",
                         id="file-notes-save-copy",
                         compact=True,
@@ -1225,6 +1265,45 @@ class LibraryFileNotesWorkspace(Vertical):
                     yield Button("Protect", id="file-notes-protect", compact=True)
                     yield Button("Reload", id="file-notes-reload", compact=True)
                     yield Button("Refresh", id="file-notes-refresh", compact=True)
+                yield Static(
+                    (
+                        "Choose a safe next step. No option overwrites the disk "
+                        "file."
+                    ),
+                    id="file-notes-resolution-copy",
+                    markup=False,
+                )
+                with Horizontal(
+                    id="file-notes-resolution-actions",
+                    classes="file-notes-toolbar",
+                ):
+                    keep = Button(
+                        "Keep editing",
+                        id="file-notes-resolution-keep",
+                        compact=True,
+                    )
+                    keep.tooltip = "Close these choices and leave the conflict open"
+                    yield keep
+                    save_new = Button(
+                        "Save draft as new note",
+                        id="file-notes-resolution-save-new",
+                        compact=True,
+                    )
+                    save_new.tooltip = (
+                        "Write the complete draft to the New note path without "
+                        "replacing an existing file"
+                    )
+                    yield save_new
+                    discard = Button(
+                        "Discard draft and load disk",
+                        id="file-notes-resolution-discard",
+                        compact=True,
+                    )
+                    discard.tooltip = (
+                        "Open a separate confirmation before replacing the editor "
+                        "with the current disk file"
+                    )
+                    yield discard
                 yield Static(
                     (
                         self._reload_confirmation_copy()
@@ -1872,15 +1951,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _dismiss_reload_confirmation(self, *, focus_opener: bool) -> bool:
         """Close a pending reload decision without changing editor content."""
-        if self._reload_confirmation is None:
+        confirmation = self._reload_confirmation
+        if confirmation is None:
             return False
         self._reload_confirmation = None
         if self._active and self.is_mounted:
             self.query_one("#file-notes-reload-confirm-copy", Static).update("")
             self._update_controls()
             if focus_opener:
-                reload_button = self.query_one("#file-notes-reload", Button)
-                self.call_after_refresh(reload_button.focus)
+                opener = self.query_one(f"#{confirmation.opener_id}", Button)
+                if opener.display and not opener.disabled:
+                    self.call_after_refresh(opener.focus)
         self.post_message(self.ReloadConfirmationChanged(False))
         return True
 
@@ -3723,6 +3804,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
         self._save_detail = detail
+        if state != "conflict":
+            self._conflict_resolution_active = False
         if self._active and self.is_mounted:
             label = _SAVE_STATE_COPY[state]
             if detail:
@@ -3953,6 +4036,10 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-delete",
                 "file-notes-restore",
                 "file-notes-compare",
+                "file-notes-resolve-conflict",
+                "file-notes-resolution-keep",
+                "file-notes-resolution-save-new",
+                "file-notes-resolution-discard",
                 "file-notes-protect",
                 "file-notes-reload",
                 "file-notes-save-copy",
@@ -3980,6 +4067,21 @@ class LibraryFileNotesWorkspace(Vertical):
             and structurally_available
             and self._save_state == "conflict"
         )
+        self.query_one("#file-notes-resolve-conflict", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._save_state == "conflict"
+        )
+        for selector in (
+            "resolution-keep",
+            "resolution-save-new",
+            "resolution-discard",
+        ):
+            self.query_one(f"#file-notes-{selector}", Button).disabled = not (
+                structurally_available
+                and self._save_state == "conflict"
+                and self._conflict_resolution_active
+            )
         copy_button = self.query_one("#file-notes-save-copy", Button)
         exact_export = self._opened is not None and self._opened.is_excerpt
         copy_label = "Export exact copy" if exact_export else "Save draft as copy"
@@ -4080,17 +4182,28 @@ class LibraryFileNotesWorkspace(Vertical):
     def _sync_editor_action_visibility(self) -> None:
         """Disclose only editor actions relevant to the retained state."""
         confirming_reload = self.reload_confirmation_active
+        resolving_conflict = (
+            self._conflict_resolution_active
+            and self._save_state == "conflict"
+            and self._opened is not None
+        )
         self.set_class(confirming_reload, "-reload-confirming")
+        self.set_class(resolving_conflict, "-resolving-conflict")
         has_service = self._service is not None
         has_document = self._opened is not None
         has_deleted = has_service and bool(self._selected_deleted_path)
         visibility = {
-            "file-notes-new": has_service,
+            "file-notes-new": has_service and not resolving_conflict,
             "file-notes-move": has_document,
-            "file-notes-delete": has_document,
+            "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
             "file-notes-compare": (
                 has_document and self._save_state == "conflict"
+            ),
+            "file-notes-resolve-conflict": (
+                has_document
+                and self._save_state == "conflict"
+                and not resolving_conflict
             ),
             "file-notes-protect": has_document,
             "file-notes-reload": has_document,
@@ -4098,7 +4211,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 has_document
                 and (
                     (self._opened is not None and self._opened.is_excerpt)
-                    or self._save_state in {"dirty", "conflict", "error"}
+                    or self._save_state in {"dirty", "error"}
                 )
             ),
             "file-notes-refresh": has_service,
@@ -4112,7 +4225,9 @@ class LibraryFileNotesWorkspace(Vertical):
         maintenance_available = any(
             visibility[action_id] for action_id in maintenance_ids
         )
-        visibility["file-notes-maintenance-toggle"] = maintenance_available
+        visibility["file-notes-maintenance-toggle"] = (
+            maintenance_available and not resolving_conflict
+        )
         focused = self.app.focused
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
@@ -4135,8 +4250,19 @@ class LibraryFileNotesWorkspace(Vertical):
         maintenance.display = (
             maintenance_available
             and self._maintenance_expanded
+            and not resolving_conflict
             and not confirming_reload
         )
+        resolution_copy = self.query_one(
+            "#file-notes-resolution-copy",
+            Static,
+        )
+        resolution_actions = self.query_one("#file-notes-resolution-actions")
+        show_resolution = resolving_conflict and not confirming_reload
+        resolution_copy.display = show_resolution
+        resolution_actions.display = show_resolution
+        for button in resolution_actions.query(Button):
+            button.display = show_resolution
         confirmation_copy = self.query_one(
             "#file-notes-reload-confirm-copy",
             Static,
@@ -4162,6 +4288,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     f"#{self._editor_action_focus_target}",
                     "#file-notes-restore",
                     "#file-notes-new",
+                    "#file-notes-resolve-conflict",
+                    "#file-notes-compare",
                     "#file-notes-maintenance-toggle",
                     "#file-notes-refresh",
                 )
@@ -4637,7 +4765,11 @@ class LibraryFileNotesWorkspace(Vertical):
         return self._apply_scan(result, deleted)
 
     def _operation_error(self, action: str, result: OperationResult) -> None:
-        detail = result.message or result.status
+        detail = (
+            "destination already exists"
+            if result.status == "exists"
+            else result.message or result.status
+        )
         self._set_action_status(f"{action} failed: {detail}")
         if self._opened is not None and result.status in {"conflict", "missing"}:
             self._set_save_state("conflict", detail)
@@ -6143,6 +6275,43 @@ class LibraryFileNotesWorkspace(Vertical):
         self._schedule_editor_action_layout()
         self.call_after_refresh(toggle.focus)
 
+    def _set_conflict_resolution(
+        self,
+        active: bool,
+        *,
+        focus_opener: bool = False,
+    ) -> None:
+        """Project the bounded conflict choices without resolving any side."""
+        self._conflict_resolution_active = bool(
+            active
+            and self._opened is not None
+            and self._save_state == "conflict"
+        )
+        self._update_controls()
+        if not self._active or not self.is_mounted:
+            return
+        if self._conflict_resolution_active:
+            keep = self.query_one("#file-notes-resolution-keep", Button)
+            self.screen.set_focus(keep)
+            self.call_after_refresh(partial(self.screen.set_focus, keep))
+        elif focus_opener:
+            opener = self.query_one("#file-notes-resolve-conflict", Button)
+            if opener.display and not opener.disabled:
+                self.screen.set_focus(opener)
+                self.call_after_refresh(partial(self.screen.set_focus, opener))
+
+    @on(Button.Pressed, "#file-notes-resolve-conflict")
+    def _open_conflict_resolution(self, event: Button.Pressed) -> None:
+        """Disclose the safe conflict choices and focus their safe default."""
+        event.stop()
+        self._set_conflict_resolution(True)
+
+    @on(Button.Pressed, "#file-notes-resolution-keep")
+    def _keep_editing_conflict(self, event: Button.Pressed) -> None:
+        """Close the choices while preserving every conflict side unchanged."""
+        event.stop()
+        self._set_conflict_resolution(False, focus_opener=True)
+
     @on(Button.Pressed, "#file-notes-delete")
     async def _delete_file(self, event: Button.Pressed) -> None:
         event.stop()
@@ -6283,6 +6452,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     opened=opened,
                     save_state=state,
                     disk_content_hash=disk_snapshot.content_hash,
+                    opener_id=event.button.id or "file-notes-reload",
                 )
                 if not self._reload_confirmation_is_current(confirmation):
                     self._set_action_status(
@@ -6442,6 +6612,11 @@ class LibraryFileNotesWorkspace(Vertical):
         event.stop()
         self.cancel_reload_confirmation()
 
+    @on(Button.Pressed, "#file-notes-resolution-discard")
+    async def _discard_conflict_draft(self, event: Button.Pressed) -> None:
+        """Route the destructive choice through the existing confirmation."""
+        await self._reload_file(event)
+
     @on(Button.Pressed, "#file-notes-reload-confirm")
     async def _confirm_reload(self, event: Button.Pressed) -> None:
         """Revalidate every identity before intentionally loading disk bytes."""
@@ -6521,17 +6696,15 @@ class LibraryFileNotesWorkspace(Vertical):
             self._dismiss_reload_confirmation(focus_opener=False)
             self._apply_opened_document(reloaded)
 
-    @on(Button.Pressed, "#file-notes-save-copy")
-    async def _save_copy(self, event: Button.Pressed) -> None:
-        event.stop()
+    async def _save_editor_copy(self, action: str) -> bool:
+        """Run the shared exact, validated, no-clobber editor-copy path."""
         opened = self._opened
         service = self._service
         if service is None or opened is None:
-            return
-        action = "Export exact copy" if opened.is_excerpt else "Save draft as copy"
+            return False
         destination = self._validated_path_input(action)
         if destination is None:
-            return
+            return False
         if opened.is_excerpt:
             await self._complete_path_action(
                 action,
@@ -6550,6 +6723,31 @@ class LibraryFileNotesWorkspace(Vertical):
                 body,
                 destination,
             )
+        return (
+            self._opened is not None
+            and self._current_path == destination
+            and self._save_state == "saved"
+        )
+
+    @on(Button.Pressed, "#file-notes-save-copy")
+    async def _save_copy(self, event: Button.Pressed) -> None:
+        event.stop()
+        opened = self._opened
+        if opened is None:
+            return
+        action = "Export exact copy" if opened.is_excerpt else "Save draft as copy"
+        await self._save_editor_copy(action)
+
+    @on(Button.Pressed, "#file-notes-resolution-save-new")
+    async def _save_conflict_draft_as_new_note(
+        self,
+        event: Button.Pressed,
+    ) -> None:
+        """Save the retained draft through the existing no-clobber copy path."""
+        event.stop()
+        if await self._save_editor_copy("Save draft as new note"):
+            editor = self.query_one("#file-notes-editor", TextArea)
+            self.call_after_refresh(editor.focus)
 
     @on(Button.Pressed, "#file-notes-refresh")
     async def _refresh_pressed(self, event: Button.Pressed) -> None:
