@@ -517,6 +517,188 @@ async def test_three_sequential_older_restores_reuse_fixed_nonzero_tombstones(
 
 
 @pytest.mark.asyncio
+async def test_restore_close_restart_restore_reuses_zero_tombstones(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    first = tmp_path / "incoming-first.sqlite3"
+    second = tmp_path / "incoming-second.sqlite3"
+    third = tmp_path / "incoming-third.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(first, display_name="First")
+    _build_populated_v2_store_at(second, display_name="Second")
+    _build_populated_v2_store_at(third, display_name="Third")
+
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.restore_from(first)
+    await repository.close()
+    tombstones = tuple(tmp_path.glob(".profile-migration-*.tombstone"))
+    assert tombstones
+    assert all(path.stat().st_size == 0 for path in tombstones)
+    retained_inode_set: set[int] | None = None
+    for index, (candidate, expected_name) in enumerate(
+        ((second, "Second"), (third, "Third"))
+    ):
+        restarted = _repository(database_path)
+        await restarted.open()
+        try:
+            await restarted.restore_from(candidate)
+            assert _stored_profile_name(database_path) == expected_name
+        finally:
+            await restarted.close()
+        namespace = tuple(
+            path
+            for path in tmp_path.iterdir()
+            if path == database_path
+            or path.name.startswith(".profile-migration-")
+            or ".pre-v" in path.name
+        )
+        if index == 0:
+            retained_inode_set = {path.stat().st_ino for path in namespace}
+        else:
+            assert {path.stat().st_ino for path in namespace} == retained_inode_set
+        assert all(
+            path.stat().st_size == 0
+            for path in tmp_path.glob(".profile-migration-*.tombstone")
+        )
+
+
+@pytest.mark.asyncio
+async def test_close_refuses_hardlinked_known_tombstone_and_retries_safely(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    incoming = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(incoming, display_name="Restored")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.restore_from(incoming)
+    tombstone = tmp_path / ".profile-migration-active-rollback.tombstone"
+    alias = tmp_path / "foreign-alias.sqlite3"
+    os.link(tombstone, alias)
+    private_bytes = alias.read_bytes()
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+
+    assert alias.read_bytes() == private_bytes
+    assert tombstone.read_bytes() == private_bytes
+    assert repository._connection is not None
+    assert repository._lease is not None and repository._lease.acquired is True
+    await _assert_exclusive_lease_blocked(database_path)
+
+    alias.unlink()
+    await repository.close()
+    assert tombstone.stat().st_size == 0
+
+
+@pytest.mark.asyncio
+async def test_close_refuses_substituted_known_tombstone_and_retries_safely(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    incoming = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(incoming, display_name="Restored")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.restore_from(incoming)
+    tombstone = tmp_path / ".profile-migration-active-rollback.tombstone"
+    retained = tmp_path / "retained-exact-tombstone"
+    foreign = b"foreign replacement bytes"
+    tombstone.rename(retained)
+    tombstone.write_bytes(foreign)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+
+    assert tombstone.read_bytes() == foreign
+    assert retained.stat().st_size > 0
+    assert repository._connection is not None
+    assert repository._lease is not None and repository._lease.acquired is True
+    await _assert_exclusive_lease_blocked(database_path)
+
+    foreign_leaf = tmp_path / "preserved-foreign-tombstone"
+    tombstone.rename(foreign_leaf)
+    retained.rename(tombstone)
+    await repository.close()
+    assert foreign_leaf.read_bytes() == foreign
+    assert tombstone.stat().st_size == 0
+
+
+@pytest.mark.asyncio
+async def test_close_settlement_failure_retains_authority_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    incoming = tmp_path / "incoming.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(incoming, display_name="Restored")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.restore_from(incoming)
+    module = _repository_module()
+    original_prepare = module.prepare_reusable_tombstone
+    fail_once = True
+
+    def transient_prepare(*args: object, **kwargs: object) -> os.stat_result:
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise OSError("injected settle failure")
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(module, "prepare_reusable_tombstone", transient_prepare)
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+
+    assert repository._connection is not None
+    assert repository._lease is not None and repository._lease.acquired is True
+    await _assert_exclusive_lease_blocked(database_path)
+    await repository.close()
+    assert all(
+        path.stat().st_size == 0
+        for path in tmp_path.glob(".profile-migration-*.tombstone")
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_rejects_unknown_nonzero_tombstone_without_modifying_it(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    first = tmp_path / "incoming-first.sqlite3"
+    second = tmp_path / "incoming-second.sqlite3"
+    await _create_profile_store(database_path, "Current")
+    _build_populated_v2_store_at(first, display_name="First")
+    _build_populated_v2_store_at(second, display_name="Second")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.restore_from(first)
+    await repository.close()
+    tombstone = tmp_path / ".profile-migration-active-rollback.tombstone"
+    foreign = b"unknown nonzero restart bytes"
+    tombstone.write_bytes(foreign)
+
+    restarted = _repository(database_path)
+    await restarted.open()
+    try:
+        with pytest.raises(ProfileRepositoryError, match="restore_failed"):
+            await restarted.restore_from(second)
+        assert tombstone.read_bytes() == foreign
+        assert _stored_profile_name(database_path) == "First"
+    finally:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await restarted.close()
+        assert tombstone.read_bytes() == foreign
+        tombstone.unlink()
+        await restarted.close()
+
+
+@pytest.mark.asyncio
 async def test_nonzero_tombstone_hardlink_blocks_reuse_without_touching_alias(
     tmp_path: Path,
 ) -> None:

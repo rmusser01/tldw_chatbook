@@ -174,6 +174,54 @@ def require_reusable_tombstone(
         os.close(parent_fd)
 
 
+def admit_zero_reusable_tombstone(
+    path: Path,
+    *,
+    parent_authority: ParentAuthority,
+    tombstone_key: MigrationTombstoneKey,
+) -> os.stat_result:
+    """Admit one restart-surviving zero tombstone through retained descriptors."""
+
+    holding = _holding_path(path, tombstone_key)
+    parent_fd = _open_parent(path, parent_authority)
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            holding.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(descriptor)
+        named = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            opened.st_size != 0
+            or named.st_size != 0
+            or not private_paths._same_identity(opened, named)
+            or not _valid_file(opened, links=frozenset({1}))
+            or not _valid_file(named, links=frozenset({1}))
+            or not _sidecars_absent(parent_fd, holding.name)
+        ):
+            raise ValueError
+        os.fsync(descriptor)
+        settled = os.fstat(descriptor)
+        current = os.stat(holding.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            settled.st_size != 0
+            or current.st_size != 0
+            or not private_paths._same_identity(settled, opened)
+            or not private_paths._same_identity(current, opened)
+            or not _valid_file(settled, links=frozenset({1}))
+            or not _valid_file(current, links=frozenset({1}))
+        ):
+            raise ValueError
+        os.fsync(parent_fd)
+        return settled
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
 def prepare_reusable_tombstone(
     path: Path,
     *,
@@ -586,6 +634,7 @@ def open_new_or_reused_private_file(
 __all__ = [
     "MigrationTombstoneKey",
     "ParentAuthority",
+    "admit_zero_reusable_tombstone",
     "move_exact_noreplace",
     "open_new_or_reused_private_file",
     "prepare_reusable_tombstone",

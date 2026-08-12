@@ -47,6 +47,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
 from tldw_chatbook.TTS.profile_migration_namespace import (
     MigrationTombstoneKey,
     ParentAuthority,
+    admit_zero_reusable_tombstone,
     prepare_reusable_tombstone,
     remove_exact,
     remove_zero_reusable_tombstone,
@@ -1680,7 +1681,16 @@ class TTSProfileRepository:
         except BaseException as error:
             body_error = error
 
-        cleanup_errors: list[BaseException] = []
+        if body_error is not None and publication_started:
+            try:
+                self._worker_refresh_reusable_tombstones(active_path)
+            except BaseException as error:
+                cleanup_errors: list[BaseException] = [error]
+            else:
+                cleanup_errors = []
+        else:
+            cleanup_errors = []
+
         if source is not None:
             try:
                 source.close()
@@ -1726,7 +1736,16 @@ class TTSProfileRepository:
             except FileNotFoundError:
                 continue
             expected = known.get(key)
-            if expected is None or not private_paths._same_identity(observed, expected):
+            if expected is None:
+                try:
+                    known[key] = admit_zero_reusable_tombstone(
+                        active_path,
+                        parent_authority=parent,
+                        tombstone_key=key,
+                    )
+                except Exception:
+                    raise _repository_error("migration_failed") from None
+            elif not private_paths._same_identity(observed, expected):
                 raise _repository_error("migration_failed")
         moves = (
             (
@@ -1794,6 +1813,37 @@ class TTSProfileRepository:
                 raise _repository_error("migration_failed")
             refreshed[key] = observed
         self._reusable_tombstones = refreshed
+
+    def _worker_settle_reusable_tombstones(
+        self,
+        active_path: Path,
+        parent_fd: int,
+    ) -> None:
+        """Make retained cleanup evidence restart-safe before lease release."""
+
+        parent = ParentAuthority(os.fstat(parent_fd))
+        known = self._reusable_tombstones
+        for key in MigrationTombstoneKey:
+            holding = active_path.with_name(f".profile-migration-{key.value}.tombstone")
+            try:
+                observed = holding.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                if key in known:
+                    raise _repository_error("operation_failed")
+                continue
+            expected = known.get(key)
+            if expected is None or not private_paths._same_identity(observed, expected):
+                raise _repository_error("operation_failed")
+            try:
+                known[key] = prepare_reusable_tombstone(
+                    active_path,
+                    parent_authority=parent,
+                    file_identity=expected,
+                    source_key=key,
+                    destination_key=key,
+                )
+            except Exception:
+                raise _repository_error("operation_failed") from None
 
     def _worker_exact_schema_version(self, active_path: Path) -> int | None:
         """Read the exact version without authorizing migration or creation."""
@@ -2796,6 +2846,7 @@ class TTSProfileRepository:
         if rebound_ok and isinstance(primary_error, ProfileRepositoryError):
             if primary_error.code in {
                 "corrupt_data",
+                "lock_timeout",
                 "schema_corrupt",
                 "schema_partial",
                 "schema_unsupported",
@@ -4731,6 +4782,20 @@ class TTSProfileRepository:
                 raise
             with self._state_lock:
                 self._exact_authority_quarantined = False
+            parent_fd = getattr(cast(object, connection), "parent_fd", -1)
+            active_path = self._active_database_path
+            if (
+                self._reusable_tombstones
+                and active_path is not None
+                and type(parent_fd) is int
+                and parent_fd >= 0
+            ):
+                try:
+                    self._worker_settle_reusable_tombstones(active_path, parent_fd)
+                except BaseException:
+                    with self._state_lock:
+                        self._exact_authority_quarantined = True
+                    raise
         elif self._exact_authority_quarantined:
             raise _repository_error("operation_failed")
 
