@@ -320,6 +320,50 @@ def test_isolated_root_check_canonicalizes_a_directory_alias(tmp_path: Path) -> 
     assert evidence._path_is_within(managed, alias)
 
 
+def test_parent_passes_a_canonical_scratch_root_to_the_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence = _load_probe()
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(canonical, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable")
+    observed: dict[str, object] = {}
+
+    class _TemporaryDirectory:
+        def __enter__(self) -> str:
+            return str(alias)
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    def supervise(command: object, **kwargs: object) -> dict[str, object]:
+        observed["command"] = command
+        observed["cleanup_parent"] = kwargs["cleanup_parent"]
+        return evidence.failure_result(
+            kwargs["run_identity"],
+            failure_code="probe_failed",
+            failure_stage="test",
+        )
+
+    monkeypatch.setattr(
+        evidence.tempfile,
+        "TemporaryDirectory",
+        lambda **_kwargs: _TemporaryDirectory(),
+    )
+    monkeypatch.setattr(evidence, "supervise", supervise)
+
+    assert evidence.run_parent(tmp_path / "result.json", 1) == 1
+    command = observed["command"]
+    scratch_index = command.index("--scratch") + 1
+    assert Path(command[scratch_index]) == canonical.resolve(strict=True)
+    assert observed["cleanup_parent"] == canonical.resolve(strict=True)
+
+
 def test_cache_token_covers_xdg_writes_outside_hf_home(tmp_path: Path) -> None:
     evidence = _load_probe()
     xdg_cache = tmp_path / "cache"
@@ -436,6 +480,18 @@ def test_success_evidence_rejects_failure_type() -> None:
 
     with pytest.raises(ValueError, match="failure_type"):
         evidence.validate_result(result)
+
+
+def test_probe_reads_the_production_transcription_provenance_field() -> None:
+    evidence = _load_probe()
+    provenance = {"artifact_root": None}
+
+    assert (
+        evidence._transcription_provenance({"transcription_provenance": provenance})
+        is provenance
+    )
+    with pytest.raises(RuntimeError, match="omitted provenance"):
+        evidence._transcription_provenance({"provenance": provenance})
 
 
 @pytest.mark.parametrize(

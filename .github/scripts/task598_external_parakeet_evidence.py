@@ -694,6 +694,13 @@ def _reference_dict(reference: object) -> dict[str, str]:
     }
 
 
+def _transcription_provenance(payload: Mapping[str, object]) -> dict[str, object]:
+    provenance = payload.get("transcription_provenance")
+    if type(provenance) is not dict:
+        raise RuntimeError("native transcription omitted provenance")
+    return provenance
+
+
 def _copy_external_root(source: Path, destination: Path, descriptor: object) -> None:
     destination.mkdir(parents=True, exist_ok=False)
     for item in descriptor.files:
@@ -872,9 +879,7 @@ def _run_one_model(
         report_stage("provenance")
         if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
             raise RuntimeError("native transcription returned an invalid payload")
-        provenance = payload.get("provenance")
-        if not isinstance(provenance, dict):
-            raise RuntimeError("native transcription omitted provenance")
+        provenance = _transcription_provenance(payload)
         dependencies = provenance.get("artifact_dependencies")
         if dependencies != [VAD_REFERENCE]:
             raise RuntimeError("native transcription reported wrong dependencies")
@@ -1072,7 +1077,7 @@ def _isolated_environment(scratch: Path) -> dict[str, str]:
 def run_parent(output: Path, timeout_seconds: float) -> int:
     run_identity = current_run_identity()
     with tempfile.TemporaryDirectory(prefix="task598-evidence-") as temporary:
-        scratch = Path(temporary)
+        scratch = Path(temporary).resolve(strict=True)
         control = scratch / "control.json"
         env = _isolated_environment(scratch)
         command = [
