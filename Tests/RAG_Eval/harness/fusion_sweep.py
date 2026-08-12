@@ -59,12 +59,24 @@ type except prompts. `keyword_leg_census` therefore calls the engine's
 whose target lands in the leg's own top-k. That is the number the spec's
 decision rule maximizes (20 today, over the 53 non-negative queries).
 
-*The control row self-checks before anything else runs.* A sweep whose
-passes share a cache reports "the construction makes no difference" — the
-exact failure TASK-4110's fusion sweep was nearly published with. The
-instrumented loop clears the cache per pass AND re-counts the shipped
-construction's census first; a mismatch raises before the second row spends
-a minute producing numbers nobody could trust.
+*The control row self-checks before anything else runs — and it is not a
+cache alarm.* Be precise about what that check can and cannot see, because
+the failure it is named after is the one this arc most fears. The census
+calls `_keyword_search`, which NEVER touches `self.cache` (only `search()`
+does — `rag_service.py:1240/:1334`), so a stale cache cannot move the census
+in either direction. What the control row actually catches is **census-method
+drift**: the counting method, the corpus or the golden set having moved out
+from under the shipped 20, and — via `_validate_constructions` beside it —
+a construction VOCABULARY drift that would silently degrade rows 2-4 to the
+control and report all four censuses equal.
+
+What protects the SCORED passes from a shared cache is different and lives
+elsewhere: Task 1 put the construction in the hybrid cache key, and this
+loop clears the cache before every pass (count- and order-pinned). And the
+discriminator for a reader who suspects staleness anyway is printed on the
+matrix's face: prompts are FTS-only by construction, so a run where the
+census moves under `or`/`and_or` while the prompt HYBRID cells do not is
+staleness, not the semantic leg masking the change.
 
 *The 4110 decision rule does not apply to this axis.* `qualify` /
 `select_winner` / `format_matrix` implement the FUSION rule (a weighting
@@ -137,6 +149,7 @@ __all__ = [
     "negative_composition",
     "prefix_probe_expression",
     "qualify",
+    "rescued_zero_row_queries",
     "run_construction_sweep",
     "run_full_matrix",
     "run_fusion_sweep",
@@ -540,8 +553,10 @@ class ProbeCensus:
             was actually asked rather than what the code was meant to ask.
         queries: Zero-row queries probed.
         queries_with_rows: How many returned anything at all.
-        hits: How many returned their target inside the leg's top-k — the
-            census-comparable number.
+        hits: How many returned their target inside the leg's top-k. A
+            RESCUE count, comparable with the matrix's ``resc`` column and
+            NEVER with a row's full census (which counts the ~20 queries the
+            control already answers and no probe was ever run over).
         negative_queries_with_rows: How many of the probed NEGATIVES started
             returning rows; a variant's noise cost, in the same units the
             negative-composition record uses.
@@ -1253,25 +1268,101 @@ def run_near_prefix_probes(
     return tuple(censuses)
 
 
+def _validate_constructions(strategies: Sequence[Strategy]) -> None:
+    """Refuse a matrix naming a construction the ENGINE does not know.
+
+    The engine resolves an unrecognized `fts_match_construction` to the
+    shipped ``and`` with ONE warning per service instance
+    (`_resolved_fts_match_construction`) — a deliberate fail-safe for
+    production that is a silent flattener for a sweep: rows 2-4 would each
+    measure the control, all four censuses would read 20, the control's own
+    self-check would PASS, and the table would report "the construction makes
+    no difference". That is the 4110 failure through a different door, so the
+    vocabulary is checked against the engine's own tuple rather than trusted
+    as four string literals.
+
+    Args:
+        strategies: The matrix about to run.
+
+    Raises:
+        ValueError: A strategy names a construction outside
+            `rag_service.FTS_MATCH_CONSTRUCTIONS`.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_CONSTRUCTIONS,
+    )
+
+    unknown = [
+        (strategy.name, strategy.fts_match_construction)
+        for strategy in strategies
+        if strategy.fts_match_construction not in FTS_MATCH_CONSTRUCTIONS
+    ]
+    if unknown:
+        raise ValueError(
+            f"these rows name constructions the engine does not know: "
+            f"{unknown}. The engine would degrade each of them to "
+            f"{FTS_MATCH_CONSTRUCTIONS[0]!r} with one warning and the sweep "
+            f"would report the control's numbers under another row's name. "
+            f"Valid: {', '.join(FTS_MATCH_CONSTRUCTIONS)}."
+        )
+
+
+def rescued_zero_row_queries(
+    entry: StrategyReport, control: LegCensus
+) -> tuple[str, ...]:
+    """Which of the control's zero-row queries THIS row's leg now answers.
+
+    The only number a probe's `hits` can honestly be compared against. A
+    probe runs over the ~40 zero-row queries alone, so its census is a
+    RESCUE count; a swept row's census is over all 53 scoreable queries and
+    carries the control's own 20 inside it. Comparing those two directly
+    sets the promotion bar ~20 too high and would have Task 3 writing
+    "neither probe beats the winner" off a mis-scaled comparison.
+
+    Computed from the ids rather than as a delta, so a row that gains three
+    and loses one is not reported as having rescued two.
+
+    Args:
+        entry: A row of an instrumented sweep.
+        control: The control row's census.
+
+    Returns:
+        The rescued query ids, in the control's zero-row order; empty when
+        the row carries no census.
+    """
+    if entry.census is None:
+        return ()
+    found = set(entry.census.hit_queries)
+    return tuple(
+        query_id for query_id in control.zero_row_queries if query_id in found
+    )
+
+
 def _check_control_census(
     strategy: Strategy, census: LegCensus, expected: int
 ) -> None:
-    """The cache-blindness alarm: raise unless the control reproduces itself.
+    """Raise unless the shipped construction reproduces its shipped census.
 
-    Raised from inside the pass loop, on the FIRST row, before its scored
-    pass runs — so a blinded matrix costs one census rather than a whole
-    gated run's worth of numbers nobody can trust.
+    A METHOD check, not a cache alarm: `_keyword_search` never reads
+    `self.cache`, so nothing about cache state can move this number (see the
+    module docstring). It catches the census method, the corpus or the golden
+    set drifting away from the figure the whole decision rule is calibrated
+    against — before the rest of the matrix spends a gated run's worth of
+    time producing numbers measured against a moved baseline.
+
+    Raised from inside the pass loop on the FIRST row, before its scored pass
+    runs, which is why the control row is required to be first.
     """
     if census.hits == expected:
         return
     raise ValueError(
         f"the control row {strategy.name!r} "
         f"({strategy.fts_match_construction}) scored a keyword-leg census of "
-        f"{census.hits}/{census.scoreable}, not the shipped {expected}. "
-        "Either the sweep is not reaching the leg it thinks it is (a warm "
-        "cache serving every construction one answer — the failure this "
-        "check exists for), or the corpus/golden set moved under the "
-        "census. Per category: "
+        f"{census.hits}/{census.scoreable}, not the shipped {expected}. The "
+        "counting method, the corpus or the golden set has moved away from "
+        "the number this arc's decision rule is calibrated against — "
+        "reconcile the method against the shipped census before trusting any "
+        "row, and do NOT edit the expected number to match. Per category: "
         f"{ {name: f'{hit}/{total}' for name, (hit, total) in census.per_category.items()} }; "
         f"{len(census.zero_row_queries)} of {census.queries} queries returned "
         "no rows at all."
@@ -1463,6 +1554,7 @@ def run_construction_sweep(
         composition. Render it with `format_construction_matrix` — the
         fusion rule (`format_matrix`) answers a different arc's question.
     """
+    _validate_constructions(strategies)
     return run_fusion_sweep(
         runtime,
         golden,
@@ -1700,13 +1792,18 @@ def format_construction_matrix(report: SweepReport) -> str:
     lines.append(
         "'census' = golden queries whose target enters the keyword leg's own "
         f"top-{report.k}{denominator}, measured leg-level (a direct "
-        "`_keyword_search` pass, no fusion); 'zero' = queries the leg returned "
-        "nothing for, negatives included."
+        "`_keyword_search` pass, no fusion). NOT 'reaches fusion': hybrid "
+        f"over-fetches top_k x pool = {control.strategy.vector_window(report.k)} "
+        "candidates per leg, so a query can be a census miss and still have "
+        "its target inside the fused pool. 'resc' = how many of the CONTROL's "
+        "zero-row queries this row's leg now answers (the number a probe's "
+        "count is comparable with); 'zero' = queries the leg returned nothing "
+        "for, negatives included."
     )
     lines.append("")
 
     header = (
-        f"{'row':<10}{'construction':>19}{'census':>8}{'zero':>6}"
+        f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'zero':>6}"
         f"{'P@k':>8}{'R@k':>8}{'MRR':>8}{'NDCG':>8}{'docs':>6}"
         f"{'rescue':>8}{'rank':>6}{'mech':>11}"
         f"{'neg-or':>8}{'neg-fts':>8}{'secs':>7}"
@@ -1718,9 +1815,15 @@ def format_construction_matrix(report: SweepReport) -> str:
         overall = entry.hybrid.overall
         census = entry.census
         negatives = entry.negatives
+        rescues = (
+            "-"
+            if control.census is None or census is None
+            else len(rescued_zero_row_queries(entry, control.census))
+        )
         lines.append(
             f"{strategy.name:<10}{strategy.fts_match_construction:>19}"
             f"{('-' if census is None else census.hits):>8}"
+            f"{rescues:>6}"
             f"{('-' if census is None else len(census.zero_row_queries)):>6}"
             f"{_cell(overall.get('precision'))}{_cell(overall.get('recall'))}"
             f"{_cell(overall.get('mrr'))}{_cell(overall.get('ndcg'))}"
@@ -1742,6 +1845,15 @@ def format_construction_matrix(report: SweepReport) -> str:
     lines.append(
         "'rescue' is hard constraint (a): the vector-blind fixture must keep "
         "its hybrid rescue. A 'NO' disqualifies the row whatever its census."
+    )
+    lines.append(
+        "STALENESS CHECK (read before attributing any flat row): prompts are "
+        "FTS-only by construction — no indexer writes them to the vector "
+        "store — so a run where the census moves under `or`/`and_then_or` "
+        "while the prompt/* HYBRID cells below do NOT move is a stale-cache "
+        "result, not the semantic leg masking the change. The census itself "
+        "cannot see cache state (`_keyword_search` never reads the cache); "
+        "this pair of columns is what can."
     )
 
     census_entries = [entry for entry in report.entries if entry.census is not None]
@@ -1806,15 +1918,18 @@ def format_construction_matrix(report: SweepReport) -> str:
 
 
 def format_probe_table(
-    probes: Sequence[ProbeCensus], *, census_to_beat: Optional[int] = None
+    probes: Sequence[ProbeCensus], *, rescues_to_beat: Optional[int] = None
 ) -> str:
     """Render the NEAR/prefix probe results.
 
     Args:
         probes: The probe censuses, in report order.
-        census_to_beat: The best swept candidate's census, when known. The
-            spec promotes a probe to a full matrix row only if it beats that
-            number, so the comparison belongs on the face of the report.
+        rescues_to_beat: The best swept candidate's RESCUE count — how many
+            of the control's zero-row queries it answers
+            (`rescued_zero_row_queries`), never its full census. A probe only
+            ever runs over the zero-row queries, so its count is a rescue
+            count; printing a full census as the bar would set it ~20 too
+            high and make every probe look hopeless by arithmetic.
 
     Returns:
         The probe table, labelled report-only.
@@ -1823,11 +1938,19 @@ def format_probe_table(
         "NEAR / prefix probes (report-only) — run over the zero-row queries "
         "ONLY, as one-variable moves off the content-token AND: 'near' adds "
         f"proximity (NEAR(..., {NEAR_PROBE_DISTANCE})), 'prefix' adds prefix "
-        "matching. Promoted to a full matrix row only if a probe's census "
-        "beats the best swept candidate's."
+        "matching. 'rescues' counts probed queries whose target reached the "
+        "leg's top-k — the same units as the matrix's 'resc' column, NOT a "
+        "row's full census.",
+        "NEAR's ceiling is a theorem, not a measurement: proximity only "
+        "NARROWS, so NEAR over the content tokens matches a subset of the "
+        "content-token AND (`and_trim`) — it can never rescue more than "
+        "`and_trim` does, which the P2ab attribution measured at 1 of the 40. "
+        "A nonzero NEAR row is therefore a subset finding, and a zero row is "
+        "the expected one; neither is evidence about proximity's value in "
+        "general.",
     ]
     header = (
-        f"{'probe':<8}{'queries':>9}{'with rows':>11}{'census':>8}"
+        f"{'probe':<8}{'queries':>9}{'with rows':>11}{'rescues':>9}"
         f"{'negatives w/ rows':>20}  example expression"
     )
     lines.append(header)
@@ -1835,12 +1958,14 @@ def format_probe_table(
     for probe in probes:
         lines.append(
             f"{probe.name:<8}{probe.queries:>9}{probe.queries_with_rows:>11}"
-            f"{probe.hits:>8}{probe.negative_queries_with_rows:>20}  "
+            f"{probe.hits:>9}{probe.negative_queries_with_rows:>20}  "
             f"{probe.expression_sample or '(no content tokens)'}"
         )
-    if census_to_beat is not None:
+    if rescues_to_beat is not None:
         lines.append(
-            f"the number to beat is {census_to_beat} (the best swept "
-            "candidate's census); a probe at or below it stays a probe."
+            f"the number to beat is {rescues_to_beat} — the best swept "
+            "candidate's RESCUE count over these same zero-row queries (its "
+            "full census also carries the control's own hits, which no probe "
+            "was ever run over). A probe at or below it stays a probe."
         )
     return "\n".join(lines)

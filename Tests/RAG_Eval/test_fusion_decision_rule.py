@@ -868,9 +868,13 @@ class FakeLegService(FakeService):
         self.async_leg_calls: list[tuple[str, int]] = []
         self.sync_leg_calls = 0
         self.constructions_seen: list[str] = []
+        #: Cache clears and leg calls, interleaved in the order they happened
+        #: — the order pin's evidence.
+        self.events: list[str] = []
 
     async def _keyword_search(self, query, top_k, include_citations=True, **kwargs):
         self.async_leg_calls.append((query, top_k))
+        self.events.append(f"leg:{query}")
         self.constructions_seen.append(self.config.search.fts_match_construction)
         rows = (
             self.stale_rows
@@ -887,6 +891,7 @@ class FakeLegService(FakeService):
 
     def clear_cache(self) -> None:
         super().clear_cache()
+        self.events.append("clear")
         self.stale_rows = None
 
 
@@ -1002,6 +1007,47 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
     )
 
 
+def test_every_construction_row_names_a_construction_the_engine_KNOWS():
+    """Vocabulary drift is a SILENT flattener, so it is checked, not trusted.
+
+    The engine resolves an unknown `fts_match_construction` to the shipped
+    `and` with one warning per service instance. A renamed value would leave
+    rows 2-4 each measuring the control: four censuses of 20, a control row
+    whose self-check passes, and a table saying "the construction makes no
+    difference" — TASK-4110's failure through a different door.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_CONSTRUCTIONS,
+    )
+
+    values = tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES)
+    assert set(values) <= set(FTS_MATCH_CONSTRUCTIONS)
+    assert set(values) == set(FTS_MATCH_CONSTRUCTIONS), (
+        "the matrix must sweep every construction the engine can be put in, "
+        "or a candidate ships unmeasured"
+    )
+
+
+def test_a_construction_the_engine_does_not_know_stops_the_sweep(monkeypatch):
+    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
+    rows = (
+        Strategy("and", 5, 2, 0.7, "and"),
+        Strategy("typo", 5, 2, 0.7, "and_then_OR"),  # a plausible rename
+    )
+
+    with pytest.raises(ValueError, match="does not know"):
+        run_construction_sweep(
+            FakeLegRuntime(FakeLegService(CENSUS_ROWS)),
+            CENSUS_GOLDEN,
+            rows,
+            k=K,
+            seam=FakeSeam([]),
+            rescue_query_id="kw-hit",
+            target_slug="note-saltmarsh-hide",
+            expected_control_census=1,
+        )
+
+
 def test_the_or_form_stamp_is_the_engines_own_constant():
     """The negative-composition counter reads `metadata["fts_match"]`; a rename
     on the engine side must not leave this module counting a dead string."""
@@ -1039,6 +1085,33 @@ def test_the_census_records_zero_row_queries_across_the_whole_set():
 
     assert census.zero_row_queries == ("pm-miss", "neg-absent")
     assert census.hits == 1
+
+
+def test_scoped_queries_are_part_of_the_census_population():
+    """The population decision, pinned — it was not, and a mutation excluding
+    scoped queries left every other test green.
+
+    Scoped queries count because they HIT today (7/7 of the shipped 20 are
+    scoped), so dropping them would silently move the number the whole
+    decision rule is calibrated against. The census asks them UNSCOPED — a
+    leg-level question about the whole corpus — which is also how the
+    shipped 20 was measured.
+    """
+    scoped = GoldenQuery(
+        id="sc-scoped",
+        query="saltmarsh hide",
+        category="scoped",
+        relevant_slugs=("note-saltmarsh-hide",),
+        scope_slugs=("note-saltmarsh-hide",),
+    )
+    golden = (CENSUS_GOLDEN[0], scoped)
+    service = FakeLegService({**CENSUS_ROWS, "saltmarsh hide": [NOTE_ROW]})
+
+    census = keyword_leg_census(FakeLegRuntime(service), golden, k=K)
+
+    assert census.scoreable == 2
+    assert census.hits == 2 and "sc-scoped" in census.hit_queries
+    assert census.per_category["scoped"] == (1, 1)
 
 
 def test_a_row_no_fixture_claims_is_not_a_census_hit():
@@ -1170,28 +1243,78 @@ def test_a_control_census_mismatch_raises_before_any_other_row_runs(monkeypatch)
     )
 
 
-def test_a_warm_cache_cannot_blind_the_control_census(monkeypatch):
-    """THE MUTATION TEST for `clear_cache` in the pass loop.
+def test_every_pass_clears_the_cache_before_it_measures_anything(monkeypatch):
+    """THE MUTATION TEST for `clear_cache` in the pass loop — an ORDER pin.
 
-    The fake is handed over warm: until the cache is cleared its leg returns
-    a stale answer whose census is NOT the shipped number. With the clear in
-    the loop the control row reproduces its census and the sweep runs; drop
-    the clear and this test reds with the self-check's own ValueError, which
-    is exactly the alarm firing when the sweep is blinded.
+    Be exact about what this does and does not prove. Today's census cannot
+    be blinded by a stale cache at all: `_keyword_search` never reads
+    `self.cache` (only `search()` does, `rag_service.py:1240/:1334`). What
+    protects the SCORED passes is the construction being in the cache key
+    (Task 1) plus this clear, and what this test pins is that the clear
+    happens FIRST — before the pass measures anything, census or scored
+    pass. Drop it from the loop and the recorded order loses its "clear",
+    which is the regression an editor would otherwise make silently.
+
+    The stale-serving fake below models a leg whose answers ARE cache-served
+    — which today's is not — so the ordering pin keeps its teeth if that
+    ever changes.
     """
-    stale = [OTHER_ROW]
-    service = FakeLegService(CENSUS_ROWS, stale_rows=list(stale))
+    service = FakeLegService(CENSUS_ROWS, stale_rows=[OTHER_ROW])
 
-    # The fake really is blinding: served stale, the control census is wrong.
+    report = _run_instrumented(monkeypatch, service, expected=1)
+
+    # Two passes, each opening with a clear and then measuring.
+    assert service.events[:2] == ["clear", f"leg:{CENSUS_GOLDEN[0].query}"]
+    assert service.events.count("clear") == 2
+    for position, event in enumerate(service.events):
+        if event.startswith("leg:"):
+            assert "clear" in service.events[:position], (
+                "a pass measured before it cleared: "
+                f"{service.events[:position + 1]}"
+            )
+    assert report.entries[0].census_hits == 1
+
+
+def test_a_stale_leg_would_be_caught_by_the_control_row(monkeypatch):
+    """The counterfactual behind the pin above, stated rather than implied.
+
+    Served stale answers, the control's census is NOT the shipped number —
+    so the self-check WOULD catch a leg whose results were cache-served.
+    That is a property of this fake, not of today's engine, and the
+    docstring on `_check_control_census` says so.
+    """
     blinded = keyword_leg_census(
-        FakeLegRuntime(FakeLegService(CENSUS_ROWS, stale_rows=list(stale))),
+        FakeLegRuntime(FakeLegService(CENSUS_ROWS, stale_rows=[OTHER_ROW])),
         CENSUS_GOLDEN,
         k=K,
     )
     assert blinded.hits == 0
 
-    report = _run_instrumented(monkeypatch, service, expected=1)
-    assert report.entries[0].census_hits == 1
+    with pytest.raises(ValueError, match="census"):
+        fusion_sweep._check_control_census(CONSTRUCTION_STRATEGIES[0], blinded, 1)
+
+
+def test_the_self_check_says_what_it_checks_and_what_it_cannot(monkeypatch):
+    """The message must not sell a cache alarm it cannot be.
+
+    The overclaim this replaces would have had Task 3 reading a passing
+    control row as proof the passes were not cache-flattened. They are
+    protected — by the keyed cache and the per-pass clear — but not by this.
+    """
+    census = LegCensus(
+        k=K, hits=3, scoreable=53, queries=60, hit_queries=("a", "b", "c"),
+        zero_row_queries=("d",), per_category={"keyword": (3, 16)},
+    )
+    with pytest.raises(ValueError) as excinfo:
+        fusion_sweep._check_control_census(CONSTRUCTION_STRATEGIES[0], census, 20)
+
+    message = str(excinfo.value)
+    assert "cache" not in message.lower(), (
+        "the census cannot see cache state; naming it here would send the "
+        "next reader hunting the wrong failure"
+    )
+    for expected in ("counting method", "corpus", "golden set", "3/53", "keyword"):
+        assert expected in message
 
 
 def test_the_self_check_needs_the_control_row_first(monkeypatch):
@@ -1255,16 +1378,34 @@ def test_fts5_reads_an_infix_near_as_a_bare_token_not_as_proximity():
     db = sqlite3.connect(":memory:")
     try:
         db.execute("CREATE VIRTUAL TABLE t USING fts5(body)")
+        # Row 1 is what the probe is FOR: the two terms, adjacent, no "near".
         db.execute("INSERT INTO t(body) VALUES ('the shift log summary for supervisors')")
+        # Row 2 contains the WORD "near" and the two terms scattered — the
+        # only row the infix spelling matches. Without it the claim below
+        # would be 0 == 0 and prove nothing.
+        db.execute(
+            "INSERT INTO t(body) VALUES "
+            "('the log is filed near the end of every shift handover')"
+        )
 
-        def hits(expression: str) -> int:
-            return len(
-                db.execute("SELECT rowid FROM t WHERE t MATCH ?", (expression,)).fetchall()
-            )
+        def rows(expression: str) -> list[int]:
+            return [
+                row[0]
+                for row in db.execute(
+                    "SELECT rowid FROM t WHERE t MATCH ?", (expression,)
+                ).fetchall()
+            ]
 
-        assert hits('"shift" NEAR "log"') == 0, "infix NEAR is not proximity here"
-        assert hits('"shift" "near" "log"') == 0, "...it is this AND, exactly"
-        assert hits(near_probe_expression(RAGService, "shift log")) == 1
+        # The infix spelling matches row 2 ONLY — the row containing the
+        # literal word "near", where the terms are 9 tokens apart — and
+        # misses row 1, where they are adjacent. It is an AND over three
+        # terms, demonstrably, not proximity in any direction.
+        assert rows('"shift" NEAR "log"') == [2]
+        assert rows('"shift" "near" "log"') == [2], "...it is this AND, exactly"
+        # The function form is proximity: both rows are within 10 tokens.
+        assert sorted(rows(near_probe_expression(RAGService, "shift log"))) == [1, 2]
+        # ...and it discriminates on distance, which the infix form cannot:
+        assert rows('NEAR("shift" "log", 2)') == [1]
     finally:
         db.close()
 
@@ -1340,6 +1481,81 @@ def test_the_probes_run_only_the_named_queries_and_restore_the_builder():
     )
 
 
+def test_a_rows_rescues_are_counted_over_the_controls_zero_row_queries():
+    """The only number a probe's count is comparable with.
+
+    A swept row's census counts all 53 scoreable queries — including the ~20
+    the control already answers, which no probe was ever run over. Comparing
+    a probe's ~40-query count against that sets the promotion bar ~20 too
+    high, and the write-up would then say "neither probe beats the winner"
+    off pure arithmetic.
+
+    Counted from the ids rather than as a census delta, so a row that gains
+    three and loses one reports three rescues, not two.
+    """
+    control_census = LegCensus(
+        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
+        zero_row_queries=("c", "d", "e", "neg"), per_category={},
+    )
+    candidate = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[3],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=LegCensus(
+            k=K, hits=4, scoreable=5, queries=6,
+            hit_queries=("a", "c", "d", "e"),  # gained three, LOST "b"
+            zero_row_queries=(), per_category={},
+        ),
+    )
+
+    rescued = fusion_sweep.rescued_zero_row_queries(candidate, control_census)
+
+    assert rescued == ("c", "d", "e")
+    assert len(rescued) == 3 != candidate.census_hits - control_census.hits, (
+        "a net delta would have said 2; the rescue count is what the probes "
+        "are measured against"
+    )
+
+
+def test_the_matrix_prints_rescues_beside_the_census():
+    control_census = LegCensus(
+        k=K, hits=1, scoreable=2, queries=3, hit_queries=("kw-hit",),
+        zero_row_queries=("pm-miss",), per_category={"keyword": (1, 1)},
+    )
+    control = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
+        rescue=rescue(), census=control_census,
+        negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
+    )
+    candidate = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[3], hybrid=mode_report(), rescue=rescue(),
+        census=LegCensus(
+            k=K, hits=2, scoreable=2, queries=3,
+            hit_queries=("kw-hit", "pm-miss"), zero_row_queries=(),
+            per_category={"keyword": (1, 1), "paraphrase": (1, 1)},
+        ),
+        negatives=NegativeComposition(queries=1, fallback_rows=2, fts_only_rows=3),
+    )
+    report = SweepReport(
+        k=K, entries=(control, candidate),
+        rescue_query_id="kw-hit", target_slug="note-saltmarsh-hide",
+        source_types=("media",), num_queries=3, num_scored=2, control_name="and",
+    )
+
+    rendered = format_construction_matrix(report)
+
+    assert "resc" in rendered
+    # The candidate's row carries census 2 AND rescues 1 — the two numbers a
+    # reader must not conflate, printed side by side.
+    row = next(line for line in rendered.splitlines() if line.startswith("and_or"))
+    assert row.split()[2:4] == ["2", "1"]
+    assert "NOT 'reaches fusion'" in rendered, (
+        "a census hit is 'in the leg's own top-10', not 'reaches fusion' — "
+        "hybrid over-fetches top_k x pool"
+    )
+    assert "STALENESS CHECK" in rendered
+
+
 def test_the_probe_report_is_readable_on_its_own():
     service = with_engine_tokenizer(
         FakeLegService({"how do I write a shift log": [leg_row("media", "7")]})
@@ -1348,11 +1564,21 @@ def test_the_probe_report_is_readable_on_its_own():
     probes = run_near_prefix_probes(
         FakeLegRuntime(service), CENSUS_GOLDEN, ("pm-miss",), k=K
     )
-    rendered = format_probe_table(probes, census_to_beat=1)
+    rendered = format_probe_table(probes, rescues_to_beat=1)
 
     assert "near" in rendered and "prefix" in rendered
     assert "report-only" in rendered
     assert probes[0].hits == 1
+    # The bar is a RESCUE count, and the table says so — the mis-scaled
+    # comparison (a probe's ~40-query count against a row's full census) is
+    # the one arithmetic error that would decide the promotion question
+    # wrongly without anyone noticing.
+    assert "rescues" in rendered and "RESCUE count" in rendered
+    assert "full census" in rendered
+    # NEAR's ceiling is a theorem, and the text Task 3 copies must carry it:
+    # proximity only narrows, so NEAR over content tokens matches a subset of
+    # `and_trim`, which rescues 1 of the 40.
+    assert "NARROWS" in rendered and "and_trim" in rendered
 
 
 # ---------------------------------------------------------------------------

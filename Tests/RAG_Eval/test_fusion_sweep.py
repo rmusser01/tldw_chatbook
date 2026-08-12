@@ -172,6 +172,7 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
         SHIPPED_CONTROL_CENSUS,
         format_construction_matrix,
         format_probe_table,
+        rescued_zero_row_queries,
         run_construction_sweep,
         run_near_prefix_probes,
     )
@@ -202,16 +203,24 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
         except Exception as exc:  # pragma: no cover - reported, not raised
             close_error = exc
 
-    best_census = max(
-        entry.census_hits for entry in report.entries if entry.census is not None
+    # The probes only ever ran the ZERO-ROW queries, so the number they must
+    # beat is a rescue count over those same queries — never a row's full
+    # census, which carries the control's own ~20 hits no probe was run over.
+    best_rescues = max(
+        len(rescued_zero_row_queries(entry, control.census))
+        for entry in report.entries
     )
     with capsys.disabled():
         print("\n" + format_construction_matrix(report))
-        print("\n" + format_probe_table(probes, census_to_beat=best_census))
+        print("\n" + format_probe_table(probes, rescues_to_beat=best_rescues))
         for entry in report.entries:
             print(
                 f"{entry.strategy.name:<10} census hits: "
                 f"{', '.join(entry.census.hit_queries)}"
+            )
+            print(
+                f"{entry.strategy.name:<10} rescued: "
+                f"{', '.join(rescued_zero_row_queries(entry, control.census)) or '-'}"
             )
     if close_error is not None:
         print(f"NOTE: runtime.close() failed after the sweep: {close_error!r}")
