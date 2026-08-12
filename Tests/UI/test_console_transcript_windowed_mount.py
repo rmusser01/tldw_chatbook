@@ -280,3 +280,69 @@ async def test_pin_exports_render_full_history_regardless_of_mounting():
         plain = transcript.to_plain_text(width=40)
         assert "line 0.0" in plain
         assert "line 59.3" in plain
+
+
+# ---------------------------------------------------------------------------
+# Batched DOM churn (reconciler).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_rows_mount_in_one_batched_call():
+    """Contiguous new rows are mounted with a single `mount()` call."""
+    app = WindowHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        calls: list[int] = []
+        original_mount = transcript.mount
+
+        def _counting_mount(*widgets, **kwargs):
+            calls.append(len(widgets))
+            return original_mount(*widgets, **kwargs)
+
+        transcript.mount = _counting_mount  # type: ignore[method-assign]
+        transcript.set_messages(_messages(20))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        transcript.mount = original_mount  # type: ignore[method-assign]
+
+        mounted_rows = sum(calls)
+        assert mounted_rows > 20, "the load must mount at least one row per message"
+        assert len(calls) <= 2, (
+            "a fresh load must mount its rows in one batch "
+            f"(saw {len(calls)} mount calls for {mounted_rows} rows)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_removed_rows_are_pruned_in_one_batched_call():
+    """A session switch removes the old rows with one `remove_children()`."""
+    app = WindowHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(20))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        removals: list[int] = []
+        original_remove_children = transcript.remove_children
+
+        def _counting_remove_children(selector="*"):
+            widgets = list(selector) if not isinstance(selector, str) else []
+            removals.append(len(widgets))
+            return original_remove_children(widgets or selector)
+
+        transcript.remove_children = _counting_remove_children  # type: ignore[method-assign]
+        transcript.set_messages(
+            [_msg(f"other{i}", ConsoleMessageRole.ASSISTANT) for i in range(4)]
+        )
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        transcript.remove_children = original_remove_children  # type: ignore[method-assign]
+
+        assert removals, "the switch must remove the previous session's rows"
+        assert len(removals) == 1, (
+            f"stale rows must be removed in one batch (saw {len(removals)} calls)"
+        )
+        assert removals[0] > 20, "every stale row belongs to that one batch"
+        assert _mounted_message_ids(transcript) == [f"mother{i}" for i in range(4)]

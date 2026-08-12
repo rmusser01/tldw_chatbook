@@ -2621,15 +2621,70 @@ class ConsoleTranscript(VerticalScroll):
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
 
+        stale_widgets: list[Widget] = []
         for stale_key in [
             key for key in self._row_widgets if key not in desired_key_set
         ]:
-            stale_widget = self._row_widgets.pop(stale_key)
+            stale_widgets.append(self._row_widgets.pop(stale_key))
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
-            await stale_widget.remove()
+        if stale_widgets:
+            # TASK-15455: one batched removal instead of one awaited
+            # `remove()` per row -- a session switch or a prune drops hundreds
+            # of rows at once, and each individual removal is its own DOM
+            # walk + await. `remove_children` prunes the whole set in one
+            # pass. Widgets that are not (or no longer) our children take the
+            # per-widget path they always did.
+            own_rows = [widget for widget in stale_widgets if widget.parent is self]
+            if own_rows:
+                await self.remove_children(own_rows)
+            for stale_widget in stale_widgets:
+                if stale_widget.parent is not None:
+                    await stale_widget.remove()
 
         previous_widget: Widget | None = None
+        # TASK-15455: contiguous freshly built rows are accumulated here and
+        # mounted in ONE `mount(*widgets, after=...)` call. Textual inserts a
+        # multi-widget mount in argument order, so the resulting child order
+        # is identical to mounting them one at a time -- only the number of
+        # DOM/layout passes changes. The batch is flushed before any decision
+        # that reads the real child list (the in-position check below).
+        pending_widgets: list[Widget] = []
+        pending_keys: list[str] = []
+        pending_signatures: list[tuple] = []
+        pending_after: Widget | None = None
+
+        async def _flush_pending_mounts() -> bool:
+            """Mount the accumulated new rows; False means abandon the pass."""
+            nonlocal previous_widget
+            if not pending_widgets:
+                return True
+            widgets = list(pending_widgets)
+            keys = list(pending_keys)
+            signatures = list(pending_signatures)
+            pending_widgets.clear()
+            pending_keys.clear()
+            pending_signatures.clear()
+            if pending_after is None:
+                await self.mount(*widgets, before=0 if self.children else None)
+            else:
+                await self.mount(*widgets, after=pending_after)
+            for key, widget, signature in zip(keys, widgets, signatures):
+                if widget.parent is not self:
+                    # Version-proof backstop for the pruning check in the
+                    # walk: mount() completed without attaching (it no-ops
+                    # while the container is being removed). Drop the phantom
+                    # map entries for this batch and abandon the pass instead
+                    # of poisoning later moves.
+                    for pending_key in keys:
+                        self._row_widgets.pop(pending_key, None)
+                        self._row_signatures.pop(pending_key, None)
+                    return False
+                self._row_widgets[key] = widget
+                self._row_signatures[key] = signature
+            previous_widget = widgets[-1]
+            return True
+
         for index, row in enumerate(rows):
             if self._closing or self._pruning or not self.is_attached:
                 # This instance is being removed (a parent recompose/session
@@ -2643,14 +2698,17 @@ class ConsoleTranscript(VerticalScroll):
             row_was_mounted = False
             if widget is None:
                 widget = self._build_row_widget(row, track=True)
-                if previous_widget is None:
-                    await self.mount(widget, before=0 if self.children else None)
-                else:
-                    await self.mount(widget, after=previous_widget)
-                row_was_mounted = True
-                self._row_widgets[row.key] = widget
-                self._row_signatures[row.key] = row.signature
-            elif self._row_signatures.get(row.key) != row.signature:
+                if not pending_widgets:
+                    pending_after = previous_widget
+                pending_widgets.append(widget)
+                pending_keys.append(row.key)
+                pending_signatures.append(row.signature)
+                continue
+            # An already-mounted row: every row above it must be in the DOM
+            # before its position can be judged, so flush first.
+            if not await _flush_pending_mounts():
+                return
+            if self._row_signatures.get(row.key) != row.signature:
                 updated_widget = self._update_row_widget(widget, row)
                 if updated_widget is widget:
                     self._row_signatures[row.key] = row.signature
@@ -2692,6 +2750,10 @@ class ConsoleTranscript(VerticalScroll):
                     else:
                         self.move_child(widget, after=previous_widget)
             previous_widget = widget
+        if self._closing or self._pruning or not self.is_attached:
+            return
+        if not await _flush_pending_mounts():
+            return
         self._paint_debug_dump("after-reconcile")
 
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
