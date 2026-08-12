@@ -280,6 +280,34 @@ sessions spanning many hours each. That single command would have caught both.
 The board is not a lock. Treat a claim as documentation, and the PR list as the
 actual source of truth about who is building what.
 
+**Third instance: TASK-15455, 2026-08-11 — same day, same task, neither session
+ran the command.** The Console transcript windowing task was implemented twice
+in parallel: `codex/console-transcript-windowing` (PR #1538, merged 13:26) and
+`task/15455-windowed-mount` (PR #1556, closed unmerged). Both sessions worked
+for hours; both wrote their own pin suites, probes, and lessons entries; neither
+ran `gh pr list --search "15455"` before designing or during the build. The
+duplication was found only when the second PR was opened against a dev that
+already contained the first.
+
+The cost is measurable this time: the merged-first rule stood, and the second
+implementation's ~1,500 lines became a ~250-line reconciliation delta — roughly
+one full task cycle spent twice, plus a third cycle to port. What survived was
+only what the second session's REVIEW round had found (a prune/hydration
+oscillation the merged build genuinely had, a reading-state restore gap, the
+config kill switch); every line of its actual windowing mechanism was thrown
+away because the merged design was equivalent or better.
+
+Two notes for the next time this happens. First, the reconciliation is worth
+doing properly rather than abandoning: the second implementation's review had
+found a real infinite-churn defect in the merged one, which no amount of "we
+merged first" makes untrue. Second, the porting brief that starts a
+reconciliation is written by someone who has read neither implementation
+closely — verify every "the incumbent is missing X" claim against the incumbent
+at YOUR head before porting X. One of the four items in this reconciliation's
+brief (selection into windowed-out history) was already implemented and
+working; porting it blind would have duplicated a mechanism inside a PR whose
+whole purpose was undoing duplication.
+
 ---
 
 ## A duplicate ID on dev may be a resurrected ghost — check for a renumbered twin BEFORE renumbering
