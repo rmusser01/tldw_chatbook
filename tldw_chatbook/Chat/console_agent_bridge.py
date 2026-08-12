@@ -2529,6 +2529,10 @@ class ConsoleAgentBridge:
             AgentLiveSnapshot(status="running"),
             primary=True,
         )
+        # PR3a-1 Task 6b (audit F1): bound the per-run slots -- one turn's
+        # worth plus whatever is still live. Must run AFTER the publish
+        # above, which is what tells it which key is this turn's.
+        self._prune_live_run_slots(conversation_id)
         # A live run is starting -- live_snapshot takes over as the rail's
         # source of truth for this conversation from here on, so any
         # previously cached historical (DB-derived) summary is stale.
@@ -3114,13 +3118,6 @@ class ConsoleAgentBridge:
         if coordinator.max_live != max_live:
             coordinator.set_max_live(max_live)
         coordinator.prune_terminal()
-        # PR3a-1 Task 6b (audit F1): the per-run rail slots are bounded by
-        # the SAME rule, and here, for the same reason -- `_live` now gains
-        # one key per sub-agent run and this bridge outlives every turn.
-        self._prune_live_run_slots(
-            conversation_id,
-            {h.run_id for h in coordinator.snapshot() if h.run_id},
-        )
         return coordinator
 
     def _conversation_fleet_handles(
@@ -3235,24 +3232,37 @@ class ConsoleAgentBridge:
         if primary:
             self._live_primary_keys[conversation_id] = run_key
 
-    def _prune_live_run_slots(self, conversation_id: str, live_run_ids: set) -> None:
-        """Drop finished runs' live slots between turns (PR3a-1 Task 6b).
+    def _prune_live_run_slots(self, conversation_id: str) -> None:
+        """Drop finished runs' live slots at the start of a turn (Task 6b).
 
         `_live[conversation_id]` gains one key per sub-agent run, and this
         bridge outlives every turn, so without this a long conversation
         would accumulate one snapshot per child it ever ran. Kept: the
-        conversation's current summary key, and any run still live in its
-        coordinator (a survivor's steps must stay readable while it works).
-        Everything else has, by then, finished and persisted its steps to
-        ``AgentRunsDB``, where the drill-in reads them from.
+        conversation's current summary key (just published by the turn
+        calling this), and any run still LIVE in the conversation's
+        coordinator -- a survivor's steps must stay readable while it
+        works. Everything else has, by then, finished and persisted its
+        steps to ``AgentRunsDB``, where the drill-in reads them from.
 
-        Called once per turn, from the same place terminal fleet handles
-        are pruned -- never mid-turn, for the same reason.
+        Liveness is read from handle STATUS rather than from coordinator
+        membership, deliberately: `FleetCoordinator` keeps terminal handles
+        until `prune_terminal` runs (later in this same turn, in
+        `_conversation_fleet_coordinator`), and the inline/kill-switch path
+        has no coordinator at ALL yet still emits child steps -- so a
+        membership test would leak a slot per inline child forever.
+
+        Called once per turn, at the start -- never mid-turn, for the same
+        reason `prune_terminal` is not: this turn's own children must stay
+        readable until it ends.
         """
         slots = self._live.get(conversation_id)
         if not slots:
             return
-        keep = set(live_run_ids)
+        keep = {
+            handle.run_id
+            for handle in self._conversation_fleet_handles(conversation_id)
+            if handle.run_id and handle.status not in TERMINAL_RUN_STATUSES
+        }
         primary_key = self._live_primary_keys.get(conversation_id)
         if primary_key is not None:
             keep.add(primary_key)

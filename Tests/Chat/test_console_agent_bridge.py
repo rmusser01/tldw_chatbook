@@ -5109,3 +5109,44 @@ def test_busy_fleet_session_count_degrades_when_the_bridge_raises():
         store=store, provider_gateway=object(), agent_bridge=_RaisingFleetBridge()
     )
     assert controller.busy_fleet_session_count() == 0
+
+
+def test_inline_child_live_slots_are_bounded_with_the_fleet_switched_off(
+    tmp_path, monkeypatch
+):
+    """The kill-switch path emits child steps but has NO coordinator.
+
+    So slot pruning cannot key off coordinator membership -- there is none
+    to be a member of -- or `[agents] max_live_subagents <= 1` would leak
+    one rail slot per inline sub-agent for the life of the process.
+    """
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["child one"],
+            ["turn 1 final"],
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["child two"],
+            ["turn 2 final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    _run(bridge, store, session, aid, conversation_id="conv-inline-prune")
+    assert bridge._fleet_coordinators.get("conv-inline-prune") is None
+    assert len(bridge._live["conv-inline-prune"]) == 2
+
+    second = _second_turn_message(store, session)
+    _run(bridge, store, session, second, conversation_id="conv-inline-prune")
+
+    assert len(bridge._live["conv-inline-prune"]) == 2, (
+        "the inline path leaked a rail slot per child: "
+        f"{bridge._live['conv-inline-prune']}"
+    )
