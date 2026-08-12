@@ -1,11 +1,11 @@
 ---
 id: TASK-601
 title: Add generation-fenced local STT executor
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-12 08:06'
+updated_date: '2026-08-12 08:17'
 labels:
   - stt
   - processes
@@ -24,6 +24,8 @@ documentation:
     Docs/superpowers/specs/2026-08-11-task-601-platform-process-tree-evidence-design.md
   - Docs/superpowers/plans/2026-08-02-task-601-local-stt-executor.md
   - Docs/superpowers/plans/2026-08-11-task-601-platform-process-tree-evidence.md
+  - Docs/STT_Evaluation/task-601/README.md
+  - Docs/STT_Evaluation/task-601/platform-evidence.json
 priority: high
 ---
 
@@ -40,7 +42,7 @@ Create one app-owned heavy-media process boundary that gives batch transcription
 - [x] #3 The worker owns root and loaded-dependency leases for the full resident-model lifetime, including idle reuse, and releases them only on close or process exit.
 - [x] #4 Every request, progress event, result, and error carries attempt and executor-generation identity; detached-generation callbacks cannot reach the single-writer stage.
 - [x] #5 Cooperative cancellation and force stop produce exactly one terminal state, recycle only the heavy pool, and leave light parse workers unaffected.
-- [ ] #6 FFmpeg and other preparation subprocesses are owned and terminated as a platform process tree before temporary cleanup on Windows, macOS, and Linux.
+- [x] #6 FFmpeg and other preparation subprocesses are owned and terminated as a platform process tree before temporary cleanup on Windows, macOS, and Linux.
 - [x] #7 Process tests cover same-model reuse, identity recycle, idle leases, crash release, stale callbacks, child cleanup, CPU retry in a fresh worker, and shutdown.
 <!-- AC:END -->
 
@@ -76,4 +78,8 @@ ADR required: no. ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runt
 Native platform evidence attempt 1 remained red and did not close acceptance criterion 6. Workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31575959082 tested executable commit 48c4ccadb9ef93f64ddfffd9954aede9526ea48e: Linux x86_64 and macOS x86_64 passed; Windows x86_64 produced bounded test_execution failure evidence. All three required evidence nodes passed on Windows, but selected unit Tests/STT/test_executor_process_tree.py::test_unproven_tree_death_quarantines_containment failed before its assertion because the test monkeypatch required os.killpg to pre-exist. Windows does not expose os.killpg. This is a native test-portability defect, not a containment production failure. No aggregate was created. Remediation is limited to a RED-backed portable monkeypatch and requires a fresh full three-platform run on a new executable commit.
 
 Native platform evidence attempt 2 also remained red and did not close acceptance criterion 6. New workflow_dispatch run https://github.com/rmusser01/tldw_chatbook/actions/runs/31576646463 tested reviewed executable commit 83c68c30d82fe04b53db02612ff358fb2fb6a0ec: Linux x86_64 and macOS x86_64 passed; Windows x86_64 produced bounded test_execution failure evidence. All three required nodes again passed. The prior os.killpg monkeypatch repair allowed the same selected POSIX-emulation unit to reach its next Windows-unavailable POSIX symbol: signal.SIGKILL. No aggregate was created. Remediation remains test-only: install the simulated SIGKILL constant without skipping coverage, review it, and run a new full three-platform workflow on a new executable commit.
+
+Native platform evidence attempt 3 passed and closes acceptance criterion 6. Workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31577352552 tested executable commit 5c6a446c8d050587f141561319e58e1ce72c528d: Linux x86_64 on ubuntu-24.04, Windows x86_64 on windows-2022, and macOS x86_64 on macos-15-intel all passed the exact three required process-tree and scratch-ordering nodes. All three downloaded JSON records passed individual validation, matched the tested commit and workflow run, and produced the checked-in aggregate through the repository script; aggregate validation passed. The fresh local gate passed 98 tests with one intentional local Windows-only skip in 1.37 seconds; Ruff check, Ruff format check for all five scoped Python files, py_compile for the evidence script, and git diff --check origin/dev...HEAD all passed. Attempts 1 and 2 exposed only Windows portability gaps in a selected POSIX-emulation unit test; both test-only remediations were reviewed, no production fix was needed, and every native lane was rerun after each executable change. Evidence and complete rerun history are documented in Docs/STT_Evaluation/task-601/README.md and Docs/STT_Evaluation/task-601/platform-evidence.json. ADR required: no; ADR-025 and ADR-041 continue to govern the unchanged boundary.
+
+All seven acceptance criteria are checked. The implementation plan history, focused automated coverage, successful scoped static checks, evidence documentation, existing final correctness review, reviewed portability remediations, ADR check, and no-regression native matrix satisfy the applicable repository Definition of Done. No separate lesson entry was added because the two portability discoveries were confined to this deliberate POSIX-emulation test and are preserved with their incident and remediation in the task and evidence README.
 <!-- SECTION:NOTES:END -->
