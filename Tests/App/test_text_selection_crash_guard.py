@@ -163,10 +163,12 @@ async def test_guard_drops_the_crashing_click_and_app_survives(loguru_sink):
         # The guard completed Textual's own "not selectable" branch.
         assert app.screen._select_state is None
 
-        # The drop is visible in the log (no user data: widget repr + coords).
+        # The drop is visible in the log. TASK-15103 (ADR-029): the event is
+        # fixed text — a widget repr can embed rendered user content and the
+        # coordinates are input telemetry, so neither is echoed any more.
         output = loguru_sink.getvalue()
         assert "task-14903" in output
-        assert "quiet-line" in output
+        assert "quiet-line" not in output
 
         # The app is still alive and interactive: after the pending reflow
         # runs, a freshly mounted widget accepts a normal selection click.

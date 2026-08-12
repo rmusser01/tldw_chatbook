@@ -133,9 +133,6 @@ class TextSelectionCrashGuard:
             logger.warning(
                 "Dropped a MouseDown that hit Textual's text-selection begin "
                 "path while its target widget was mid-recompose (detached "
-                f"parent): target={target}, "
-                f"screen_offset=({getattr(event, 'screen_x', '?')},"
-                f"{getattr(event, 'screen_y', '?')}). Upstream Textual race "
-                "(screen.py _forward_event, container=None) -- the click was "
-                "not delivered; the app stays alive (task-14903)."
+                "parent). The click was not delivered; the app stays alive "
+                "(task-14903)."
             )

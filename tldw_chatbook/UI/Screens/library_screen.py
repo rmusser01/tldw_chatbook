@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
+from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import events, on, work
@@ -8991,10 +8992,9 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await update()
             except Exception:
-                logger.debug(
+                loguru_logger.debug(
                     "Details-open DB size recompute failed; the disclosure "
-                    "keeps its cached reading.",
-                    exc_info=True,
+                    "keeps its cached reading."
                 )
         sizes_line = self._library_db_sizes_line()
         if sizes_line is None:
@@ -9017,10 +9017,9 @@ class LibraryScreen(BaseAppScreen):
                 after=anchors[0],
             )
         except Exception:
-            logger.debug(
+            loguru_logger.debug(
                 "Mounting the freshly computed DB-sizes line failed; the "
-                "next rail recompose renders it from the updated cache.",
-                exc_info=True,
+                "next rail recompose renders it from the updated cache."
             )
 
     def _build_library_conversations_state(self):
@@ -14149,9 +14148,9 @@ class LibraryScreen(BaseAppScreen):
             else:
                 error = "Trash is unavailable."
         except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to load the Library media trash page."
-            )
+            # TASK-15103: raw logger — the ledgered contract for these events
+            # carries no bound fields, including the file-level module bind.
+            loguru_logger.warning("Failed to load the Library media trash page.")
             error = "Could not load Trash."
 
         self._library_media_trash_records = records
@@ -26015,9 +26014,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                     deleted = True
                 except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to delete Library media item {media_id!r}."
-                    )
+                    logger.warning("Failed to delete a Library media item.")
                     self._notify_library_media_delete_warning(
                         "Could not delete this media item."
                     )
