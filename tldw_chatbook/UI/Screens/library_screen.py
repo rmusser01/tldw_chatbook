@@ -1444,6 +1444,12 @@ def _sync_library_canvas(
             exc_info=True,
         )
         screen.refresh(recompose=True)
+        if then is not None:
+            # The fallback tears the canvas down, taking any callback queued
+            # on it; re-schedule the follow-up the way a whole-screen
+            # recompose has always scheduled one, so a failed targeted sync
+            # costs a rebuild but never the user's focus.
+            screen.call_after_refresh(then)
 
 
 def _canonical_shortcut_key(key: str) -> str:
