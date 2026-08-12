@@ -1099,7 +1099,7 @@ class AudioBookGenerationWidget(Widget):
             logger.error(f"Failed to preview chapter audio: {e}")
             self.app.notify(f"Failed to generate preview: {e}", severity="error")
 
-    def _get_model_for_provider(self, provider: str) -> str:
+    def _get_model_for_provider(self, provider: str) -> str:  # type: ignore[no-redef]
         """Get the default model for a given provider"""
         model_map = {
             "openai": "tts-1",

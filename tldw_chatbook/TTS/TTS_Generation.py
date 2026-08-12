@@ -1299,11 +1299,11 @@ class TTSService:
             raise
 
         preparation = self._audio_cpp_preparation.get()
+        clone_reference = None if clone_execution is None else clone_execution.reference
         clone_requirement = (
-            None
-            if clone_execution is None
-            or type(clone_execution.reference) is CanonicalTTSCloneReference
-            else clone_execution.reference.recipe_requirement
+            clone_reference.recipe_requirement
+            if isinstance(clone_reference, TTSCloneReference)
+            else None
         )
         if clone_execution is not None:
             adapter = lease.adapter
@@ -1328,10 +1328,26 @@ class TTSService:
                             operation_id=uuid4().hex,
                             recovery_action="refresh",
                         ) from None
-                    adapter.preflight_clone_request_dependency(
-                        request,
-                        clone_requirement,
-                    )
+                    dependency_preflight_failed = False
+                    try:
+                        adapter.preflight_clone_request_dependency(
+                            request,
+                            clone_requirement,
+                        )
+                    except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                        raise
+                    except TTSOperationError:
+                        raise
+                    except Exception:
+                        dependency_preflight_failed = True
+                    if dependency_preflight_failed:
+                        raise TTSOperationError(
+                            code="dependency_changed",
+                            message="The clone voice dependency changed",
+                            retryable=False,
+                            operation_id=uuid4().hex,
+                            recovery_action="refresh",
+                        ) from None
             except BaseException as error:
                 await _cleanup_preserving_primary(lease.release, error)
                 reservation.release_if_untransferred()

@@ -187,21 +187,33 @@ forensic erasure, especially on copy-on-write filesystems, backups, and storage
 media. The Windows privacy posture remains unverified until TASK-13208; do not
 infer a Windows ACL guarantee from the POSIX owner-private implementation.
 
-Opening a v2 store eagerly creates and validates a retained v2 pre-migration
-backup before the transactional v3 migration. It is the owner-private sibling
-`<profile-db>.pre-v3.sqlite3` beside the configured `[database]
-tts_profiles_db_path` (or beside the default
-`tldw_chatbook_tts_profiles.db`). Older builds refuse schema v3. To downgrade,
-close Chatbook completely, replace the configured profile database with that
-retained v2 backup, and only then start the older build. This necessarily
-accepts loss of post-migration profile changes, including all clone references
-and later profile or assignment edits.
+The repository schema is version 4. Opening any supported older store advances
+a private candidate through each migration step and retains validated downgrade
+siblings at the applicable boundaries: `<profile-db>.pre-v3.sqlite3` and
+`<profile-db>.pre-v4.sqlite3`. Version 3 reference rows receive null recipe
+provenance; migration never infers it from current Settings. Publication is a
+journaled, non-cancellable complete-or-restore protocol after replacement. To
+downgrade to a version-3-capable build, close Chatbook completely, restore the
+stable pre-v4 sibling as the configured database, and only then start the older
+build. This loses every post-migration change and all v4 provenance.
 
-TASK-13205 adds the reference setup and explicit save workflow described below.
-It does not add voice-bundle portability. Ordinary portable profile wire
-version 1 remains unchanged and contains no reference summary, bytes,
-transcript, digest, or source path. Explicit sensitive voice bundles are a
-separate later workstream.
+Ordinary portability remains sanitized: reference-free profiles retain exact
+wire version 1; reference-bearing profiles use exact wire version 2 with only
+`{"reference":{"status":"omitted"}}` added. The v2 decoder returns a bounded
+skip/no-mutation result. Explicit clone transfer uses a separate warning-gated
+bundle containing only `manifest.json`, `profile.json`, canonical
+`reference.wav`, and canonical `reference.txt`. The deterministic writer uses
+fixed metadata; the hostile reader validates archive layout before bounded
+streaming decompression and never invokes general extraction.
+
+`TTSVoiceBundlePortabilityService` owns source/destination authority, at most
+four expiring single-use inspection sessions, deterministic no-overwrite
+publication, and retained cleanup. UI receives only an opaque handle plus safe
+review facts. Commit repeats source validation and pure dependency inspection,
+then delegates Create/Reuse/Copy to one serialized repository transaction.
+Missing exact dependencies may be stored only as explicitly accepted inactive
+profiles. Import never assigns or changes a default. The app closes and joins
+the portability service before the profile repository and TTS service.
 
 #### Guided clone execution and materialization
 
@@ -1371,6 +1383,10 @@ pytest Tests/TTS/
    - Chatterbox adds watermarks to generated audio
    - Store voice metadata securely
 7. **Reference Audio**: Validate file formats and sizes
+8. **Clone Voice Bundles**: Ordinary export is sanitized. Explicit bundle
+   import/export is POSIX-only until Windows ACL parity is verified, requires
+   plaintext warnings, treats archives as hostile, and never describes SHA-256
+   as authenticity, identity, signature, or consent proof.
 
 ## License
 

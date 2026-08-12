@@ -63,4 +63,23 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
 7. Extend the existing Voice Profile library and reuse inactive/advisory action truth in Personas assignment.
 8. Complete privacy/lifecycle testing, static/full verification, two-launch isolated UAT, docs, review, and closeout.
 
+## Implementation Notes
+
+- Implemented sanitized wire-v2 export, strict warning-gated four-entry voice
+  bundles, hostile-input validation, inactive conflict recovery, exact
+  dependency admission, schema-v4 migration/recovery, and service-owned
+  lifecycle integration under ADR-028, ADR-029, and ADR-051.
+- Added cross-cutting privacy/lifecycle regressions for legacy-reader behavior,
+  repository rollback, runtime collaborator failures, UI error surfaces, and
+  composite shutdown; the runtime regression exposed and fixed an unsanitized
+  adapter-preflight exception boundary.
+- Updated the user/developer speech documentation and recorded a sanitized,
+  independent two-launch deterministic UAT. The imported profile survived
+  restart as inactive with `Needs compatible model`; assignment/default state
+  and owned teardown residue remained unchanged/empty.
+- Status remains **In Progress**. No exact pre-provisioned clone model was
+  available inside the isolated Launch B environment and no human playback
+  confirmation was performed, so acceptance criterion 7 and task closeout
+  remain pending.
+
 Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.

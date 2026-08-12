@@ -3654,6 +3654,63 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
 
 
 @pytest.mark.asyncio
+async def test_bundle_export_failure_never_surfaces_private_canaries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from loguru import logger as loguru_logger
+
+    canaries = (
+        "CANARY-source-path",
+        "CANARY-destination-path",
+        "CANARY-staging-path",
+        "manifest.json",
+        "CANARY-transcript",
+        "CANARY-wav-bytes",
+        "CANARY-checksum",
+        "CANARY-provider-origin",
+        "CANARY-generated-config",
+        "CANARY-collaborator-error",
+    )
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    app = _BundleActionHost(service, bundle_service)
+    destination = tmp_path / "voice.tldw-voice.zip"
+    messages: list[str] = []
+
+    async def _fail_export(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(" ".join(canaries))
+
+    bundle_service.export = _fail_export  # type: ignore[method-assign]
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, loaded = await _select_action_profile(app, pilot)
+
+        async def _destination() -> Path:
+            return destination
+
+        async def _acknowledge(_modal: object) -> bool:
+            return True
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_export_path", _destination)
+        monkeypatch.setattr(library, "_push_owned_modal", _acknowledge)
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)),
+            level="DEBUG",
+        )
+        try:
+            assert await library._export_selected_voice_bundle(loaded) is False
+        finally:
+            loguru_logger.remove(sink)
+        status_copy = _status_copy(app)
+
+    rendered = "\n".join((*messages, status_copy))
+    assert status_copy == profile_library_module.PROFILE_ACTION_FAILED_COPY
+    assert all(canary not in rendered for canary in canaries)
+
+
+@pytest.mark.asyncio
 async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

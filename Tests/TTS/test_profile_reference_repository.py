@@ -1026,12 +1026,13 @@ async def test_bundle_import_failure_between_profile_and_reference_rolls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "profiles.sqlite3"
+    canary = "CANARY-private-transcript-checksum-staging-path"
     async with _opened_repository(path) as repository:
         real_put = repository._worker_put_reference
 
         def fail_after_reference(*args: object, **kwargs: object) -> object:
             real_put(*args, **kwargs)
-            raise ProfileRepositoryError("operation_failed")
+            raise RuntimeError(canary)
 
         monkeypatch.setattr(repository, "_worker_put_reference", fail_after_reference)
         command = profile_repository.TTSBundleImportCommand(
@@ -1055,6 +1056,8 @@ async def test_bundle_import_failure_between_profile_and_reference_rolls_back(
             await repository.commit_bundle_import(command)
 
         _assert_error(caught.value, "operation_failed")
+        assert canary not in str(caught.value)
+        assert canary not in repr(caught.value)
         assert (await repository.list_profiles()).value.total == 0
 
 

@@ -1286,6 +1286,72 @@ async def test_recipe_mismatch_blocks_before_provider_lease_or_adapter_work(
 
 
 @pytest.mark.asyncio
+async def test_clone_dependency_collaborator_failure_is_bounded() -> None:
+    canary = "CANARY-private-provider-origin-generated-config"
+    adapter = _CloneCapturingAdapter()
+    saved = StudioTTSPreferencesSnapshot(revision=2)
+    service, registry = _native_service(
+        adapter,
+        _snapshot(model_id="clone-model"),
+        studio_preferences_loader=lambda: saved,
+    )
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+
+    async def exact(current: TTSCloneRecipeRequirement):
+        return generation_module.AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=1,
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    def fail_dependency(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(canary)
+
+    adapter.preflight_clone_request_dependency = fail_dependency  # type: ignore[method-assign]
+    service.audio_cpp_guided_dependency_snapshot = exact  # type: ignore[method-assign]
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="clone-model",
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=1,
+        profile_revision=1,
+        profile_id=UUID("55555555-5555-4555-8555-555555555555"),
+        reference=_clone_reference(requirement),
+    )
+    try:
+        with pytest.raises(TTSOperationError) as caught:
+            await service.synthesize_effective(
+                text="private submitted text",
+                character_profile=character,
+            )
+
+        assert caught.value.code == "dependency_changed"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert canary not in str(caught.value)
+        assert canary not in repr(caught.value)
+        assert registry._total_leases() == 0
+        assert adapter.clone_requests == []
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_kind",
     ("boolean_generation", "hollow_snapshot", "hollow_requirement"),

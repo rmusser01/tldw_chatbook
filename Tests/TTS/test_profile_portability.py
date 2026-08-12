@@ -237,6 +237,22 @@ def test_v2_omission_decode_is_skip_without_profile() -> None:
     assert result.warning_code == "reference_omitted"
 
 
+def test_sanitized_v2_remains_unsupported_to_the_frozen_v1_reader_contract() -> None:
+    """An old reader must skip the new omission wire instead of importing it."""
+
+    payload = _valid_v2_payload()
+    legacy_wire_fields = frozenset(_valid_payload())
+
+    legacy_status = (
+        "valid"
+        if payload.get("schema_version") == 1
+        and frozenset(payload) == legacy_wire_fields
+        else "unsupported_version"
+    )
+
+    assert legacy_status == "unsupported_version"
+
+
 @pytest.mark.parametrize(
     "profile_id",
     [

@@ -1329,12 +1329,15 @@ class TTSVoiceBundlePortabilityService:
             raise TTSVoiceBundleError("operation_failed")
         collisions = collision_result.value
         exact_duplicate = await self._exact_duplicate(bundle, collisions, generation)
-        dependency = (
+        dependency_value = (
             await self._dependency_service.audio_cpp_guided_dependency_snapshot(
                 bundle.recipe_requirement
             )
         )
-        dependency = _valid_dependency_snapshot(dependency, bundle.recipe_requirement)
+        dependency = _valid_dependency_snapshot(
+            dependency_value,
+            bundle.recipe_requirement,
+        )
         if dependency is None:
             raise TTSVoiceBundleError("operation_failed")
         if self._repository.generation != generation:
@@ -1614,6 +1617,8 @@ class TTSVoiceBundlePortabilityService:
             ):
                 raise TTSVoiceBundleError("operation_failed")
             reference = reference_result.value
+            requirement = reference.recipe_requirement
+            assert requirement is not None
             bundle = TTSCloneVoiceBundle(
                 profile=PortableTTSProfile(
                     profile_id=profile.profile_id,
@@ -1628,7 +1633,7 @@ class TTSVoiceBundlePortabilityService:
                     ),
                 ),
                 reference=_canonical_reference(reference),
-                recipe_requirement=reference.recipe_requirement,
+                recipe_requirement=requirement,
             )
             payload = encode_clone_voice_bundle(bundle)
             selected = _source_path(destination)
