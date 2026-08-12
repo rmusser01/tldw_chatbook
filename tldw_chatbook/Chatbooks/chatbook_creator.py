@@ -37,6 +37,7 @@ from ..Chat.citation_service_factory import (
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
@@ -81,6 +82,26 @@ class ExportProgress:
 
 class ChatbookExportCancelled(Exception):
     """Raised internally when cancel_check() returns True at a checkpoint."""
+
+
+class PromptChatbookExportError(RuntimeError):
+    """Report one bounded Prompt collection failure.
+
+    Attributes:
+        archive_item_id: Opaque archive-local Prompt identifier.
+        category: Fixed stage where collection failed.
+    """
+
+    def __init__(self, archive_item_id: str, category: str) -> None:
+        self.archive_item_id = archive_item_id
+        self.category = category
+        super().__init__("Unable to export one or more Prompts.")
+
+    def __repr__(self) -> str:
+        return (
+            "PromptChatbookExportError("
+            f"archive_item_id={self.archive_item_id!r}, category={self.category!r})"
+        )
 
 
 class ChatbookCreator:
@@ -418,6 +439,18 @@ class ChatbookCreator:
                     "auto_included": list(self.auto_included_characters),
                 },
             )
+        except PromptChatbookExportError as exc:
+            logger.error(
+                "ChatbookCreator.create_chatbook: Prompt export failed "
+                "item={} category={}",
+                exc.archive_item_id,
+                exc.category,
+            )
+            dependency_info = {
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters),
+            }
+            return False, "Unable to export one or more Prompts.", dependency_info
         except Exception as e:
             logger.opt(exception=True).error(
                 "ChatbookCreator.create_chatbook: Error creating chatbook"
@@ -1286,59 +1319,73 @@ class ChatbookCreator:
         manifest: ChatbookManifest,
         content: ChatbookContent,
     ) -> None:
-        """Collect prompts."""
+        """Collect portable Prompt records or abort the whole archive."""
+        if not prompt_ids:
+            return
         db_path = self.db_paths.get("Prompts")
         if not db_path:
-            return
+            raise PromptChatbookExportError("item-000001", "source")
 
-        db = PromptsDatabase(db_path, "chatbook_creator")
+        try:
+            db = PromptsDatabase(db_path, "chatbook_creator")
+        except Exception:
+            raise PromptChatbookExportError("item-000001", "source") from None
         prompts_dir = work_dir / "content" / "prompts"
-        prompts_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            prompts_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            db.close_connection()
+            raise PromptChatbookExportError("item-000001", "write") from None
 
         total = len(prompt_ids)
-        for idx, prompt_id in enumerate(prompt_ids):
-            self._check_cancel()
-            self._emit_progress("prompts", idx + 1, total)
-            try:
-                # Get prompt details
-                prompt = db.get_prompt_by_id(int(prompt_id))
-                if not prompt:
-                    continue
+        try:
+            for idx, selected_id in enumerate(prompt_ids):
+                self._check_cancel()
+                archive_item_id = f"item-{idx + 1:06d}"
+                self._emit_progress("prompts", idx + 1, total)
+                try:
+                    source_id = int(selected_id)
+                except (TypeError, ValueError, OverflowError):
+                    raise PromptChatbookExportError(
+                        archive_item_id, "selection"
+                    ) from None
+                try:
+                    prompt = db.fetch_prompt_chatbook_snapshot(source_id)
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "source") from None
+                if prompt is None:
+                    raise PromptChatbookExportError(archive_item_id, "missing")
+                try:
+                    prompt_data = encode_chatbook_prompt_record(prompt)
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "record") from None
 
-                # Create prompt data
-                prompt_data = {
-                    "id": prompt["id"],
-                    "name": prompt["name"],
-                    "description": prompt.get("details", ""),
-                    "content": prompt.get("system_prompt", "")
-                    or prompt.get("user_prompt", ""),
-                    "created_at": prompt.get("created_at", datetime.now().isoformat()),
-                    "updated_at": prompt.get("updated_at", datetime.now().isoformat()),
-                }
+                prompt_file = prompts_dir / f"prompt_{archive_item_id}.json"
+                try:
+                    with open(prompt_file, "w", encoding="utf-8") as handle:
+                        json.dump(
+                            prompt_data,
+                            handle,
+                            indent=2,
+                            ensure_ascii=False,
+                        )
+                except Exception:
+                    raise PromptChatbookExportError(archive_item_id, "write") from None
 
-                # Write prompt file
-                prompt_file = prompts_dir / f"prompt_{prompt_id}.json"
-                with open(prompt_file, "w", encoding="utf-8") as f:
-                    json.dump(prompt_data, f, indent=2, ensure_ascii=False)
-
-                # Add to content
                 content.prompts.append(prompt_data)
-
-                # Add to manifest
                 manifest.content_items.append(
                     ContentItem(
-                        id=prompt_id,
+                        id=archive_item_id,
                         type=ContentType.PROMPT,
-                        title=prompt["name"],
-                        description=prompt.get("description"),
-                        created_at=datetime.fromisoformat(prompt["created_at"]),
-                        updated_at=datetime.fromisoformat(prompt["updated_at"]),
-                        file_path=f"content/prompts/prompt_{prompt_id}.json",
+                        title=prompt_data["name"],
+                        description=prompt_data["details"],
+                        created_at=None,
+                        updated_at=None,
+                        file_path=(f"content/prompts/prompt_{archive_item_id}.json"),
                     )
                 )
-
-            except Exception as e:
-                logger.error(f"Error collecting prompt {prompt_id}: {e}")
+        finally:
+            db.close_connection()
 
     # Kept scripts per briefing are denormalized, small text blobs (preset
     # name + two JSON strings). Export must never silently truncate a

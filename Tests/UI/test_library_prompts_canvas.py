@@ -37,6 +37,7 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
+from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
     PromptBrowseResult,
@@ -810,28 +811,50 @@ async def test_prompts_canvas_escapes_secondary_line_markup_and_unmatched_close_
 
 @pytest.mark.asyncio
 async def test_prompts_canvas_toolbar_is_one_horizontal_row():
-    """sort/Import share a single ``ds-toolbar`` Horizontal parent -- proven
+    """Sort/Import/Export share a single ``ds-toolbar`` parent -- proven
     structurally (shared parentage), not via region/geometry (the bare
     harness has no app CSS loaded)."""
     app = _CanvasHost(_three_row_state())
     async with app.run_test() as pilot:
         sort_button = pilot.app.query_one("#library-prompts-sort", Button)
         import_button = pilot.app.query_one("#library-prompts-import", Button)
+        export_button = pilot.app.query_one("#library-prompts-export", Button)
         toolbar = sort_button.parent
         assert toolbar is not None and toolbar.has_class("ds-toolbar")
         assert import_button.parent is toolbar
+        assert export_button.parent is toolbar
 
 
 @pytest.mark.asyncio
-async def test_prompts_canvas_list_toolbar_has_no_dead_export_button():
-    """D5 (Task 8c): the list-toolbar "Export..." button had no handler
-    anywhere -- pressing it silently no-op'd. Bulk export is deferred to
-    task-197; per-prompt export lives in the editor's own
-    ``#library-prompt-export`` and still works. The dead affordance is
-    removed rather than wired to a fake bulk export."""
-    app = _CanvasHost(_three_row_state())
-    async with app.run_test() as pilot:
-        assert len(pilot.app.query("#library-prompts-export")) == 0
+@pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
+async def test_prompts_canvas_export_toolbar_is_painted_focusable_and_in_bounds(size):
+    """All three compact actions remain readable in the real stylesheet."""
+    app = _StyledCanvasHost(_three_row_state())
+    async with app.run_test(size=size) as pilot:
+        buttons = [
+            pilot.app.query_one("#library-prompts-sort", Button),
+            pilot.app.query_one("#library-prompts-import", Button),
+            pilot.app.query_one("#library-prompts-export", Button),
+        ]
+        toolbar = buttons[0].parent
+        assert toolbar is not None and toolbar.has_class("ds-toolbar")
+        for button, needle in zip(buttons, ("sort", "Import", "Export"), strict=True):
+            assert button.parent is toolbar
+            assert button.region.width > 0 and button.region.height > 0
+            assert toolbar.region.x <= button.region.x
+            assert button.region.right <= toolbar.region.right
+            assert toolbar.region.y <= button.region.y < toolbar.region.bottom
+            assert _painted_style_of_text(pilot.app, button.region, needle) is not None
+            button.focus()
+            await pilot.pause()
+            assert pilot.app.focused is button
+
+
+def test_prompt_export_control_is_a_stable_focus_identity():
+    fake = SimpleNamespace(focused=SimpleNamespace(id="library-prompts-export"))
+    assert LibraryScreen._library_prompts_focus_identity(fake) == (
+        "library-prompts-export"
+    )
 
 
 @pytest.mark.asyncio
@@ -5057,6 +5080,90 @@ async def _open_prompts_list(screen, pilot) -> None:
     screen.query_one("#library-row-browse-prompts").press()
     await pilot.pause()
     await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_export_opens_prompt_scope_without_media_controls(
+    tmp_path,
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Portable Prompt",
+        author=None,
+        details=None,
+        system_prompt="System",
+        user_prompt="User",
+    )
+    assert prompt_id is not None
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.prompts_db = db
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        export_button = screen.query_one("#library-prompts-export", Button)
+        export_button.press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Prompt export counts never landed")
+
+        assert screen._library_export_scope == ExportScope(kind="prompts")
+        assert screen._library_export_counts == {
+            "media": 0,
+            "conversations": 0,
+            "notes": 0,
+            "prompts": 1,
+        }
+        assert str(screen.query_one("#library-export-scope-line").renderable) == (
+            "Prompts · 1 item"
+        )
+        assert not screen.query("#library-export-quality")
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_export_refuses_server_mode_before_prompt_count(
+    tmp_path,
+):
+    _db, service = _real_prompt_scope_service(tmp_path)
+    prompt_ids = Mock(side_effect=AssertionError("Prompt DB must not be touched"))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.prompts_db = SimpleNamespace(
+        is_memory_db=True, get_all_active_prompt_ids=prompt_ids
+    )
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server",
+            server_configured=True,
+            active_server_id="server-1",
+        ),
+        persist=lambda: None,
+    )
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        screen.query_one("#library-prompts-export", Button).press()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        assert not screen.query("#library-export-header")
+        prompt_ids.assert_not_called()
+        app.notify.assert_called_once()
 
 
 @pytest.mark.asyncio

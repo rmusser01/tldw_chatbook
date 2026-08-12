@@ -16601,6 +16601,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
     never land -> the bounded poll below raises).
     """
     app = _build_test_app()
+    app.prompts_db = PromptsDatabase(":memory:", client_id="export-restore-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-restore-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -16633,7 +16634,9 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
+        assert scope_line == (
+            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+        )
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
         # destination keeps it disabled now, which is correct).
@@ -16715,6 +16718,13 @@ async def test_library_shell_restored_notes_editor_with_deleted_note_falls_back_
 # thread-vs-inline dispatch differs, not the query/marshal/gate logic.
 
 
+def _wire_empty_export_prompts_db(app, client_id: str) -> PromptsDatabase:
+    """Attach the real app-owned Prompt source expected by export resolution."""
+    prompts_db = PromptsDatabase(":memory:", client_id=client_id)
+    app.prompts_db = prompts_db
+    return prompts_db
+
+
 @pytest.mark.asyncio
 async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_land():
     """Pressing the Export rail row opens the export canvas scoped to
@@ -16722,6 +16732,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
     the rendered/capped snapshot) within a bounded poll.
     """
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-pilot-everything-prompts")
     _seed_conversations(app, _two_conversations())
     media_db = MediaDatabase(":memory:", client_id="export-pilot-everything-media")
     media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -16755,7 +16766,9 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 1 notes"
+        assert scope_line == (
+            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+        )
         submit = screen.query_one("#library-export-submit", Button)
         # Counts landed with a positive total, but no destination chosen yet.
         assert submit.disabled is True
@@ -17276,6 +17289,10 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
     )
     chachanotes_db.add_conversation({"title": "Conv"})
     app.chachanotes_db = chachanotes_db
+    app.prompts_db = PromptsDatabase(
+        tmp_path / "export-thread-prompts.db",
+        client_id="export-pilot-thread-prompts",
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -17299,7 +17316,9 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
         await pilot.pause()
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
+        assert scope_line == (
+            "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
+        )
 
 
 class _GatedExportCountMediaDB:
@@ -17336,6 +17355,15 @@ class _StaticExportCountChaChaDB:
         return []
 
 
+class _StaticExportCountPromptDB:
+    """A fixed, file-shaped Prompt source for gated counts pilots."""
+
+    is_memory_db = False
+
+    def get_all_active_prompt_ids(self):
+        return []
+
+
 @pytest.mark.asyncio
 async def test_library_shell_export_counts_landing_preserves_input_focus_and_text():
     """REGRESSION (F4 Task 2 review): counts landing must update the form
@@ -17350,6 +17378,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
     media_db = _GatedExportCountMediaDB()
     app.media_db = media_db
     app.chachanotes_db = _StaticExportCountChaChaDB()
+    app.prompts_db = _StaticExportCountPromptDB()
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -17388,7 +17417,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-scope-line", Static) is scope_line
         assert (
             str(scope_line.renderable)
-            == "All media, conversations & notes: 1 media · 1 conversations · 0 notes"
+            == "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
         )
         # Positive total, but still no destination -- Export stays disabled.
         assert screen.query_one("#library-export-submit", Button).disabled is True
@@ -17416,6 +17445,7 @@ async def test_library_shell_export_counts_landing_at_zero_reveals_empty_helper_
     media_db = _EmptyGatedMediaDB()
     app.media_db = media_db
     app.chachanotes_db = _EmptyChaChaDB()
+    app.prompts_db = _StaticExportCountPromptDB()
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -17515,6 +17545,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
     counts-landing regression pilot for the reverse transition.
     """
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-run-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-run-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -17651,6 +17682,7 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
     ``refresh(recompose=True)`` inside ``_apply_library_export_failure``)
     would otherwise go undetected."""
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-fail-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-fail-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -17759,6 +17791,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
     the orphaned run's completion (which still fires its notification --
     the export genuinely happened -- but nothing else)."""
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-orphan-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-orphan-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -17889,6 +17922,7 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
     reverted, test passes.
     """
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-stale-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-stale-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
@@ -17967,6 +18001,7 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
     silently-stuck ``running`` state -- the closest-to-production shape of
     "the service wiring failed", covered nowhere else in this suite."""
     app = _build_test_app()
+    _wire_empty_export_prompts_db(app, "export-noservice-prompts")
     _seed_conversations(app, _two_conversations())
     app.media_db = MediaDatabase(":memory:", client_id="export-noservice-media")
     app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")

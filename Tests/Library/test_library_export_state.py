@@ -60,14 +60,16 @@ def test_counts_none_renders_counting_placeholder_and_disables_export():
 def test_counts_landed_renders_scope_label():
     state = build_library_export_form_state(
         scope=ExportScope(kind="everything"),
-        counts={"media": 128, "conversations": 542, "notes": 87},
+        counts={"media": 128, "conversations": 542, "notes": 87, "prompts": 13},
         name="x",
         description="",
         media_quality=DEFAULT_MEDIA_QUALITY,
         destination="/tmp/out.zip",
     )
     assert state.counts_loading is False
-    assert state.scope_line == "All media, conversations & notes: 128 media · 542 conversations · 87 notes"
+    assert state.scope_line == (
+        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+    )
 
 
 def test_media_scoped_label_carries_type_filter():
@@ -175,7 +177,7 @@ def test_media_bearing_scopes_show_media_fields(kind):
     assert state.show_media_fields is True
 
 
-@pytest.mark.parametrize("kind", ["conversations", "notes"])
+@pytest.mark.parametrize("kind", ["conversations", "notes", "prompts"])
 def test_non_media_scopes_hide_media_fields(kind):
     state = build_library_export_form_state(
         scope=ExportScope(kind=kind),

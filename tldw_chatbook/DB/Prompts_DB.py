@@ -640,13 +640,17 @@ class PromptsDatabase:
         except Exception as e:
             if not in_outer:
                 logging.error(
-                    f"Transaction failed, rolling back: {type(e).__name__} - {e}"
+                    "PromptsDatabase.transaction: rolling back category={}",
+                    type(e).__name__,
                 )
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")
                 except sqlite3.Error as rb_err:
-                    logging.opt(exception=True).error(f"Rollback FAILED: {rb_err}")
+                    logging.error(
+                        "PromptsDatabase.transaction: rollback failed category={}",
+                        type(rb_err).__name__,
+                    )
             raise e
 
     # --- Schema Initialization and Migration ---
@@ -1309,7 +1313,8 @@ class PromptsDatabase:
                         return kw_id, kw_uuid
                     else:  # Already active, just return its ID and UUID
                         logger.debug(
-                            f"Keyword '{normalized_keyword}' already exists and is active. Reusing ID: {kw_id}, UUID: {kw_uuid}"
+                            "Prompt keyword reused operation=add_keyword "
+                            "category=existing"
                         )
                         return kw_id, kw_uuid
                 else:  # New keyword
@@ -1342,14 +1347,14 @@ class PromptsDatabase:
                     )
                     self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
                     return kw_id, new_uuid
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error in add_keyword (prompt) for '{keyword_text}': {e}"
+        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as exc:
+            logger.error(
+                "Prompt keyword write failed operation=add_keyword category={}",
+                type(exc).__name__,
             )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to add/update prompt keyword: {e}") from e
+            if isinstance(exc, (InputError, ConflictError, DatabaseError)):
+                raise
+            raise DatabaseError("Failed to add or update Prompt keyword.") from None
 
     def get_active_keyword_by_text(self, keyword_text: str) -> Optional[Dict]:
         """
@@ -1716,8 +1721,9 @@ class PromptsDatabase:
                 },
             )
 
-            logger.opt(exception=True).error(
-                f"Error adding/updating prompt '{name}': {e}"
+            logger.error(
+                "PromptsDatabase.add_prompt: operation failed category={}",
+                error_type,
             )
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
@@ -1822,19 +1828,19 @@ class PromptsDatabase:
                     )
 
             if ids_to_add or ids_to_remove:
-                logging.debug(
-                    f"Keywords updated for prompt {prompt_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
+                logger.debug(
+                    "Prompt keyword membership updated added={} removed={}",
+                    len(ids_to_add),
+                    len(ids_to_remove),
                 )
-        except (InputError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error updating keywords for prompt {prompt_id}: {e}"
+        except (InputError, DatabaseError, sqlite3.Error) as exc:
+            logger.error(
+                "Prompt keyword membership update failed category={}",
+                type(exc).__name__,
             )
-            if isinstance(e, (InputError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(
-                    f"Keyword update failed for prompt {prompt_id}: {e}"
-                ) from e
+            if isinstance(exc, (InputError, DatabaseError)):
+                raise
+            raise DatabaseError("Prompt keyword update failed.") from None
 
     def update_prompt_by_id(
         self,
@@ -2563,6 +2569,93 @@ class PromptsDatabase:
                 raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
 
     # --- Read Methods ---
+    def get_all_active_prompt_ids(self) -> List[int]:
+        """Return every active local Prompt/Recipe row ID in stable order.
+
+        Returns:
+            All non-deleted Prompt IDs ordered by their integer row ID.
+
+        Raises:
+            sqlite3.Error: If SQLite cannot execute the uncapped ID query.
+        """
+        rows = self.get_connection().execute(
+            "SELECT id FROM Prompts WHERE deleted = 0 ORDER BY id"
+        )
+        return [int(row["id"]) for row in rows.fetchall()]
+
+    def fetch_prompt_chatbook_snapshot(
+        self, prompt_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Read one active Prompt and its keywords from one SQLite snapshot.
+
+        This export-specific seam uses the shared nested-aware transaction
+        context while avoiding query helpers whose diagnostics include
+        parameters, exception messages, or tracebacks. The detached result
+        contains only portable Chatbook fields.
+
+        Args:
+            prompt_id: Positive SQLite-range Prompt row ID.
+
+        Returns:
+            Portable Prompt fields plus canonical active keywords, or ``None``
+            when the row is missing or deleted.
+
+        Raises:
+            ValueError: If ``prompt_id`` is not a positive SQLite-range integer.
+            DatabaseError: If the coherent snapshot cannot be read.
+        """
+        if type(prompt_id) is not int or not 1 <= prompt_id <= (2**63 - 1):
+            raise ValueError("prompt_id must be a positive integer in SQLite range.")
+
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT name, author, details, system_prompt, user_prompt,
+                           artifact_type, prompt_format, prompt_schema_version,
+                           prompt_definition
+                    FROM Prompts
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (prompt_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                keyword_rows = conn.execute(
+                    """
+                    SELECT keyword_table.keyword
+                    FROM PromptKeywordsTable AS keyword_table
+                    JOIN PromptKeywordLinks AS link
+                      ON link.keyword_id = keyword_table.id
+                    WHERE link.prompt_id = ? AND keyword_table.deleted = 0
+                    ORDER BY keyword_table.keyword COLLATE NOCASE
+                    """,
+                    (prompt_id,),
+                ).fetchall()
+                return {
+                    "name": row["name"],
+                    "author": row["author"],
+                    "details": row["details"],
+                    "system_prompt": row["system_prompt"],
+                    "user_prompt": row["user_prompt"],
+                    "keywords": [
+                        keyword_row["keyword"] for keyword_row in keyword_rows
+                    ],
+                    "artifact_type": row["artifact_type"],
+                    "prompt_format": row["prompt_format"],
+                    "prompt_schema_version": row["prompt_schema_version"],
+                    "prompt_definition": row["prompt_definition"],
+                }
+        except (
+            DatabaseError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ):
+            raise DatabaseError("Failed to read Prompt export snapshot.") from None
+
     def get_prompt_by_id(
         self, prompt_id: int, include_deleted: bool = False
     ) -> Optional[Dict]:

@@ -10,6 +10,7 @@ Handles the import and validation of chatbooks into the application.
 
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -28,10 +29,17 @@ from ..Chat.citation_service_factory import (
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..Prompt_Management.prompt_chatbook_record import (
+    PromptChatbookRecordError,
+    decode_chatbook_prompt_record,
+)
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
 from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
+
+
+_PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
 
 
 class ImportStatus:
@@ -998,59 +1006,117 @@ class ChatbookImporter:
         prefix_imported: bool,
         status: ImportStatus,
     ) -> None:
-        """Import prompts."""
+        """Import versioned or historical portable Prompt records."""
         db_path = self.db_paths.get("Prompts")
         if not db_path:
             status.add_error("Prompts database path not configured")
             return
 
-        db = PromptsDatabase(db_path, "chatbook_importer")
+        valid_prompt_ids: list[str] = []
+        for prompt_id in prompt_ids:
+            if (
+                not isinstance(prompt_id, str)
+                or _PROMPT_ARCHIVE_ITEM_ID.fullmatch(prompt_id) is None
+            ):
+                status.processed_items += 1
+                status.failed_items += 1
+                status.add_error("Unable to import Prompt item.")
+                logger.error(
+                    "ChatbookImporter._import_prompts: Prompt import failed "
+                    "item=invalid category=shape"
+                )
+            else:
+                valid_prompt_ids.append(prompt_id)
+        if not valid_prompt_ids:
+            return
+
+        try:
+            db = PromptsDatabase(db_path, "chatbook_importer")
+        except Exception:
+            for prompt_id in valid_prompt_ids:
+                status.processed_items += 1
+                status.failed_items += 1
+                status.add_error("Unable to import Prompt item.")
+                logger.error(
+                    "ChatbookImporter._import_prompts: Prompt import failed "
+                    "item={} category=database",
+                    prompt_id,
+                )
+            return
         prompts_dir = extract_dir / "content" / "prompts"
 
-        for prompt_id in prompt_ids:
+        for prompt_id in valid_prompt_ids:
             status.processed_items += 1
 
             try:
                 # Find prompt file
                 prompt_file = prompts_dir / f"prompt_{prompt_id}.json"
                 if not prompt_file.exists():
-                    status.add_warning(f"Prompt file not found: {prompt_file.name}")
+                    status.add_error("Unable to import Prompt item.")
                     status.failed_items += 1
+                    logger.error(
+                        "ChatbookImporter._import_prompts: Prompt import failed "
+                        "item={} category=missing",
+                        prompt_id,
+                    )
                     continue
 
-                # Load prompt data
                 with open(prompt_file, "r", encoding="utf-8") as f:
                     prompt_data = json.load(f)
+                decoded = decode_chatbook_prompt_record(prompt_data)
 
-                # Check for existing prompt with same name
-                prompt_name = prompt_data["name"]
+                prompt_name = decoded["name"]
                 if prefix_imported:
                     prompt_name = f"[Imported] {prompt_name}"
 
-                # Create prompt
-                # add_prompt returns tuple: (prompt_id, action, message)
                 result = db.add_prompt(
                     name=prompt_name,
-                    author=None,
-                    details=prompt_data.get("description", ""),
-                    system_prompt=prompt_data.get("content", ""),
-                    user_prompt=None,
-                    keywords=None,
+                    author=decoded["author"],
+                    details=decoded["details"],
+                    system_prompt=decoded["system_prompt"],
+                    user_prompt=decoded["user_prompt"],
+                    keywords=decoded["keywords"],
                     overwrite=False,
+                    prompt_format=decoded["prompt_format"],
+                    prompt_schema_version=decoded["prompt_schema_version"],
+                    prompt_definition=decoded["prompt_definition"],
+                    artifact_type=decoded["artifact_type"],
                 )
                 new_prompt_id = result[0] if result else None
 
                 if new_prompt_id:
                     status.successful_items += 1
-                    logger.info(f"Imported prompt: {prompt_name}")
+                    logger.info(
+                        "ChatbookImporter._import_prompts: Prompt imported "
+                        "item={} category=success",
+                        prompt_id,
+                    )
                 else:
                     status.failed_items += 1
-                    status.add_error(f"Failed to create prompt: {prompt_name}")
+                    status.add_error("Unable to import Prompt item.")
+                    logger.error(
+                        "ChatbookImporter._import_prompts: Prompt import failed "
+                        "item={} category=database",
+                        prompt_id,
+                    )
 
-            except Exception as e:
+            except Exception as exc:
                 status.failed_items += 1
-                status.add_error(f"Error importing prompt {prompt_id}: {str(e)}")
-                logger.error(f"Error importing prompt {prompt_id}: {e}")
+                status.add_error("Unable to import Prompt item.")
+                category = (
+                    exc.category
+                    if isinstance(exc, PromptChatbookRecordError)
+                    else "read"
+                    if isinstance(exc, (OSError, json.JSONDecodeError))
+                    else "database"
+                )
+                logger.error(
+                    "ChatbookImporter._import_prompts: Prompt import failed "
+                    "item={} category={}",
+                    prompt_id,
+                    category,
+                )
+        db.close_connection()
 
     def _import_media(
         self,

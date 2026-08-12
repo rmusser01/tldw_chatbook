@@ -108,8 +108,7 @@ class LibraryPromptsListCanvas(Vertical):
             conflict entry/resolution).
         import_open: List-view only. When ``True``, renders the inline
             Import row (a path ``Input`` for a file OR folder, plus
-            Import/Cancel actions) below the sort/Import… toolbar (Task 8c
-            D5 removed the dead Export… button that used to sit here).
+            Import/Cancel actions) below the Sort/Import…/Export… toolbar.
         import_path: The Import row's path ``Input`` prefilled value.
             Only meaningful while ``import_open`` is ``True``.
         import_status: Muted outcome line shown below the Import row
@@ -241,15 +240,12 @@ class LibraryPromptsListCanvas(Vertical):
             # names the pick's shape rather than a stale enumeration.
             tooltip="Press to pick the prompt scope: All prompts, or one collection.",
         )
-        # One horizontal ds-toolbar row for sort/Import -- mirrors
+        # One horizontal ds-toolbar row for Sort/Import/Export -- mirrors
         # library_notes_canvas.py's toolbar exactly (same render-safe shape:
         # every child is a fixed-width compact Button, never mixed with a
-        # 1fr sibling). Task 8c D5: the list-toolbar "Export…" button that
-        # used to sit here had no handler anywhere -- pressing it silently
-        # no-op'd -- so it was removed rather than wired to a fake bulk
-        # export. Bulk export is deferred to backlog task-197; per-prompt
-        # export lives in the editor's own #library-prompt-export and still
-        # works.
+        # 1fr sibling). TASK-197 wires the list Export action to the existing
+        # Chatbook export canvas; per-prompt Markdown export remains in the
+        # editor's own #library-prompt-export action.
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         # task-14902: the sort choice strip replaces this toolbar row while
@@ -270,6 +266,12 @@ class LibraryPromptsListCanvas(Vertical):
             yield Button(
                 "Import…",
                 id="library-prompts-import",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export…",
+                id="library-prompts-export",
                 classes="library-canvas-action",
                 compact=True,
             )
