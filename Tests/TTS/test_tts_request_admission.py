@@ -1276,8 +1276,13 @@ async def test_recipe_mismatch_blocks_before_provider_lease_or_adapter_work(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ("boolean_generation", "hollow_snapshot", "hollow_requirement"),
+)
 async def test_forged_pure_dependency_evidence_is_rejected_before_provider_work(
     tmp_path: Any,
+    invalid_kind: str,
 ) -> None:
     adapter = _CloneCapturingAdapter()
     saved = StudioTTSPreferencesSnapshot(revision=2)
@@ -1294,6 +1299,19 @@ async def test_forged_pure_dependency_evidence_is_rejected_before_provider_work(
     )
 
     async def forged(current: TTSCloneRecipeRequirement):
+        if invalid_kind == "hollow_snapshot":
+            return object.__new__(generation_module.AudioCppGuidedDependencySnapshot)
+        if invalid_kind == "hollow_requirement":
+            hollow = object.__new__(TTSCloneRecipeRequirement)
+            return generation_module.AudioCppGuidedDependencySnapshot(
+                state="exact",
+                provider_configuration_revision=1,
+                saved_generation=1,
+                applied_generation=1,
+                pending_configuration=False,
+                saved_requirement=hollow,
+                applied_requirement=hollow,
+            )
         return generation_module.AudioCppGuidedDependencySnapshot(
             state="exact",
             provider_configuration_revision=True,  # type: ignore[arg-type]

@@ -345,59 +345,70 @@ def validate_audio_cpp_guided_dependency_snapshot(
 ) -> AudioCppGuidedDependencySnapshot | None:
     """Fail closed on forged pure dependency evidence."""
 
-    if type(value) is not AudioCppGuidedDependencySnapshot:
-        return None
-    snapshot = value
-    if snapshot.state not in {"exact", "missing", "mismatch", "pending"}:
-        return None
     if (
-        any(
+        type(value) is not AudioCppGuidedDependencySnapshot
+        or type(requirement) is not TTSCloneRecipeRequirement
+    ):
+        return None
+
+    def canonical_requirement(
+        observed: object,
+    ) -> TTSCloneRecipeRequirement | None:
+        if observed is None:
+            return None
+        if not isinstance(observed, TTSCloneRecipeRequirement):
+            raise ValueError
+        if type(observed) is not TTSCloneRecipeRequirement:
+            raise ValueError
+        return TTSCloneRecipeRequirement(
+            recipe_id=observed.recipe_id,
+            recipe_revision=observed.recipe_revision,
+            model_id=observed.model_id,
+        )
+
+    try:
+        state = value.state
+        provider_revision = value.provider_configuration_revision
+        saved_generation = value.saved_generation
+        applied_generation = value.applied_generation
+        pending_configuration = value.pending_configuration
+        exact_requirement = canonical_requirement(requirement)
+        saved_requirement = canonical_requirement(value.saved_requirement)
+        applied_requirement = canonical_requirement(value.applied_requirement)
+    except Exception:  # noqa: BLE001 - hostile evidence fails closed
+        return None
+
+    if (
+        type(state) is not str
+        or state not in {"exact", "missing", "mismatch", "pending"}
+        or any(
             type(item) is not int or item < 0
             for item in (
-                snapshot.provider_configuration_revision,
-                snapshot.saved_generation,
-                snapshot.applied_generation,
+                provider_revision,
+                saved_generation,
+                applied_generation,
             )
         )
-        or type(snapshot.pending_configuration) is not bool
+        or type(pending_configuration) is not bool
+        or exact_requirement is None
+        or pending_configuration != (saved_generation != applied_generation)
     ):
         return None
-    for observed in (snapshot.saved_requirement, snapshot.applied_requirement):
-        if observed is None:
-            continue
-        if type(observed) is not TTSCloneRecipeRequirement:
-            return None
-        try:
-            canonical = TTSCloneRecipeRequirement(
-                recipe_id=observed.recipe_id,
-                recipe_revision=observed.recipe_revision,
-                model_id=observed.model_id,
-            )
-        except (TypeError, ValueError):
-            return None
-        if canonical != observed:
-            return None
-    if snapshot.pending_configuration != (
-        snapshot.saved_generation != snapshot.applied_generation
-    ):
+    if saved_requirement not in {
+        None,
+        exact_requirement,
+    } or applied_requirement not in {
+        None,
+        exact_requirement,
+    }:
         return None
-    if snapshot.state == "exact" and snapshot.applied_requirement != requirement:
+    if not pending_configuration and saved_requirement != applied_requirement:
         return None
-    if snapshot.state == "missing" and (
-        snapshot.saved_requirement is not None
-        or snapshot.applied_requirement is not None
-    ):
-        return None
-    if snapshot.state == "mismatch" and (
-        snapshot.saved_requirement == requirement
-        and snapshot.applied_requirement == requirement
-    ):
-        return None
-    if snapshot.state == "pending" and not (
-        snapshot.pending_configuration and snapshot.saved_requirement == requirement
-    ):
-        return None
-    return snapshot
+    if applied_requirement == exact_requirement:
+        return value if state == "exact" else None
+    if pending_configuration and saved_requirement == exact_requirement:
+        return value if state == "pending" else None
+    return value if state in {"missing", "mismatch"} else None
 
 
 @dataclass(frozen=True, slots=True)

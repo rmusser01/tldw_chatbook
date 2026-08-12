@@ -2582,6 +2582,134 @@ async def test_guided_dependency_snapshot_reports_exact_without_provider_work() 
     assert registry.acquire_calls == 0
 
 
+@pytest.mark.parametrize("pending_configuration", (False, True))
+@pytest.mark.parametrize("applied_kind", ("none", "exact", "other"))
+@pytest.mark.parametrize("saved_kind", ("none", "exact", "other"))
+@pytest.mark.parametrize("state", ("exact", "missing", "mismatch", "pending"))
+def test_guided_dependency_snapshot_validator_enforces_full_producer_matrix(
+    state: str,
+    saved_kind: str,
+    applied_kind: str,
+    pending_configuration: bool,
+) -> None:
+    requirement = _guided_requirement()
+    other = _guided_requirement(model_id="other-model")
+    observed = {
+        "none": None,
+        "exact": requirement,
+        "other": other,
+    }
+    snapshot = tts_generation.AudioCppGuidedDependencySnapshot(
+        state=state,  # type: ignore[arg-type]
+        provider_configuration_revision=4,
+        saved_generation=2 if pending_configuration else 1,
+        applied_generation=1,
+        pending_configuration=pending_configuration,
+        saved_requirement=observed[saved_kind],
+        applied_requirement=observed[applied_kind],
+    )
+    if "other" in {saved_kind, applied_kind}:
+        expected = False
+    elif not pending_configuration and saved_kind != applied_kind:
+        expected = False
+    elif applied_kind == "exact":
+        expected = state == "exact"
+    elif pending_configuration and saved_kind == "exact":
+        expected = state == "pending"
+    else:
+        expected = state in {"missing", "mismatch"}
+
+    validated = tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+        snapshot,
+        requirement,
+    )
+
+    assert (validated is snapshot) is expected
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    (
+        ("provider_configuration_revision", True),
+        ("saved_generation", False),
+        ("applied_generation", True),
+        ("pending_configuration", 0),
+    ),
+)
+def test_guided_dependency_snapshot_validator_requires_strict_bool_and_int_fields(
+    field: str,
+    invalid: object,
+) -> None:
+    requirement = _guided_requirement()
+    values: dict[str, object] = {
+        "state": "exact",
+        "provider_configuration_revision": 4,
+        "saved_generation": 1,
+        "applied_generation": 1,
+        "pending_configuration": False,
+        "saved_requirement": requirement,
+        "applied_requirement": requirement,
+    }
+    values[field] = invalid
+    snapshot = tts_generation.AudioCppGuidedDependencySnapshot(**values)  # type: ignore[arg-type]
+
+    assert (
+        tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+            snapshot,
+            requirement,
+        )
+        is None
+    )
+
+
+def test_guided_dependency_snapshot_validator_contains_hollow_exact_type_objects() -> (
+    None
+):
+    requirement = _guided_requirement()
+    hollow_snapshot = object.__new__(tts_generation.AudioCppGuidedDependencySnapshot)
+    hollow_requirement = object.__new__(TTSCloneRecipeRequirement)
+    snapshot_with_hollow_nested = tts_generation.AudioCppGuidedDependencySnapshot(
+        state="exact",
+        provider_configuration_revision=4,
+        saved_generation=1,
+        applied_generation=1,
+        pending_configuration=False,
+        saved_requirement=hollow_requirement,
+        applied_requirement=hollow_requirement,
+    )
+    exact_snapshot = tts_generation.AudioCppGuidedDependencySnapshot(
+        state="exact",
+        provider_configuration_revision=4,
+        saved_generation=1,
+        applied_generation=1,
+        pending_configuration=False,
+        saved_requirement=requirement,
+        applied_requirement=requirement,
+    )
+
+    assert (
+        tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+            hollow_snapshot,
+            requirement,
+        )
+        is None
+    )
+    assert (
+        tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+            snapshot_with_hollow_nested,
+            requirement,
+        )
+        is None
+    )
+    assert (
+        tts_generation.validate_audio_cpp_guided_dependency_snapshot(
+            exact_snapshot,
+            hollow_requirement,
+        )
+        is None
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("requirement", "expected_state"),
@@ -5303,7 +5431,9 @@ async def test_reference_availability_projects_exact_dependency_truth(
             saved_generation=2 if dependency_state == "pending" else 1,
             applied_generation=1,
             pending_configuration=dependency_state == "pending",
-            saved_requirement=(requirement if dependency_state != "missing" else None),
+            saved_requirement=(
+                requirement if dependency_state in {"exact", "pending"} else None
+            ),
             applied_requirement=(requirement if dependency_state == "exact" else None),
         )
     )
@@ -5330,6 +5460,35 @@ async def test_reference_availability_projects_exact_dependency_truth(
     assert availability.state == (
         "available" if dependency_state == "exact" else "unavailable"
     )
+    assert tts_service.dependency_calls == [requirement]
+
+
+@pytest.mark.asyncio
+async def test_reference_availability_bounds_invalid_dependency_evidence() -> None:
+    requirement = _guided_requirement(model_id="model-a")
+    reference = _reference_with_requirement(requirement)
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    tts_service.dependency_snapshots[requirement] = cast(
+        Any,
+        object.__new__(tts_generation.AudioCppGuidedDependencySnapshot),
+    )
+    service, repository, _ = _service(tts_service=tts_service)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.observe_availability(
+            TTSProfilePageSnapshot(
+                repository_generation=repository.generation,
+                profiles=(
+                    _profile(
+                        model_id="model-a",
+                        reference=reference.summary,
+                    ),
+                ),
+                total=1,
+            )
+        )
+
+    _assert_safe_service_error(caught.value, "operation_failed")
     assert tts_service.dependency_calls == [requirement]
 
 
