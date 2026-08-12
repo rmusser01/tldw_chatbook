@@ -198,12 +198,24 @@ def test_console_workspace_status_row_empty_value_uses_unavailable():
 
 
 def test_console_workspace_conversation_search_worker_uses_dedicated_group():
+    # TASK-15454 moved the `run_worker` call out of the `Input.Changed`
+    # handler and into the debounced callback the handler now arms -- the
+    # DB work in front of the timer was running once per keystroke. The
+    # contract this test pins (the search runs in its own exclusive worker
+    # group, so a newer search cancels an in-flight one) is unchanged; only
+    # the function that expresses it moved.
     source = inspect.getsource(
-        ChatScreen.on_console_workspace_conversation_search_changed
+        ChatScreen._start_console_conversation_browser_search
     )
 
     assert 'group="console-workspace-conversation-search"' in source
     assert "exclusive=True" in source
+
+    handler = inspect.getsource(
+        ChatScreen.on_console_workspace_conversation_search_changed
+    )
+    assert "_start_console_conversation_browser_search" in handler
+    assert "self.set_timer(" in handler
 
 
 def test_console_workspace_conversation_search_clear_button_stops_pending_timer():

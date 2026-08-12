@@ -2901,3 +2901,41 @@ opened during it can be born stale. And treat a documented "it self-heals on ret
 as a live bug with a shortened fuse: it is one held connection away from being permanent.
 Probing the mechanism cost ~20 minutes (init/connection timeline + one retry inside the
 failing call); guessing at "sqlite locking" would have cost far more and fixed nothing.
+
+## A "we tried this and it broke X" comment is dated evidence, not a standing constraint (TASK-15454, 2026-08-11)
+
+`ConsoleWorkspaceContextTray.sync_state` carried a long, careful comment (TASK-251,
+July) explaining that the obvious `if state == self.state: return` guard had been
+implemented, had broken click targeting on grouped browser rows, and had been
+withdrawn — naming the two tests that failed. A separate test pinned the
+unconditional recompose so nobody could quietly reintroduce it. Every downstream
+comment in the file, in `chat_screen.py`, and in two test modules repeated the
+conclusion: "an equality guard here is unsafe".
+
+Re-guarding it started by reproducing that: apply the naive guard, run the two named
+tests. **Both passed.** Widening to the whole 309-test `test_console_native_chat_flow.py`
+plus `test_console_rail_sections.py` produced only the two tick-gating pins (which pin
+the unconditional recompose itself) and one failure that also fails at HEAD. The
+regression had been dissolved by later, unrelated work — most plausibly TASK-1900's
+non-echoing search input and TASK-1191's collapse of the fit-pass from three deferred
+hops to one.
+
+Two things follow, and the second matters more than the first:
+
+1. **Re-run the witness before designing around it.** Fifteen minutes of `git log -S`
+   plus two test invocations turned "this is forbidden" into "this was forbidden in
+   July, for a reason that no longer exists". Without that, the natural move is to
+   design elaborately around a constraint that is not there — or, worse, to accept the
+   comment and skip the work entirely.
+2. **A dissolved regression is not a licence to do the naive thing.** The comment's
+   *diagnosis* outlived its symptom, and it was the valuable part: state equality
+   answers "does this widget REMEMBER this state", which is a different question from
+   "is this widget SHOWING it". Those two came apart once and can come apart again.
+   The guard that shipped therefore checks the second question directly — `compose()`
+   records the row ids/keys it built; the guard compares that against the rows read
+   back out of the live DOM — and both directions are mutation-tested (`return state
+   == self.state` reds the safety tests; `return False` reds the skip tests).
+
+**What to do.** Treat every "deliberately reverted / do not reintroduce" comment as an
+experiment with a date on it. Re-run its named witnesses first; record the result in
+the task either way. Then keep the diagnosis even when the symptom is gone.
