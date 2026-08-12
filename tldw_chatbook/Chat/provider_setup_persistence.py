@@ -25,8 +25,11 @@ from .provider_test_evidence import CredentialSource, ProviderDraftIdentity
 _MAX_MODEL_CHARS = 120
 _MAX_SECRET_CHARS = 8192
 _MAX_CONFIG_PROVIDERS = 256
+_MAX_IDENTITY_COUNTER = 2**63 - 1
 _MAX_MUTATION_SECTIONS = 3
 _MAX_MUTATION_KEYS = 16
+_MAX_COMBINED_MUTATION_SECTIONS = 8
+_MAX_COMBINED_MUTATION_KEYS = 32
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _SECTION_NAME_PATTERN = re.compile(r"[A-Za-z0-9_. -]{1,192}")
@@ -97,6 +100,7 @@ _CANONICAL_PROVIDER_KEYS = frozenset(
         "local_onnx",
         "local_transformers",
         "local_vllm",
+        "mistral",
         "mistralai",
         "moonshot",
         "ollama",
@@ -144,8 +148,7 @@ _ALIASES = {
     "local-llamacpp": "local_llamacpp",
     "local-llm": "local_llm",
     "mlx_lm": "local_mlx_lm",
-    "Mistral": "mistralai",
-    "mistral": "mistralai",
+    "Mistral": "mistral",
     "MistralAI": "mistralai",
     "Moonshot": "moonshot",
     "Ollama": "ollama",
@@ -213,9 +216,15 @@ class ProviderSetupDraft:
             raise ValueError("Endpoint is invalid.")
         if self.credential_source not in {"none", "stored", "environment", "draft"}:
             raise ValueError("Credential source is invalid.")
-        if type(self.credential_revision) is not int or self.credential_revision < 0:
+        if (
+            type(self.credential_revision) is not int
+            or not 0 <= self.credential_revision <= _MAX_IDENTITY_COUNTER
+        ):
             raise ValueError("Credential revision is invalid.")
-        if type(self.draft_generation) is not int or self.draft_generation < 0:
+        if (
+            type(self.draft_generation) is not int
+            or not 0 <= self.draft_generation <= _MAX_IDENTITY_COUNTER
+        ):
             raise ValueError("Draft generation is invalid.")
         if self.credential_value is not None:
             _validate_credential_value(self.credential_value)
@@ -443,10 +452,46 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
         require_issued=True,
         validate_credentials=True,
     )
-    return apply_settings_mutation_to_cli_config(
-        mutation.section_values,
+    chat_defaults = mutation.section_values.get("chat_defaults", {})
+    return persist_provider_settings_atomic(
+        mutation,
+        provider=chat_defaults.get("provider"),
+        model=chat_defaults.get("model"),
+        section_values=mutation.section_values,
         delete_keys=mutation.delete_keys,
     )
+
+
+def persist_provider_settings_atomic(
+    setup_mutation: ProviderSetupMutation | None,
+    *,
+    provider: object,
+    model: object,
+    section_values: Mapping[str, Mapping[str, object]],
+    delete_keys: Mapping[str, tuple[str, ...]],
+) -> ConfigMutationResult:
+    """Validate and persist one combined provider Settings mutation."""
+
+    ownership = _ownership_for(provider)
+    if type(model) is not str or (model and _safe_model(model) != model):
+        raise ValueError("Provider settings model is invalid.")
+    _validate_combined_provider_settings_mutation(
+        setup_mutation,
+        ownership,
+        model,
+        section_values,
+        delete_keys,
+    )
+    try:
+        result = apply_settings_mutation_to_cli_config(
+            section_values,
+            delete_keys=delete_keys,
+        )
+    except Exception:  # noqa: BLE001 - persistence must fail closed on writer errors.
+        return ConfigMutationResult(False, False, "before_replace")
+    if type(result) is not ConfigMutationResult:
+        return ConfigMutationResult(False, False, "before_replace")
+    return result
 
 
 def provider_setup_is_explicitly_configured(
@@ -584,6 +629,195 @@ def _existing_environment_name(value: object) -> str | None:
     if not candidate or _ENV_VAR_PATTERN.fullmatch(candidate) is None:
         return None
     return candidate
+
+
+def _provider_draft_identity_is_valid(identity: object) -> bool:
+    if type(identity) is not ProviderDraftIdentity:
+        return False
+    try:
+        provider_key = identity.provider_key
+        connection_identity = identity.connection_identity
+        credential_source = identity.credential_source
+        credential_revision = identity.credential_revision
+        draft_generation = identity.draft_generation
+        rebuilt = ProviderDraftIdentity(
+            provider_key=provider_key,
+            connection_identity=connection_identity,
+            credential_source=credential_source,
+            credential_revision=credential_revision,
+            draft_generation=draft_generation,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return bool(
+        rebuilt == identity
+        and type(credential_revision) is int
+        and 0 <= credential_revision <= _MAX_IDENTITY_COUNTER
+        and type(draft_generation) is int
+        and 0 <= draft_generation <= _MAX_IDENTITY_COUNTER
+    )
+
+
+def _validate_combined_provider_settings_mutation(
+    setup_mutation: ProviderSetupMutation | None,
+    ownership: _ProviderOwnership,
+    model: str,
+    section_values: object,
+    delete_keys: object,
+) -> None:
+    error = ValueError("Combined provider settings mutation is invalid.")
+    connection_error = ValueError(
+        "Combined provider settings connection mutation requires validated setup."
+    )
+    if not isinstance(section_values, Mapping) or not isinstance(delete_keys, Mapping):
+        raise error
+    if (
+        not section_values
+        and not delete_keys
+        or len(section_values) > _MAX_COMBINED_MUTATION_SECTIONS
+    ):
+        raise error
+    if len(delete_keys) > _MAX_COMBINED_MUTATION_SECTIONS:
+        raise error
+
+    total_keys = 0
+    for section, values in section_values.items():
+        if (
+            type(section) is not str
+            or _SECTION_NAME_PATTERN.fullmatch(section) is None
+            or not isinstance(values, Mapping)
+            or not values
+        ):
+            raise error
+        total_keys += len(values)
+        if section == "model_capabilities.models":
+            invalid_keys = any(_safe_model(key) != key for key in values)
+        else:
+            invalid_keys = any(
+                type(key) is not str or _CONFIG_KEY_PATTERN.fullmatch(key) is None
+                for key in values
+            )
+        if invalid_keys:
+            raise error
+    for section, keys in delete_keys.items():
+        if (
+            type(section) is not str
+            or _SECTION_NAME_PATTERN.fullmatch(section) is None
+            or type(keys) is not tuple
+            or not keys
+            or len(keys) != len(set(keys))
+        ):
+            raise error
+        total_keys += len(keys)
+        if section == "model_capabilities.models":
+            invalid_keys = any(_safe_model(key) != key for key in keys)
+        else:
+            invalid_keys = any(
+                type(key) is not str or _CONFIG_KEY_PATTERN.fullmatch(key) is None
+                for key in keys
+            )
+        if invalid_keys:
+            raise error
+        values = section_values.get(section, {})
+        if any(key in values for key in keys):
+            raise ValueError(
+                "Combined provider settings mutation has overlapping keys."
+            )
+    if total_keys > _MAX_COMBINED_MUTATION_KEYS:
+        raise error
+
+    setup_set_keys: dict[str, frozenset[str]] = {}
+    setup_delete_keys: dict[str, frozenset[str]] = {}
+    if setup_mutation is not None:
+        _validate_provider_setup_mutation(
+            setup_mutation,
+            require_issued=True,
+            validate_credentials=True,
+        )
+        setup_defaults = setup_mutation.section_values["chat_defaults"]
+        if (
+            setup_defaults.get("provider") != ownership.provider_key
+            or setup_defaults.get("model") != model
+        ):
+            raise error
+        for section, values in setup_mutation.section_values.items():
+            combined_values = section_values.get(section)
+            if not isinstance(combined_values, Mapping) or any(
+                key not in combined_values or combined_values[key] != value
+                for key, value in values.items()
+            ):
+                raise error
+            setup_set_keys[section] = frozenset(values)
+        for section, keys in setup_mutation.delete_keys.items():
+            combined_deletes = delete_keys.get(section, ())
+            if any(key not in combined_deletes for key in keys):
+                raise error
+            setup_delete_keys[section] = frozenset(keys)
+
+    for section, values in section_values.items():
+        extra_keys = set(values) - setup_set_keys.get(section, frozenset())
+        if section.startswith("api_settings."):
+            try:
+                section_owner = _ownership_for(section.removeprefix("api_settings."))
+            except ValueError as exc:
+                raise error from exc
+            if section_owner.provider_key != ownership.provider_key:
+                raise error
+            allowed_extra_keys = {"model_defaults"}
+            if ownership.provider_key == "qwencloud":
+                allowed_extra_keys.add("api_mode")
+            if not extra_keys.issubset(allowed_extra_keys):
+                if setup_mutation is None:
+                    raise connection_error
+                raise error
+            if "model_defaults" in extra_keys and not isinstance(
+                values["model_defaults"], Mapping
+            ):
+                raise error
+            if "api_mode" in extra_keys and values["api_mode"] not in {
+                "responses",
+                "chat_completions",
+            }:
+                raise error
+        elif section == "model_capabilities.models":
+            if (
+                not model
+                or extra_keys != {model}
+                or not isinstance(values[model], Mapping)
+            ):
+                raise error
+        elif extra_keys:
+            if setup_mutation is None and section in {
+                "chat_defaults",
+                "provider_setup.confirmed",
+            }:
+                raise connection_error
+            raise error
+
+    for section, keys in delete_keys.items():
+        extra_keys = set(keys) - setup_delete_keys.get(section, frozenset())
+        if not extra_keys:
+            continue
+        if section.startswith("api_settings."):
+            try:
+                section_owner = _ownership_for(section.removeprefix("api_settings."))
+            except ValueError as exc:
+                raise error from exc
+            if (
+                section_owner.provider_key != ownership.provider_key
+                or ownership.provider_key != "qwencloud"
+                or extra_keys != {"api_mode"}
+            ):
+                if setup_mutation is None:
+                    raise connection_error
+                raise error
+        elif section == "model_capabilities.models":
+            if not model or extra_keys != {model}:
+                raise error
+        else:
+            if setup_mutation is None:
+                raise connection_error
+            raise error
 
 
 def _mark_provider_setup_mutation_issued(mutation: ProviderSetupMutation) -> None:
@@ -791,6 +1025,8 @@ def _validate_provider_setup_mutation(
             raise error
         if type(semantic_identity) is not ProviderDraftIdentity:
             raise identity_error
+        if not _provider_draft_identity_is_valid(semantic_identity):
+            raise identity_error
         endpoint_value = provider_values[set_endpoint_keys[0]]
         if type(endpoint_value) is not str:
             raise error
@@ -824,7 +1060,7 @@ def _configured_section_key(
         return ownership.config_section
     for index, configured_provider in enumerate(api_settings):
         if index >= _MAX_CONFIG_PROVIDERS:
-            break
+            raise ValueError("Provider settings alias scan limit was exceeded.")
         try:
             configured_ownership = _ownership_for(configured_provider)
         except ValueError:

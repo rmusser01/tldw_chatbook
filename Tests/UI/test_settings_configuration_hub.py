@@ -31,6 +31,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -91,7 +92,7 @@ def _capture_provider_settings_mutations(monkeypatch):
         return ConfigMutationResult(True, True, None)
 
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         apply_mutation,
     )
@@ -5782,17 +5783,75 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
             "streaming": False,
         },
     }
+    assert set(sections) == {"api_settings.openai"}
+    assert set(sections["api_settings.openai"]) == {"model_defaults"}
+    assert _deletes == {}
     assert app.app_config["chat_defaults"] == {
-        "provider": "openai",
+        "provider": "OpenAI",
         "model": "gpt-4.1",
         "streaming": True,
         "temperature": 0.7,
+    }
+    assert app.app_config["api_settings"]["openai"] == {
+        "model_defaults": {
+            "gpt-4.1": {
+                "temperature": 0.2,
+                "top_p": 0.88,
+                "streaming": False,
+            }
+        }
     }
     assert app.app_config["api_settings"]["openai"]["model_defaults"]["gpt-4.1"] == {
         "temperature": 0.2,
         "top_p": 0.88,
         "streaming": False,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+async def test_settings_saves_each_mistral_entry_to_its_distinct_owner(
+    monkeypatch, provider
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "mistral": {
+            "api_base_url": "https://legacy.mistral.example/v1",
+            "model": "legacy-model",
+            "api_key_env_var": "MISTRAL_LEGACY_KEY",
+        },
+        "mistralai": {
+            "api_base_url": "https://catalog.mistral.example/v1",
+            "model": "catalog-model",
+            "api_key_env_var": "MISTRALAI_KEY",
+        },
+    }
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider_select = screen.query_one("#settings-provider-value", Select)
+        provider_select.value = provider
+        screen.handle_provider_value_changed(Select.Changed(provider_select, provider))
+        screen.query_one("#settings-model-value", Input).value = f"{provider}-new"
+
+        await pilot.click("#settings-save-category")
+
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": provider,
+        "model": f"{provider}-new",
+    }
+    assert sections[f"api_settings.{provider}"]["model"] == f"{provider}-new"
+    other = "mistralai" if provider == "mistral" else "mistral"
+    assert f"api_settings.{other}" not in sections
 
 
 @pytest.mark.asyncio
@@ -6377,10 +6436,12 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         endpoint.focus()
         endpoint.value = "https://proxy.example.com/v1"
+        await pilot.pause()
 
         screen.handle_save_category(
             Button.Pressed(screen.query_one("#settings-save-category", Button))
         )
+        await pilot.pause()
 
     assert len(mutations) == 1
     sections, _deletes = mutations[0]

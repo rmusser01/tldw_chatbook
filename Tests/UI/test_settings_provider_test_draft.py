@@ -1,3 +1,4 @@
+import asyncio
 import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -868,6 +869,39 @@ def test_settings_converts_probe_outcome_to_exact_evidence_dto():
     )
 
 
+def test_model_edit_cancels_active_probe_token_but_not_settled_evidence():
+    identity = _semantic_identity("https://example.test/v1/models")
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_current_draft_identity = lambda: identity
+    screen._provider_test_result = "Provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    token = store.begin(identity)
+
+    screen._update_provider_evidence_for_edit("model", "model-b")
+
+    assert not store.settle(
+        token,
+        ProviderProbeResult(endpoint="reachable", model_ids=("model-a",)),
+    )
+    assert store.evidence_for(identity) is None
+    assert "re-run" in screen._provider_test_result.lower()
+
+    settled_token = store.begin(identity)
+    assert store.settle(
+        settled_token,
+        ProviderProbeResult(
+            endpoint="reachable",
+            model_ids=("model-a", "model-b"),
+        ),
+    )
+    screen._provider_test_result = "Provider test | endpoint reachable"
+    screen._update_provider_evidence_for_edit("model", "model-b")
+    assert store.evidence_for(identity) is not None
+    assert "re-run" not in screen._provider_test_result.lower()
+
+
 def test_discovery_status_distinguishes_malformed_from_unsupported():
     """TASK-367: the model-discovery status surfaces DISTINCT copy for a
     malformed URL vs a valid-but-unsupported path, instead of collapsing both
@@ -1132,6 +1166,89 @@ async def test_t_hotkey_does_not_run_test_while_input_focused():
         screen.action_settings_test_category()
         await pilot.pause()
         assert _provider_test_result_text(screen) == before
+
+
+@pytest.mark.asyncio
+async def test_model_edit_during_probe_rejects_late_old_model_result(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+    }
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_probe(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("model-a",),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        delayed_probe,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.action_settings_test_category()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert "checking" in screen._provider_test_result
+
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "model-b"
+        await pilot.pause()
+        release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        current_identity = screen._provider_current_draft_identity()
+        assert current_identity is not None
+        assert screen._provider_evidence_store().evidence_for(current_identity) is None
+        assert "re-run" in screen._provider_test_result.lower()
+        assert "endpoint reachable" not in screen._provider_test_result.lower()
+
+
+@pytest.mark.asyncio
+async def test_probe_worker_unexpected_exception_settles_bounded_failure(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://localhost:8080", "model": "model-a"}
+    }
+
+    async def failing_probe(*_args, **_kwargs):
+        raise RuntimeError("secret-probe-detail")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        failing_probe,
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        identity = screen._provider_current_draft_identity()
+        assert identity is not None
+
+        screen.action_settings_test_category()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        result = screen._provider_test_result
+        assert "checking" not in result.lower()
+        assert "connection error" in result.lower()
+        assert "secret-probe-detail" not in result
+        evidence = screen._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "unreachable"
+        assert evidence.category == "connection_error"
 
 
 @pytest.mark.asyncio

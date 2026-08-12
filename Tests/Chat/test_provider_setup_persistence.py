@@ -61,6 +61,33 @@ def test_provider_ownership_tables_cover_established_aliases(
     assert provider_credential_keys(provider) == ("api_key", "api_key_env_var")
 
 
+@pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+def test_mistral_provider_entries_keep_distinct_config_owners(provider):
+    mutation = build_provider_setup_mutation(
+        _draft(
+            provider=provider,
+            model=f"{provider}-model",
+            endpoint="https://api.mistral.ai/v1",
+        ),
+        {
+            "api_settings": {
+                "mistral": {"model": "legacy-model"},
+                "mistralai": {"model": "catalog-model"},
+            }
+        },
+    )
+
+    assert f"api_settings.{provider}" in mutation.section_values
+    assert mutation.section_values[f"api_settings.{provider}"]["model"] == (
+        f"{provider}-model"
+    )
+    assert mutation.section_values["chat_defaults"] == {
+        "provider": provider,
+        "model": f"{provider}-model",
+    }
+    assert mutation.section_values["provider_setup.confirmed"] == {provider: True}
+
+
 @pytest.mark.parametrize(
     "provider",
     ["", "unknown", "custom---openai", "open ai", "../openai", "openai\u202e"],
@@ -853,6 +880,63 @@ def test_persist_rejects_post_issuance_identity_without_calling_writer(monkeypat
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("field_name", "tampered_value"),
+    [
+        ("credential_revision", -1),
+        ("credential_revision", 2**63),
+        ("credential_revision", True),
+        ("credential_revision", "1"),
+        ("draft_generation", -1),
+        ("draft_generation", 2**63),
+        ("draft_generation", True),
+        ("draft_generation", "1"),
+    ],
+)
+def test_persist_revalidates_all_semantic_identity_counters(
+    monkeypatch, field_name, tampered_value
+):
+    forged = build_provider_setup_mutation(_draft(), {})
+    assert forged.semantic_identity is not None
+    object.__setattr__(forged.semantic_identity, field_name, tampered_value)
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="identity"):
+        persist_provider_setup(forged)
+    assert calls == []
+
+
+def test_provider_alias_after_bounded_scan_fails_closed_without_writer(monkeypatch):
+    api_settings = {f"unknown_{index}": {} for index in range(256)}
+    api_settings["OpenAI"] = {
+        "api_base_url": "https://existing.example.test/v1",
+        "model": "existing-model",
+    }
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="Provider settings"):
+        mutation = build_provider_setup_mutation(
+            _draft(
+                provider="openai",
+                endpoint="https://new.example.test/v1",
+            ),
+            {"api_settings": api_settings},
+        )
+        persist_provider_setup(mutation)
+
+    assert calls == []
+
+
 def test_dataclass_replace_cannot_copy_issuance_or_persist_oversized_credential(
     monkeypatch,
 ):
@@ -972,6 +1056,75 @@ def test_persist_provider_setup_delegates_once_and_preserves_typed_result(monkey
 
     assert persist_provider_setup(mutation) is expected
     assert calls == [(mutation.section_values, mutation.delete_keys)]
+
+
+def test_combined_provider_settings_boundary_validates_setup_and_writes_once(
+    monkeypatch,
+):
+    setup = build_provider_setup_mutation(
+        _draft(
+            provider="openai",
+            model="gpt-4.1",
+            endpoint="https://api.openai.com/v1",
+            credential_source="environment",
+            credential_env_var="OPENAI_API_KEY",
+        ),
+        {},
+    )
+    section_values = {
+        section: dict(values) for section, values in setup.section_values.items()
+    }
+    section_values["api_settings.openai"]["model_defaults"] = {
+        "gpt-4.1": {"temperature": 0.2}
+    }
+    delete_keys = {section: tuple(keys) for section, keys in setup.delete_keys.items()}
+    expected = ConfigMutationResult(True, True, None)
+    calls = []
+
+    def writer(values, *, delete_keys=None):
+        calls.append((values, delete_keys))
+        return expected
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+
+    result = persistence_module.persist_provider_settings_atomic(
+        setup,
+        provider="openai",
+        model="gpt-4.1",
+        section_values=section_values,
+        delete_keys=delete_keys,
+    )
+
+    assert result is expected
+    assert calls == [(section_values, delete_keys)]
+
+
+def test_combined_provider_settings_boundary_rejects_connection_without_setup(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="connection"):
+        persistence_module.persist_provider_settings_atomic(
+            None,
+            provider="openai",
+            model="gpt-4.1",
+            section_values={
+                "chat_defaults": {"provider": "openai", "model": "gpt-4.1"}
+            },
+            delete_keys={},
+        )
+
+    assert calls == []
 
 
 def test_explicit_confirmation_is_authoritative_and_sparse():

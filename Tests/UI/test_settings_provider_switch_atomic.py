@@ -17,6 +17,8 @@ from Tests.UI.test_settings_configuration_hub import (
     _build_test_app,
     _open_settings_category,
 )
+from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -122,7 +124,7 @@ async def test_provider_save_partial_failure_keeps_memory_and_draft(
         return result
 
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         fake_writer,
     )
@@ -161,6 +163,57 @@ async def test_provider_save_partial_failure_keeps_memory_and_draft(
 
 
 @pytest.mark.asyncio
+async def test_provider_save_writer_exception_fails_closed_and_settles_lease(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": "malformed-provider-table"}
+    calls = []
+
+    def failing_writer(section_values, *, delete_keys=None):
+        calls.append((section_values, delete_keys))
+        raise RuntimeError("secret-writer-detail")
+
+    monkeypatch.setattr(
+        provider_persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        failing_writer,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4o-mini"
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "https://api.openai.com/v1"
+        await pilot.pause()
+        identity = screen._provider_current_draft_identity()
+        assert identity is not None
+        token = screen._provider_evidence_store().begin(identity)
+        assert screen._provider_evidence_store().settle(
+            token,
+            ProviderProbeResult("reachable", ("gpt-4o-mini",)),
+        )
+
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+
+        copy = str(
+            screen.query_one("#settings-provider-save-result", Static).renderable
+        )
+        assert "file was not written" in copy.lower()
+        assert "secret-writer-detail" not in copy
+        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
+        assert screen._provider_evidence_store().evidence_for(identity) is None
+
+    assert len(calls) == 1
+    assert app.app_config["api_settings"]["openai"] == "malformed-provider-table"
+
+
+@pytest.mark.asyncio
 async def test_provider_save_uses_one_atomic_writer_for_all_owned_values(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
@@ -175,7 +228,7 @@ async def test_provider_save_uses_one_atomic_writer_for_all_owned_values(monkeyp
         return ConfigMutationResult(True, True, None)
 
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         fake_writer,
     )
@@ -230,7 +283,7 @@ async def test_exact_probe_evidence_survives_returned_model_selection_and_save(
 
     monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         lambda section_values, *, delete_keys=None: ConfigMutationResult(
             True, True, None
@@ -297,7 +350,7 @@ async def test_exact_draft_key_probe_evidence_survives_successful_commit(
 
     monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         lambda section_values, *, delete_keys=None: ConfigMutationResult(
             True, True, None

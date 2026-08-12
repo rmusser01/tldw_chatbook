@@ -112,9 +112,7 @@ class SettingsEndpointProbeOutcome:
         if model_ids_provided and isinstance(model_ids, (str, bytes)):
             raise ValueError("Model IDs are invalid.")
         try:
-            resolved_model_ids = (
-                tuple(model_ids) if model_ids_provided else ()
-            )
+            resolved_model_ids = tuple(model_ids) if model_ids_provided else ()
         except TypeError:
             raise ValueError("Model IDs are invalid.") from None
         if any(not isinstance(model_id, str) for model_id in resolved_model_ids):
@@ -126,8 +124,7 @@ class SettingsEndpointProbeOutcome:
         ):
             raise ValueError("Model count must be a non-negative integer.")
         if category is not None and (
-            not isinstance(category, str)
-            or category not in _ENDPOINT_PROBE_CATEGORIES
+            not isinstance(category, str) or category not in _ENDPOINT_PROBE_CATEGORIES
         ):
             raise ValueError("Endpoint probe category is invalid.")
 
@@ -148,9 +145,7 @@ class SettingsEndpointProbeOutcome:
         resolved_model_count: int | None = None
         if resolved_state == "reachable":
             if category is not None:
-                raise ValueError(
-                    "Reachable probe cannot include a failure category."
-                )
+                raise ValueError("Reachable probe cannot include a failure category.")
             if (
                 model_ids_provided
                 and model_count is not None
@@ -302,7 +297,11 @@ async def probe_settings_endpoint(
             summary="unreachable: invalid endpoint URL",
         )
     owns_client = http_client is None
-    client = http_client or httpx.AsyncClient(timeout=timeout)
+    try:
+        client = http_client or httpx.AsyncClient(timeout=timeout)
+    except Exception:  # noqa: BLE001 - keep UI failures bounded and secret-free.
+        return _failure("connection_error", "unreachable: connection error")
+    outcome = _failure("connection_error", "unreachable: connection error")
     try:
         outcome = await _request_models(
             client,
@@ -314,8 +313,16 @@ async def probe_settings_endpoint(
             "local_ollama",
         }:
             root = resolution.models_url.removesuffix("/v1/models")
-            return await _request_models(client, f"{root}/api/tags", timeout)
-        return outcome
+            outcome = await _request_models(client, f"{root}/api/tags", timeout)
+    except Exception:  # noqa: BLE001 - helper contract is explicitly no-raise.
+        outcome = _failure("connection_error", "unreachable: connection error")
     finally:
         if owns_client:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001 - shutdown errors are not actionable UI.
+                outcome = _failure(
+                    "connection_error",
+                    "unreachable: connection error",
+                )
+    return outcome

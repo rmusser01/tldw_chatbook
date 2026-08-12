@@ -17,10 +17,10 @@ from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
     _settle_settings_mount_storm,
 )
+from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 
 
@@ -68,7 +68,7 @@ def _capture_atomic_writes(
         return mutation_result
 
     monkeypatch.setattr(
-        settings_screen_module,
+        provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
         write,
     )
@@ -223,13 +223,20 @@ async def test_immediate_qwencloud_save_snapshots_visible_mode(monkeypatch):
 
         assert calls == [
             (
-                _expected_qwen_sections(
-                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                    mode="chat_completions",
-                ),
-                {"api_settings.qwencloud": ("api_key",)},
+                {"api_settings.qwencloud": {"api_mode": "chat_completions"}},
+                {},
             )
         ]
+        assert app.app_config["chat_defaults"] == {
+            "provider": "QwenCloud",
+            "model": "qwen3.8-max",
+        }
+        assert app.app_config["api_settings"]["qwencloud"]["api_base_url"] == (
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        )
+        assert app.app_config["api_settings"]["qwencloud"]["api_key_env_var"] == (
+            "DASHSCOPE_API_KEY"
+        )
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == (
             "chat_completions"
         )
@@ -595,13 +602,14 @@ async def test_qwencloud_api_mode_save_and_revert_exact_values(
 
         assert calls == [
             (
-                _expected_qwen_sections(
-                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                    mode=selected_mode,
-                ),
-                {"api_settings.qwencloud": ("api_key",)},
+                {"api_settings.qwencloud": {"api_mode": selected_mode}},
+                {},
             )
         ]
+        assert app.app_config["chat_defaults"] == {
+            "provider": "QwenCloud",
+            "model": "qwen3.8-max",
+        }
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == selected_mode
         draft = screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
         assert draft is None or "provider_api_mode:qwencloud" not in draft.values
@@ -702,11 +710,8 @@ async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
 
         assert calls == [
             (
-                _expected_qwen_sections(
-                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                    mode="responses",
-                ),
-                {"api_settings.qwencloud": ("api_key",)},
+                {"api_settings.qwencloud": {"api_mode": "responses"}},
+                {},
             )
         ]
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
@@ -772,20 +777,8 @@ async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
 
     assert atomic_mutations == [
         (
-            {
-                "api_settings.QwenCloud": {
-                    "model": "qwen3.8-max",
-                    "api_base_url": "https://proxy.example.com/compatible-mode/v1",
-                    "api_key_env_var": "DASHSCOPE_API_KEY",
-                },
-                "chat_defaults": {
-                    "provider": "qwencloud",
-                    "model": "qwen3.8-max",
-                },
-                "provider_setup.confirmed": {"qwencloud": True},
-                "api_settings.qwencloud": {"api_mode": "chat_completions"},
-            },
-            {"api_settings.QwenCloud": ("api_key", "api_mode")},
+            {"api_settings.qwencloud": {"api_mode": "chat_completions"}},
+            {"api_settings.QwenCloud": ("api_mode",)},
         )
     ]
     assert app.app_config["api_settings"]["qwencloud"] == {

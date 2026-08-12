@@ -67,6 +67,7 @@ from ...Chat.provider_readiness import get_provider_readiness, provider_config_k
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
+    persist_provider_settings_atomic,
     provider_setup_draft_identity,
     resolve_remembered_provider_model,
 )
@@ -111,6 +112,7 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_ORDER,
 )
 from ...config import (
+    ConfigMutationResult,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
@@ -8617,6 +8619,10 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         selected_model = str(value or "").strip()
+        if evidence is not None and evidence.endpoint == "testing":
+            self._provider_evidence_store().invalidate(identity)
+            self._mark_provider_test_result_stale()
+            return
         if evidence is None or selected_model not in evidence.model_ids:
             self._mark_provider_test_result_stale()
 
@@ -10213,13 +10219,36 @@ class SettingsScreen(BaseAppScreen):
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
     ) -> None:
-        outcome = await probe_settings_endpoint(base_url, provider=provider)
-        self._apply_provider_endpoint_probe_outcome(
-            detail,
-            summary,
-            outcome,
-            identity=identity,
-            token=token,
+        try:
+            outcome = await probe_settings_endpoint(base_url, provider=provider)
+        except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+            outcome = self._provider_probe_connection_error_outcome()
+        try:
+            self._apply_provider_endpoint_probe_outcome(
+                detail,
+                summary,
+                outcome,
+                identity=identity,
+                token=token,
+            )
+        except Exception:  # noqa: BLE001 - UI settlement must not strand probe state.
+            failure = self._provider_probe_connection_error_outcome()
+            if identity is not None and token is not None:
+                self._provider_evidence_store().settle(
+                    token,
+                    self._provider_probe_result_from_outcome(failure),
+                )
+            self._provider_test_result = redact_secret_text(
+                f"{detail} | endpoint {failure.summary}"
+            )
+            self._update_provider_test_result()
+
+    @staticmethod
+    def _provider_probe_connection_error_outcome() -> SettingsEndpointProbeOutcome:
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection error",
+            category="connection_error",
         )
 
     @staticmethod
@@ -10250,12 +10279,10 @@ class SettingsScreen(BaseAppScreen):
             summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
         """
+        if type(outcome) is not SettingsEndpointProbeOutcome:
+            outcome = self._provider_probe_connection_error_outcome()
         if identity is not None and token is not None:
-            try:
-                probe_result = self._provider_probe_result_from_outcome(outcome)
-            except ValueError:
-                self._provider_evidence_store().settle(token, object())
-                return
+            probe_result = self._provider_probe_result_from_outcome(outcome)
             if not self._provider_evidence_store().settle(token, probe_result):
                 return
         self._provider_test_result = redact_secret_text(
@@ -18428,7 +18455,10 @@ class SettingsScreen(BaseAppScreen):
             dirty_values = {
                 key: value
                 for key, value in values.items()
-                if key in chat_defaults_keys and loaded_values.get(key) != value
+                if key in chat_defaults_keys
+                and draft is not None
+                and key in draft.dirty_keys
+                and loaded_values.get(key) != value
             }
             dirty_keys = draft.dirty_keys if draft is not None else set()
             api_mode_draft_key = self._provider_api_mode_draft_key(provider)
@@ -18462,8 +18492,19 @@ class SettingsScreen(BaseAppScreen):
             current_provider_endpoint = self._provider_endpoint_value(provider)
             current_credential_env_var = self._provider_credential_env_var(provider)
             api_key_dirty = draft is not None and "api_key" in draft.dirty_keys
-            endpoint_dirty = endpoint != current_provider_endpoint
-            credential_dirty = credential_env_var != current_credential_env_var
+            endpoint_dirty = bool(
+                draft is not None
+                and "endpoint" in draft.dirty_keys
+                and endpoint != current_provider_endpoint
+            )
+            credential_dirty = bool(
+                draft is not None
+                and "credential_env_var" in draft.dirty_keys
+                and credential_env_var != current_credential_env_var
+            )
+            connection_dirty = bool(
+                dirty_values or endpoint_dirty or credential_dirty or api_key_dirty
+            )
             if endpoint_dirty and not provider_key:
                 self._provider_save_result = (
                     "Provider is required before saving an endpoint."
@@ -18594,56 +18635,64 @@ class SettingsScreen(BaseAppScreen):
                         self.app.notify(self._provider_save_result, severity="error")
                         return
 
-            tested_identity = self._provider_current_draft_identity()
-            credential_source = self._provider_current_credential_source(provider)
-            try:
-                setup_mutation = build_provider_setup_mutation(
-                    ProviderSetupDraft(
-                        provider=provider,
-                        model=model,
-                        endpoint=endpoint,
-                        credential_source=credential_source,
-                        credential_revision=getattr(
-                            self, "_provider_credential_revision", 0
+            tested_identity = (
+                self._provider_current_draft_identity() if connection_dirty else None
+            )
+            setup_mutation = None
+            section_values: dict[str, dict[str, object]] = {}
+            delete_keys: dict[str, list[str]] = {}
+            if connection_dirty:
+                credential_source = self._provider_current_credential_source(provider)
+                try:
+                    setup_mutation = build_provider_setup_mutation(
+                        ProviderSetupDraft(
+                            provider=provider,
+                            model=model,
+                            endpoint=endpoint,
+                            credential_source=credential_source,
+                            credential_revision=getattr(
+                                self, "_provider_credential_revision", 0
+                            ),
+                            draft_generation=getattr(
+                                self, "_provider_draft_generation", 0
+                            ),
+                            credential_value=(
+                                api_key if credential_source == "draft" else None
+                            ),
+                            credential_env_var=(
+                                credential_env_var
+                                if credential_source == "environment"
+                                else None
+                            ),
                         ),
-                        draft_generation=getattr(
-                            self, "_provider_draft_generation", 0
-                        ),
-                        credential_value=(
-                            api_key if credential_source == "draft" else None
-                        ),
-                        credential_env_var=(
-                            credential_env_var
-                            if credential_source == "environment"
-                            else None
-                        ),
-                    ),
-                    self._app_config_mapping(),
+                        self._app_config_mapping(),
+                    )
+                except ValueError:
+                    self._provider_save_result = (
+                        "Provider settings are invalid; review the endpoint and model."
+                    )
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    self.app.notify(self._provider_save_result, severity="error")
+                    return
+                section_values = {
+                    section: dict(section_data)
+                    for section, section_data in setup_mutation.section_values.items()
+                }
+                delete_keys = {
+                    section: list(keys)
+                    for section, keys in setup_mutation.delete_keys.items()
+                }
+                provider_section = next(
+                    section
+                    for section in section_values
+                    if section.startswith("api_settings.")
                 )
-            except ValueError:
-                self._provider_save_result = (
-                    "Provider settings are invalid; review the endpoint and model."
+            else:
+                provider_section = (
+                    f"api_settings.{provider_section_key or provider_key}"
                 )
-                self._set_static_text(
-                    "#settings-provider-save-result", self._provider_save_result
-                )
-                self.app.notify(self._provider_save_result, severity="error")
-                return
-
-            section_values = {
-                section: dict(section_data)
-                for section, section_data in setup_mutation.section_values.items()
-            }
-            delete_keys: dict[str, list[str]] = {
-                section: list(keys)
-                for section, keys in setup_mutation.delete_keys.items()
-            }
-            provider_sections = [
-                section
-                for section in section_values
-                if section.startswith("api_settings.")
-            ]
-            provider_section = provider_sections[0]
             if api_mode_dirty and normalized_api_mode is not None:
                 mode_section = (
                     "api_settings.qwencloud"
@@ -18659,7 +18708,7 @@ class SettingsScreen(BaseAppScreen):
                             f"api_settings.{alias_section}", []
                         ).append("api_mode")
             if next_model_defaults is not None:
-                section_values[provider_section][
+                section_values.setdefault(provider_section, {})[
                     "model_defaults"
                 ] = next_model_defaults
             if next_model_capabilities is not None:
@@ -18679,15 +18728,29 @@ class SettingsScreen(BaseAppScreen):
             evidence_store = self._provider_evidence_store()
             save_lease = (
                 evidence_store.begin_save(tested_identity)
-                if tested_identity is not None
+                if setup_mutation is not None and tested_identity is not None
                 else None
             )
-            mutation_result = apply_settings_mutation_to_cli_config(
-                section_values,
-                delete_keys=normalized_delete_keys,
-            )
-            evidence_preserved = False
-            if save_lease is not None and tested_identity is not None:
+            try:
+                mutation_result = persist_provider_settings_atomic(
+                    setup_mutation,
+                    provider=provider,
+                    model=model,
+                    section_values=section_values,
+                    delete_keys=normalized_delete_keys,
+                )
+            except ValueError:
+                mutation_result = ConfigMutationResult(
+                    False,
+                    False,
+                    "before_replace",
+                )
+            evidence_preserved = setup_mutation is None
+            if (
+                setup_mutation is not None
+                and save_lease is not None
+                and tested_identity is not None
+            ):
                 evidence_preserved = evidence_store.rebase_after_save(
                     tested_identity,
                     setup_mutation.semantic_identity,

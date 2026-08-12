@@ -24,6 +24,53 @@ def _client(handler, *, follow_redirects: bool = False) -> httpx.AsyncClient:
     )
 
 
+@pytest.mark.asyncio
+async def test_probe_client_construction_failure_returns_bounded_outcome(
+    monkeypatch,
+) -> None:
+    def fail_client(*_args, **_kwargs):
+        raise RuntimeError("secret-client-construction-detail")
+
+    monkeypatch.setattr(settings_probe_module.httpx, "AsyncClient", fail_client)
+
+    outcome = await probe_settings_endpoint("https://example.test/v1")
+
+    assert outcome.state == "unreachable"
+    assert outcome.category == "connection_error"
+    assert outcome.summary == "unreachable: connection error"
+    assert "secret-client-construction-detail" not in outcome.summary
+
+
+@pytest.mark.asyncio
+async def test_probe_client_shutdown_failure_returns_bounded_outcome(
+    monkeypatch,
+) -> None:
+    class FailingCloseClient:
+        async def aclose(self) -> None:
+            raise RuntimeError("secret-client-shutdown-detail")
+
+    async def reachable(*_args, **_kwargs):
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("model-a",),
+        )
+
+    monkeypatch.setattr(
+        settings_probe_module.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: FailingCloseClient(),
+    )
+    monkeypatch.setattr(settings_probe_module, "_request_models", reachable)
+
+    outcome = await probe_settings_endpoint("https://example.test/v1")
+
+    assert outcome.state == "unreachable"
+    assert outcome.category == "connection_error"
+    assert outcome.summary == "unreachable: connection error"
+    assert "secret-client-shutdown-detail" not in outcome.summary
+
+
 class _TrackingAsyncStream(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self.chunks = chunks
@@ -298,9 +345,7 @@ async def test_probe_accepts_valid_empty_model_listing() -> None:
 
 @pytest.mark.asyncio
 async def test_probe_accepts_bare_list_string_model_entry() -> None:
-    async with _client(
-        lambda request: httpx.Response(200, json=["model-a"])
-    ) as client:
+    async with _client(lambda request: httpx.Response(200, json=["model-a"])) as client:
         outcome = await probe_settings_endpoint(
             "http://127.0.0.1:9099",
             http_client=client,
@@ -365,9 +410,7 @@ async def test_settings_probe_falls_back_to_next_usable_identifier_field(
 @pytest.mark.asyncio
 async def test_settings_probe_accepts_json_body_at_exact_byte_limit() -> None:
     prefix = b'{"data":[]}'
-    body = prefix + b" " * (
-        _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix)
-    )
+    body = prefix + b" " * (_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES - len(prefix))
 
     async with _client(lambda request: httpx.Response(200, content=body)) as client:
         outcome = await probe_settings_endpoint(
@@ -380,16 +423,16 @@ async def test_settings_probe_accepts_json_body_at_exact_byte_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_probe_rejects_oversized_content_length_without_reading() -> None:
+async def test_settings_probe_rejects_oversized_content_length_without_reading() -> (
+    None
+):
     stream = _TrackingAsyncStream(b"secret oversized response body")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             headers={
-                "content-length": str(
-                    _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES + 1
-                )
+                "content-length": str(_EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES + 1)
             },
             stream=stream,
         )
