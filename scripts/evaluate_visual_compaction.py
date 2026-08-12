@@ -113,10 +113,16 @@ async def run_live(args: argparse.Namespace) -> int:
         load_visual_support_matrix,
         resolve_visual_evaluation_model,
     )
+    from tldw_chatbook.Chat.console_visual_transcript import (
+        resolve_evaluation_renderer_profile,
+    )
     from tldw_chatbook.config import load_settings
     from tldw_chatbook.model_capabilities import get_model_capabilities
     from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 
+    # The parser choices intentionally remain inert literals. Re-resolve after
+    # the billable/overwrite guard so a stale CLI allowlist cannot reach a call.
+    resolve_evaluation_renderer_profile(args.renderer_profile)
     corpus = load_visual_evaluation_corpus(args.corpus)
     config = load_settings(force_reload=True)
     gateway = ConsoleProviderGateway(config_provider=lambda: config)

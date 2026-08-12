@@ -155,7 +155,22 @@ def render_visual_transcript(
     max_pages: int | None = None,
     renderer_profile: VisualTranscriptRendererProfile = PRODUCTION_RENDERER_PROFILE,
 ) -> VisualTranscriptArtifact:
-    """Render ordered durable units into byte-stable PNG pages."""
+    """Render ordered durable units into byte-stable PNG pages.
+
+    Args:
+        units: Ordered durable conversation units to render.
+        summarized_prefix_digest: Digest identifying the rendered prefix.
+        max_pages: Optional upper bound on the number of generated pages.
+        renderer_profile: Closed renderer geometry and version profile to use.
+
+    Returns:
+        A deterministic visual transcript artifact with PNG pages and provenance.
+
+    Raises:
+        TypeError: If ``renderer_profile`` is not a renderer profile.
+        ValueError: If the input is empty, the digest is blank, ``max_pages`` is
+            invalid, or the rendered transcript exceeds ``max_pages``.
+    """
 
     if not units:
         raise ValueError("At least one durable conversation unit is required.")
@@ -314,7 +329,17 @@ def resolve_effective_compaction_representation(
 def resolve_evaluation_renderer_profile(
     profile_id: str,
 ) -> VisualTranscriptRendererProfile:
-    """Resolve a closed evaluator profile ID without admitting custom geometry."""
+    """Resolve a closed evaluator profile ID without admitting custom geometry.
+
+    Args:
+        profile_id: Identifier of a registered evaluation renderer profile.
+
+    Returns:
+        The matching closed renderer profile.
+
+    Raises:
+        ValueError: If ``profile_id`` is blank or is not registered.
+    """
 
     normalized = str(profile_id).strip()
     for profile in EVALUATION_RENDERER_PROFILES:

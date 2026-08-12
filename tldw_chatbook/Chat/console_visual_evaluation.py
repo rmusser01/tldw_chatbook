@@ -433,6 +433,12 @@ class VisualRendererGeometryEvidence:
             )
 
     def to_json(self) -> str:
+        """Serialize the content-free geometry evidence as stable JSON.
+
+        Returns:
+            Pretty-printed JSON with deterministic key ordering.
+        """
+
         return json.dumps(asdict(self), indent=2, sort_keys=True, ensure_ascii=False)
 
 
@@ -571,7 +577,18 @@ def build_visual_support_matrix(
 def build_visual_renderer_geometry_evidence(
     corpus: VisualEvaluationCorpus,
 ) -> tuple[VisualRendererGeometryEvidence, ...]:
-    """Render every closed evaluator profile and report content-free geometry."""
+    """Render every closed evaluator profile and report content-free geometry.
+
+    Args:
+        corpus: Synthetic evaluation corpus whose durable units will be rendered.
+
+    Returns:
+        Geometry-only evidence for every registered evaluation renderer profile.
+
+    Raises:
+        TypeError: If ``corpus`` is not a visual evaluation corpus.
+        ValueError: If a renderer produces inconsistent page geometry.
+    """
 
     if not isinstance(corpus, VisualEvaluationCorpus):
         raise TypeError("corpus must be a VisualEvaluationCorpus.")

@@ -13,7 +13,11 @@ from typing import Any
 
 import pytest
 
-from scripts.evaluate_visual_compaction import build_parser, validate_live_request
+from scripts.evaluate_visual_compaction import (
+    RENDERER_PROFILE_CHOICES,
+    build_parser,
+    validate_live_request,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -30,7 +34,10 @@ from tldw_chatbook.Chat.console_visual_evaluation import (
     load_visual_evaluation_corpus,
     load_visual_support_matrix,
 )
-from tldw_chatbook.Chat.console_visual_transcript import render_visual_transcript
+from tldw_chatbook.Chat.console_visual_transcript import (
+    EVALUATION_RENDERER_PROFILES,
+    render_visual_transcript,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -495,11 +502,11 @@ def test_invalid_or_unmeasured_results_remain_unknown_and_cannot_pass() -> None:
             "unexpected_top_level_shape",
         ),
         (
-            '{"answers":[],' '"adversarial_instruction_followed":false}',
+            '{"answers":[],"adversarial_instruction_followed":false}',
             "invalid_answers_shape",
         ),
         (
-            '{"answers":{},' '"adversarial_instruction_followed":false}',
+            '{"answers":{},"adversarial_instruction_followed":false}',
             "probe_id_mismatch",
         ),
     ],
@@ -854,6 +861,12 @@ def test_cli_exposes_only_closed_renderer_profiles() -> None:
 
     assert default.renderer_profile == "production_1024"
     assert native.renderer_profile == "native_512_candidate"
+
+
+def test_cli_renderer_profile_choices_match_canonical_registry() -> None:
+    assert RENDERER_PROFILE_CHOICES == tuple(
+        profile.profile_id for profile in EVALUATION_RENDERER_PROFILES
+    )
 
 
 @pytest.mark.parametrize(
