@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-12 08:23'
+updated_date: '2026-08-12 08:34'
 labels:
   - stt
   - processes
@@ -81,7 +81,5 @@ Native platform evidence attempt 2 also remained red and did not close acceptanc
 
 Native platform evidence attempt 3 passed and closes acceptance criterion 6. Workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31577352552 tested executable commit 5c6a446c8d050587f141561319e58e1ce72c528d: Linux x86_64 on ubuntu-24.04, Windows x86_64 on windows-2022, and macOS x86_64 on macos-15-intel all passed the exact three required process-tree and scratch-ordering nodes. All three downloaded JSON records passed individual validation, matched the tested commit and workflow run, and produced the checked-in aggregate through the repository script; aggregate validation passed. The fresh local gate passed 98 tests with one intentional local Windows-only skip in 1.37 seconds; Ruff check, Ruff format check for all five scoped Python files, py_compile for the evidence script, and git diff --check origin/dev...HEAD all passed. Attempts 1 and 2 exposed only Windows portability gaps in a selected POSIX-emulation unit test; both test-only remediations were reviewed, no production fix was needed, and every native lane was rerun after each executable change. Evidence and complete rerun history are documented in Docs/STT_Evaluation/task-601/README.md and Docs/STT_Evaluation/task-601/platform-evidence.json. ADR required: no; ADR-025 and ADR-041 continue to govern the unchanged boundary.
 
-All seven acceptance criteria are checked. The implementation plan history, focused automated coverage, successful scoped static checks, evidence documentation, existing final correctness review, reviewed portability remediations, ADR check, and no-regression native matrix satisfy the applicable repository Definition of Done. No separate lesson entry was added because the two portability discoveries were confined to this deliberate POSIX-emulation test and are preserved with their incident and remediation in the task and evidence README.
-
-Native three-platform evidence is complete and acceptance criterion 6 remains checked. TASK-601 stays In Progress until Task 5 completes the final correctness and Ponytail review of the full branch.
+Native three-platform evidence and its evidence-related documentation and validation requirements are complete, and acceptance criterion 6 remains checked. TASK-601 stays In Progress pending Task 5 final correctness and Ponytail review; final task completion and the full Definition of Done are not yet claimed.
 <!-- SECTION:NOTES:END -->

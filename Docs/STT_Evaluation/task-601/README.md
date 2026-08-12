@@ -27,7 +27,7 @@ Every platform passed these exact nodes:
 - `Tests/STT/test_local_stt_executor.py::test_force_stop_detaches_before_kill_and_cleans_generation_scratch`
 
 The workflow installed only the repository development dependencies. It used no
-STT model/runtime extra, model or network download, inference, or general CI
+STT model/runtime extra, STT model/runtime download, inference, or general CI
 result. The normalized source records and exact run binding are in
 [`platform-evidence.json`](platform-evidence.json).
 
@@ -42,6 +42,6 @@ result. The normalized source records and exact run binding are in
 From the repository root:
 
 ```bash
-../../.venv/bin/python .github/scripts/task601_process_tree_evidence.py \
+python .github/scripts/task601_process_tree_evidence.py \
   --validate-aggregate Docs/STT_Evaluation/task-601/platform-evidence.json
 ```
