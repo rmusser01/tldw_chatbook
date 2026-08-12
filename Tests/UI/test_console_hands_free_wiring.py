@@ -1673,7 +1673,13 @@ async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert service.start_calls == 2
+        service.emit_partial("resumed physically")
+        await _wait_for(
+            lambda: console._console_dictation_partial == "resumed physically",
+            pilot,
+        )
         service.emit_final("resumed physically")
+        await _wait_for(lambda: console._console_dictation_partial == "", pilot)
         await pilot.pause()
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictate")
