@@ -73,13 +73,16 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
   repository rollback, runtime collaborator failures, UI error surfaces, and
   composite shutdown; the runtime regression exposed and fixed an unsanitized
   adapter-preflight exception boundary.
-- Updated the user/developer speech documentation and recorded a sanitized,
-  independent two-launch deterministic UAT. The imported profile survived
-  restart as inactive with `Needs compatible model`; assignment/default state
-  and owned teardown residue remained unchanged/empty.
+- Updated the user/developer speech documentation and recorded both the limited
+  service-layer setup and an isolated two-launch production-mounted Pilot UAT
+  on commit `6eab86144`. Production warnings gated chooser/publication, the
+  imported inactive profile survived restart with `Needs compatible model`
+  under a deterministic non-launching missing-dependency observer, no
+  assignment was created, and composite shutdown left no portability
+  sessions/tasks or staging/output residue.
 - Status remains **In Progress**. No exact pre-provisioned clone model was
-  available inside the isolated Launch B environment and no human playback
-  confirmation was performed, so acceptance criterion 7 and task closeout
-  remain pending.
+  available inside isolated Launch B; audio.cpp was not launched and no human
+  playback confirmation was performed. Acceptance criterion 7 and task
+  closeout remain pending.
 
 Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.
