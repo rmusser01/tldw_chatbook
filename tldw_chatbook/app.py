@@ -9778,13 +9778,45 @@ class TldwCli(
             first_run.pop(key, None)
 
     def _handle_first_run_wizard_result(self, result: dict | None) -> None:
-        if not isinstance(result, dict):
+        if type(result) is not dict:
             return  # cancelled / finish-later: recovery state handles next launch
         exit_route = result.get("exit_route")
-        if exit_route:
-            from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        completed = result.get("completed")
+        exit_context = result.get("exit_context")
+        if type(exit_route) is not str:
+            return
 
-            self.post_message(NavigateToScreen(str(exit_route)))
+        screen_context: dict[str, object] = {}
+        if exit_route == TAB_SETTINGS:
+            if completed is not False or type(exit_context) is not dict:
+                return
+            if set(exit_context) != {"category"}:
+                return
+            category = exit_context.get("category")
+            if type(category) is not str:
+                return
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
+            )
+
+            if category not in set(
+                REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES.values()
+            ):
+                return
+            screen_context = {"category": category}
+        elif exit_route in {TAB_CHAT, TAB_HOME}:
+            if completed is not True:
+                return
+            if exit_context is not None and (
+                type(exit_context) is not dict or exit_context
+            ):
+                return
+        else:
+            return
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        self.post_message(NavigateToScreen(exit_route, screen_context))
 
     def handle_first_run_wizard_result(self, result: dict | None) -> None:
         """Public alias for ``_handle_first_run_wizard_result``.

@@ -60,6 +60,7 @@ class _HostApp(App):
         super().__init__()
         self._wizard = wizard
         self.wizard_result = "UNSET"
+        self.wizard_results = []
 
     def compose(self) -> ComposeResult:
         yield from ()
@@ -69,6 +70,7 @@ class _HostApp(App):
 
     def _capture(self, result) -> None:
         self.wizard_result = result
+        self.wizard_results.append(result)
 
 
 def _make_wizard(**kwargs) -> FirstRunSetupWizard:
@@ -3248,6 +3250,209 @@ class TestComposeCrashPolicy:
 
             assert all(step.parent is None for step in retired)
             assert container._failure_action_running is False
+
+    @pytest.mark.parametrize(
+        ("action_selector", "outcome"),
+        (
+            ("#setup-step-retry", "retry"),
+            ("#setup-step-manual", "manual"),
+            ("#setup-step-later", "later"),
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_failure_action_fences_navigation_and_duplicate_actions(
+        self, monkeypatch, action_selector, outcome
+    ):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
+
+        original_compose = ProviderStep.compose_step
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            failed_step = container.steps[container.current_step]
+            failed_index = container.current_step
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            if outcome == "retry":
+                original_remove = failed_step.remove
+                remove_calls = 0
+
+                async def blocked_remove():
+                    nonlocal remove_calls
+                    remove_calls += 1
+                    started.set()
+                    await release.wait()
+                    await original_remove()
+
+                monkeypatch.setattr(failed_step, "remove", blocked_remove)
+                monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
+            else:
+                async def blocked_checkpoint():
+                    started.set()
+                    await release.wait()
+                    return True
+
+                checkpoint = AsyncMock(side_effect=blocked_checkpoint)
+                container.persist_current_checkpoint = checkpoint
+
+            wizard.query_one(action_selector, Button).press()
+            await asyncio.wait_for(started.wait(), timeout=2)
+            await pilot.pause()
+
+            assert container._failure_action_running is True
+            container.validate_step()
+            await pilot.pause()
+            for selector in (
+                "#wizard-back",
+                "#wizard-next",
+                "#wizard-cancel",
+                "#setup-step-retry",
+                "#setup-step-manual",
+                "#setup-step-later",
+            ):
+                assert wizard.query_one(selector, Button).disabled is True
+
+            wizard.query_one("#wizard-back", Button).press()
+            await pilot.press("ctrl+n")
+            await pilot.press("escape")
+            second_action = (
+                "#setup-step-manual"
+                if action_selector != "#setup-step-manual"
+                else "#setup-step-later"
+            )
+            wizard.query_one(second_action, Button).press()
+            await pilot.pause(0.1)
+
+            assert app.screen is wizard
+            assert container.current_step == failed_index
+            assert container.steps[failed_index] is failed_step
+            if outcome == "retry":
+                assert remove_calls == 1
+            else:
+                assert checkpoint.await_count == 1
+
+            release.set()
+            await pilot.pause(0.8)
+
+            if outcome == "retry":
+                replacement = container.steps[failed_index]
+                assert replacement is not failed_step
+                assert replacement.config.id == STEP_PROVIDER
+                assert app.wizard_results == []
+                assert container._failure_action_running is False
+            elif outcome == "manual":
+                assert app.wizard_results == [
+                    {
+                        "completed": False,
+                        "exit_route": "settings",
+                        "exit_context": {"category": "providers-models"},
+                    }
+                ]
+            else:
+                assert app.wizard_results == [None]
+
+    @pytest.mark.parametrize(
+        ("action_selector", "outcome"),
+        (
+            ("#setup-step-retry", "retry"),
+            ("#setup-step-manual", "manual"),
+            ("#setup-step-later", "later"),
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_failure_action_completion_is_inert_after_external_dismiss(
+        self, monkeypatch, action_selector, outcome
+    ):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProviderStep
+
+        original_compose = ProviderStep.compose_step
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            failed_step = container.steps[container.current_step]
+            failed_index = container.current_step
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            if outcome == "retry":
+                original_remove = failed_step.remove
+
+                async def blocked_remove():
+                    started.set()
+                    await release.wait()
+                    await original_remove()
+
+                monkeypatch.setattr(failed_step, "remove", blocked_remove)
+                monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
+            else:
+                async def blocked_checkpoint():
+                    started.set()
+                    await release.wait()
+                    return True
+
+                container.persist_current_checkpoint = AsyncMock(
+                    side_effect=blocked_checkpoint
+                )
+
+            dismiss_spy = MagicMock(wraps=container._dismiss_screen)
+            monkeypatch.setattr(container, "_dismiss_screen", dismiss_spy)
+            notify_spy = MagicMock()
+            monkeypatch.setattr(app, "notify", notify_spy)
+            navigation_messages = []
+            original_post_message = app.post_message
+
+            def capture_posted_message(message):
+                if isinstance(message, NavigateToScreen):
+                    navigation_messages.append(message)
+                return original_post_message(message)
+
+            monkeypatch.setattr(app, "post_message", capture_posted_message)
+            recovery_tasks = []
+
+            def independently_run_worker(coroutine, **_kwargs):
+                task = asyncio.create_task(coroutine)
+                recovery_tasks.append(task)
+                return task
+
+            monkeypatch.setattr(container, "run_worker", independently_run_worker)
+
+            wizard.query_one(action_selector, Button).press()
+            await asyncio.wait_for(started.wait(), timeout=2)
+            wizard.dismiss(None)
+            await pilot.pause(0.2)
+            assert app.wizard_results == [None]
+
+            release.set()
+            task_results = await asyncio.gather(
+                *recovery_tasks, return_exceptions=True
+            )
+            await pilot.pause(0.2)
+
+            assert task_results == [None]
+            dismiss_spy.assert_not_called()
+            notify_spy.assert_not_called()
+            assert navigation_messages == []
+            assert app.wizard_results == [None]
+            if outcome == "retry":
+                assert container.steps[failed_index] is failed_step
 
     @pytest.mark.asyncio
     async def test_manual_setup_preserves_checkpoint_and_routes_to_provider_settings(

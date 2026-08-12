@@ -63,6 +63,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ToolsStep,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_COMPLETED_KEY,
@@ -104,6 +105,19 @@ def _press(screen, selector: str) -> None:
     real click, without depending on the widget's cached screen region.
     """
     screen.query_one(selector, Button).press()
+
+
+def _capture_navigation_messages(monkeypatch, app) -> list[NavigateToScreen]:
+    messages: list[NavigateToScreen] = []
+    original_post_message = app.post_message
+
+    def capture(message):
+        if isinstance(message, NavigateToScreen):
+            messages.append(message)
+        return original_post_message(message)
+
+    monkeypatch.setattr(app, "post_message", capture)
+    return messages
 
 
 def _raising_compose_step(self):
@@ -1258,6 +1272,7 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
 
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
     monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+    navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -1273,6 +1288,7 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
                 == STEP_PROVIDER,
             )
 
+            navigation_messages.clear()
             _press(app.screen, "#setup-step-manual")
             await _wait_until(
                 pilot,
@@ -1291,6 +1307,11 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
             assert draft is not None
             assert draft.active_step_id == STEP_PROVIDER
             assert draft.values[STEP_WELCOME] == {"track": TRACK_QUICK}
+            assert len(navigation_messages) == 1
+            assert navigation_messages[0].screen_name == "settings"
+            assert navigation_messages[0].screen_context == {
+                "category": "providers-models"
+            }
 
 
 @pytest.mark.parametrize(
@@ -1311,6 +1332,11 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
     app._initial_tab_value = "home"
     monkeypatch.setattr(step_type, "compose_step", _raising_compose_step)
     results: list[dict[str, object]] = []
+    navigation_messages = _capture_navigation_messages(monkeypatch, app)
+
+    def handle_result(result):
+        results.append(result)
+        app.handle_first_run_wizard_result(result)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -1319,7 +1345,7 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
             )
             app.app_config[WIZARD_STATE_SECTION][SETUP_COMPLETED_KEY] = False
             wizard = FirstRunSetupWizard(app, rerun=True)
-            await app.push_screen(wizard, results.append)
+            await app.push_screen(wizard, handle_result)
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -1329,6 +1355,7 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
             container.show_step(container._step_index_for_id(step_id))
             await pilot.pause(0.2)
 
+            navigation_messages.clear()
             _press(app.screen, "#setup-step-manual")
             await _wait_until(pilot, lambda: bool(results))
             await _wait_until(
@@ -1353,6 +1380,65 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
             assert draft is not None
             assert draft.active_step_id == step_id
             assert draft.values[STEP_WELCOME] == {"track": TRACK_FULL}
+            assert len(navigation_messages) == 1
+            assert navigation_messages[0].screen_name == "settings"
+            assert navigation_messages[0].screen_context == {
+                "category": "advanced-config"
+            }
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        {"completed": False, "exit_route": "forged", "exit_context": {}},
+        {"completed": False, "exit_route": "settings", "exit_context": {}},
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "forged"},
+        },
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": object()},
+        },
+        {
+            "completed": False,
+            "exit_route": "settings",
+            "exit_context": {"category": "diagnostics", "extra": "forged"},
+        },
+        {"completed": True, "exit_route": TAB_CHAT, "exit_context": {"x": 1}},
+    ),
+)
+def test_first_run_result_callback_rejects_untrusted_route_context(result):
+    from tldw_chatbook.app import TldwCli
+
+    receiver = SimpleNamespace(post_message=MagicMock())
+    TldwCli._handle_first_run_wizard_result(receiver, result)
+    receiver.post_message.assert_not_called()
+
+
+def test_first_run_result_callback_rejects_objects_without_comparing_them():
+    from tldw_chatbook.app import TldwCli
+
+    class ForgedValue:
+        def __eq__(self, _other):
+            raise AssertionError("untrusted equality must not run")
+
+        def __hash__(self):
+            return 1
+
+    receiver = SimpleNamespace(post_message=MagicMock())
+    for result in (
+        {"completed": False, "exit_route": ForgedValue(), "exit_context": {}},
+        {
+            "completed": True,
+            "exit_route": TAB_CHAT,
+            "exit_context": ForgedValue(),
+        },
+    ):
+        TldwCli._handle_first_run_wizard_result(receiver, result)
+    receiver.post_message.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1512,6 +1598,7 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
+    navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
@@ -1519,6 +1606,7 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
             assert len(app.screen.query("#setup-exit-chat")) == 1
 
+            navigation_messages.clear()
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
@@ -1529,6 +1617,9 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
             # final tab rather than racing the first screen-stack pop.
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
             assert app.current_tab == TAB_CHAT
+            assert len(navigation_messages) == 1
+            assert navigation_messages[0].screen_name == TAB_CHAT
+            assert navigation_messages[0].screen_context == {}
 
 
 # ---------------------------------------------------------------------------

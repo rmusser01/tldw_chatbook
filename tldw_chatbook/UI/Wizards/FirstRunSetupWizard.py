@@ -345,6 +345,17 @@ class SetupStep(WizardStep):
             logger.warning("Setup step error had nowhere to render: {}", message)
 
 
+@dataclass(frozen=True, slots=True)
+class _SetupFailureAction:
+    """Identity captured when one required-failure recovery action starts."""
+
+    screen: "FirstRunSetupWizard"
+    index: int
+    step: SetupStep
+    step_id: str
+    failure: SetupStepFailure
+
+
 CLOUD_PROBE_TIMEOUT_SECONDS = 8.0
 
 
@@ -3714,6 +3725,7 @@ class SetupWizardContainer(WizardContainer):
         self.skipped_step_reasons: dict[str, str] = {}
         self._advancing = False
         self._failure_action_running = False
+        self._failure_action: _SetupFailureAction | None = None
         # F3 hardening: guards _dismiss_screen/_finalize against ever
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
@@ -4150,6 +4162,8 @@ class SetupWizardContainer(WizardContainer):
         focusable widget of its own. Either way the container remains in
         the focused widget's ancestry, so ctrl+n/ctrl+b still resolve.
         """
+        if self._failure_action_running and step_index != self.current_step:
+            return
         step_index = self._resolve_visible_index(step_index)
         super().show_step(step_index)
         try:
@@ -4244,36 +4258,48 @@ class SetupWizardContainer(WizardContainer):
     # -- required-step failure recovery -----------------------------------
     @on(Button.Pressed, "#setup-step-retry")
     def handle_step_retry(self) -> None:
-        if self._failure_action_running:
+        action = self._begin_failure_action()
+        if action is None:
             return
-        self._failure_action_running = True
-        self.run_worker(
-            self._retry_failed_step(),
-            exclusive=True,
-            group="setup-step-recovery",
-        )
+        try:
+            self.run_worker(
+                self._retry_failed_step(action),
+                exclusive=True,
+                group="setup-step-recovery",
+            )
+        except Exception:
+            self._release_failure_action(action)
+            raise
 
     @on(Button.Pressed, "#setup-step-manual")
     def handle_step_manual(self) -> None:
-        if self._failure_action_running:
+        action = self._begin_failure_action()
+        if action is None:
             return
-        self._failure_action_running = True
-        self.run_worker(
-            self._use_manual_setup(),
-            exclusive=True,
-            group="setup-step-recovery",
-        )
+        try:
+            self.run_worker(
+                self._use_manual_setup(action),
+                exclusive=True,
+                group="setup-step-recovery",
+            )
+        except Exception:
+            self._release_failure_action(action)
+            raise
 
     @on(Button.Pressed, "#setup-step-later")
     def handle_step_later(self) -> None:
-        if self._failure_action_running:
+        action = self._begin_failure_action()
+        if action is None:
             return
-        self._failure_action_running = True
-        self.run_worker(
-            self._finish_later_from_failure(),
-            exclusive=True,
-            group="setup-step-recovery",
-        )
+        try:
+            self.run_worker(
+                self._finish_later_from_failure(action),
+                exclusive=True,
+                group="setup-step-recovery",
+            )
+        except Exception:
+            self._release_failure_action(action)
+            raise
 
     def _active_required_failure(self) -> SetupStep | None:
         try:
@@ -4288,10 +4314,154 @@ class SetupWizardContainer(WizardContainer):
             return step
         return None
 
-    async def _checkpoint_required_failure(self) -> bool:
+    def _begin_failure_action(self) -> _SetupFailureAction | None:
+        if self._failure_action_running or self._advancing or self._finalized:
+            return None
         step = self._active_required_failure()
-        if step is None:
+        if (
+            step is None
+            or step.config is None
+            or step.compose_failure is None
+            or not self.is_mounted
+            or not step.is_mounted
+        ):
+            return None
+        try:
+            screen = self.screen
+        except Exception:
+            return None
+        if not isinstance(screen, FirstRunSetupWizard):
+            return None
+        action = _SetupFailureAction(
+            screen=screen,
+            index=self.current_step,
+            step=step,
+            step_id=step.config.id,
+            failure=step.compose_failure,
+        )
+        self._failure_action = action
+        self._failure_action_running = True
+        self._sync_action_controls()
+        return action
+
+    def _failure_action_is_current(
+        self,
+        action: _SetupFailureAction,
+        *,
+        require_step_mounted: bool = True,
+    ) -> bool:
+        try:
+            same_screen = (
+                self.screen is action.screen
+                and action.screen.app.screen is action.screen
+                and action.screen.query_one(SetupWizardContainer) is self
+            )
+            same_step = (
+                self.current_step == action.index
+                and self.steps[action.index] is action.step
+                and action.step.config is not None
+                and action.step.config.id == action.step_id
+                and action.step.compose_failure is action.failure
+            )
+        except Exception:
             return False
+        return (
+            self._failure_action_running
+            and self._failure_action is action
+            and not self._finalized
+            and self.is_mounted
+            and action.screen.is_mounted
+            and same_screen
+            and same_step
+            and (not require_step_mounted or action.step.is_mounted)
+        )
+
+    def _retry_replacement_is_current(
+        self,
+        action: _SetupFailureAction,
+        replacement: SetupStep,
+    ) -> bool:
+        try:
+            return (
+                self._failure_action_running
+                and self._failure_action is action
+                and not self._finalized
+                and self.is_mounted
+                and action.screen.is_mounted
+                and self.screen is action.screen
+                and action.screen.app.screen is action.screen
+                and action.screen.query_one(SetupWizardContainer) is self
+                and self.current_step == action.index
+                and self.steps[action.index] is replacement
+                and replacement.is_mounted
+                and replacement.config is not None
+                and replacement.config.id == action.step_id
+            )
+        except Exception:
+            return False
+
+    def _release_failure_action(
+        self,
+        action: _SetupFailureAction,
+        *,
+        replacement: SetupStep | None = None,
+    ) -> None:
+        if self._failure_action is not action:
+            return
+        still_current = (
+            self._failure_action_is_current(action)
+            if replacement is None
+            else self._retry_replacement_is_current(action, replacement)
+        )
+        if not still_current:
+            return
+        self._failure_action = None
+        self._failure_action_running = False
+        self._sync_action_controls()
+
+    def _sync_action_controls(self) -> None:
+        blocked = self._advancing or self._failure_action_running
+        try:
+            if blocked:
+                for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                    self.query_one(selector, Button).disabled = True
+            else:
+                self.update_progress()
+                self.query_one(
+                    ".wizard-navigation", WizardNavigation
+                ).update_button_states()
+                self.query_one("#wizard-cancel", Button).disabled = False
+        except NoMatches:
+            pass
+
+        failure = self._active_required_failure()
+        for selector in (
+            "#setup-step-retry",
+            "#setup-step-manual",
+            "#setup-step-later",
+        ):
+            try:
+                button = self.query_one(selector, Button)
+                if blocked:
+                    button.disabled = True
+                elif selector == "#setup-step-manual" and failure is not None:
+                    button.disabled = (
+                        failure.config is None
+                        or manual_settings_context_for_required_step(
+                            failure.config.id
+                        )
+                        is None
+                    )
+                else:
+                    button.disabled = False
+            except NoMatches:
+                pass
+
+    async def _checkpoint_required_failure(
+        self, action: _SetupFailureAction
+    ) -> bool | None:
+        if not self._failure_action_is_current(action):
+            return None
         try:
             saved = await self.persist_current_checkpoint()
         except Exception as exc:
@@ -4301,62 +4471,54 @@ class SetupWizardContainer(WizardContainer):
                 type(exc).__name__,
             )
             saved = False
+        if not self._failure_action_is_current(action):
+            return None
         if not saved:
-            step.show_step_error(
+            action.step.show_step_error(
                 "Setup progress could not be saved. Retry this action."
             )
         return saved
 
-    async def _use_manual_setup(self) -> None:
+    async def _use_manual_setup(self, action: _SetupFailureAction) -> None:
         try:
-            step = self._active_required_failure()
-            if step is None or step.config is None:
-                return
-            context = manual_settings_context_for_required_step(step.config.id)
+            context = manual_settings_context_for_required_step(action.step_id)
             if context is None:
-                step.show_step_error(
-                    "Manual setup is unavailable for this step. Retry or finish later."
-                )
+                if self._failure_action_is_current(action):
+                    action.step.show_step_error(
+                        "Manual setup is unavailable for this step. "
+                        "Retry or finish later."
+                    )
                 return
-            if not await self._checkpoint_required_failure():
+            if await self._checkpoint_required_failure(action) is not True:
                 return
             result = {
                 "completed": False,
                 "exit_route": "settings",
                 "exit_context": context,
             }
-            screen = self.screen
             self._dismiss_screen(result)
-            if isinstance(screen, FirstRunSetupWizard):
-                from tldw_chatbook.UI.Navigation.main_navigation import (
-                    NavigateToScreen,
-                )
-
-                screen.app.post_message(NavigateToScreen("settings", context))
         finally:
-            self._failure_action_running = False
+            self._release_failure_action(action)
 
-    async def _finish_later_from_failure(self) -> None:
+    async def _finish_later_from_failure(
+        self, action: _SetupFailureAction
+    ) -> None:
         try:
-            if not await self._checkpoint_required_failure():
+            if await self._checkpoint_required_failure(action) is not True:
                 return
             self._dismiss_screen(None)
         finally:
-            self._failure_action_running = False
+            self._release_failure_action(action)
 
-    async def _retry_failed_step(self) -> None:
+    async def _retry_failed_step(self, action: _SetupFailureAction) -> None:
         """Replace only the active failed step with a clean factory instance."""
 
+        replacement: SetupStep | None = None
         try:
-            index = self.current_step
-            failed_step = self.steps[index]
-            if (
-                not isinstance(failed_step, SetupStep)
-                or failed_step.compose_failure is None
-                or not failed_step.required
-                or failed_step.config is None
-            ):
+            if not self._failure_action_is_current(action):
                 return
+            index = action.index
+            failed_step = action.step
             parent = failed_step.parent
             if parent is None:
                 return
@@ -4372,20 +4534,27 @@ class SetupWizardContainer(WizardContainer):
             replacement.add_class("hidden")
 
             await failed_step.remove()
+            if not self._failure_action_is_current(
+                action, require_step_mounted=False
+            ):
+                return
             self.steps[index] = replacement
             if next_sibling is None:
                 await parent.mount(replacement)
             else:
                 await parent.mount(replacement, before=next_sibling)
+            if not self._retry_replacement_is_current(action, replacement):
+                return
             self._refresh_active_ids()
             self.show_step(index)
+            self._release_failure_action(action, replacement=replacement)
         except Exception as exc:
             logger.error(
                 "Wizard step retry failed (category=recovery, error_type={})",
                 type(exc).__name__,
             )
         finally:
-            self._failure_action_running = False
+            self._release_failure_action(action)
 
     # -- commit-on-Next ----------------------------------------------------
     @on(Button.Pressed, "#wizard-next")
@@ -4414,7 +4583,7 @@ class SetupWizardContainer(WizardContainer):
         dispatch semantics (the prevent_default() suppression) are
         unchanged.
         """
-        if self._advancing or not self.can_proceed:
+        if self._advancing or self._failure_action_running or not self.can_proceed:
             return
         self._set_advancing(True)
         self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
@@ -4423,17 +4592,7 @@ class SetupWizardContainer(WizardContainer):
         """Fence navigation while a step's config handoff is settling."""
 
         self._advancing = active
-        try:
-            if active:
-                for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
-                    self.query_one(selector, Button).disabled = True
-            else:
-                self.update_progress()
-                nav = self.query_one(".wizard-navigation", WizardNavigation)
-                nav.update_button_states()
-                self.query_one("#wizard-cancel", Button).disabled = False
-        except NoMatches:
-            pass
+        self._sync_action_controls()
 
     async def _advance(self) -> None:
         try:
@@ -4475,7 +4634,7 @@ class SetupWizardContainer(WizardContainer):
         # there. WizardContainer.handle_back() would otherwise also fire and
         # flat-decrement current_step, ignoring the active-id subset.
         event.prevent_default()
-        if self._advancing:
+        if self._advancing or self._failure_action_running:
             return
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
@@ -4509,7 +4668,7 @@ class SetupWizardContainer(WizardContainer):
         exactly, minus the event.prevent_default() call action dispatch has
         no event for.
         """
-        if self._advancing:
+        if self._advancing or self._failure_action_running:
             return
         previous = self._previous_active_index(self.current_step)
         if previous is not None:
@@ -4785,7 +4944,7 @@ class SetupWizardContainer(WizardContainer):
             screen.dismiss(result)
 
     def action_cancel(self) -> None:
-        if self._advancing:
+        if self._advancing or self._failure_action_running:
             return
         screen = self.screen
         if isinstance(screen, FirstRunSetupWizard):
@@ -4910,7 +5069,8 @@ class FirstRunSetupWizard(WizardScreen):
 
     def action_cancel(self) -> None:
         try:
-            if self.query_one(SetupWizardContainer)._advancing:
+            container = self.query_one(SetupWizardContainer)
+            if container._advancing or container._failure_action_running:
                 return
         except NoMatches:
             pass
