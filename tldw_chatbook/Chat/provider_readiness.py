@@ -211,7 +211,7 @@ def get_provider_readiness(
             reason="Invalid provider settings",
             recovery=(
                 "Replace api_settings.qwencloud with a configuration table "
-                "in Settings or config.toml."
+                "in Advanced Config or config.toml."
             ),
         )
 

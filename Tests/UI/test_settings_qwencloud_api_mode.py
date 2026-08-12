@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 from copy import deepcopy
 
 import pytest
@@ -371,6 +372,122 @@ async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
 
 
 @pytest.mark.asyncio
+async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+
+    atomic_write_count = 0
+
+    def save_batch(_section_values, *, delete_keys=None):
+        nonlocal atomic_write_count
+        atomic_write_count += 1
+        return True
+
+    legacy_write_count = 0
+
+    def save_legacy(_section, _key, _value):
+        nonlocal legacy_write_count
+        legacy_write_count += 1
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        save_legacy,
+    )
+    host = DestinationHarness(app, "settings")
+    credential = "local-test-credential"
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+
+        endpoint.value = "https://new.example.test/compatible-mode/v1"
+        api_key.focus()
+        await pilot.pause()
+        await pilot.press(*tuple(credential))
+        mode.value = "chat_completions"
+        await pilot.pause()
+
+        assert endpoint.value == "https://new.example.test/compatible-mode/v1"
+        assert len(api_key.value) == len(credential)
+        assert mode.value == "chat_completions"
+
+        await pilot.click("#settings-save-category")
+        for _ in range(4):
+            await pilot.pause()
+
+        assert atomic_write_count == 1
+        assert legacy_write_count == 0
+        assert api_key.value == ""
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        stored_provider = app.app_config["api_settings"]["qwencloud"]
+        assert stored_provider["api_base_url"] == (
+            "https://new.example.test/compatible-mode/v1"
+        )
+        assert stored_provider["api_mode"] == "chat_completions"
+        stored_key = stored_provider["api_key"]
+        assert isinstance(stored_key, str)
+        assert hmac.compare_digest(stored_key, credential)
+
+        await pilot.click("#settings-save-category")
+        for _ in range(2):
+            await pilot.pause()
+
+        assert atomic_write_count == 1
+        assert legacy_write_count == 0
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        stored_key = app.app_config["api_settings"]["qwencloud"]["api_key"]
+        assert isinstance(stored_key, str)
+        assert hmac.compare_digest(stored_key, credential)
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged():
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"]["openai"] = {
+        "api_base_url": "https://api.openai.com/v1",
+        "api_key": "saved-test-credential",
+        "model": "gpt-4.1",
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        api_key.focus()
+        await pilot.pause()
+        await pilot.press("x")
+
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "openai"
+        screen.handle_provider_value_changed(Select.Changed(provider, "openai"))
+        for _ in range(3):
+            await pilot.pause()
+
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert api_key.value == ""
+        assert "api_key" not in draft.values
+
+        api_key.focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.press("backspace")
+        await pilot.pause()
+
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["api_key"] == ""
+
+
+@pytest.mark.asyncio
 async def test_qwencloud_api_mode_draft_survives_provider_switch():
     app = _qwencloud_app(api_mode="responses")
     app.app_config["api_settings"]["openai"] = {
@@ -720,11 +837,77 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
 
         assert screen._provider_config_entry("QwenCloud")[0] == "qwencloud"
         assert selector.value is Select.NULL
-        assert "choose Responses or Chat Completions" in str(guidance.content)
+        recovery = str(guidance.content)
+        assert "api_settings.qwencloud is not a table" in recovery
+        assert "Advanced Config" in recovery
+        assert "config.toml" in recovery
         assert env_var.value == ""
+        assert "Provider settings invalid" in screen._provider_key_status("QwenCloud")
         assert "ALIAS-SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
         assert "ALIAS_ENV_CANARY" not in screen._provider_key_status("QwenCloud")
         assert app.app_config["api_settings"] == original_api_settings
+
+
+@pytest.mark.asyncio
+async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
+    monkeypatch,
+):
+    app = _qwencloud_app()
+    app.app_config["api_settings"] = {"qwencloud": ["not-a-table"]}
+    original_api_settings = deepcopy(app.app_config["api_settings"])
+    writes: list[tuple[str, str, object]] = []
+    atomic_writes: list[dict] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: writes.append((section, key, value)) or True,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: (
+            atomic_writes.append(deepcopy(dict(section_values))) or True
+        ),
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        guidance = screen.query_one("#settings-provider-api-mode-guidance", Static)
+
+        assert mode.value is Select.NULL
+        assert mode.has_class("settings-invalid-input")
+        assert "Advanced Config" in str(guidance.content)
+
+        mode.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert mode.value == "responses"
+        assert mode.has_class("settings-invalid-input")
+        assert "api_settings.qwencloud is not a table" in str(guidance.content)
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "responses"
+
+        await pilot.click("#settings-test-provider")
+        assert "Invalid provider settings" in str(
+            screen.query_one("#settings-provider-test-result", Static).content
+        )
+
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+
+        assert writes == []
+        assert atomic_writes == []
+        assert app.app_config["api_settings"] == original_api_settings
+        assert "Advanced Config" in str(
+            screen.query_one("#settings-provider-save-result", Static).content
+        )
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "responses"
 
 
 @pytest.mark.asyncio

@@ -584,7 +584,12 @@ QWENCLOUD_API_MODE_INVALID_COPY = (
     "QwenCloud API mode is invalid. Open API mode and choose Responses or Chat "
     "Completions, then Save."
 )
-_INVALID_QWENCLOUD_PROVIDER_SETTINGS = object()
+QWENCLOUD_PROVIDER_TABLE_INVALID_COPY = (
+    "QwenCloud provider settings are invalid: api_settings.qwencloud is not a "
+    "table. Replace it with a table in Advanced Config or config.toml; normal "
+    "category Save cannot repair this configuration."
+)
+_MALFORMED_QWENCLOUD_PROVIDER_TABLE = object()
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -1985,7 +1990,10 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_selected_model_ids: set[str] = set()
         self._syncing_provider_endpoint = False
         self._syncing_provider_api_mode = False
-        self._syncing_provider_api_key = False
+        # Input.Changed is delivered after a programmatic value assignment
+        # returns, so a synchronous boolean cannot suppress that deferred
+        # message. Consume exact expected values once instead.
+        self._provider_api_key_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         self._syncing_provider_model_value = False
@@ -7535,6 +7543,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(str(provider or ""))
         if not provider_key:
             return ""
+        if self._qwencloud_provider_table_is_malformed(provider_key):
+            return _MALFORMED_QWENCLOUD_PROVIDER_TABLE
         provider_config = self._provider_config(provider_key)
         if "api_mode" in provider_config:
             return provider_config["api_mode"]
@@ -8183,9 +8193,24 @@ class SettingsScreen(BaseAppScreen):
         try:
             return section_key, provider_settings_for_key(api_settings, target_key)
         except ProviderSettingsError:
-            return "qwencloud", {
-                "api_mode": _INVALID_QWENCLOUD_PROVIDER_SETTINGS,
-            }
+            return "qwencloud", {}
+
+    def _qwencloud_provider_table_is_malformed(self, provider: object) -> bool:
+        """Return whether QwenCloud's authoritative provider entry is non-table."""
+        target_key = provider_config_key(str(provider or ""))
+        if target_key != "qwencloud":
+            return False
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        api_settings = (
+            app_config.get("api_settings", {})
+            if isinstance(app_config, Mapping)
+            else {}
+        )
+        try:
+            provider_settings_for_key(api_settings, target_key)
+        except ProviderSettingsError:
+            return True
+        return False
 
     def _provider_config(self, provider: str) -> Mapping[str, object]:
         _section_key, provider_config = self._provider_config_entry(provider)
@@ -8254,6 +8279,8 @@ class SettingsScreen(BaseAppScreen):
             provider,
             self._provider_readiness_app_config(),
         )
+        if readiness.reason == "Invalid provider settings":
+            return "Provider settings invalid; repair in Advanced Config or config.toml"
         if self._provider_saved_api_key_present(provider):
             return "API key source: local config key saved"
         if readiness.api_key_source and readiness.api_key_source.startswith("env:"):
@@ -8427,17 +8454,19 @@ class SettingsScreen(BaseAppScreen):
         try:
             row = self.query_one("#settings-provider-api-mode-row", Horizontal)
             selector = self.query_one("#settings-provider-api-mode", Select)
-            guidance = self.query_one(
-                "#settings-provider-api-mode-guidance", Static
-            )
+            guidance = self.query_one("#settings-provider-api-mode-guidance", Static)
         except QueryError:
             return
         is_qwencloud = provider_config_key(provider) == "qwencloud"
+        provider_table_malformed = self._qwencloud_provider_table_is_malformed(provider)
         display_value, valid = self._provider_api_mode_display_value(provider)
         row.set_class(not is_qwencloud, "settings-gated-profile-hidden")
         guidance.set_class(not is_qwencloud, "settings-gated-profile-hidden")
         selector.disabled = not is_qwencloud
-        selector.set_class(is_qwencloud and not valid, "settings-invalid-input")
+        selector.set_class(
+            is_qwencloud and (provider_table_malformed or not valid),
+            "settings-invalid-input",
+        )
         if selector.value != display_value:
             self._syncing_provider_api_mode = True
             try:
@@ -8445,9 +8474,13 @@ class SettingsScreen(BaseAppScreen):
             finally:
                 self._syncing_provider_api_mode = False
         guidance.update(
-            QWENCLOUD_API_MODE_INVALID_COPY
-            if is_qwencloud and not valid
-            else QWENCLOUD_API_MODE_HELP_COPY
+            QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
+            if is_qwencloud and provider_table_malformed
+            else (
+                QWENCLOUD_API_MODE_INVALID_COPY
+                if is_qwencloud and not valid
+                else QWENCLOUD_API_MODE_HELP_COPY
+            )
         )
 
     def _snapshot_provider_api_mode_widget(self, provider: object) -> None:
@@ -8588,7 +8621,6 @@ class SettingsScreen(BaseAppScreen):
             api_key_input = None
         draft = self._provider_draft()
         self._syncing_provider_credential_env_var = True
-        self._syncing_provider_api_key = True
         try:
             if credential_input is not None:
                 credential_input.value = self._provider_credential_env_var(provider)
@@ -8596,15 +8628,29 @@ class SettingsScreen(BaseAppScreen):
                     provider
                 )
             if api_key_input is not None:
-                api_key_input.value = (
+                api_key_value = (
                     str(draft.values.get("api_key") or "")
                     if draft is not None and "api_key" in draft.values
                     else ""
                 )
+                self._set_provider_api_key_input_value(
+                    api_key_input,
+                    api_key_value,
+                )
                 api_key_input.placeholder = self._provider_api_key_placeholder(provider)
         finally:
             self._syncing_provider_credential_env_var = False
-            self._syncing_provider_api_key = False
+
+    def _set_provider_api_key_input_value(
+        self,
+        api_key_input: Input,
+        value: str,
+    ) -> None:
+        """Assign a key widget value and queue its deferred change once."""
+        if api_key_input.value == value:
+            return
+        self._provider_api_key_suppress_queue.append(value)
+        api_key_input.value = value
 
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
         profile = self._provider_model_profile(provider, model)
@@ -8831,6 +8877,8 @@ class SettingsScreen(BaseAppScreen):
             provider,
             self._provider_readiness_app_config(),
         )
+        if readiness.reason == "Invalid provider settings":
+            return "Provider settings invalid; repair in Advanced Config or config.toml"
         if readiness.api_key_source:
             return f"API key: {readiness.api_key_source}"
         if not readiness.requires_api_key:
@@ -8863,6 +8911,11 @@ class SettingsScreen(BaseAppScreen):
             A config mapping the Test's readiness check can evaluate.
         """
         app_config = getattr(self.app_instance, "app_config", {}) or {}
+        if self._qwencloud_provider_table_is_malformed(provider):
+            # A normal category draft cannot replace a malformed table. Keep
+            # readiness fail-closed instead of manufacturing a valid table in
+            # the test-only overlay.
+            return app_config
         draft = self._provider_draft()
         dirty = draft.dirty_keys if draft is not None else set()
         provider_key = provider_config_key(provider)
@@ -9753,9 +9806,14 @@ class SettingsScreen(BaseAppScreen):
                 ("Validation", "must start with http:// or https:// when set"),
             )
         if field_id == "settings-provider-api-mode":
+            purpose = (
+                QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
+                if self._qwencloud_provider_table_is_malformed(provider)
+                else QWENCLOUD_API_MODE_HELP_COPY
+            )
             return (
                 ("Focused setting", "API mode"),
-                ("Purpose", QWENCLOUD_API_MODE_HELP_COPY),
+                ("Purpose", purpose),
                 ("Saved as", "api_settings.qwencloud.api_mode"),
                 ("Validation", "responses or chat_completions"),
             )
@@ -10519,6 +10577,9 @@ class SettingsScreen(BaseAppScreen):
             api_mode_value, api_mode_valid = self._provider_api_mode_display_value(
                 provider
             )
+            provider_table_malformed = self._qwencloud_provider_table_is_malformed(
+                provider
+            )
             api_mode_row_classes = "settings-input-row settings-select-row"
             if provider_config_key(provider) != "qwencloud":
                 api_mode_row_classes += " settings-gated-profile-hidden"
@@ -10533,7 +10594,7 @@ class SettingsScreen(BaseAppScreen):
                     prompt="Choose Responses or Chat Completions",
                     classes=(
                         "settings-compact-select"
-                        if api_mode_valid
+                        if api_mode_valid and not provider_table_malformed
                         else "settings-compact-select settings-invalid-input"
                     ),
                     allow_blank=True,
@@ -10542,10 +10603,15 @@ class SettingsScreen(BaseAppScreen):
                 )
             yield Static(
                 (
-                    QWENCLOUD_API_MODE_INVALID_COPY
+                    QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
                     if provider_config_key(provider) == "qwencloud"
-                    and not api_mode_valid
-                    else QWENCLOUD_API_MODE_HELP_COPY
+                    and provider_table_malformed
+                    else (
+                        QWENCLOUD_API_MODE_INVALID_COPY
+                        if provider_config_key(provider) == "qwencloud"
+                        and not api_mode_valid
+                        else QWENCLOUD_API_MODE_HELP_COPY
+                    )
                 ),
                 id="settings-provider-api-mode-guidance",
                 classes=(
@@ -14567,6 +14633,7 @@ class SettingsScreen(BaseAppScreen):
                 return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
+            self._provider_api_key_suppress_queue.clear()
         # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
         # scope must not leak into a later LIBRARY_RAG visit -- e.g. leaving
         # with "Chunking" expanded and coming back to a freshly recomposed
@@ -16851,6 +16918,11 @@ class SettingsScreen(BaseAppScreen):
         )
         self._stage_provider_value("provider", staged_provider or None)
         self._sync_provider_manual_widget(staged_provider)
+        # Provider-scoped endpoint/credential/profile drafts belong to the
+        # provider being left. Drop them before resyncing the shared widgets,
+        # otherwise the old API-key draft is programmed straight back into
+        # the newly selected provider's input.
+        self._clear_provider_auxiliary_draft_keys()
         try:
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
         except QueryError:
@@ -16878,7 +16950,6 @@ class SettingsScreen(BaseAppScreen):
                 pass
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
-        self._clear_provider_auxiliary_draft_keys()
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -17014,6 +17085,7 @@ class SettingsScreen(BaseAppScreen):
         ).strip()
         if provider_config_key(provider) != "qwencloud":
             return
+        provider_table_malformed = self._qwencloud_provider_table_is_malformed(provider)
         value = self._select_value_text(event.value)
         if not value:
             if event.select.has_focus:
@@ -17021,7 +17093,9 @@ class SettingsScreen(BaseAppScreen):
                 event.select.add_class("settings-invalid-input")
                 self._set_static_text(
                     "#settings-provider-api-mode-guidance",
-                    QWENCLOUD_API_MODE_INVALID_COPY,
+                    QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
+                    if provider_table_malformed
+                    else QWENCLOUD_API_MODE_INVALID_COPY,
                 )
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(
@@ -17042,10 +17116,15 @@ class SettingsScreen(BaseAppScreen):
             # false draft or silently repair an invalid persisted setting.
             return
         self._stage_provider_api_mode(provider, value)
-        event.select.remove_class("settings-invalid-input")
+        event.select.set_class(
+            provider_table_malformed,
+            "settings-invalid-input",
+        )
         self._set_static_text(
             "#settings-provider-api-mode-guidance",
-            QWENCLOUD_API_MODE_HELP_COPY,
+            QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
+            if provider_table_malformed
+            else QWENCLOUD_API_MODE_HELP_COPY,
         )
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -17070,7 +17149,9 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             None.
         """
-        if self._syncing_provider_api_key:
+        queue = self._provider_api_key_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
         self._stage_provider_value("api_key", event.value.strip())
@@ -17094,12 +17175,8 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             api_key_input = None
         self._stage_provider_value("api_key", "")
-        self._syncing_provider_api_key = True
-        try:
-            if api_key_input is not None:
-                api_key_input.value = ""
-        finally:
-            self._syncing_provider_api_key = False
+        if api_key_input is not None:
+            self._set_provider_api_key_input_value(api_key_input, "")
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -17454,6 +17531,19 @@ class SettingsScreen(BaseAppScreen):
                 return
             normalized_api_mode: str | None = None
             if provider_key == "qwencloud":
+                if self._qwencloud_provider_table_is_malformed(provider):
+                    self._provider_save_result = QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    try:
+                        self.query_one("#settings-provider-api-mode", Select).add_class(
+                            "settings-invalid-input"
+                        )
+                    except QueryError:
+                        pass
+                    self.app.notify(self._provider_save_result, severity="error")
+                    return
                 try:
                     normalized_api_mode = normalize_qwencloud_api_mode(
                         values.get("api_mode")
@@ -18264,7 +18354,10 @@ class SettingsScreen(BaseAppScreen):
                     provider
                 )
                 api_key_input = self.query_one("#settings-provider-api-key", Input)
-                api_key_input.value = str(values.get("api_key") or "")
+                self._set_provider_api_key_input_value(
+                    api_key_input,
+                    str(values.get("api_key") or ""),
+                )
                 api_key_input.placeholder = self._provider_api_key_placeholder(provider)
                 credential_input = self.query_one(
                     "#settings-provider-credential-env-var",

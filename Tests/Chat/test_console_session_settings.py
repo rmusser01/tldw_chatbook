@@ -139,6 +139,81 @@ def test_qwencloud_default_settings_use_canonical_fields_with_alias_fallbacks() 
     assert settings.base_url == "https://alias.example.test/compatible-mode/v1"
 
 
+def test_qwencloud_public_builders_fail_closed_for_malformed_canonical_settings() -> (
+    None
+):
+    config = {
+        "chat_defaults": {"model": "safe-default"},
+        "api_settings": {
+            "qwencloud": ["not", "a", "table"],
+            "QwenCloud": {
+                "model": "alias-canary-model",
+                "api_key": "alias-canary-key",
+            },
+        },
+    }
+
+    defaults = build_default_console_session_settings(config, provider="QwenCloud")
+    errors = validate_console_session_settings(defaults, app_config=config)
+    readiness = build_console_settings_readiness(
+        defaults,
+        app_config=config,
+        environ={},
+    )
+
+    assert defaults.model == "safe-default"
+    assert errors == []
+    assert readiness.label == "Not ready"
+    assert "Invalid provider settings" in readiness.detail
+    assert "alias-canary" not in readiness.detail
+
+
+def test_qwencloud_public_builders_fail_closed_for_malformed_alias_only() -> None:
+    config = {
+        "chat_defaults": {"model": "safe-default"},
+        "api_settings": {"QwenCloud": "not-a-table"},
+    }
+
+    defaults = build_default_console_session_settings(config, provider="qwencloud")
+    errors = validate_console_session_settings(defaults, app_config=config)
+    readiness = build_console_settings_readiness(
+        defaults,
+        app_config=config,
+        environ={},
+    )
+
+    assert defaults.model == "safe-default"
+    assert errors == []
+    assert readiness.label == "Not ready"
+    assert "Invalid provider settings" in readiness.detail
+
+
+def test_qwencloud_public_builders_ignore_malformed_alias_when_exact_is_valid() -> None:
+    config = {
+        "api_settings": {
+            "QwenCloud": ["not", "a", "table"],
+            "qwencloud": {
+                "model": "canonical-model",
+                "api_base_url": "https://canonical.example.test/v1",
+                "api_key_env_var": "QWENCLOUD_TEST_API_KEY",
+            },
+        }
+    }
+
+    defaults = build_default_console_session_settings(config, provider="QwenCloud")
+    errors = validate_console_session_settings(defaults, app_config=config)
+    readiness = build_console_settings_readiness(
+        defaults,
+        app_config=config,
+        environ={"QWENCLOUD_TEST_API_KEY": "available"},
+    )
+
+    assert defaults.model == "canonical-model"
+    assert defaults.base_url == "https://canonical.example.test/v1"
+    assert errors == []
+    assert readiness.label == "Ready"
+
+
 def test_console_session_settings_system_prompt_defaults_to_none() -> None:
     """Native Console session settings carry no system prompt by default."""
     settings = ConsoleSessionSettings(provider="llama_cpp")
