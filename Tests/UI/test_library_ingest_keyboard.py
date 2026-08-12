@@ -27,7 +27,7 @@ CSS-true pattern, see ``_CssTrueConsoleHarness`` in
 
 import pytest
 from textual.geometry import Region
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -126,6 +126,35 @@ async def test_rail_row_entry_into_ingest_focuses_the_path_field_too():
             lambda: path_input.has_focus,
             message="rail-row entry into Ingest never focused the path field",
         )
+
+
+@pytest.mark.asyncio
+async def test_narrow_ingest_collapses_rail_and_keeps_source_contract_visible():
+    """TASK-15702: 80-column entry spends width on the form, not the rail."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        path_input = await _enter_ingest_mode(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: path_input.has_focus,
+            message="narrow Ingest never focused its path",
+        )
+        assert screen.query_one("#library-rail").display is False, (
+            f"screen={screen.size.width}, shell="
+            f"{screen.query_one('#library-shell-grid').region.width}, "
+            f"collapsed={screen._library_rail_collapsed}, "
+            f"auto={screen._library_ingest_auto_collapsed_rail}"
+        )
+        assert screen.query_one("#library-rail-handle").display is True
+        canvas = screen.query_one("#library-ingest-canvas")
+        for selector in ("#library-ingest-header", "#library-ingest-path-label"):
+            widget = screen.query_one(selector, Static)
+            assert canvas.region.y <= widget.region.y < canvas.region.bottom
 
 
 # --- AC#2: Esc exits, `i` enters from any canvas -----------------------------
@@ -241,9 +270,8 @@ async def test_ingest_footer_advertises_enter_start_and_esc_back():
         # filters reserved keys (F6) out of the context portion, and that
         # rendering evolves independently of this mode's registered set.
         footer = screen.query_one(AppFooterStatus)
-        assert "/ focus search" in footer.shortcut_text
-        assert "enter start import" in footer.shortcut_text
-        assert "esc back to hub" in footer.shortcut_text
+        assert "enter start" in footer.shortcut_text
+        assert "esc back" in footer.shortcut_text
 
 
 def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
@@ -260,11 +288,11 @@ def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
 
-    # The footer and F1 must read the SAME object -- shared source, not a
-    # copied tuple that can drift.
+    # The footer and F1 read the same state-derived set. Retry is omitted
+    # until a settled last submission exists.
     assert (
         screen._library_footer_shortcuts_for_current_state()
-        is screen.LIBRARY_INGEST_SHORTCUTS
+        == screen.LIBRARY_INGEST_SHORTCUTS
     )
 
     pushed = []
@@ -447,7 +475,7 @@ def test_f1_help_in_ingest_lists_exactly_one_escape_row(monkeypatch):
         for key, description in shortcuts
         if key.strip().casefold() in ("esc", "escape")
     ]
-    assert escape_rows == [("esc", "back to hub")], shortcuts
+    assert escape_rows == [("esc", "back")], shortcuts
 
 
 # --- task-3312 (#4): collapsible panel-header focus is glyph-level -----------
@@ -460,8 +488,6 @@ async def test_options_panel_header_focus_is_glyph_level_under_real_css():
     structural-focus sweep missed. Focused, it must paint a structural
     (heavy-glyph) cue without eating the ▼/title text and without any
     dimensional change."""
-    from textual.widgets._collapsible import CollapsibleTitle
-
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)

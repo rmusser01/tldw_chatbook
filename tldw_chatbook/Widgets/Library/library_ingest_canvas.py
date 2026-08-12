@@ -861,7 +861,6 @@ def build_type_group_title(
     """
     probe = _is_installed if is_installed is None else is_installed
     changed: list[str] = []
-    untouched: list[str] = []
     blocked_reasons: list[str] = []
     blocked_count = 0
     invalid_labels: list[str] = []
@@ -885,13 +884,14 @@ def build_type_group_title(
             continue
         if value is None or str(value).strip() == "":
             continue
-        bucket = untouched if _option_is_default(field, value) else changed
-        bucket.append(_summarise_option(field, value))
+        if not _option_is_default(field, value):
+            changed.append(_summarise_option(field, value))
     # Order: the blocker first (nothing in this panel can be committed
     # while it stands), then what the USER chose (the receipt's whole
     # point), then the blocked-options clause -- which is never dropped by
     # the cap, because being droppable is what made it unreachable -- then
-    # untouched defaults to fill the remaining budget.
+    # Omit untouched defaults: collapsed titles are change receipts, not a
+    # second copy of the schema. This keeps the default state scannable.
     shown: list[str] = []
     if invalid_labels:
         extra = (
@@ -914,11 +914,7 @@ def build_type_group_title(
     shown.extend(changed[: max(_TITLE_MAX_PAIRS - reserved, 0)])
     if blocked_clause:
         shown.append(blocked_clause)
-    pairs = changed + untouched
-    remaining = max(_TITLE_MAX_PAIRS - len(shown), 0)
-    filler = [pair for pair in pairs if pair not in shown][:remaining]
-    shown.extend(filler)
-    if len([pair for pair in pairs if pair not in shown]):
+    if len(changed) > len([pair for pair in shown if pair in changed]):
         shown.append("…")
     if not shown:
         return cap.label
@@ -1462,24 +1458,50 @@ class LibraryIngestCanvas(VerticalScroll):
                     expanded,
                     has_files=bool(state.type_group_file_counts.get(group)),
                 )
-        yield Input(
-            value=state.form.title,
-            placeholder="Title (optional)",
-            id="library-ingest-title",
-            classes="library-ingest-field",
-        )
-        yield Input(
-            value=state.form.author,
-            placeholder="Author (optional)",
-            id="library-ingest-author",
-            classes="library-ingest-field",
-        )
-        yield Input(
-            value=state.form.keywords,
-            placeholder="Keywords, comma-separated (optional)",
-            id="library-ingest-keywords",
-            classes="library-ingest-field",
-        )
+        # TASK-15702: placeholders disappear as soon as the user types and
+        # therefore cannot carry field identity. Keep short, persistent
+        # labels above the three optional metadata fields; placeholders are
+        # now examples/default guidance only.
+        with Horizontal(id="library-ingest-metadata-row"):
+            with Vertical(classes="library-ingest-metadata-field"):
+                yield Static(
+                    "Title (optional)",
+                    id="library-ingest-title-label",
+                    classes="library-ingest-field-label",
+                    markup=False,
+                )
+                yield Input(
+                    value=state.form.title,
+                    placeholder="Defaults to source name",
+                    id="library-ingest-title",
+                    classes="library-ingest-field",
+                )
+            with Vertical(classes="library-ingest-metadata-field"):
+                yield Static(
+                    "Author (optional)",
+                    id="library-ingest-author-label",
+                    classes="library-ingest-field-label",
+                    markup=False,
+                )
+                yield Input(
+                    value=state.form.author,
+                    placeholder="e.g. Ada Lovelace",
+                    id="library-ingest-author",
+                    classes="library-ingest-field",
+                )
+            with Vertical(classes="library-ingest-metadata-field"):
+                yield Static(
+                    "Keywords (optional)",
+                    id="library-ingest-keywords-label",
+                    classes="library-ingest-field-label",
+                    markup=False,
+                )
+                yield Input(
+                    value=state.form.keywords,
+                    placeholder="comma-separated",
+                    id="library-ingest-keywords",
+                    classes="library-ingest-field",
+                )
         # Always mounted, even with empty text, so the Start button never
         # shifts vertically when the gate line's copy appears/disappears
         # (2026-07 UAT: the button jumped ~2 rows on every gate change,
@@ -1494,65 +1516,62 @@ class LibraryIngestCanvas(VerticalScroll):
         # element (PDF selections rendered the line, plain text never),
         # and after Clear the stale line survived. The in-place updater
         # owns its content and visibility.
-        commit_summary = Static(
-            state.commit_summary_line,
-            id="library-ingest-commit-summary",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
-        commit_summary.display = bool(state.commit_summary_line)
-        yield commit_summary
-        start_quiet_line = Static(
-            state.start_quiet_line,
-            id="library-ingest-start-quiet-line",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
-        start_quiet_line.styles.height = 1
-        # (task-3314) The confirm treatment is state-keyed at compose time
-        # too, so a full recompose while armed keeps copy and styling in
-        # agreement; the gate updater owns the in-place toggle.
-        start_quiet_line.set_class(
-            state.start_confirm_armed, "-ingest-start-confirm"
-        )
-        yield start_quiet_line
-        # (task-3301) Analyze-readiness hint: says BEFORE Start that
-        # "Analyze after import" cannot actually run (no provider / missing
-        # key) and that imports will proceed without analysis. Always
-        # mounted, display-managed -- the screen's gate updater owns its
-        # content and visibility in place, same non-structural contract as
-        # the commit-summary line above.
-        analysis_hint = Static(
-            state.analysis_hint_line,
-            id="library-ingest-analysis-hint",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
-        analysis_hint.display = bool(state.analysis_hint_line)
-        yield analysis_hint
-        external_status = Static(
-            self.external_status,
-            id="library-external-prepare-status",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
-        external_status.display = bool(self.external_status)
-        yield external_status
-        external_cancel = Button(
-            "Cancel external preparation",
-            id="library-external-prepare-cancel",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        external_cancel.display = self.external_busy
-        yield external_cancel
-        yield Button(
-            "Start import",
-            id="library-ingest-start",
-            classes="library-canvas-action",
-            compact=True,
-            disabled=not state.start_enabled or self.external_busy,
-        )
+        # TASK-15702: the decision and its consequences are docked together
+        # so a long preflight never separates the forecast from Start. Once
+        # a submission clears the form, hide this blank gate and give the
+        # activity receipt the viewport instead.
+        with Vertical(id="library-ingest-commit-bar") as commit_bar:
+            commit_bar.display = bool(state.form.path.strip() or not state.queue_rows)
+            commit_summary = Static(
+                state.commit_summary_line,
+                id="library-ingest-commit-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+            commit_summary.display = bool(state.commit_summary_line)
+            yield commit_summary
+            start_quiet_line = Static(
+                state.start_quiet_line,
+                id="library-ingest-start-quiet-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+            start_quiet_line.styles.height = 1
+            start_quiet_line.set_class(
+                state.start_confirm_armed, "-ingest-start-confirm"
+            )
+            yield start_quiet_line
+            analysis_hint = Static(
+                state.analysis_hint_line,
+                id="library-ingest-analysis-hint",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+            analysis_hint.display = bool(state.analysis_hint_line)
+            yield analysis_hint
+            external_status = Static(
+                self.external_status,
+                id="library-external-prepare-status",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+            external_status.display = bool(self.external_status)
+            yield external_status
+            external_cancel = Button(
+                "Cancel external preparation",
+                id="library-external-prepare-cancel",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            external_cancel.display = self.external_busy
+            yield external_cancel
+            yield Button(
+                "Start import",
+                id="library-ingest-start",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=not state.start_enabled or self.external_busy,
+            )
         yield Static(
             state.queue_heading,
             id="library-ingest-queue-heading",

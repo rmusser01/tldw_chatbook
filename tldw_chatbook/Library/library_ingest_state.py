@@ -2110,27 +2110,20 @@ class IngestQueueGroup:
 
 
 def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
-    """Per-state outcome segments for one batch, active work last.
+    """Per-state outcome segments for one batch.
 
     Args:
         members: The batch's jobs, in render order.
 
     Returns:
-        Non-zero tally segments in ``_COUNTS_LINE_ORDER`` order (e.g.
-        ``["2 done", "1 skipped"]``), with a trailing ``"N running"``
-        segment when any member is still queued/parsing/writing.
+        Non-zero tally segments in ``_COUNTS_LINE_ORDER`` order. Each job
+        contributes its actual state; no derived "running" synonym is
+        added beside queued/parsing/writing.
     """
     tallies: dict[str, int] = {}
-    active = 0
     matched = 0
     for job in members:
-        if job.state in (
-            IngestJobState.QUEUED,
-            IngestJobState.PARSING,
-            IngestJobState.WRITING,
-        ):
-            active += 1
-        elif job.state == IngestJobState.DONE and str(
+        if job.state == IngestJobState.DONE and str(
             (job.progress or {}).get("message", "")
         ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
             # (task-2837) "matched" is reported, not folded into "done".
@@ -2144,8 +2137,6 @@ def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
     ]
     if matched:
         parts.append(f"{matched} matched")
-    if active:
-        parts.append(f"{active} running")
     return parts
 
 
@@ -2206,7 +2197,7 @@ def build_ingest_queue_groups(
         age = (
             format_batch_relative_age(max(finished_walls), now=reference_now)
             if finished_walls and not any_active
-            else "running"
+            else "active"
         )
         parts = _batch_outcome_parts(members)
         # Whole-branch review M-D (pre-existing conformance fix): no leading

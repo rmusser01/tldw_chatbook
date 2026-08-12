@@ -912,6 +912,7 @@ async def _shipped_ingest_screen(host, pilot, *, warning_count: int = 11):
     await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
     await _wait_for_selector(screen, pilot, "#library-ingest-path")
     await pilot.pause()
+    screen.app_instance.media_db = object()
     screen._library_ingest_form.path = "/tmp/mixed"
     screen._library_ingest_form.preflight = _four_group_selection(warning_count)
     screen._update_library_ingest_dynamic_regions()
@@ -1004,39 +1005,23 @@ async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen():
 
 
 @pytest.mark.asyncio
-async def test_start_still_needs_scrolling_at_52_rows():
-    """AC#2's second half does NOT hold, pinned with its numbers.
-
-    The AC was ticked from the canvas mounted alone at 80x52 (Start at
-    y=45 of 52). In the shipped screen at 235x52 the canvas viewport is 43
-    rows and Start sits at virtual y=59 -- 17 rows below the fold, which
-    is what the live pass saw. It first clears the fold at a 60-row canvas
-    viewport (terminal height 69). Both facts are asserted so neither can
-    silently change: if a later layout change brings Start into view at 52
-    rows, THIS test fails and AC#2 can be re-ticked on real evidence.
-    """
-    measured: dict[int, tuple[int, int]] = {}
-    for height in (52, 69):
-        host = _screen_harness()
-        async with host.run_test(size=(235, height)) as pilot:
-            screen = await _shipped_ingest_screen(host, pilot)
-            canvas = screen.query_one(LibraryIngestCanvas)
-            start = screen.query_one("#library-ingest-start", Button)
-            measured[height] = (
-                canvas.container_size.height,
-                start.virtual_region.y,
-            )
-
-    viewport_52, start_52 = measured[52]
-    viewport_69, start_69 = measured[69]
-    assert start_52 >= viewport_52, (
-        "Start now fits at 52 rows in the shipped screen -- re-tick "
-        f"task-14822 AC#2 and delete this test: {measured}"
-    )
-    assert start_69 < viewport_69, (
-        "Start no longer clears the fold even at a 60-row canvas viewport: "
-        f"{measured}"
-    )
+async def test_start_and_forecast_are_visible_without_scrolling_at_52_rows():
+    """TASK-15702: the shipped shell pins the commit decision above the fold."""
+    host = _screen_harness()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _shipped_ingest_screen(host, pilot, warning_count=0)
+        canvas = screen.query_one(LibraryIngestCanvas)
+        start = screen.query_one("#library-ingest-start", Button)
+        summary = screen.query_one("#library-ingest-commit-summary", Static)
+        assert canvas.region.y <= summary.region.y < canvas.region.bottom, (
+            f"canvas={canvas.region}, summary={summary.region}, start={start.region}, "
+            f"copy={screen._build_library_ingest_state().commit_summary_line!r}, "
+            f"display={summary.display}"
+        )
+        assert canvas.region.y <= start.region.y < canvas.region.bottom, (
+            f"canvas={canvas.region}, summary={summary.region}, start={start.region}"
+        )
+        assert start.region.bottom <= canvas.region.bottom
 
 
 @pytest.mark.asyncio

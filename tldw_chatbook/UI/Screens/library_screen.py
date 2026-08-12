@@ -585,6 +585,7 @@ LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 # removed and remounted here -- only the always-kept heading is listed.
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
+LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
 LIBRARY_NOTES_SOURCE_DATABASE = "database"
 LIBRARY_NOTES_SOURCE_FILES = "files"
 LIBRARY_CANVAS_KIND_NOTES = "notes"
@@ -1666,17 +1667,31 @@ class LibraryScreen(BaseAppScreen):
     #: landing (``action_library_ingest_back``). Shared by the footer and
     #: F1 via ``_library_footer_shortcuts_for_current_state``, the
     #: task-2858 single-source rule.
-    #: task-3313 adds ``r`` -- re-stage the last submission ("Retry this
-    #: batch"); the binding itself is snapshot-gated, the advertisement is
-    #: static like the rest of this set (the footer already advertises
-    #: Enter while the gate is closed -- same precedent).
     LIBRARY_INGEST_SHORTCUTS = (
-        ("/", "focus search"),
+        ("enter", "start"),
+        ("esc", "back"),
+        ("/", "search"),
         ("F6", "next pane"),
-        ("enter", "start import"),
-        ("r", "retry last batch"),
-        ("esc", "back to hub"),
     )
+
+    def _library_ingest_shortcuts_for_current_state(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """Return prioritized Ingest hints, including Retry only when live."""
+        shortcuts = list(self.LIBRARY_INGEST_SHORTCUTS)
+        registry = getattr(
+            getattr(self, "app_instance", None), "library_ingest_jobs", None
+        )
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        if library_ingest_retry_available(
+            jobs,
+            last_submission_available=(
+                getattr(self, "_library_ingest_last_submission", None) is not None
+            ),
+        ):
+            shortcuts.insert(2, ("r", "retry"))
+        return tuple(shortcuts)
 
     #: task-2237 (R2): F6 pane-cycle targets (the app's
     #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
@@ -2947,6 +2962,7 @@ class LibraryScreen(BaseAppScreen):
         # testable without coupling the canvas to terminal geometry.
         self._library_notes_compact: bool = False
         self._library_rail_collapsed: bool = False
+        self._library_ingest_auto_collapsed_rail: bool = False
         self._library_notes_stage: Literal["rail", "notes"] = "rail"
         self._library_notes_explicit_stage_intent = False
         self._library_notes_pending_focus_identity: LibraryNotesFocusIdentity | None = (
@@ -3303,7 +3319,7 @@ class LibraryScreen(BaseAppScreen):
         # starts the import, Esc returns to the hub. Disjoint from every
         # gate below (they all require a different row id).
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
-            return self.LIBRARY_INGEST_SHORTCUTS
+            return self._library_ingest_shortcuts_for_current_state()
         # task-4023 AC#7: Export and the Study staging canvases advertise
         # their newly wired Escape. Export's label names the actual
         # destination -- the canvas whose "Export…" opened it, or the hub.
@@ -4185,9 +4201,7 @@ class LibraryScreen(BaseAppScreen):
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
-        manually_collapsed = (
-            self._library_rail_collapsed and not self._library_notes_compact
-        )
+        manually_collapsed = self._library_rail_collapsed and not single_stage
         rail_display = (
             not single_stage or self._library_notes_stage == "rail"
         ) and not manually_collapsed
@@ -4204,7 +4218,40 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
-            collapse.display = not self._library_notes_compact
+            collapse.display = not single_stage
+
+    def _sync_library_ingest_rail_for_width(self, width: int) -> None:
+        """Auto-collapse the rail only while narrow Ingest needs the space."""
+        # The grid carries a wide min-width and can report its virtual width
+        # while overflowing an 80-column terminal. The user experiences the
+        # screen viewport, so use the smaller real allocation for this gate.
+        viewport_width = self.size.width if self.is_mounted else 0
+        if viewport_width > 0:
+            width = min(width, viewport_width)
+        ingest_active = self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        should_collapse = (
+            ingest_active and width < LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT
+        )
+        if should_collapse and not self._library_rail_collapsed:
+            self._library_rail_collapsed = True
+            self._library_ingest_auto_collapsed_rail = True
+            self._apply_library_notes_stage_visibility()
+        elif (
+            self._library_ingest_auto_collapsed_rail
+            and (not ingest_active or not should_collapse)
+        ):
+            self._library_rail_collapsed = False
+            self._library_ingest_auto_collapsed_rail = False
+            self._apply_library_notes_stage_visibility()
+
+    def _sync_library_ingest_rail_from_shell(self) -> None:
+        """Measure the settled shell, then apply the Ingest rail policy."""
+        try:
+            width = self.query_one("#library-shell-grid").region.width
+        except (NoMatches, QueryError):
+            return
+        if width > 0:
+            self._sync_library_ingest_rail_for_width(width)
 
     def _transition_library_notes_presentation(
         self,
@@ -4475,6 +4522,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if width <= 0:
             return
+        self._sync_library_ingest_rail_for_width(width)
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -4497,6 +4545,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if width <= 0:
             return
+        self._sync_library_ingest_rail_for_width(width)
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -7768,7 +7817,7 @@ class LibraryScreen(BaseAppScreen):
             rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
             rail_handle.styles.height = "100%"
             rail_handle.display = (
-                self._library_rail_collapsed and not self._library_notes_compact
+                self._library_rail_collapsed and not single_notes_stage
             )
             yield rail_handle
             rail = LibraryRail(
@@ -7785,7 +7834,7 @@ class LibraryScreen(BaseAppScreen):
             rail.display = (
                 (not single_notes_stage or self._library_notes_stage == "rail")
                 and not (
-                    self._library_rail_collapsed and not self._library_notes_compact
+                    self._library_rail_collapsed and not single_notes_stage
                 )
             )
             yield rail
@@ -10191,6 +10240,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._update_library_ingest_dynamic_regions()
+            self._register_footer_shortcuts()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
@@ -10328,6 +10378,8 @@ class LibraryScreen(BaseAppScreen):
             scroll_y = canvas.scroll_offset.y
         except (NoMatches, QueryError):
             pass
+        if focused_id == "library-ingest-path":
+            scroll_y = 0
         # (task-3311, second half) ``refresh(recompose=True)`` is DEFERRED:
         # the path Input below stays mounted, focused, and typeable until
         # the recompose actually runs, and whatever the user types into it
@@ -10349,7 +10401,7 @@ class LibraryScreen(BaseAppScreen):
             stale_path_input.value if stale_path_input is not None else None
         )
         self.refresh(recompose=True)
-        if focused_id is not None or scroll_y or stale_path_input is not None:
+        if focused_id is not None or scroll_y is not None or stale_path_input is not None:
             self.call_after_refresh(
                 self._restore_library_ingest_canvas_context,
                 focused_id,
@@ -10390,7 +10442,7 @@ class LibraryScreen(BaseAppScreen):
             stale_path_input: The pre-recompose path ``Input`` object.
             stale_path_value: That widget's value at capture time.
         """
-        if scroll_y:
+        if scroll_y is not None:
             try:
                 canvas = self.query_one(LibraryIngestCanvas)
                 canvas.scroll_to(y=scroll_y, animate=False, force=True)
@@ -10436,6 +10488,14 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         start_button.disabled = not new_state.start_enabled
+        try:
+            commit_bar = self.query_one("#library-ingest-commit-bar", Vertical)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            commit_bar.display = bool(
+                new_state.form.path.strip() or not new_state.queue_rows
+            )
         try:
             quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
         except (NoMatches, QueryError):
@@ -10504,7 +10564,9 @@ class LibraryScreen(BaseAppScreen):
             return
         canvas.scroll_to_widget(heading, animate=False, top=True)
 
-    def _update_library_ingest_dynamic_regions(self) -> None:
+    def _update_library_ingest_dynamic_regions(
+        self, allow_structural_recompose: bool = True
+    ) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
 
         Recomposing the whole canvas on every pre-flight result / job tick
@@ -10539,7 +10601,7 @@ class LibraryScreen(BaseAppScreen):
             or new_state.unavailable_line != old_state.unavailable_line
         )
         canvas.state = new_state
-        if structural:
+        if structural and allow_structural_recompose:
             self._refresh_library_ingest_canvas_preserving_context()
             return
         summary.state = new_state
@@ -12012,8 +12074,13 @@ class LibraryScreen(BaseAppScreen):
     def _set_library_rail_collapsed(self, collapsed: bool) -> None:
         """Toggle wide Library navigation in place without rebuilding state."""
         self._library_rail_collapsed = collapsed
+        self._library_ingest_auto_collapsed_rail = False
         self._apply_library_notes_stage_visibility()
-        if not self.is_mounted or self._library_notes_compact:
+        single_stage = (
+            self._library_notes_compact
+            and self._library_notes_compact_stage_applies()
+        )
+        if not self.is_mounted or single_stage:
             return
         selector = "#library-rail-open" if collapsed else "#library-search-input"
         try:
@@ -12325,6 +12392,12 @@ class LibraryScreen(BaseAppScreen):
             # failure must not leak into a later fresh Create entry.
             self._library_note_create_status = ""
         self._library_selected_row_id = row_id
+        try:
+            shell_width = self.query_one("#library-shell-grid").region.width
+        except (NoMatches, QueryError):
+            shell_width = 0
+        if shell_width > 0:
+            self._sync_library_ingest_rail_for_width(shell_width)
         # task-4023 AC#7: a plain rail switch is a fresh entry -- only
         # ``_open_library_export_canvas`` (which bypasses this seam) may
         # arm an Export back-origin.
@@ -12453,6 +12526,7 @@ class LibraryScreen(BaseAppScreen):
             # ran a Library search. Same call_after_refresh seam the
             # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
             self.call_after_refresh(self._focus_library_ingest_path)
+            self.call_after_refresh(self._sync_library_ingest_rail_from_shell)
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
@@ -15499,9 +15573,12 @@ class LibraryScreen(BaseAppScreen):
         so a pasted path ran a Library search).
         """
         try:
-            self.query_one("#library-ingest-path", Input).focus()
+            canvas = self.query_one(LibraryIngestCanvas)
+            path_input = self.query_one("#library-ingest-path", Input)
         except (NoMatches, QueryError):
-            pass
+            return
+        canvas.scroll_home(animate=False)
+        self.set_focus(path_input, scroll_visible=False)
 
     def _focus_library_hub_entry(self) -> None:
         """Focus the hub landing's first action (task-3302 AC#2, MI-04).
@@ -20543,7 +20620,12 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             path_input = None
         if path_input is not None:
-            path_input.value = ""
+            # This is a programmatic mirror of the form assignment above,
+            # not a second user edit. Suppressing its deferred Changed
+            # message prevents that stale empty event from landing after
+            # the user's immediate first keystroke and erasing it.
+            with path_input.prevent(Input.Changed):
+                path_input.value = ""
             # (task-3311) SYNCHRONOUS focus, before the dynamic-region
             # update below. ``Widget.focus()`` defers through
             # ``app.call_later``, so with a pre-flight staged (type-group
@@ -20559,8 +20641,23 @@ class LibraryScreen(BaseAppScreen):
             # binding). Setting focus through the Screen API updates
             # ``screen.focused`` immediately, so the capture/restore
             # round-trips ``#library-ingest-path`` deterministically.
-            self.set_focus(path_input)
-        self._update_library_ingest_dynamic_regions()
+            self.set_focus(path_input, scroll_visible=False)
+        # Clear is the one transition where the staged type-group set is
+        # guaranteed to shrink. Hide those stale panels immediately and run
+        # the ordinary in-place region update without a full canvas remount;
+        # the next completed preflight may structurally rebuild for its new
+        # group set. This removes the keystroke-loss window altogether.
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+        except (NoMatches, QueryError):
+            canvas = None
+        if canvas is not None:
+            for panel in canvas.query(Collapsible):
+                if (panel.id or "").startswith("type-group-"):
+                    panel.display = False
+            for bulk in canvas.query(".library-ingest-options-bulk"):
+                bulk.display = False
+        self._update_library_ingest_dynamic_regions(False)
 
     @on(Button.Pressed, "#library-ingest-retry-last")
     def handle_library_ingest_retry_last(self, event: Button.Pressed) -> None:

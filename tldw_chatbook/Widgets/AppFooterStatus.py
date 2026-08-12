@@ -53,9 +53,8 @@ class AppFooterStatus(Widget):
     #: in sync (a joined string here, a hardcoded key-only filter that used
     #: to live in `set_shortcut_context`) is exactly how a screen's own F6
     #: ("next pane") hint went silently missing -- the old filter dropped the
-    #: screen's copy unconditionally, even at compact widths where
-    #: `GLOBAL_HINTS_COMPACT` does not render F6 at all, leaving the key
-    #: advertised nowhere. The fix: the screen's context now renders
+    #: screen's copy unconditionally, leaving the key advertised nowhere
+    #: in the historical compact tier. The screen's context now renders
     #: UNFILTERED (see `set_shortcut_context`), and this global half
     #: instead excludes whichever keys the context already covers -- see
     #: `_remaining_global_text`. A key the screen does not mention still
@@ -73,6 +72,7 @@ class AppFooterStatus(Widget):
     )
     _GLOBAL_HINT_ITEMS_COMPACT = (
         ("f1", "F1"),
+        ("f6", "F6"),
         ("ctrl+p", "Ctrl+P"),
         ("ctrl+q", "Ctrl+Q"),
     )
@@ -237,7 +237,11 @@ class AppFooterStatus(Widget):
     def shortcut_text(self) -> str:
         return self._shortcut_text
 
-    def _remaining_global_text(self, items: tuple[tuple[str, str], ...]) -> str:
+    def _remaining_global_text(
+        self,
+        items: tuple[tuple[str, str], ...],
+        actions: tuple[ShortcutAction, ...] | None = None,
+    ) -> str:
         """Join a global-hint tier, dropping keys the screen already covers.
 
         Args:
@@ -248,12 +252,20 @@ class AppFooterStatus(Widget):
             The tier's hints, minus any whose key the active context
             already advertises under its own (available) label -- task-2860.
         """
+        visible_actions = self._context_actions if actions is None else actions
         covered = {
             action.key.lower()
-            for action in self._context_actions
+            for action in visible_actions
             if action.available
         }
         return " · ".join(label for key, label in items if key not in covered)
+
+    @staticmethod
+    def _render_actions(actions: tuple[ShortcutAction, ...]) -> str:
+        """Render an ordered subset of available workflow hints."""
+        return " | ".join(
+            action.render() for action in actions if action.available
+        )
 
     @staticmethod
     def _combine(context_text: str, globals_text: str) -> str:
@@ -370,8 +382,7 @@ class AppFooterStatus(Widget):
         ``_remaining_global_text``, which excludes whichever reserved keys
         (f1/f6/ctrl+p/ctrl+q) the context already advertises under its own
         label -- so a screen's own F6 ("next pane") hint, say, survives
-        even the compact tier (whose bare ``GLOBAL_HINTS_COMPACT`` never
-        mentions F6 at all) instead of being silently dropped everywhere.
+        even the compact tier instead of being silently dropped everywhere.
         """
         width = self.size.width
         if width <= 0:
@@ -411,10 +422,38 @@ class AppFooterStatus(Widget):
                 (full, True, False, False),
                 (full, False, False, False),
                 (context_compact_globals, False, False, False),
-                (ellipsis, False, False, False),
-                (compact, False, False, False),
-                (self.GLOBAL_HINTS_MIN, False, False, False),
             ]
+            # TASK-15702: when the full workflow context still does not
+            # fit, retain its highest-priority prefix before falling back
+            # to a global-only ellipsis. Screens order actions primary,
+            # recovery, then navigation. Build globals against the prefix
+            # actually shown so a truncated F6 reappears in the compact
+            # global cluster rather than vanishing.
+            available_actions = tuple(
+                action for action in self._context_actions if action.available
+            )
+            for count in range(len(available_actions) - 1, 0, -1):
+                prefix = available_actions[:count]
+                prefix_text = self._render_actions(prefix)
+                prefix_globals = self._remaining_global_text(
+                    self._GLOBAL_HINT_ITEMS_COMPACT,
+                    prefix,
+                )
+                steps.append(
+                    (
+                        self._combine(prefix_text, prefix_globals),
+                        False,
+                        False,
+                        False,
+                    )
+                )
+            steps.extend(
+                (
+                    (ellipsis, False, False, False),
+                    (compact, False, False, False),
+                    (self.GLOBAL_HINTS_MIN, False, False, False),
+                )
+            )
         else:
             # No screen context: the full and compact variants advertise the
             # same global keys, so shrink the hints to compact and keep the
