@@ -1448,12 +1448,15 @@ async def test_live_operation_fence_rejects_valid_v4_main_replacement_before_sql
         assert repository.state is ProfileRepositoryState.UNAVAILABLE
         assert database_path.read_bytes() == replacement_before
     finally:
+        quarantined = tmp_path / "quarantined-foreign.sqlite3"
+        os.replace(database_path, quarantined)
+        os.replace(detached, database_path)
         await repository.close()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sidecar_suffix", ("-wal", "-shm"))
-async def test_live_operation_fence_rejects_replaced_sqlite_sidecar(
+async def test_sidecar_authority_loss_quarantines_without_sqlite_cleanup(
     tmp_path: Path,
     sidecar_suffix: str,
 ) -> None:
@@ -1461,18 +1464,97 @@ async def test_live_operation_fence_rejects_replaced_sqlite_sidecar(
     await _create_profile_store(database_path, "Original")
     repository = _repository(database_path)
     await repository.open()
+    authority = repository._connection
     sidecar = Path(f"{database_path}{sidecar_suffix}")
-    replacement = tmp_path / f"replacement{sidecar_suffix}"
-    replacement.write_bytes(sidecar.read_bytes())
-    replacement.chmod(0o600)
-    os.replace(replacement, sidecar)
+    detached = tmp_path / f"detached{sidecar_suffix}"
+    foreign = tmp_path / f"foreign{sidecar_suffix}"
+    foreign_bytes = b"foreign sidecar bytes must remain unchanged"
+    foreign.write_bytes(foreign_bytes)
+    foreign.chmod(0o600)
+    os.replace(sidecar, detached)
+    os.replace(foreign, sidecar)
 
-    try:
-        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
-            await repository.list_profiles()
-        assert repository.state is ProfileRepositoryState.UNAVAILABLE
-    finally:
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.list_profiles()
+
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    assert sidecar.read_bytes() == foreign_bytes
+    await _assert_exclusive_lease_blocked(database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
         await repository.close()
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    assert sidecar.read_bytes() == foreign_bytes
+
+    quarantined_foreign = tmp_path / f"quarantined-foreign{sidecar_suffix}"
+    os.replace(sidecar, quarantined_foreign)
+    os.replace(detached, sidecar)
+    await repository.close()
+    assert repository._connection is None
+    assert repository._lease is None
+    assert quarantined_foreign.read_bytes() == foreign_bytes
+    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sidecar_suffix", ("-wal", "-shm"))
+async def test_precommit_sidecar_loss_retains_uncommitted_transaction_without_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sidecar_suffix: str,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path)
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    authority = cast(Any, repository._connection)
+    sidecar = Path(f"{database_path}{sidecar_suffix}")
+    detached = tmp_path / f"detached{sidecar_suffix}"
+    foreign = tmp_path / f"foreign{sidecar_suffix}"
+    foreign_bytes = b"foreign precommit sidecar bytes"
+    foreign.write_bytes(foreign_bytes)
+    foreign.chmod(0o600)
+    real_revalidate = module.revalidate_exact_current_profile_store
+    swapped = False
+
+    def replace_sidecar_before_commit(
+        connection: sqlite3.Connection,
+        path: Path,
+    ) -> None:
+        nonlocal swapped
+        if connection.in_transaction and not swapped:
+            os.replace(sidecar, detached)
+            os.replace(foreign, sidecar)
+            swapped = True
+        real_revalidate(connection, path)
+
+    monkeypatch.setattr(
+        module,
+        "revalidate_exact_current_profile_store",
+        replace_sidecar_before_commit,
+    )
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.create_profile(
+            _draft("Must remain uncommitted"),
+            UUID("00000000-0000-4000-8000-000000000045"),
+        )
+
+    assert swapped is True
+    assert authority.in_transaction is True
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    assert sidecar.read_bytes() == foreign_bytes
+
+    quarantined_foreign = tmp_path / f"quarantined-foreign{sidecar_suffix}"
+    os.replace(sidecar, quarantined_foreign)
+    os.replace(detached, sidecar)
+    await repository.close()
+    assert quarantined_foreign.read_bytes() == foreign_bytes
 
 
 @pytest.mark.asyncio
@@ -1498,7 +1580,14 @@ async def test_live_operation_fence_rejects_inserted_journal_artifact(
             await repository.list_profiles()
         assert repository.state is ProfileRepositoryState.UNAVAILABLE
         assert artifact.read_bytes() == b"foreign journal evidence"
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.close()
+        assert repository._connection is not None
+        assert repository._lease is not None and repository._lease.acquired is True
+        assert artifact.read_bytes() == b"foreign journal evidence"
     finally:
+        if artifact.exists():
+            artifact.unlink()
         await repository.close()
 
 
@@ -1538,13 +1627,16 @@ async def test_write_transaction_revalidates_authority_immediately_before_commit
     try:
         with pytest.raises(ProfileRepositoryError, match="operation_failed"):
             await repository.create_profile(
-                _draft("Must roll back"),
+                _draft("Must remain uncommitted"),
                 UUID("00000000-0000-4000-8000-000000000044"),
             )
         assert swapped is True
         assert repository.state is ProfileRepositoryState.UNAVAILABLE
         assert database_path.read_bytes() == replacement_before
     finally:
+        quarantined = tmp_path / "quarantined-foreign.sqlite3"
+        os.replace(database_path, quarantined)
+        os.replace(detached, database_path)
         await repository.close()
 
 
@@ -1588,11 +1680,14 @@ async def test_read_transaction_revalidates_authority_before_returning_result(
         assert repository.state is ProfileRepositoryState.UNAVAILABLE
         assert database_path.read_bytes() == replacement_before
     finally:
+        quarantined = tmp_path / "quarantined-foreign.sqlite3"
+        os.replace(database_path, quarantined)
+        os.replace(detached, database_path)
         await repository.close()
 
 
 @pytest.mark.asyncio
-async def test_authority_mismatch_close_failure_retains_connection_and_shared_lease(
+async def test_authority_mismatch_close_retains_connection_and_shared_lease(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
@@ -1600,6 +1695,7 @@ async def test_authority_mismatch_close_failure_retains_connection_and_shared_le
     detached = tmp_path / "detached.sqlite3"
     await _create_profile_store(database_path, "Original")
     await _create_profile_store(replacement, "Foreign current")
+    replacement_before = replacement.read_bytes()
     repository = _repository(database_path)
     await repository.open()
     authority = cast(Any, repository._connection)
@@ -1621,6 +1717,15 @@ async def test_authority_mismatch_close_failure_retains_connection_and_shared_le
     assert repository._lease.acquired is True
     await _assert_exclusive_lease_blocked(database_path)
 
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.close()
+    assert close_proxy.close_calls == 0
+    assert database_path.read_bytes() == replacement_before
+    assert repository._connection is authority
+    assert repository._lease is not None and repository._lease.acquired is True
+    quarantined = tmp_path / "quarantined-foreign.sqlite3"
+    os.replace(database_path, quarantined)
+    os.replace(detached, database_path)
     close_proxy.fail_close = False
     await repository.close()
     assert repository._connection is None
@@ -1653,6 +1758,9 @@ async def test_restore_fences_live_authority_before_checkpoint_or_publication(
         assert database_path.read_bytes() == replacement_before
         assert candidate.read_bytes() == candidate_before
     finally:
+        quarantined = tmp_path / "quarantined-foreign.sqlite3"
+        os.replace(database_path, quarantined)
+        os.replace(detached, database_path)
         await repository.close()
 
 

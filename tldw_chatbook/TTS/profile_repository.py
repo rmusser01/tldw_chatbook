@@ -1037,6 +1037,7 @@ class TTSProfileRepository:
         self._executor_shutdown = False
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
+        self._exact_authority_quarantined = False
         self._active_database_path: Path | None = None
         self._residual_cleanup_paths: tuple[Path, ...] = ()
         self._damaged_reference_profile_ids: set[UUID] = set()
@@ -4256,6 +4257,9 @@ class TTSProfileRepository:
         if body_error is None:
             return cast(_T, value)
 
+        if isinstance(body_error, ExactProfileStoreAuthorityError):
+            _raise_with_cleanup_precedence(body_error)
+
         integrity_conflict = False
         classification_error: BaseException | None = None
         if (
@@ -4437,17 +4441,13 @@ class TTSProfileRepository:
         self,
         error: ExactProfileStoreAuthorityError,
     ) -> None:
-        """Seal live use and settle exact authority before releasing its lease."""
+        """Quarantine exact authority without invoking SQLite cleanup."""
 
-        cleanup_error: BaseException | None = None
         with self._state_lock:
             if not self._terminal:
                 self._state = ProfileRepositoryState.UNAVAILABLE
-        try:
-            self._worker_cleanup()
-        except BaseException as caught:
-            cleanup_error = caught
-        _raise_with_cleanup_precedence(error, cleanup_error)
+            self._exact_authority_quarantined = True
+        _raise_with_cleanup_precedence(error)
 
     def _worker_state_error_locked(self, generation: int) -> str | None:
         if generation != self._generation:
@@ -4494,28 +4494,41 @@ class TTSProfileRepository:
         )
 
     async def close(self) -> ProfileStoreResult[None]:
-        """Definitively close the repository and shut down its worker once."""
+        """Close safely, retaining quarantined authority until it matches again.
+
+        Exact namespace loss makes SQLite cleanup unsafe because close may
+        mutate or remove a foreign WAL/SHM cohort.  In that state this method
+        reports ``operation_failed`` and retains the worker, connection, and
+        lease.  A later call may settle cleanup after the exact inode cohort is
+        restored; otherwise process exit is the only non-mutating release.
+        """
 
         lifecycle_lock = self._bind_or_check_loop()
         async with lifecycle_lock:
             with self._state_lock:
                 if self._terminal:
-                    return ProfileStoreResult(
-                        generation=self._generation,
-                        value=None,
-                    )
-                self._generation += 1
-                self._damaged_reference_profile_ids.clear()
-                generation = self._generation
-                self._terminal = True
-                self._state = ProfileRepositoryState.CLOSED
+                    if not self._exact_authority_quarantined:
+                        return ProfileStoreResult(
+                            generation=self._generation,
+                            value=None,
+                        )
+                    generation = self._generation
+                else:
+                    self._generation += 1
+                    self._damaged_reference_profile_ids.clear()
+                    generation = self._generation
+                    self._terminal = True
+                    self._state = ProfileRepositoryState.CLOSED
                 executor = self._executor
                 pending = tuple(self._pending_futures)
+                authority_quarantined = self._exact_authority_quarantined
 
             for future in pending:
                 future.cancel()
 
             if executor is None:
+                if authority_quarantined:
+                    raise _repository_error("operation_failed")
                 return ProfileStoreResult(generation=generation, value=None)
 
             completion = asyncio.create_task(self._finish_close(executor, pending))
@@ -4549,6 +4562,11 @@ class TTSProfileRepository:
             except BaseException as error:
                 cleanup_error = error
 
+        with self._state_lock:
+            authority_quarantined = self._exact_authority_quarantined
+        if cleanup_error is not None and authority_quarantined:
+            _raise_cleanup_errors(cleanup_error)
+
         shutdown_error: BaseException | None = None
         with self._state_lock:
             self._executor_shutdown = True
@@ -4568,7 +4586,7 @@ class TTSProfileRepository:
         _raise_cleanup_errors(cleanup_error, shutdown_error)
 
     def _worker_cleanup(self) -> None:
-        """Close SQLite before releasing the shared lease on the worker."""
+        """Close SQLite before its lease, only under revalidated authority."""
 
         self._clear_reference_damage_markers()
         connection = self._connection
@@ -4576,6 +4594,13 @@ class TTSProfileRepository:
         connection_error: BaseException | None = None
         residual_error: BaseException | None = None
         lease_error: BaseException | None = None
+
+        if self._exact_authority_quarantined:
+            if connection is None:
+                raise _repository_error("operation_failed")
+            self._worker_revalidate_exact_authority(connection)
+            with self._state_lock:
+                self._exact_authority_quarantined = False
 
         if connection is not None:
             try:
