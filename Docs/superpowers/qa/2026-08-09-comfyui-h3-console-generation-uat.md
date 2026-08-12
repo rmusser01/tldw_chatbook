@@ -8,7 +8,7 @@ TASK-3401.14 tests the packaged Base and Spectrum H3 workflows through the real 
 
 - The app ran with isolated home, config, and data directories under a disposable temporary root.
 - A read-only prerequisite probe against the configured trusted server found both packaged workflow node sets and the required video-output class.
-- The run was configured only with disposable profile paths. A post-run containment check caught and recovered the separate cross-profile default-write defect described below.
+- The run was configured only with disposable profile paths. A post-run containment check found a byte fingerprint change in the separate default config, so the exact validated snapshot was restored as a precaution.
 - No generated-media filename, prompt, credential, server identity, or private source-workflow identity is recorded here.
 
 ## Results
@@ -33,7 +33,8 @@ TASK-3401.14 tests the packaged Base and Spectrum H3 workflows through the real 
 - Explicit inline-preview activation was followed by an app-level unhandled `AttributeError` and shutdown in the isolated persistent log. The log contained no prompt or media bytes.
 - These issues are tracked atomically in TASK-3401.17, TASK-3401.18, and TASK-3401.19. No production fix was made inside this UAT task.
 - A follow-up run after those tasks completed verified that identity persistence, preview lifecycle, remount retention, full-player launch, and save-copy no longer block this acceptance path.
-- The follow-up isolated launch also exposed a separate config-containment defect: startup appended built-in default keys to the unrelated user config even though an isolated config override was active. No existing value changed; the exact pre-run file was restored, and TASK-15674 tracks the product fix.
+- The follow-up session's containment check also found a byte fingerprint change in the unrelated default config. Because unrelated concurrent activity existed, that observation did not prove that the isolated app's startup-to-approved-quit lifecycle wrote the file. Restoring the exact validated pre-run snapshot remained the appropriate precaution.
+- TASK-15674 later ran a controlled current-development reproduction with distinct effective and decoy configs. Approved-quit persistence ran, selected the exact effective profile path, and left the decoy default config byte-identical. No product fix was required; regression coverage now locks that verified boundary.
 
 ## Cleanup
 
