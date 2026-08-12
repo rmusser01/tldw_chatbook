@@ -1,0 +1,80 @@
+name: TASK-601 native process-tree evidence
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-evidence:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'task-601-platform-evidence'
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - evidence_name: linux-x86_64
+            os: ubuntu-24.04
+          - evidence_name: windows-x86_64
+            os: windows-2022
+          - evidence_name: macos-x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Initialize failure evidence
+        run: python .github/scripts/task601_process_tree_evidence.py --initialize --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-601-platform-evidence.json"
+
+      - name: Install test dependencies
+        id: dependencies
+        continue-on-error: true
+        run: python -m pip install -e '.[dev]'
+
+      - name: Record dependency installation failure
+        if: steps.dependencies.outcome != 'success'
+        run: python .github/scripts/task601_process_tree_evidence.py --record-failure dependency_install --failure-stage dependency_install --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-601-platform-evidence.json"
+
+      - name: Run bounded platform tests
+        id: platform_tests
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python -m pytest \
+            Tests/STT/test_executor_process_tree.py \
+            Tests/STT/test_local_stt_executor.py::test_force_stop_detaches_before_kill_and_cleans_generation_scratch \
+            Tests/CI/test_task601_process_tree_evidence.py \
+            --timeout=60 \
+            --junitxml="$RUNNER_TEMP/task-601-junit.xml" \
+            -q
+
+      - name: Normalize platform evidence
+        if: always() && steps.dependencies.outcome == 'success'
+        run: python .github/scripts/task601_process_tree_evidence.py --from-junit "$RUNNER_TEMP/task-601-junit.xml" --pytest-outcome "${{ steps.platform_tests.outcome }}" --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-601-platform-evidence.json"
+
+      - name: Validate platform evidence
+        if: always()
+        run: python .github/scripts/task601_process_tree_evidence.py --validate "$RUNNER_TEMP/task-601-platform-evidence.json"
+
+      - name: Upload platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-601-platform-${{ matrix.evidence_name }}
+          path: ${{ runner.temp }}/task-601-platform-evidence.json
+          if-no-files-found: error

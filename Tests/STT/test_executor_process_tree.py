@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,14 +96,141 @@ def _receive(connection: object, timeout: float = 10.0) -> tuple[str, object]:
     return connection.recv()  # type: ignore[attr-defined,no-any-return]
 
 
-def _pid_exists(pid: int) -> bool:
+def _pid_has_exited(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        synchronize = 0x00100000
+        error_invalid_parameter = 87
+        wait_object_0 = 0
+        wait_timeout = 258
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+        ]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        ctypes.set_last_error(0)
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == error_invalid_parameter:
+                return True
+            raise OSError(error, "OpenProcess could not prove PID exit")
+        try:
+            result = kernel32.WaitForSingleObject(handle, 0)
+            if result == wait_object_0:
+                return True
+            if result == wait_timeout:
+                return False
+            error = ctypes.get_last_error()
+            raise OSError(error, "WaitForSingleObject failed")
+        finally:
+            kernel32.CloseHandle(handle)
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return False
-    except PermissionError:
         return True
-    return True
+    except PermissionError:
+        return False
+    return False
+
+
+def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not _pid_has_exited(pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return _pid_has_exited(pid)
+
+
+def _finalize_native_tree(
+    tree: ExecutorProcessTree | None,
+    process: object,
+    identity: WorkerContainmentIdentity | None,
+    child_pid: int | None,
+) -> bool:
+    tree_proven = False
+    if tree is not None:
+        try:
+            tree_proven = tree.terminate_tree(term_timeout=1.0, kill_timeout=1.0)
+        except Exception:
+            pass
+    worker_alive = process.is_alive()  # type: ignore[attr-defined]
+    child_alive = child_pid is not None and not _pid_has_exited(child_pid)
+    if os.name == "nt":
+        if tree is not None and not tree_proven:
+            tree._close_job_handle()
+        if worker_alive:
+            try:
+                process.terminate()  # type: ignore[attr-defined]
+            except OSError:
+                pass
+            process.join(1.0)  # type: ignore[attr-defined]
+            if process.is_alive():  # type: ignore[attr-defined]
+                try:
+                    process.kill()  # type: ignore[attr-defined]
+                except OSError:
+                    pass
+    elif (
+        (worker_alive or child_alive)
+        and identity is not None
+        and identity.process_group_id is not None
+        and identity.process_group_id != os.getpgrp()
+    ):
+        try:
+            os.killpg(identity.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.join(2.0)  # type: ignore[attr-defined]
+    return tree_proven
+
+
+def test_windows_finalizer_uses_only_the_owned_process_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    raw_pid_terminations: list[int] = []
+    process = _FakeProcess(calls)
+
+    monkeypatch.setattr(sys.modules[__name__], "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(sys.modules[__name__], "_pid_has_exited", lambda _pid: False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_terminate_captured_windows_pid",
+        raw_pid_terminations.append,
+        raising=False,
+    )
+
+    _finalize_native_tree(None, process, None, child_pid=67890)
+
+    assert "terminate_process" in calls
+    assert raw_pid_terminations == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows PID probe")
+def test_windows_pid_probe_does_not_terminate_a_live_process() -> None:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert _pid_has_exited(child.pid) is False
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(10.0)
 
 
 def test_posix_worker_enters_new_session_and_waits_for_parent_admission() -> None:
@@ -213,7 +341,10 @@ def test_unproven_tree_death_quarantines_containment(
     process = _FakeProcess(calls, dies=False)
     admission = _RecordingEvent(calls)
     identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=process.pid)
-    monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(
+        os, "killpg", lambda pgid, sig: calls.append((pgid, sig)), raising=False
+    )
     tree = ExecutorProcessTree(
         process,
         admission,
@@ -228,11 +359,9 @@ def test_unproven_tree_death_quarantines_containment(
     assert (process.pid, signal.SIGKILL) in calls
 
 
-def test_posix_force_stop_removes_worker_and_descendant_before_scratch_cleanup(
+def test_native_force_stop_removes_worker_and_descendant_before_scratch_cleanup(
     tmp_path: Path,
 ) -> None:
-    if os.name != "posix":
-        pytest.skip("POSIX containment evidence")
     scratch = tmp_path / "generation-scratch"
     scratch.mkdir(mode=0o700)
     context = multiprocessing.get_context("spawn")
@@ -244,42 +373,48 @@ def test_posix_force_stop_removes_worker_and_descendant_before_scratch_cleanup(
     )
     process.start()
     tree: ExecutorProcessTree | None = None
+    identity: WorkerContainmentIdentity | None = None
     child_pid: int | None = None
     try:
         kind, identity = _receive(receive)
         assert kind == "identity"
         assert type(identity) is WorkerContainmentIdentity
+        assert identity == WorkerContainmentIdentity(
+            pid=process.pid,
+            process_group_id=process.pid if os.name == "posix" else None,
+        )
         tree = ExecutorProcessTree(process, admission, identity)
         tree.admit()
         child_kind, raw_child_pid = _receive(receive)
         assert child_kind == "child"
         child_pid = int(raw_child_pid)
         assert (scratch / "worker-admitted").is_file()
+        assert _pid_has_exited(child_pid) is False
 
         assert tree.terminate_tree(term_timeout=2.0, kill_timeout=2.0) is True
-        deadline = time.monotonic() + 5.0
-        while _pid_exists(child_pid) and time.monotonic() < deadline:
-            time.sleep(0.02)
         assert process.is_alive() is False
-        assert _pid_exists(child_pid) is False
+        assert _pid_has_exited(process.pid) is True
+        assert _wait_for_pid_exit(child_pid) is True
 
         shutil.rmtree(scratch)
         assert scratch.exists() is False
     finally:
-        if tree is not None and process.is_alive():
-            tree.terminate_tree(term_timeout=1.0, kill_timeout=1.0)
-        elif process.is_alive():
+        tree_proven = _finalize_native_tree(tree, process, identity, child_pid)
+        if tree is None and process.is_alive():
             process.terminate()
             process.join(5.0)
-        if scratch.exists() and (child_pid is None or not _pid_exists(child_pid)):
+        if (
+            scratch.exists()
+            and not process.is_alive()
+            and (child_pid is None or _pid_has_exited(child_pid))
+            and (tree is None or tree_proven)
+        ):
             shutil.rmtree(scratch)
 
 
-def test_posix_crashed_leader_still_reaps_term_ignoring_descendant(
+def test_native_crashed_leader_reaps_descendant_before_scratch_cleanup(
     tmp_path: Path,
 ) -> None:
-    if os.name != "posix":
-        pytest.skip("POSIX containment evidence")
     scratch = tmp_path / "crashed-generation-scratch"
     scratch.mkdir(mode=0o700)
     context = multiprocessing.get_context("spawn")
@@ -297,28 +432,38 @@ def test_posix_crashed_leader_still_reaps_term_ignoring_descendant(
         kind, identity = _receive(receive)
         assert kind == "identity"
         assert type(identity) is WorkerContainmentIdentity
+        assert identity == WorkerContainmentIdentity(
+            pid=process.pid,
+            process_group_id=process.pid if os.name == "posix" else None,
+        )
         tree = ExecutorProcessTree(process, admission, identity)
         tree.admit()
         child_kind, raw_child_pid = _receive(receive)
         assert child_kind == "child"
         child_pid = int(raw_child_pid)
+        assert (scratch / "descendant-ready").is_file()
         process.join(10.0)
         assert process.is_alive() is False
-        assert _pid_exists(child_pid) is True
+        assert _pid_has_exited(child_pid) is False
 
         assert tree.terminate_tree(term_timeout=0.1, kill_timeout=2.0) is True
-        assert _pid_exists(child_pid) is False
+        assert process.is_alive() is False
+        assert _pid_has_exited(process.pid) is True
+        assert _wait_for_pid_exit(child_pid) is True
 
         shutil.rmtree(scratch)
         assert scratch.exists() is False
     finally:
-        if identity is not None and child_pid is not None and _pid_exists(child_pid):
-            try:
-                os.killpg(identity.process_group_id, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        process.join(2.0)
-        if scratch.exists() and (child_pid is None or not _pid_exists(child_pid)):
+        tree_proven = _finalize_native_tree(tree, process, identity, child_pid)
+        if tree is None and process.is_alive():
+            process.terminate()
+            process.join(5.0)
+        if (
+            scratch.exists()
+            and not process.is_alive()
+            and (child_pid is None or _pid_has_exited(child_pid))
+            and (tree is None or tree_proven)
+        ):
             shutil.rmtree(scratch)
 
 

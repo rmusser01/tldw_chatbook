@@ -180,7 +180,9 @@ def test_executor_request_rejects_invalid_source_or_buffer_boundaries(
         )
 
 
-def test_executor_request_source_variants_pickle_without_leaking_private_inputs() -> None:
+def test_executor_request_source_variants_pickle_without_leaking_private_inputs() -> (
+    None
+):
     snapshot = LocalSourceSnapshot(
         token="private-snapshot-token",
         paths=(Path("/private/models/model.onnx"),),
@@ -1217,9 +1219,13 @@ def test_controller_drops_stale_and_duplicate_terminals(mode: str) -> None:
         executor.close()
 
 
-def test_force_stop_detaches_before_kill_and_cleans_generation_scratch() -> None:
+def test_force_stop_detaches_before_kill_and_cleans_generation_scratch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     executor = _executor()
     callbacks = _Callbacks()
+    termination_entered = threading.Event()
+    allow_termination = threading.Event()
     try:
         _submit(executor, callbacks, attempt_id="held", mode="ignore_cancel")
         _wait_until(
@@ -1229,8 +1235,21 @@ def test_force_stop_detaches_before_kill_and_cleans_generation_scratch() -> None
         )
         scratch = executor._scratch_path
         assert scratch is not None and scratch.is_dir()
+        tree = executor._tree
+        assert tree is not None
+        original_terminate_tree = tree.terminate_tree
+
+        def gated_terminate_tree(**kwargs: float) -> bool:
+            termination_entered.set()
+            assert allow_termination.wait(10.0)
+            return original_terminate_tree(**kwargs)
+
+        monkeypatch.setattr(tree, "terminate_tree", gated_terminate_tree)
 
         assert executor.force_stop("held") is True
+        assert termination_entered.wait(10.0)
+        assert scratch.exists() is True
+        allow_termination.set()
         _wait_for_terminal(callbacks)
         assert callbacks.failures[0].code is TranscriptionFailureCode.CANCELLED
         assert executor.wait_for_retirement(10.0) is True
@@ -1238,6 +1257,8 @@ def test_force_stop_detaches_before_kill_and_cleans_generation_scratch() -> None
         assert scratch.exists() is False
         assert executor.busy is False
     finally:
+        allow_termination.set()
+        executor.wait_for_retirement(10.0)
         executor.close()
 
 

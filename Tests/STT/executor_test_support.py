@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
-import os
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
@@ -44,7 +44,9 @@ def _protocol_provider_builder(
     def file_runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
         return {"audio_path": audio_path, "kwargs": kwargs}
 
-    def buffer_runner(source: Any, *, segment_end_frames: tuple[int, ...]) -> dict[str, Any]:
+    def buffer_runner(
+        source: Any, *, segment_end_frames: tuple[int, ...]
+    ) -> dict[str, Any]:
         return {
             "audio_bytes": len(source.audio),
             "sample_rate": source.sample_rate,
@@ -295,13 +297,18 @@ def containment_crashed_leader_with_term_ignoring_descendant(
     if not admission_event.wait(10.0):
         return
     ready = Path(scratch_path) / "descendant-ready"
+    ignore_sigterm = (
+        "import signal;signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+        if os.name == "posix"
+        else ""
+    )
     child = subprocess.Popen(
         [
             sys.executable,
             "-c",
             (
-                "import pathlib,signal,time;"
-                "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                "import pathlib,time;"
+                f"{ignore_sigterm}"
                 f"pathlib.Path({str(ready)!r}).write_text('ready');"
                 "time.sleep(120)"
             ),
