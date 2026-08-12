@@ -317,11 +317,29 @@ class ProviderChoiceList(OptionList):
         self._post_navigation_interaction()
 
     def action_page_up(self) -> None:
+        previous_highlight = self.highlighted
+        previous_option = self.highlighted_option
         super().action_page_up()
+        if (
+            self.highlighted is None
+            and previous_highlight is not None
+            and previous_option is not None
+            and not previous_option.disabled
+        ):
+            self.highlighted = previous_highlight
         self._post_navigation_interaction()
 
     def action_page_down(self) -> None:
+        previous_highlight = self.highlighted
+        previous_option = self.highlighted_option
         super().action_page_down()
+        if (
+            self.highlighted is None
+            and previous_highlight is not None
+            and previous_option is not None
+            and not previous_option.disabled
+        ):
+            self.highlighted = previous_highlight
         self._post_navigation_interaction()
 
 
