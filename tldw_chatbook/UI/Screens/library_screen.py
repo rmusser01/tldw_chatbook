@@ -8646,6 +8646,7 @@ class LibraryScreen(BaseAppScreen):
             "library-prompts-filter",
             "library-prompts-sort",
             "library-prompts-import",
+            "library-prompts-export",
             "library-prompts-retry",
             "library-prompts-page-previous",
             "library-prompts-page-next",
@@ -9229,7 +9230,7 @@ class LibraryScreen(BaseAppScreen):
         """Open the export canvas pre-scoped to a browse section's own filter.
 
         Wired to each browse canvas's "Export…" action (media/
-        conversations/notes) -- mirrors ``_select_library_rail_row``'s
+        conversations/notes/Prompts) -- mirrors ``_select_library_rail_row``'s
         dirty-note-flush discipline for switching canvases, but only
         touches the export-specific state (the rail row's own switch
         already resets everything else on the way past); the caller's
@@ -9266,7 +9267,7 @@ class LibraryScreen(BaseAppScreen):
         """True when the Library is in server runtime mode.
 
         Export packages LOCAL content only (it reads the local media /
-        ChaChaNotes DBs), so both the rail Export row and the section
+        ChaChaNotes / Prompt DBs), so both the rail Export row and the section
         "Export..." actions must refuse to run in server mode.
         """
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
@@ -9293,7 +9294,10 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _compute_library_export_counts(
-        scope: ExportScope, media_db: Any, chachanotes_db: Any
+        scope: ExportScope,
+        media_db: Any,
+        chachanotes_db: Any,
+        prompts_db: Any,
     ) -> dict[str, int]:
         """Run the full-query, uncapped counts for ``scope`` (never a rendered snapshot).
 
@@ -9303,12 +9307,14 @@ class LibraryScreen(BaseAppScreen):
         than crashing the recompose; the failure is still logged.
         """
         try:
-            return count_export_scope(scope, media_db, chachanotes_db)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library export counts failed for scope {scope!r}."
+            return count_export_scope(scope, media_db, chachanotes_db, prompts_db)
+        except Exception as exc:
+            logger.warning(
+                "Library export counts failed scope_kind={} category={}",
+                scope.kind,
+                type(exc).__name__,
             )
-            return {"media": 0, "conversations": 0, "notes": 0}
+            return {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
 
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
@@ -9317,7 +9323,7 @@ class LibraryScreen(BaseAppScreen):
         that created/migrated the DB has a working connection (same guard
         as ``_fetch_library_conversation_by_id`` elsewhere on this
         screen).
-        When either DB is memory-backed (the test suite's fixtures, and
+        When any source DB is memory-backed (the test suite's fixtures, and
         any other future in-memory deployment), the count runs inline on
         the calling (UI) thread instead of a real worker thread -- a
         worker thread would only ever see a blank, unmigrated connection.
@@ -9327,21 +9333,32 @@ class LibraryScreen(BaseAppScreen):
         scope = self._library_export_scope
         media_db = getattr(self.app_instance, "media_db", None)
         chachanotes_db = self._resolve_library_export_chachanotes_db()
-        if bool(getattr(media_db, "is_memory_db", False)) or bool(
-            getattr(chachanotes_db, "is_memory_db", False)
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
+        if (
+            bool(getattr(media_db, "is_memory_db", False))
+            or bool(getattr(chachanotes_db, "is_memory_db", False))
+            or bool(getattr(prompts_db, "is_memory_db", False))
         ):
             counts = self._compute_library_export_counts(
-                scope, media_db, chachanotes_db
+                scope, media_db, chachanotes_db, prompts_db
             )
             self._apply_library_export_counts(scope, counts)
             return
-        self._run_library_export_counts_worker(scope, media_db, chachanotes_db)
+        self._run_library_export_counts_worker(
+            scope, media_db, chachanotes_db, prompts_db
+        )
 
     @work(thread=True, exclusive=True, group="library_export_counts")
     def _run_library_export_counts_worker(
-        self, scope: ExportScope, media_db: Any, chachanotes_db: Any
+        self,
+        scope: ExportScope,
+        media_db: Any,
+        chachanotes_db: Any,
+        prompts_db: Any,
     ) -> None:
-        counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+        counts = self._compute_library_export_counts(
+            scope, media_db, chachanotes_db, prompts_db
+        )
         # ``self.app`` (Textual's own running-App property), not
         # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
         # event loop is actually running this screen (see
@@ -9385,7 +9402,8 @@ class LibraryScreen(BaseAppScreen):
 
         Args:
             scope: The scope the landed ``counts`` were computed for.
-            counts: The landed counts (keys "media"/"conversations"/"notes").
+            counts: The landed counts (keys "media"/"conversations"/"notes"/
+                "prompts").
         """
         if scope != self._library_export_scope:
             return
@@ -9555,7 +9573,7 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``_start_library_export_counts_worker``'s memory-vs-file-
         backed DB branch for the id-resolution step specifically: a genuine
         OS worker thread only ever sees a blank, unmigrated connection for
-        an in-memory-backed DB (``threading.local``), so when either DB is
+        an in-memory-backed DB (``threading.local``), so when any source DB is
         memory-backed, ``resolve_export_selections`` -- a pure, synchronous
         DB read with no ``asyncio`` involvement -- runs inline on the
         calling (UI) thread first, exactly like the counts worker's own
@@ -9573,20 +9591,26 @@ class LibraryScreen(BaseAppScreen):
         """
         media_db = getattr(self.app_instance, "media_db", None)
         chachanotes_db = self._resolve_library_export_chachanotes_db()
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
         preresolved_selections: dict[ContentType, list[str]] | None = None
-        if bool(getattr(media_db, "is_memory_db", False)) or bool(
-            getattr(chachanotes_db, "is_memory_db", False)
+        if (
+            bool(getattr(media_db, "is_memory_db", False))
+            or bool(getattr(chachanotes_db, "is_memory_db", False))
+            or bool(getattr(prompts_db, "is_memory_db", False))
         ):
             try:
                 preresolved_selections = resolve_export_selections(
-                    scope, media_db, chachanotes_db
+                    scope, media_db, chachanotes_db, prompts_db
                 )
             except Exception as exc:
-                logger.opt(exception=True).warning(
-                    f"Library export selection resolution failed for scope {scope!r}."
+                logger.warning(
+                    "Library export selection resolution failed "
+                    "scope_kind={} category={}",
+                    scope.kind,
+                    type(exc).__name__,
                 )
                 self._apply_library_export_failure(
-                    run_id, f"Failed to resolve export selections: {exc}"
+                    run_id, "Unable to resolve export selections."
                 )
                 return
         self._run_library_export_worker(
@@ -9598,6 +9622,7 @@ class LibraryScreen(BaseAppScreen):
             destination=destination,
             media_db=media_db,
             chachanotes_db=chachanotes_db,
+            prompts_db=prompts_db,
             preresolved_selections=preresolved_selections,
             cancel_event=cancel_event,
         )
@@ -9731,6 +9756,7 @@ class LibraryScreen(BaseAppScreen):
         destination: str,
         media_db: Any,
         chachanotes_db: Any,
+        prompts_db: Any,
         preresolved_selections: dict[ContentType, list[str]] | None,
         cancel_event: threading.Event | None,
     ) -> None:
@@ -9738,13 +9764,18 @@ class LibraryScreen(BaseAppScreen):
             selections = preresolved_selections
         else:
             try:
-                selections = resolve_export_selections(scope, media_db, chachanotes_db)
+                selections = resolve_export_selections(
+                    scope, media_db, chachanotes_db, prompts_db
+                )
             except Exception as exc:
-                logger.opt(exception=True).warning(
-                    f"Library export selection resolution failed for scope {scope!r}."
+                logger.warning(
+                    "Library export selection resolution failed "
+                    "scope_kind={} category={}",
+                    scope.kind,
+                    type(exc).__name__,
                 )
                 self._marshal_library_export_failure(
-                    run_id, f"Failed to resolve export selections: {exc}"
+                    run_id, "Unable to resolve export selections."
                 )
                 return
 
@@ -15506,7 +15537,7 @@ class LibraryScreen(BaseAppScreen):
         """Escape: leave the Export canvas (task-4023 AC#7).
 
         Returns to the canvas whose "Export…" action opened it (Media/
-        Conversations/Notes -- the "navigates away with no return path"
+        Conversations/Notes/Prompts -- the "navigates away with no return path"
         finding), or to the hub landing when Export was entered from the
         rail. A running export keeps running; the canvas's own state
         (including the durable last-export receipt) survives exactly as a
@@ -22718,6 +22749,17 @@ class LibraryScreen(BaseAppScreen):
         panel.title = build_type_group_title(cap, values)
 
     # ----- Export canvas: section entry points --------------------------
+
+    @on(Button.Pressed, "#library-prompts-export")
+    async def handle_library_prompts_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to active local Prompts.
+
+        Args:
+            event: Button press event emitted by the Prompt list's
+                ``Export…`` action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(ExportScope(kind="prompts"))
 
     @on(Button.Pressed, "#library-media-export")
     async def handle_library_media_export(self, event: Button.Pressed) -> None:
