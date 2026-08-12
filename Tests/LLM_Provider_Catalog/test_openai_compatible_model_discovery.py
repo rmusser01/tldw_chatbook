@@ -46,9 +46,35 @@ def test_qwencloud_models_url_normalizes_base_and_both_request_endpoints(endpoin
 @pytest.mark.parametrize(
     "endpoint",
     [
+        "https://workspace.example/api/v2",
+        "https://workspace.example/api/v2/",
+        "https://workspace.example/api/v2/responses",
+        "https://workspace.example/api/v2/responses/",
+        "https://workspace.example/api/v2/chat/completions",
+        "https://workspace.example/api/v2/chat/completions/",
+        "https://user:secret@workspace.example/api/v2/responses?api_key=secret#fragment",
+    ],
+)
+def test_qwencloud_custom_prefix_normalizes_base_and_request_endpoints(endpoint):
+    original_endpoint = endpoint
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert (
+        build_models_url(endpoint, "qwencloud")
+        == "https://workspace.example/api/v2/models"
+    )
+    assert endpoint == original_endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses-extra",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions-extra",
-        "https://dashscope-intl.aliyuncs.com/not-compatible-mode/v1/responses",
+        "https://workspace.example/api/v2/myresponses",
+        "https://workspace.example/api/v2/responses/extra",
+        "https://workspace.example/api/v2/chat/completions/extra",
+        "https://user:secret@/api/v2/responses",
         "https://user:secret@[::1/compatible-mode/v1/responses?api_key=secret",
     ],
 )
@@ -57,10 +83,13 @@ def test_qwencloud_discovery_rejects_lookalike_or_malformed_paths(endpoint):
 
 
 def test_responses_suffix_is_not_broadly_inferred_for_other_endpoint_shapes():
-    endpoint = "https://api.example.test/v1/responses"
-
-    assert supports_openai_compatible_model_discovery("openai", endpoint) is False
-    assert build_models_url(endpoint, "openai") == endpoint
+    for endpoint in (
+        "https://api.example.test/v1/responses",
+        "https://api.example.test/api/v2/responses",
+        "https://api.example.test/compatible-mode/v1/responses",
+    ):
+        assert supports_openai_compatible_model_discovery("openai", endpoint) is False
+        assert build_models_url(endpoint, "openai") == endpoint
 
 
 def test_llamacpp_completion_url_maps_to_v1_models():

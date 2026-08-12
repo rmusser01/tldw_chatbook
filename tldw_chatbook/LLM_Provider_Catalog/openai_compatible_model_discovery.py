@@ -24,7 +24,7 @@ _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
-_QWENCLOUD_COMPATIBLE_BASE_PATH = "/compatible-mode/v1"
+_QWENCLOUD_PROVIDER_KEY = "qwencloud"
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -53,9 +53,6 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         "/completions",
         "/api/v1",
         "/api/paas/v4",
-        _QWENCLOUD_COMPATIBLE_BASE_PATH,
-        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models",
-        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/responses",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -191,7 +188,34 @@ def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
     return parsed if parsed.scheme and parsed.netloc and parsed.hostname else None
 
 
-def _models_path_for_endpoint_path(path: str) -> str | None:
+def _qwencloud_models_path_for_endpoint_path(path: str) -> str | None:
+    """Return a models path for a valid QwenCloud compatible-API path."""
+    normalized_path = (path or "/").rstrip("/").lower() or "/"
+    segments = normalized_path.strip("/").split("/")
+    responses_segments = [segment for segment in segments if "responses" in segment]
+    completion_segments = [segment for segment in segments if "completion" in segment]
+
+    if segments[-1] == "responses" and responses_segments == ["responses"]:
+        base_path = normalized_path.removesuffix("/responses")
+        return f"{base_path}/models"
+    if (
+        segments[-2:] == ["chat", "completions"]
+        and not responses_segments
+        and completion_segments == ["completions"]
+    ):
+        base_path = normalized_path.removesuffix("/chat/completions")
+        return f"{base_path}/models"
+    if responses_segments or completion_segments:
+        return None
+    if segments[-1] == "models":
+        return normalized_path
+    return f"{normalized_path}/models"
+
+
+def _models_path_for_endpoint_path(
+    path: str,
+    provider_identity: str | None = None,
+) -> str | None:
     """Return the OpenAI-compatible models path for a supported endpoint path."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
     if normalized_path == "/":
@@ -202,15 +226,10 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         return "/v1/models"
     if normalized_path in {"/api/v1", "/api/paas/v4"}:
         return f"{normalized_path}/models"
-    if normalized_path in {
-        _QWENCLOUD_COMPATIBLE_BASE_PATH,
-        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models",
-        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/responses",
-        f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/chat/completions",
-    }:
-        return f"{_QWENCLOUD_COMPATIBLE_BASE_PATH}/models"
     if normalized_path in {"/completion", "/completions"}:
         return "/v1/models"
+    if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
+        return _qwencloud_models_path_for_endpoint_path(normalized_path)
     if normalized_path.endswith("/v1/chat/completions"):
         return f"{normalized_path.removesuffix('/chat/completions')}/models"
     if normalized_path.endswith("/chat/completions"):
@@ -224,12 +243,19 @@ def _is_base_url_path(path: str) -> bool:
     return normalized_path == "/"
 
 
-def _is_explicit_openai_compatible_path(path: str) -> bool:
+def _is_explicit_openai_compatible_path(
+    path: str,
+    provider_identity: str | None = None,
+) -> bool:
     """Return whether a path explicitly opts into OpenAI-compatible discovery."""
     normalized_path = (path or "/").rstrip("/").lower() or "/"
     return (
         normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS
         or normalized_path.endswith("/chat/completions")
+        or (
+            _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY
+            and _qwencloud_models_path_for_endpoint_path(normalized_path) is not None
+        )
     )
 
 
@@ -256,8 +282,8 @@ def supports_openai_compatible_model_discovery(
     if _is_base_url_path(path):
         return provider_key in _BASE_URL_INFERABLE_PROVIDER_KEYS
 
-    return _is_explicit_openai_compatible_path(path) and (
-        _models_path_for_endpoint_path(path) is not None
+    return _is_explicit_openai_compatible_path(path, provider_key) and (
+        _models_path_for_endpoint_path(path, provider_key) is not None
     )
 
 
@@ -283,7 +309,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
                 )
             )
 
-    models_path = _models_path_for_endpoint_path(path) or path
+    models_path = _models_path_for_endpoint_path(path, provider_identity) or path
 
     return urlunparse((parsed.scheme, _safe_netloc(parsed), models_path, "", "", ""))
 
