@@ -66,7 +66,7 @@ import time
 import uuid
 import traceback
 from copy import deepcopy
-from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Iterable, Mapping
 from textual.widget import Widget
 
 #
@@ -408,7 +408,13 @@ from .UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
-from .UI.Navigation.screen_registry import resolve_screen_target, screen_load_error
+from .UI.Navigation.screen_registry import (
+    ScreenRoute,
+    registered_screen_aliases,
+    registered_screen_routes,
+    resolve_screen_target,
+    screen_load_error,
+)
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
@@ -607,6 +613,23 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# task-15472: after first paint, warm the lazy screen-module import cache from
+# a background thread so the FIRST click to each tab doesn't pay for a
+# synchronous, UI-thread `import_module` inside the FIFO-locked navigation
+# worker (`UI/Navigation/screen_registry.py`'s `load_screen_class`) --
+# chat_screen.py is ~20k lines, library_screen.py ~26k, settings_screen.py
+# ~19k (Docs/Design/2026-08-11-input-latency-audit.md). Scheduled slightly
+# after the other 0.1s deferred-startup timers (footer status, audio
+# services) so it is strictly the lowest-priority background task: nothing
+# depends on it finishing, it only warms a cache.
+DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS = 0.2
+
+# Chat/Library/Settings are the three screens the audit measured as
+# multi-thousand-line modules -- import them first so a thread that gets cut
+# short (app quit shortly after startup) still banked the highest-value work
+# before spending time on the rest of the registry.
+SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS: tuple[str, ...] = ("chat", "library", "settings")
 
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
@@ -4979,6 +5002,7 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
@@ -9307,6 +9331,10 @@ class TldwCli(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
         )
+        self.set_timer(
+            DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
+            self._schedule_screen_preimport,
+        )
         self.schedule_media_cleanup()
         coordinator = getattr(
             self,
@@ -9462,6 +9490,130 @@ class TldwCli(
 
         self._schedule_tts_initialization()
         self._schedule_stts_initialization()
+
+    def _screen_preimport_enabled(self) -> bool:
+        """Whether the background screen-module pre-importer should run.
+
+        On by default. Off under pytest (``PYTEST_CURRENT_TEST`` -- the same
+        signal ``Utils/optional_deps.py`` and ``Metrics/metrics_logger.py``
+        already gate background/eager behavior on) so the test suite's many
+        ``app.run_test()`` instances don't each spin up an extra
+        background-import thread for a mechanism most tests never look at.
+        ``TLDW_SCREEN_PREIMPORT`` overrides in either direction: ``"0"``/
+        ``"false"`` forces it off even outside pytest, ``"1"``/``"true"``
+        forces it on even under pytest -- used by this feature's own tests to
+        exercise the real scheduling path rather than only the worker method.
+        """
+        override = os.environ.get("TLDW_SCREEN_PREIMPORT")
+        if override is not None:
+            return override.strip().lower() not in ("", "0", "false", "no")
+        return "PYTEST_CURRENT_TEST" not in os.environ
+
+    def _screen_preimport_route_order(self) -> tuple[ScreenRoute, ...]:
+        """Ordered, module-deduplicated routes for the background pre-importer.
+
+        Several canonical route ids share one module (``"ccp"``/``"personas"``
+        both target ``personas_screen.PersonasScreen``, ``"tools_settings"``/
+        ``"mcp"`` both target ``mcp_screen.MCPScreen``) -- importing each
+        module once is enough, a second ``import_module`` call for the same
+        name is just a dict lookup, but there's no reason to schedule the
+        redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
+        library/settings, the audit's three multi-thousand-line modules) go
+        first; the rest of the registry follows in stable sorted order.
+
+        Route ids that are ALSO a key in the alias table are skipped: at real
+        navigation time, ``_lookup_route()`` resolves the alias to a
+        *different* canonical route before ever reaching this dict entry
+        (e.g. ``"customize"`` -> the ``settings`` route; ``_SCREEN_ROUTES
+        ["customize"]``, pointing at a ``customize_screen`` module that no
+        longer exists, is unreachable dead metadata kept for history). Task-
+        15472 review round 1: pre-importing it anyway logged a "Screen route
+        unavailable: customize: No module named ..." warning on every single
+        boot -- a route no click can ever reach should not be attempted.
+        """
+        shadowed_route_ids = set(registered_screen_aliases())
+        routes_by_id = {route.screen_name: route for route in registered_screen_routes()}
+        ordered: list[ScreenRoute] = []
+        seen_modules: set[str] = set()
+
+        def _consider(route: ScreenRoute | None) -> None:
+            if route is None or route.screen_name in shadowed_route_ids:
+                return
+            if route.module_path in seen_modules:
+                return
+            ordered.append(route)
+            seen_modules.add(route.module_path)
+
+        for route_id in SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS:
+            _consider(routes_by_id.get(route_id))
+        for route in registered_screen_routes():
+            _consider(route)
+        return tuple(ordered)
+
+    def _preimport_screens(self, routes: Iterable[ScreenRoute]) -> None:
+        """Warm ``sys.modules`` for ``routes``, one route at a time.
+
+        Runs on a background thread (see ``_schedule_screen_preimport``),
+        never the asyncio loop -- ``import_module`` is CPU-bound (bytecode
+        compile/exec for chat_screen.py's ~20k lines and friends) and would
+        stall UI responsiveness if it ran inline on the event loop. Python's
+        import system serializes concurrent imports of the same module
+        through its own per-module lock, and a completed import is cached in
+        ``sys.modules``, so this is safe to race against a real navigation's
+        own ``import_module`` call: nothing is ever imported twice for real,
+        and a route the user never visits just cost one idle-thread import
+        that would otherwise have happened on their first click to it.
+
+        Each route calls ``ScreenRoute.load_screen_class()`` -- the exact
+        method the real navigation path calls -- wrapped in its own
+        ``try/except Exception``. ``load_screen_class()`` already swallows
+        ``ImportError``/``AttributeError`` and logs a warning; the broader
+        catch here is belt-and-suspenders so one screen module raising
+        something stranger at import time can't kill the thread or block the
+        remaining routes. Either way a failed import is never cached in
+        ``sys.modules`` (CPython evicts a partially-initialized module on
+        import failure), so a pre-import attempt that fails changes nothing
+        about what a real navigation to that route does next: it fails again,
+        identically (AC #3).
+
+        Args:
+            routes: The routes to pre-import, in order. Factored out of
+                ``_preimport_heavy_screens`` so tests can target one or two
+                routes directly instead of the whole registry.
+        """
+        for route in routes:
+            try:
+                route.load_screen_class()
+            except Exception as exc:
+                self.loguru_logger.debug(
+                    "Screen pre-import failed for "
+                    f"{route.screen_name!r} (non-fatal, nav-time behavior "
+                    f"unaffected): {type(exc).__name__}: {exc}"
+                )
+
+    def _preimport_heavy_screens(self) -> None:
+        """Warm ``sys.modules`` for every registered screen route.
+
+        See ``_preimport_screens`` for the per-route mechanics; this just
+        supplies the full, priority-ordered route list.
+        """
+        self._preimport_screens(self._screen_preimport_route_order())
+
+    def _schedule_screen_preimport(self) -> None:
+        """Start the background screen-module pre-importer, at most once."""
+        if not self._screen_preimport_enabled():
+            return
+        if self._shutting_down:
+            return
+        if self._screen_preimport_thread is not None:
+            return
+        thread = threading.Thread(
+            target=self._preimport_heavy_screens,
+            name="tldw-screen-preimport",
+            daemon=True,
+        )
+        self._screen_preimport_thread = thread
+        thread.start()
 
     def _schedule_tts_initialization(self) -> None:
         if self._tts_handler is not None:
