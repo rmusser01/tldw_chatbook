@@ -201,6 +201,7 @@ _MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
 _MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
 _CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
 _SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(r"server-user-v1:[0-9a-f]{64}")
+_CONSOLE_TODO_STATE_KEY = "todo_state"
 
 
 def _canonical_character_id_text(value: Any) -> str | None:
@@ -2043,7 +2044,7 @@ class ConsoleSessionController:
             # comes back as a persisting one after any screen navigation,
             # and the next send writes it to the DB.
             "ephemeral": session.ephemeral,
-            "todo_state": session.todo_store.export_snapshot(),
+            _CONSOLE_TODO_STATE_KEY: session.todo_store.export_snapshot(),
         }
 
     def _console_session_from_state(
@@ -2084,9 +2085,11 @@ class ConsoleSessionController:
             draft=str(raw_session.get("draft") or ""),
         )
         todo_store = SessionTodoStore()
-        if "todo_state" in raw_session:
+        if _CONSOLE_TODO_STATE_KEY in raw_session:
             try:
-                todo_store = SessionTodoStore.from_snapshot(raw_session["todo_state"])
+                todo_store = SessionTodoStore.from_snapshot(
+                    raw_session[_CONSOLE_TODO_STATE_KEY]
+                )
             except TodoStoreError:
                 logger.warning("Console task state invalid; starting empty.")
         session_kwargs["todo_store"] = todo_store

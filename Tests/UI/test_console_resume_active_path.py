@@ -943,6 +943,30 @@ def test_console_task_state_round_trip_preserves_holes_and_id_high_water():
     assert restored.todo_store.create(content="Four")["id"] == "4"
 
 
+def test_console_task_state_uses_one_named_projection_key(monkeypatch):
+    """Serialization and restoration share the same screen-state key."""
+    from tldw_chatbook.UI.Console_Modules import session as session_module
+
+    monkeypatch.setattr(
+        session_module,
+        "_CONSOLE_TODO_STATE_KEY",
+        "task_state_contract_probe",
+        raising=False,
+    )
+    original = ConsoleChatSession(title="Task key")
+    original.todo_store.create(content="One")
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+
+    assert "task_state_contract_probe" in payload
+    assert "todo_state" not in payload
+    assert restored.todo_store.list_after(None) == [
+        {"id": "1", "version": 1, "content": "One", "status": "pending"}
+    ]
+
+
 def test_console_task_state_missing_legacy_key_starts_empty_without_warning():
     """Pre-task screen state is a normal legacy payload, not corruption."""
     from loguru import logger as loguru_logger
