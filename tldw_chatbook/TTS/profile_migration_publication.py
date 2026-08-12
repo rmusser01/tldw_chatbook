@@ -7,11 +7,13 @@ import sqlite3
 import stat
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock, get_ident
 from typing import Final
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
     ParsedProfileMigrationJournal,
@@ -47,13 +49,14 @@ _IDENTITY_FACTORY_TOKEN = object()
 
 class _OpaqueIdentity:
     __slots__ = (
+        "_content_evidence",
         "_file_identity",
         "_parent_identity",
         "_path",
+        "_schema_version",
         "_slot",
         "_state",
         "_thread_id",
-        "_validate",
     )
 
     def __init__(
@@ -64,7 +67,7 @@ class _OpaqueIdentity:
         slot: ProfileMigrationPublicationSlot,
         parent_identity: os.stat_result,
         file_identity: os.stat_result | None,
-        validate: Callable[[sqlite3.Connection], None] | None,
+        schema_version: int | None,
     ) -> None:
         if factory_token is not _IDENTITY_FACTORY_TOKEN:
             raise TypeError("opaque identity")
@@ -72,7 +75,8 @@ class _OpaqueIdentity:
         self._slot = slot
         self._parent_identity = parent_identity
         self._file_identity = file_identity
-        self._validate = validate
+        self._schema_version = schema_version
+        self._content_evidence: tuple[int, bytes] | None = None
         self._state = "ready"
         self._thread_id = get_ident()
 
@@ -137,6 +141,27 @@ def _sidecars_absent(parent_fd: int, leaf: str) -> bool:
     return True
 
 
+def _content_evidence(file_fd: int) -> tuple[int, bytes]:
+    before = os.fstat(file_fd)
+    digest = sha256()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(file_fd, min(1024 * 1024, before.st_size - offset), offset)
+        if not chunk:
+            raise ValueError
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(file_fd)
+    if (
+        not private_paths._same_identity(before, after)
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    ):
+        raise ValueError
+    return before.st_size, digest.digest()
+
+
 def _open_exact(identity: _OpaqueIdentity) -> tuple[int, int, str]:
     parent_fd, leaf = private_paths._open_verified_parent(
         identity._path,
@@ -166,6 +191,11 @@ def _open_exact(identity: _OpaqueIdentity) -> tuple[int, int, str]:
             or not _sidecars_absent(parent_fd, leaf)
         ):
             raise ValueError
+        if (
+            identity._content_evidence is not None
+            and _content_evidence(file_fd) != identity._content_evidence
+        ):
+            raise ValueError
         return parent_fd, file_fd, leaf
     except BaseException:
         if file_fd >= 0:
@@ -175,8 +205,6 @@ def _open_exact(identity: _OpaqueIdentity) -> tuple[int, int, str]:
 
 
 def _immutable_validate(identity: _OpaqueIdentity) -> None:
-    if identity._validate is None:
-        raise ValueError
     parent_fd, file_fd, _leaf = _open_exact(identity)
     try:
         os.fsync(file_fd)
@@ -190,13 +218,36 @@ def _immutable_validate(identity: _OpaqueIdentity) -> None:
             isolation_level=None,
         )
         try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA query_only = ON")
-            identity._validate(connection)
+            schema_version = identity._schema_version
+            if schema_version is None:
+                row = connection.execute("PRAGMA user_version").fetchone()
+                if (
+                    row is None
+                    or len(row) != 1
+                    or type(row[0]) is not int
+                    or row[0] not in (1, 2, 3, 4)
+                ):
+                    raise ValueError
+                schema_version = row[0]
+                identity._schema_version = schema_version
+            profile_schema.validate_profile_store_version(connection, schema_version)
         finally:
             connection.close()
         _parent_fd, reopened_fd, _reopened_leaf = _open_exact(identity)
         os.close(reopened_fd)
         os.close(_parent_fd)
+    finally:
+        os.close(file_fd)
+        os.close(parent_fd)
+
+
+def _pin_content(identity: _OpaqueIdentity) -> None:
+    parent_fd, file_fd, _leaf = _open_exact(identity)
+    try:
+        identity._content_evidence = _content_evidence(file_fd)
     finally:
         os.close(file_fd)
         os.close(parent_fd)
@@ -225,12 +276,11 @@ def prepare_profile_migration_artifact(
     path: str | os.PathLike[str],
     *,
     slot: ProfileMigrationPublicationSlot,
-    validate: Callable[[sqlite3.Connection], None],
 ) -> PreparedProfileMigrationArtifact:
     """Validate, fsync, and retain one exact private prepared artifact."""
 
     try:
-        if type(slot) is not ProfileMigrationPublicationSlot or not callable(validate):
+        if type(slot) is not ProfileMigrationPublicationSlot:
             raise ValueError
         selected, parent = _prepare_parent(path)
         file_identity = selected.lstat()
@@ -240,8 +290,9 @@ def prepare_profile_migration_artifact(
             slot=slot,
             parent_identity=parent,
             file_identity=file_identity,
-            validate=validate,
+            schema_version=_SLOT_VERSION[slot],
         )
+        _pin_content(artifact)
         _immutable_validate(artifact)
         return artifact
     except BaseException as error:
@@ -254,7 +305,6 @@ def retain_profile_migration_destination(
     path: str | os.PathLike[str],
     *,
     slot: ProfileMigrationPublicationSlot,
-    validate: Callable[[sqlite3.Connection], None] | None,
     must_exist: bool,
 ) -> RetainedProfileMigrationDestination:
     """Pin one existing or fresh publication destination without exposing it."""
@@ -263,7 +313,6 @@ def retain_profile_migration_destination(
         if (
             type(slot) is not ProfileMigrationPublicationSlot
             or type(must_exist) is not bool
-            or (must_exist and not callable(validate))
         ):
             raise ValueError
         selected, parent = _prepare_parent(path)
@@ -279,10 +328,15 @@ def retain_profile_migration_destination(
             slot=slot,
             parent_identity=parent,
             file_identity=file_identity,
-            validate=validate,
+            schema_version=(
+                None
+                if slot is ProfileMigrationPublicationSlot.ACTIVE
+                else _SLOT_VERSION[slot]
+            ),
             must_exist=must_exist,
         )
         if file_identity is not None:
+            _pin_content(destination)
             _immutable_validate(destination)
         else:
             parent_fd, leaf = private_paths._open_verified_parent(
@@ -326,17 +380,17 @@ def _identity_at(
     source: _OpaqueIdentity,
     path: Path,
     file_identity: os.stat_result,
-    *,
-    validate: Callable[[sqlite3.Connection], None] | None = None,
 ) -> _OpaqueIdentity:
-    return _OpaqueIdentity(
+    identity = _OpaqueIdentity(
         _IDENTITY_FACTORY_TOKEN,
         path=path,
         slot=source._slot,
         parent_identity=source._parent_identity,
         file_identity=file_identity,
-        validate=source._validate if validate is None else validate,
+        schema_version=source._schema_version,
     )
+    identity._content_evidence = source._content_evidence
+    return identity
 
 
 def _require_absent(path: Path, parent_identity: os.stat_result) -> None:
@@ -377,13 +431,25 @@ def _rename_exact(
         ):
             raise ValueError
         _require_absent(destination_path, source._parent_identity)
-        os.rename(
+        os.link(
             source_leaf,
             destination_leaf,
             src_dir_fd=source_parent_fd,
             dst_dir_fd=destination_parent_fd,
+            follow_symlinks=False,
         )
         assert source._file_identity is not None
+        linked = os.stat(
+            destination_leaf,
+            dir_fd=destination_parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not private_paths._same_identity(linked, source._file_identity)
+            or linked.st_nlink != 2
+        ):
+            raise ValueError
+        os.unlink(source_leaf, dir_fd=source_parent_fd)
         moved = _identity_at(
             source,
             destination_path,
@@ -602,6 +668,20 @@ def _claim(
         or destinations[0]._slot is not ProfileMigrationPublicationSlot.ACTIVE
     ):
         raise ValueError
+    slots = tuple(artifact._slot for artifact in artifacts)
+    if slots not in {
+        (ProfileMigrationPublicationSlot.ACTIVE,),
+        (
+            ProfileMigrationPublicationSlot.ACTIVE,
+            ProfileMigrationPublicationSlot.PRE_V4,
+        ),
+        (
+            ProfileMigrationPublicationSlot.ACTIVE,
+            ProfileMigrationPublicationSlot.PRE_V3,
+            ProfileMigrationPublicationSlot.PRE_V4,
+        ),
+    }:
+        raise ValueError
     seen_slots: set[ProfileMigrationPublicationSlot] = set()
     seen_paths: set[Path] = set()
     parent = artifacts[0]._path.parent
@@ -730,6 +810,11 @@ def publish_profile_migration(
     completed = False
     try:
         journal_path, key = _claim(artifacts, destinations)
+        for artifact in artifacts:
+            _immutable_validate(artifact)
+        for destination in destinations:
+            if destination._file_identity is not None:
+                _immutable_validate(destination)
         if stage_hook is not None:
             stage_hook(ProfileMigrationPublicationStage.PREFLIGHT)
         payload = _journal_payload(artifacts, destinations, phase="prepared")
@@ -822,7 +907,8 @@ def publish_profile_migration(
                 except BaseException as caught:
                     journal_update_errors.append(caught)
             _finish_claim(artifacts, destinations, key)
-            _redeliver_control_flow(body_error, *deferred, *restore_errors)
+            # Authority is indeterminate: the bounded unavailable state must
+            # dominate deferred control flow until Task D recovery completes.
             raise _safe_failure("unavailable") from None
 
         restore_cleanup_errors: list[BaseException] = []

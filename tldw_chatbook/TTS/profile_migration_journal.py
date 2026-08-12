@@ -36,7 +36,7 @@ class ProfileMigrationPublicationStage(StrEnum):
     FINAL_JOURNAL_DURABLE = "final_journal_durable"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class ProfileMigrationJournalSlot:
     """One recognized relative namespace row in a journal."""
 
@@ -46,20 +46,81 @@ class ProfileMigrationJournalSlot:
     rollback: str
     had_prior: bool
 
+    def __repr__(self) -> str:
+        return "ProfileMigrationJournalSlot(<private>)"
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class ParsedProfileMigrationJournal:
     """Path-free facts from one exact recognized publication journal."""
 
     version: int
     phase: str
-    slots: tuple[str, ...]
+    recovery_rows: tuple[ProfileMigrationJournalSlot, ...]
+
+    @property
+    def slots(self) -> tuple[str, ...]:
+        """Return only recognized slot labels for compatibility checks."""
+
+        return tuple(row.slot.value for row in self.recovery_rows)
+
+    def __repr__(self) -> str:
+        return (
+            "ParsedProfileMigrationJournal("
+            f"version={self.version!r}, phase={self.phase!r}, recovery_rows=<private>)"
+        )
 
 
 MAX_PROFILE_MIGRATION_JOURNAL_BYTES: Final = 4096
 _PHASES: Final = frozenset(
     {"prepared", "publishing", "restoring", "complete", "unavailable"}
 )
+_CANONICAL_SLOT_ORDERS: Final = frozenset(
+    {
+        (ProfileMigrationPublicationSlot.ACTIVE,),
+        (
+            ProfileMigrationPublicationSlot.ACTIVE,
+            ProfileMigrationPublicationSlot.PRE_V4,
+        ),
+        (
+            ProfileMigrationPublicationSlot.ACTIVE,
+            ProfileMigrationPublicationSlot.PRE_V3,
+            ProfileMigrationPublicationSlot.PRE_V4,
+        ),
+    }
+)
+
+
+def _validate_recovery_rows(
+    rows: tuple[ProfileMigrationJournalSlot, ...],
+) -> None:
+    if (
+        type(rows) is not tuple
+        or tuple(row.slot for row in rows) not in _CANONICAL_SLOT_ORDERS
+    ):
+        raise ValueError
+    leaves: set[str] = set()
+    for row in rows:
+        if (
+            type(row) is not ProfileMigrationJournalSlot
+            or type(row.had_prior) is not bool
+        ):
+            raise ValueError
+        for value in (row.candidate, row.target, row.rollback):
+            if (
+                type(value) is not str
+                or not value
+                or len(value.encode("utf-8")) > 255
+                or Path(value).name != value
+                or value in {".", ".."}
+                or "\x00" in value
+            ):
+                raise ValueError
+            if value in leaves:
+                raise ValueError
+            leaves.add(value)
+        if row.rollback != f".{row.target}.{row.slot.value}.rollback":
+            raise ValueError
 
 
 def encode_profile_migration_journal(
@@ -69,8 +130,9 @@ def encode_profile_migration_journal(
 ) -> bytes:
     """Encode the single canonical bounded journal representation."""
 
-    if phase not in _PHASES or not 1 <= len(slots) <= 3:
+    if phase not in _PHASES:
         raise ValueError
+    _validate_recovery_rows(slots)
     rows = [
         {
             "candidate": slot.candidate,
@@ -115,7 +177,8 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
         rows = decoded["slots"]
         if type(rows) is not list or not 1 <= len(rows) <= 3:
             raise ValueError
-        slots: list[str] = []
+        slot_names: list[str] = []
+        recovery_rows: list[ProfileMigrationJournalSlot] = []
         for row in rows:
             if type(row) is not dict or set(row) != {
                 "candidate",
@@ -126,7 +189,7 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
             }:
                 raise ValueError
             slot = ProfileMigrationPublicationSlot(row["slot"])
-            if slot.value in slots or type(row["had_prior"]) is not bool:
+            if slot.value in slot_names or type(row["had_prior"]) is not bool:
                 raise ValueError
             for key in ("candidate", "rollback", "target"):
                 value = row[key]
@@ -139,27 +202,29 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
                     or "\x00" in value
                 ):
                     raise ValueError
-            slots.append(slot.value)
-        if slots[0] != ProfileMigrationPublicationSlot.ACTIVE.value:
-            raise ValueError
+            slot_names.append(slot.value)
+            recovery_rows.append(
+                ProfileMigrationJournalSlot(
+                    slot=slot,
+                    candidate=row["candidate"],
+                    target=row["target"],
+                    rollback=row["rollback"],
+                    had_prior=row["had_prior"],
+                )
+            )
         if (
             encode_profile_migration_journal(
-                tuple(
-                    ProfileMigrationJournalSlot(
-                        slot=ProfileMigrationPublicationSlot(row["slot"]),
-                        candidate=row["candidate"],
-                        target=row["target"],
-                        rollback=row["rollback"],
-                        had_prior=row["had_prior"],
-                    )
-                    for row in rows
-                ),
+                tuple(recovery_rows),
                 phase=decoded["phase"],
             )
             != raw
         ):
             raise ValueError
-        result = ParsedProfileMigrationJournal(1, decoded["phase"], tuple(slots))
+        result = ParsedProfileMigrationJournal(
+            1,
+            decoded["phase"],
+            tuple(recovery_rows),
+        )
     except BaseException as error:
         parse_error = error
     if parse_error is not None:

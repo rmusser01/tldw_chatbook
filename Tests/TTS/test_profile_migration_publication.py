@@ -8,10 +8,11 @@ import sqlite3
 import stat
 from pathlib import Path
 from types import ModuleType
-from typing import Callable
+from zlib import crc32
 
 import pytest
 
+from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
 
@@ -29,9 +30,12 @@ def _store(path: Path, *, version: int, marker: str) -> bytes:
     path.parent.chmod(0o700)
     connection = sqlite3.connect(path)
     try:
-        connection.execute("CREATE TABLE exact_state (marker TEXT NOT NULL)")
-        connection.execute("INSERT INTO exact_state VALUES (?)", (marker,))
-        connection.execute(f"PRAGMA user_version = {version}")
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        for source_version in range(version):
+            profile_schema.MIGRATIONS[source_version](connection)
+        marker_id = crc32(marker.encode("utf-8")) & 0x7FFF_FFFF
+        connection.execute(f"PRAGMA application_id = {marker_id}")
         connection.commit()
     finally:
         connection.close()
@@ -39,26 +43,11 @@ def _store(path: Path, *, version: int, marker: str) -> bytes:
     return path.read_bytes()
 
 
-def _validator(version: int, marker: str) -> Callable[[sqlite3.Connection], None]:
-    def validate(connection: sqlite3.Connection) -> None:
-        assert connection.execute("PRAGMA user_version").fetchone() == (version,)
-        assert connection.execute("SELECT marker FROM exact_state").fetchone() == (
-            marker,
-        )
-
-    return validate
-
-
 def _prepared(module: ModuleType, path: Path, slot: object, marker: str) -> object:
-    version = {
-        module.ProfileMigrationPublicationSlot.ACTIVE: 4,
-        module.ProfileMigrationPublicationSlot.PRE_V3: 2,
-        module.ProfileMigrationPublicationSlot.PRE_V4: 3,
-    }[slot]
+    del marker
     return module.prepare_profile_migration_artifact(
         path,
         slot=slot,
-        validate=_validator(version, marker),
     )
 
 
@@ -68,15 +57,10 @@ def _retained(
     slot: object,
     marker: str | None,
 ) -> object:
-    version = {
-        module.ProfileMigrationPublicationSlot.ACTIVE: 3,
-        module.ProfileMigrationPublicationSlot.PRE_V3: 2,
-        module.ProfileMigrationPublicationSlot.PRE_V4: 3,
-    }[slot]
+    del marker
     return module.retain_profile_migration_destination(
         path,
         slot=slot,
-        validate=None if marker is None else _validator(version, marker),
         must_exist=slot is module.ProfileMigrationPublicationSlot.ACTIVE,
     )
 
@@ -88,13 +72,13 @@ def test_prepublication_cancellation_preserves_authority_and_cleans_candidates(
 ) -> None:
     module = _publication_module()
     active_path = tmp_path / "profiles.sqlite3"
-    pre_v3_path = tmp_path / "profiles.pre-v3.sqlite3"
+    pre_v3_path = tmp_path / "profiles.pre-v4.sqlite3"
     candidate_path = tmp_path / ".active.candidate"
-    prepared_pre_v3_path = tmp_path / ".pre-v3.candidate"
+    prepared_pre_v3_path = tmp_path / ".pre-v4.candidate"
     active_before = _store(active_path, version=3, marker="old-active")
-    backup_before = _store(pre_v3_path, version=2, marker="old-pre-v3")
+    backup_before = _store(pre_v3_path, version=3, marker="old-pre-v4")
     _store(candidate_path, version=4, marker="new-active")
-    _store(prepared_pre_v3_path, version=2, marker="new-pre-v3")
+    _store(prepared_pre_v3_path, version=3, marker="new-pre-v4")
 
     active_candidate = _prepared(
         module,
@@ -105,8 +89,8 @@ def test_prepublication_cancellation_preserves_authority_and_cleans_candidates(
     prepared_backup = _prepared(
         module,
         prepared_pre_v3_path,
-        module.ProfileMigrationPublicationSlot.PRE_V3,
-        "new-pre-v3",
+        module.ProfileMigrationPublicationSlot.PRE_V4,
+        "new-pre-v4",
     )
     active = _retained(
         module,
@@ -117,8 +101,8 @@ def test_prepublication_cancellation_preserves_authority_and_cleans_candidates(
     retained_backup = _retained(
         module,
         pre_v3_path,
-        module.ProfileMigrationPublicationSlot.PRE_V3,
-        "old-pre-v3",
+        module.ProfileMigrationPublicationSlot.PRE_V4,
+        "old-pre-v4",
     )
     cancellation = asyncio.CancelledError("private cancellation detail")
 
@@ -197,6 +181,24 @@ def test_durable_journal_has_only_recognized_bounded_relative_slots(
     assert parsed.version == 1
     assert parsed.phase == "prepared"
     assert parsed.slots == ("active",)
+    assert parsed.recovery_rows == (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    assert (
+        module.encode_profile_migration_journal(
+            parsed.recovery_rows,
+            phase=parsed.phase,
+        )
+        == raw
+    )
+    assert ".candidate.sqlite3" not in repr(parsed)
+    assert "profiles.sqlite3" not in repr(parsed.recovery_rows[0])
     assert json.loads(raw) == {
         "phase": "prepared",
         "slots": [
@@ -483,11 +485,11 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     module = _publication_module()
     slot = module.ProfileMigrationPublicationSlot
     active_path = tmp_path / "PRIVATE profiles.sqlite3"
-    backup_path = tmp_path / "PRIVATE profiles.pre-v3.sqlite3"
+    backup_path = tmp_path / "PRIVATE profiles.pre-v4.sqlite3"
     active_candidate_path = tmp_path / ".PRIVATE active.candidate"
-    backup_candidate_path = tmp_path / ".PRIVATE pre-v3.candidate"
+    backup_candidate_path = tmp_path / ".PRIVATE pre-v4.candidate"
     _store(active_path, version=3, marker="old-active")
-    backup_before = _store(backup_path, version=2, marker="old-backup")
+    backup_before = _store(backup_path, version=3, marker="old-backup")
     candidate_before = _store(
         active_candidate_path,
         version=4,
@@ -495,7 +497,7 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     )
     prepared_backup_before = _store(
         backup_candidate_path,
-        version=2,
+        version=3,
         marker="new-backup",
     )
     active_candidate = _prepared(
@@ -507,11 +509,11 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     prepared_backup = _prepared(
         module,
         backup_candidate_path,
-        slot.PRE_V3,
+        slot.PRE_V4,
         "new-backup",
     )
     active = _retained(module, active_path, slot.ACTIVE, "old-active")
-    backup = _retained(module, backup_path, slot.PRE_V3, "old-backup")
+    backup = _retained(module, backup_path, slot.PRE_V4, "old-backup")
     real_rename = module._rename_exact
 
     def fail_active_rollback(source: object, destination: Path) -> object:
@@ -549,6 +551,294 @@ def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable
     assert not active_path.exists()
 
 
+def test_unavailable_dominates_deferred_cancellation_when_restore_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "PRIVATE profiles.sqlite3"
+    candidate_path = tmp_path / ".PRIVATE active.candidate"
+    _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    cancellation = asyncio.CancelledError("PRIVATE deferred cancellation")
+    real_validate = module._immutable_validate
+    real_rename = module._rename_exact
+
+    def fail_completion(identity: object) -> None:
+        if identity._path == active_path and identity._slot is slot.ACTIVE:
+            if identity._schema_version == 4:
+                raise OSError("PRIVATE completion failure")
+        real_validate(identity)
+
+    def fail_restore(source: object, target: Path) -> object:
+        if str(source._path).endswith(".active.rollback"):
+            raise OSError("PRIVATE rollback failure")
+        return real_rename(source, target)
+
+    monkeypatch.setattr(module, "_immutable_validate", fail_completion)
+    monkeypatch.setattr(module, "_rename_exact", fail_restore)
+
+    def cancel(stage: object) -> None:
+        if stage is module.ProfileMigrationPublicationStage.PONR:
+            raise cancellation
+
+    with pytest.raises(ProfileRepositoryError, match="unavailable") as caught:
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+            stage_hook=cancel,
+        )
+
+    assert caught.value.code == "unavailable"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in repr(caught.value)
+    assert next(tmp_path.glob("*.migration-publication.json")).is_file()
+    assert next(tmp_path.glob("*.active.rollback")).is_file()
+
+
+@pytest.mark.parametrize("race_leaf", ["rollback", "destination"])
+def test_atomic_publication_race_never_clobbers_foreign_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_leaf: str,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    rollback_path = tmp_path / ".profiles.sqlite3.active.rollback"
+    active_before = _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    foreign = b"foreign-race-entry"
+    selected = rollback_path if race_leaf == "rollback" else active_path
+    real_link = module.os.link
+    injected = False
+
+    def race_link(
+        source: str,
+        target: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ) -> None:
+        nonlocal injected
+        if not injected and target == selected.name:
+            injected = True
+            descriptor = os.open(
+                target,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=dst_dir_fd,
+            )
+            try:
+                os.write(descriptor, foreign)
+            finally:
+                os.close(descriptor)
+        real_link(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+
+    monkeypatch.setattr(module.os, "link", race_link)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+        )
+
+    assert injected is True
+    assert caught.value.code == (
+        "migration_failed" if race_leaf == "rollback" else "unavailable"
+    )
+    assert selected.read_bytes() == foreign
+    if race_leaf == "rollback":
+        assert active_path.read_bytes() == active_before
+    else:
+        assert rollback_path.read_bytes() == active_before
+
+
+@pytest.mark.parametrize("mutated_owner", ["candidate", "retained"])
+def test_same_inode_sqlite_mutation_is_rejected_by_pinned_content_evidence(
+    tmp_path: Path,
+    mutated_owner: str,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".candidate.sqlite3"
+    active_before = _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    artifact = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    selected = candidate_path if mutated_owner == "candidate" else active_path
+    inode = selected.stat().st_ino
+    connection = sqlite3.connect(selected)
+    try:
+        mutated_id = 100 if mutated_owner == "candidate" else 200
+        connection.execute(f"PRAGMA application_id = {mutated_id}")
+        connection.commit()
+    finally:
+        connection.close()
+    assert selected.stat().st_ino == inode
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.publish_profile_migration(
+            active_candidate=artifact,
+            backup_candidates=(),
+            active_destination=destination,
+            backup_destinations=(),
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    if mutated_owner == "candidate":
+        assert active_path.read_bytes() == active_before
+    else:
+        check = sqlite3.connect(active_path)
+        try:
+            assert check.execute("PRAGMA application_id").fetchone() == (200,)
+        finally:
+            check.close()
+
+
+@pytest.mark.parametrize(
+    ("slot_name", "wrong_version"),
+    [("ACTIVE", 3), ("PRE_V3", 3), ("PRE_V4", 2)],
+)
+def test_preparer_rejects_wrong_schema_by_slot(
+    tmp_path: Path,
+    slot_name: str,
+    wrong_version: int,
+) -> None:
+    module = _publication_module()
+    wrong = tmp_path / f"wrong-{slot_name}.sqlite3"
+    _store(wrong, version=wrong_version, marker="wrong")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.prepare_profile_migration_artifact(
+            wrong,
+            slot=getattr(module.ProfileMigrationPublicationSlot, slot_name),
+        )
+
+
+def test_preparer_disallows_validator_injection(tmp_path: Path) -> None:
+    module = _publication_module()
+    candidate = tmp_path / "candidate.sqlite3"
+    _store(candidate, version=4, marker="candidate")
+
+    with pytest.raises(TypeError):
+        module.prepare_profile_migration_artifact(
+            candidate,
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            validate=lambda _connection: None,
+        )
+
+
+def test_publication_rejects_pre_v3_without_required_pre_v4_boundary(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".active.candidate"
+    pre_v3_path = tmp_path / ".pre-v3.candidate"
+    pre_v3_target = tmp_path / "profiles.pre-v3.sqlite3"
+    _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    _store(pre_v3_path, version=2, marker="pre-v3")
+    active = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    boundary = _prepared(module, pre_v3_path, slot.PRE_V3, "pre-v3")
+    destination = _retained(module, active_path, slot.ACTIVE, "old")
+    boundary_target = _retained(module, pre_v3_target, slot.PRE_V3, None)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=active,
+            backup_candidates=(boundary,),
+            active_destination=destination,
+            backup_destinations=(boundary_target,),
+        )
+
+
+def test_publication_rejects_noncanonical_boundary_order(tmp_path: Path) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    paths = {
+        "active": tmp_path / ".active.candidate",
+        "pre_v3": tmp_path / ".pre-v3.candidate",
+        "pre_v4": tmp_path / ".pre-v4.candidate",
+    }
+    targets = {
+        "active": tmp_path / "profiles.sqlite3",
+        "pre_v3": tmp_path / "profiles.pre-v3.sqlite3",
+        "pre_v4": tmp_path / "profiles.pre-v4.sqlite3",
+    }
+    _store(targets["active"], version=3, marker="old")
+    _store(paths["active"], version=4, marker="new")
+    _store(paths["pre_v3"], version=2, marker="pre-v3")
+    _store(paths["pre_v4"], version=3, marker="pre-v4")
+    active = _prepared(module, paths["active"], slot.ACTIVE, "new")
+    pre_v3 = _prepared(module, paths["pre_v3"], slot.PRE_V3, "pre-v3")
+    pre_v4 = _prepared(module, paths["pre_v4"], slot.PRE_V4, "pre-v4")
+    active_target = _retained(module, targets["active"], slot.ACTIVE, "old")
+    pre_v3_target = _retained(module, targets["pre_v3"], slot.PRE_V3, None)
+    pre_v4_target = _retained(module, targets["pre_v4"], slot.PRE_V4, None)
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=active,
+            backup_candidates=(pre_v4, pre_v3),
+            active_destination=active_target,
+            backup_destinations=(pre_v4_target, pre_v3_target),
+        )
+
+
+def test_publication_rejects_duplicate_boundary_slot(tmp_path: Path) -> None:
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    active_path = tmp_path / "profiles.sqlite3"
+    candidate_path = tmp_path / ".active.candidate"
+    first_path = tmp_path / ".first-pre-v4.candidate"
+    second_path = tmp_path / ".second-pre-v4.candidate"
+    _store(active_path, version=3, marker="old")
+    _store(candidate_path, version=4, marker="new")
+    _store(first_path, version=3, marker="first")
+    _store(second_path, version=3, marker="second")
+    active = _prepared(module, candidate_path, slot.ACTIVE, "new")
+    first = _prepared(module, first_path, slot.PRE_V4, "first")
+    second = _prepared(module, second_path, slot.PRE_V4, "second")
+    active_target = _retained(module, active_path, slot.ACTIVE, "old")
+    first_target = _retained(module, tmp_path / "first.sqlite3", slot.PRE_V4, None)
+    second_target = _retained(
+        module,
+        tmp_path / "second.sqlite3",
+        slot.PRE_V4,
+        None,
+    )
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.publish_profile_migration(
+            active_candidate=active,
+            backup_candidates=(first, second),
+            active_destination=active_target,
+            backup_destinations=(first_target, second_target),
+        )
+
+
 def test_opaque_artifact_constructor_cannot_be_forged(tmp_path: Path) -> None:
     module = _publication_module()
     path = tmp_path / "candidate.sqlite3"
@@ -560,7 +850,7 @@ def test_opaque_artifact_constructor_cannot_be_forged(tmp_path: Path) -> None:
             slot=module.ProfileMigrationPublicationSlot.ACTIVE,
             parent_identity=tmp_path.stat(),
             file_identity=path.stat(),
-            validate=_validator(4, "candidate"),
+            schema_version=4,
         )
 
 
@@ -613,6 +903,12 @@ def test_reentrant_double_publication_is_rejected_without_disrupting_owner(
         b'{"phase":"prepared","slots":[{"candidate":"../private",'
         b'"had_prior":true,"rollback":"r","slot":"active",'
         b'"target":"t"}],"version":1}\n',
+        b'{"phase":"prepared","slots":[{"candidate":"candidate",'
+        b'"had_prior":true,"rollback":"not-the-authority-rollback",'
+        b'"slot":"active","target":"target"}],"version":1}\n',
+        b'{"phase":"prepared","slots":[{"candidate":"target",'
+        b'"had_prior":true,"rollback":".target.active.rollback",'
+        b'"slot":"active","target":"target"}],"version":1}\n',
     ],
 )
 def test_journal_parser_rejects_forgery_context_free(raw: bytes) -> None:
