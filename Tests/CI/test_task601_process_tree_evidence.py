@@ -14,6 +14,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = PROJECT_ROOT / ".github/scripts/task601_process_tree_evidence.py"
+WORKFLOW_PATH = PROJECT_ROOT / ".github/workflows/task-601-platform-evidence.yml"
 REQUIRED_NODES = (
     "Tests/STT/test_executor_process_tree.py::test_native_force_stop_removes_worker_and_descendant_before_scratch_cleanup",
     "Tests/STT/test_executor_process_tree.py::test_native_crashed_leader_reaps_descendant_before_scratch_cleanup",
@@ -25,6 +26,24 @@ EXPECTED_PLATFORMS = {
     "macos-x86_64": ("Darwin", "x86_64"),
 }
 
+EXPECTED_MATRIX = (
+    ("linux-x86_64", "ubuntu-24.04"),
+    ("windows-x86_64", "windows-2022"),
+    ("macos-x86_64", "macos-15-intel"),
+)
+
+EXPECTED_STEP_NAMES = (
+    "Check out the exact tested commit",
+    "Set up Python",
+    "Initialize failure evidence",
+    "Install test dependencies",
+    "Record dependency installation failure",
+    "Run bounded platform tests",
+    "Normalize platform evidence",
+    "Validate platform evidence",
+    "Upload platform evidence",
+)
+
 
 def _load_evidence() -> ModuleType:
     assert EVIDENCE_PATH.is_file(), "TASK-601 evidence normalizer is missing"
@@ -33,6 +52,64 @@ def _load_evidence() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _workflow_text() -> str:
+    assert WORKFLOW_PATH.is_file(), "TASK-601 evidence workflow is missing"
+    return WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def _yaml_block(text: str, header: str) -> str:
+    lines = text.splitlines()
+    matches = [index for index, line in enumerate(lines) if line == header]
+    assert len(matches) == 1, f"expected one YAML header: {header!r}"
+    start = matches[0]
+    indentation = len(header) - len(header.lstrip())
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and len(line) - len(line.lstrip()) <= indentation:
+            end = index
+            break
+    return "\n".join(lines[start + 1 : end])
+
+
+def _nonempty_lines(block: str) -> list[str]:
+    return [line for line in block.splitlines() if line.strip()]
+
+
+def _workflow_step(workflow: str, name: str) -> str:
+    return _yaml_block(workflow, f"      - name: {name}")
+
+
+def _yaml_scalar(block: str, indentation: int, key: str) -> str:
+    prefix = " " * indentation + key + ":"
+    matches = [
+        line.removeprefix(prefix).strip()
+        for line in block.splitlines()
+        if line.startswith(prefix)
+    ]
+    assert len(matches) == 1, f"expected one YAML scalar: {key!r}"
+    return matches[0]
+
+
+def _step_command(step: str) -> str:
+    lines = step.splitlines()
+    run_lines = [
+        index for index, line in enumerate(lines) if line.startswith("        run:")
+    ]
+    assert len(run_lines) == 1
+    run_index = run_lines[0]
+    first = lines[run_index].removeprefix("        run:").strip()
+    if first != "|":
+        return first
+    command_lines: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) <= 8:
+            break
+        if line.strip():
+            command_lines.append(line.strip().removesuffix("\\").rstrip())
+    return " ".join(command_lines)
 
 
 def _run_identity(
@@ -120,6 +197,156 @@ def _main_code(evidence: ModuleType, args: list[str]) -> int:
         return evidence.main(args)
     except SystemExit as error:
         return int(error.code or 0)
+
+
+def test_workflow_has_only_explicit_triggers_and_read_only_permissions() -> None:
+    workflow = _workflow_text()
+
+    assert _nonempty_lines(_yaml_block(workflow, "on:")) == [
+        "  pull_request:",
+        "    types: [labeled]",
+        "  workflow_dispatch:",
+    ]
+    assert _nonempty_lines(_yaml_block(workflow, "permissions:")) == [
+        "  contents: read"
+    ]
+    assert "push:" not in workflow
+    assert "schedule:" not in workflow
+    assert "concurrency:" not in workflow
+    assert "secrets." not in workflow
+    assert workflow.count("permissions:") == 1
+    assert ": write" not in workflow
+
+
+def test_workflow_gates_one_job_and_checks_out_the_selected_commit() -> None:
+    workflow = _workflow_text()
+    jobs = _yaml_block(workflow, "jobs:")
+    checkout = _workflow_step(workflow, EXPECTED_STEP_NAMES[0])
+
+    assert re.findall(r"^  ([a-z0-9-]+):$", jobs, re.MULTILINE) == ["platform-evidence"]
+    assert _yaml_scalar(jobs, 4, "if") == (
+        "github.event_name == 'workflow_dispatch' || "
+        "github.event.label.name == 'task-601-platform-evidence'"
+    )
+    assert _yaml_scalar(checkout, 8, "uses") == "actions/checkout@v4"
+    assert _nonempty_lines(_yaml_block(checkout, "        with:")) == [
+        "          ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+    ]
+
+
+def test_workflow_uses_only_the_exact_bounded_three_os_matrix() -> None:
+    workflow = _workflow_text()
+    strategy = _yaml_block(workflow, "    strategy:")
+    defaults = _yaml_block(workflow, "    defaults:")
+    setup = _workflow_step(workflow, EXPECTED_STEP_NAMES[1])
+
+    assert _nonempty_lines(strategy) == [
+        "      fail-fast: false",
+        "      matrix:",
+        "        include:",
+        "          - evidence_name: linux-x86_64",
+        "            os: ubuntu-24.04",
+        "          - evidence_name: windows-x86_64",
+        "            os: windows-2022",
+        "          - evidence_name: macos-x86_64",
+        "            os: macos-15-intel",
+    ]
+    assert (
+        tuple(
+            re.findall(
+                r"^\s+- evidence_name: ([-\w.]+)\n\s+os: ([-\w.]+)$",
+                strategy,
+                re.MULTILINE,
+            )
+        )
+        == EXPECTED_MATRIX
+    )
+    jobs = _yaml_block(workflow, "jobs:")
+    assert _yaml_scalar(jobs, 4, "runs-on") == "${{ matrix.os }}"
+    assert _yaml_scalar(jobs, 4, "timeout-minutes") == "20"
+    assert _nonempty_lines(defaults) == ["      run:", "        shell: bash"]
+    assert workflow.count("shell:") == 1
+    assert _yaml_scalar(setup, 8, "uses") == "actions/setup-python@v5"
+    assert _nonempty_lines(_yaml_block(setup, "        with:")) == [
+        '          python-version: "3.12"',
+        "          cache: pip",
+    ]
+    assert "actions/cache" not in workflow
+    assert "HF_HOME" not in workflow
+    assert "TRANSFORMERS_CACHE" not in workflow
+
+
+def test_workflow_runs_only_the_exact_dependency_and_pytest_commands() -> None:
+    workflow = _workflow_text()
+    step_names = tuple(re.findall(r"^      - name: (.+)$", workflow, re.MULTILINE))
+    initialize = _workflow_step(workflow, EXPECTED_STEP_NAMES[2])
+    dependencies = _workflow_step(workflow, EXPECTED_STEP_NAMES[3])
+    platform_tests = _workflow_step(workflow, EXPECTED_STEP_NAMES[5])
+
+    assert step_names == EXPECTED_STEP_NAMES
+    assert _step_command(initialize) == (
+        "python .github/scripts/task601_process_tree_evidence.py --initialize "
+        '--evidence-name "${{ matrix.evidence_name }}" '
+        '--output "$RUNNER_TEMP/task-601-platform-evidence.json"'
+    )
+    assert _yaml_scalar(dependencies, 8, "id") == "dependencies"
+    assert _yaml_scalar(dependencies, 8, "continue-on-error") == "true"
+    assert _step_command(dependencies) == "python -m pip install -e '.[dev]'"
+    assert workflow.count("pip install") == 1
+    assert re.findall(r"\.\[([^]]+)]", workflow) == ["dev"]
+    assert _yaml_scalar(platform_tests, 8, "id") == "platform_tests"
+    assert _yaml_scalar(platform_tests, 8, "continue-on-error") == "true"
+    assert _yaml_scalar(platform_tests, 8, "if") == (
+        "steps.dependencies.outcome == 'success'"
+    )
+    assert _step_command(platform_tests) == (
+        "python -m pytest Tests/STT/test_executor_process_tree.py "
+        "Tests/STT/test_local_stt_executor.py::"
+        "test_force_stop_detaches_before_kill_and_cleans_generation_scratch "
+        "Tests/CI/test_task601_process_tree_evidence.py --timeout=60 "
+        '--junitxml="$RUNNER_TEMP/task-601-junit.xml" -q'
+    )
+
+
+def test_workflow_preserves_failures_and_always_uploads_only_the_json() -> None:
+    workflow = _workflow_text()
+    dependency_failure = _workflow_step(workflow, EXPECTED_STEP_NAMES[4])
+    normalize = _workflow_step(workflow, EXPECTED_STEP_NAMES[6])
+    validate = _workflow_step(workflow, EXPECTED_STEP_NAMES[7])
+    upload = _workflow_step(workflow, EXPECTED_STEP_NAMES[8])
+
+    assert _yaml_scalar(dependency_failure, 8, "if") == (
+        "steps.dependencies.outcome != 'success'"
+    )
+    assert _step_command(dependency_failure) == (
+        "python .github/scripts/task601_process_tree_evidence.py "
+        "--record-failure dependency_install --failure-stage dependency_install "
+        '--evidence-name "${{ matrix.evidence_name }}" '
+        '--output "$RUNNER_TEMP/task-601-platform-evidence.json"'
+    )
+    assert _yaml_scalar(normalize, 8, "if") == (
+        "always() && steps.dependencies.outcome == 'success'"
+    )
+    assert _step_command(normalize) == (
+        "python .github/scripts/task601_process_tree_evidence.py "
+        '--from-junit "$RUNNER_TEMP/task-601-junit.xml" '
+        '--pytest-outcome "${{ steps.platform_tests.outcome }}" '
+        '--evidence-name "${{ matrix.evidence_name }}" '
+        '--output "$RUNNER_TEMP/task-601-platform-evidence.json"'
+    )
+    assert _yaml_scalar(validate, 8, "if") == "always()"
+    assert "continue-on-error" not in validate
+    assert _step_command(validate) == (
+        "python .github/scripts/task601_process_tree_evidence.py "
+        '--validate "$RUNNER_TEMP/task-601-platform-evidence.json"'
+    )
+    assert _yaml_scalar(upload, 8, "if") == "always()"
+    assert _yaml_scalar(upload, 8, "uses") == "actions/upload-artifact@v4"
+    assert _nonempty_lines(_yaml_block(upload, "        with:")) == [
+        "          name: task-601-platform-${{ matrix.evidence_name }}",
+        "          path: ${{ runner.temp }}/task-601-platform-evidence.json",
+        "          if-no-files-found: error",
+    ]
 
 
 def test_evidence_script_exists_and_loads() -> None:
