@@ -23,6 +23,34 @@ from tldw_chatbook.Agents.tool_catalog import (
 
 LEGACY_NAMES = frozenset({"rag_search", "web_search", "search_notes", "code_audit"})
 REPO_ROOT = Path(__file__).resolve().parents[2]
+FORBIDDEN_AUDIT_EVENT_NAMES = frozenset(
+    {
+        "socket.bind",
+        "socket.connect",
+        "socket.getaddrinfo",
+        "socket.gethostbyaddr",
+        "socket.gethostbyname",
+        "socket.gethostname",
+        "socket.getnameinfo",
+        "socket.sendmsg",
+        "socket.sendto",
+        "sqlite3.connect",
+    }
+)
+EXPECTED_PROBE_AUDIT_EVENT_NAMES = frozenset(
+    {
+        "socket.bind",
+        "socket.connect",
+        "socket.getaddrinfo",
+        "socket.gethostbyaddr",
+        "socket.gethostbyname",
+        "socket.gethostname",
+        "socket.getnameinfo",
+        "socket.sendmsg",
+        "socket.sendto",
+        "sqlite3.connect",
+    }
+)
 
 
 def _catalog_names(provider: ToolProvider) -> set[str]:
@@ -62,13 +90,18 @@ def test_legacy_compatibility_classes_resolve_in_a_fresh_process(
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT", None)
-    code = """
+    code = f"""
 import json
 import os
+import socket
 import sys
 
-forbidden_event_names = {"socket.connect", "socket.getaddrinfo", "sqlite3.connect"}
+forbidden_event_names = set({sorted(FORBIDDEN_AUDIT_EVENT_NAMES)!r})
+expected_probe_event_names = set({sorted(EXPECTED_PROBE_AUDIT_EVENT_NAMES)!r})
 forbidden_events = []
+
+# Prevent urllib3's import-time IPv6 capability probe from opening a socket.
+socket.has_ipv6 = False
 
 def block_external_io(event, _args):
     if event in forbidden_event_names:
@@ -81,14 +114,15 @@ import tldw_chatbook.Tools as Tools
 
 classes = (Tools.WebSearchTool, Tools.RAGSearchTool, Tools.SearchNotesTool)
 if os.environ.get("TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT") == "1":
-    try:
-        sys.audit("socket.connect", None)
-    except RuntimeError:
-        pass
+    for event in sorted(expected_probe_event_names):
+        try:
+            sys.audit(event, None)
+        except RuntimeError:
+            pass
 if forbidden_events:
-    raise RuntimeError(f"forbidden I/O attempted: {', '.join(forbidden_events)}")
+    raise RuntimeError("forbidden I/O attempted: " + ", ".join(forbidden_events))
 print(json.dumps(
-    {cls.__name__: [cls.__module__, cls.__name__] for cls in classes},
+    {{cls.__name__: [cls.__module__, cls.__name__] for cls in classes}},
     separators=(",", ":"),
     sort_keys=True,
 ))
@@ -132,4 +166,6 @@ print(json.dumps(
     )
     assert probe.returncode != 0
     assert not probe.stdout
-    assert "forbidden I/O attempted: socket.connect" in probe.stderr
+    for event in EXPECTED_PROBE_AUDIT_EVENT_NAMES:
+        assert event in probe.stderr
+    assert FORBIDDEN_AUDIT_EVENT_NAMES == EXPECTED_PROBE_AUDIT_EVENT_NAMES

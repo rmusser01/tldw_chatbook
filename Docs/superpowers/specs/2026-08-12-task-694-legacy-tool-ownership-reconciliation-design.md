@@ -26,10 +26,11 @@ retirement. The premise is no longer true:
 - Console Library retrieval ships through `LibraryToolProvider` when direct
   Library tools are enabled and `LibraryRagToolProvider` otherwise, under
   ADR-030.
-- The old audit hook installation path disappeared with System A. TASK-743
-  currently owns only the narrower decision to rehome file-write hooks at
-  `BuiltinToolProvider.invoke` or delete `file_operation_hooks.py`; it does not
+- The old audit hook installation path disappeared with System A. At design
+  time, TASK-743 owned only the narrower decision to rehome file-write hooks at
+  `BuiltinToolProvider.invoke` or delete `file_operation_hooks.py`; it did not
   yet account for the whole `CodeAuditTool` subsystem or local `fs_*` writes.
+  This reconciliation expands TASK-743 to own that complete decision.
 
 The remaining legacy classes are compatibility surfaces, not runtime catalog
 owners. `Tools.__all__` and its PEP 562 `__getattr__` mapping intentionally keep
@@ -102,7 +103,7 @@ The current capability map is:
 
 | Legacy name | Current Console owner | Contract |
 | --- | --- | --- |
-| `web_search` | `LocalToolProvider` | `local:web_search`; ADR-032 permission gate and outbound access through the configured search backend |
+| `web_search` | `LocalToolProvider` | `local:web_search`; the ADR-032 permission gate is unchanged. For each `web_search` invocation, the caller/model selects one allowlisted `search_engine`, and that selection determines the destination. The operator supplies supported per-engine credentials and configurable endpoints where available; fixed-endpoint engines remain implementation-defined. A configured Searx endpoint may be local. `web_search` does not apply public-target validation. |
 | `rag_search` | `LibraryRagToolProvider.search_library_rag` when direct Library tools are off | Bounded profile-driven Library retrieval over notes, media, and conversations |
 | `search_notes` | `LibraryToolProvider.library_search_notes` when direct Library tools are on | Bounded lexical search through the local Library notes service |
 | `code_audit` | None | Never became a live System B capability; TASK-743 owns rehome-or-delete |
@@ -126,10 +127,14 @@ instead of claiming all four tools remain unported.
 
 Correct ADR-032's TASK-1354 addendum heading and TASK-1354's closeout wording
 so “public-only” applies only to `web_fetch` target and redirect validation.
-Record `web_search` accurately: it remains permission-gated, but sends queries
-through the operator-configured backend, including a configured Searx endpoint.
-This is a truthfulness correction, not new egress hardening; TASK-694 does not
-change operator-configured search endpoints.
+Record `web_search` accurately: its permission gate is unchanged. For each
+`web_search` invocation, the caller/model selects one allowlisted
+`search_engine`, and that selection determines the destination. The operator
+supplies supported per-engine credentials and configurable endpoints where
+available; fixed-endpoint engines remain implementation-defined. A configured
+Searx endpoint may be local. `web_search` does not apply public-target
+validation.
+This is a truthfulness correction, not new egress hardening.
 
 Narrow TASK-3500 to its genuine MCP parity work. Remove its stale agent-side
 `RAGSearchTool` premise and agent ACs as already satisfied/superseded by the
