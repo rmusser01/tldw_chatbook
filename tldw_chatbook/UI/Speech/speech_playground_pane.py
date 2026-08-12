@@ -1063,14 +1063,18 @@ class SpeechPlaygroundPane(
             return
         row.update_values(self.axis_values)
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Re-evaluate whether Generate is available.
-
-        Args:
-            event: The text change.
-        """
-        if event.text_area.id == "tts-text-input":
-            self._sync_generate_enabled()
+    # NOTE (task-15476): there used to be a second handler here,
+    # `on_text_area_changed`, matched by Textual's implicit
+    # `on_<message>` naming convention. Every `TextArea.Changed` in this
+    # pane is ALSO caught by the `@on(TextArea.Changed)`-decorated
+    # `on_tts_text_changed` above, which falls through to
+    # `self.handle_text_changed(event)` -> `_sync_generate_enabled()` for
+    # any text area other than the clone-reference one -- including
+    # `tts-text-input`. The two handlers fired on every keystroke into the
+    # main TTS text box, each independently materializing the full
+    # `TextArea.text` inside `_sync_generate_enabled`. Deleted as a pure
+    # duplicate; `_sync_generate_enabled()` still runs exactly once per
+    # keystroke via the fallthrough above.
 
     def _show_provider_specific_controls(self, provider: str) -> None:
         """Re-scope the parameter group and clip picker to `provider`.
