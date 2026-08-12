@@ -425,8 +425,9 @@ def test_video_store_explicit_bad_extension_fails_without_creating_root(
     assert not root.exists()
 
 
+@pytest.mark.parametrize("video_format", ["mp4", "webm"])
 def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
-    tmp_path,
+    tmp_path, video_format
 ):
     payload = b"recoverable-video"
     _register_fake(result_content=payload, resolved_model="FakeH3")
@@ -449,6 +450,7 @@ def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
             backend="fakevid",
             prompt="Recover this",
             message_id="msg-store-failure",
+            video_format=video_format,
             video_store=store,
         )
     finally:
@@ -461,6 +463,8 @@ def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
     assert result.size_bytes == len(payload)
     assert result.message_id == "msg-store-failure"
     assert result.metadata.model == "FakeH3"
+    assert result.extension == video_format
+    assert result.metadata.container == video_format
     assert result.stream.tell() == 0
     assert result.stream.read() == payload
     assert "PRIVATE-PATH" not in repr(result)
