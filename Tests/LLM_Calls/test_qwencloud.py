@@ -420,6 +420,82 @@ def test_base_url_rejects_malformed_authorities() -> None:
         assert exc_info.value.provider == "qwencloud"
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://dashscope.example/api%2fv2",
+        "https://dashscope.example/api%252Fv2",
+        "https://dashscope.example/api%5Cv2",
+        "https://dashscope.example/api/v2/%2e/responses",
+        "https://dashscope.example/api/v2/%2E%2e/responses",
+        "https://dashscope.example/api/v2/%252e%252e/responses",
+        "https://dashscope.example/api/v2/res%70onses",
+        "https://dashscope.example/api/v2/RES%70ONSES",
+        "https://dashscope.example/api/v2/chat/%63ompletions",
+        "https://dashscope.example/api/v2/mod%65ls",
+        "https://dashscope.example/api/v2/res%2570onses",
+        "https://dashscope.example/api/v2/chat/%2563ompletions",
+        "https://dashscope.example/api/v2/mod%2565ls",
+        "https://dashscope.example/api/v2/res%252570onses",
+    ],
+)
+def test_base_url_rejects_encoded_endpoint_structure(value: str) -> None:
+    with pytest.raises(ChatConfigurationError) as exc_info:
+        normalize_qwencloud_base_url(value)
+
+    assert exc_info.value.provider == "qwencloud"
+    assert value not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://dashscope.example", "https://dashscope.example"),
+        (
+            "https://dashscope.example/api/RESPONSES",
+            "https://dashscope.example/api/RESPONSES",
+        ),
+        (
+            "https://dashscope.example/tenant-responses/api/v2",
+            "https://dashscope.example/tenant-responses/api/v2",
+        ),
+        (
+            "https://dashscope.example/completion-gateway/api/v2",
+            "https://dashscope.example/completion-gateway/api/v2",
+        ),
+        (
+            "https://dashscope.example/api/v2/responses-extra",
+            "https://dashscope.example/api/v2/responses-extra",
+        ),
+        (
+            "https://dashscope.example/api/v2/chat/completions-extra",
+            "https://dashscope.example/api/v2/chat/completions-extra",
+        ),
+        (
+            "https://dashscope.example/api/v2/myresponses",
+            "https://dashscope.example/api/v2/myresponses",
+        ),
+        (
+            "https://dashscope.example/tenant%20alpha/api/v2",
+            "https://dashscope.example/tenant%20alpha/api/v2",
+        ),
+        (
+            "https://dashscope.example/tenant%2520alpha/api/v2",
+            "https://dashscope.example/tenant%2520alpha/api/v2",
+        ),
+        (
+            "https://dashscope.example/mod%65ls/api/v2",
+            "https://dashscope.example/mod%65ls/api/v2",
+        ),
+    ],
+)
+def test_base_url_preserves_valid_arbitrary_prefix_contract(
+    value: str,
+    expected: str,
+) -> None:
+    assert normalize_qwencloud_base_url(value) == expected
+
+
 def test_api_key_precedence_is_provider_isolated() -> None:
     environ = {
         "DASHSCOPE_API_KEY": "default-env-key",

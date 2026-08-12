@@ -673,6 +673,39 @@ async def test_local_llm_provider_catalog_service_rejects_invalid_endpoint_befor
 @pytest.mark.parametrize(
     "endpoint",
     [
+        "http://workspace.example%evil/v1",
+        "http://workspace.example|evil/v1",
+        "http://workspace.example^evil/v1",
+        "http://workspace.example/v1//",
+        "http://workspace.example/%zz/v1/chat/completions",
+        "http://workspace.example/../v1/chat/completions",
+        "http://workspace.example/api%2fv1/chat/completions",
+        "http://workspace.example/v1/chat/completions/chat/completions",
+    ],
+)
+async def test_non_qwen_structural_rejection_stops_before_discovery_client(endpoint):
+    discovery_client = AsyncMock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"VLLM": ["local-model"]},
+        settings_loader=lambda: {
+            "providers": {"VLLM": ["local-model"]},
+            "api_settings": {"vllm": {"api_base_url": endpoint}},
+        },
+        discovery_client=discovery_client,
+    )
+
+    result = await service.discover_models(provider="VLLM")
+
+    assert result.status == "unsupported"
+    assert result.error is not None
+    assert result.error.kind == "unsupported_endpoint"
+    discovery_client.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "https://workspace.example/api//v2",
         "https://workspace.example/api/v2/../responses",
         "https://workspace.example/api/v2/models/models",
@@ -685,10 +718,16 @@ async def test_local_llm_provider_catalog_service_rejects_invalid_endpoint_befor
         "https://workspace.example/api/v2/chat/%63ompletions",
         "https://workspace.example/api/v2/res%2570onses",
         "https://workspace.example/api/v2/res%252570onses",
+        "https://user:secret-canary@workspace.example/api/v2",
+        "https://workspace.example/api/v2?api_key=secret-canary",
+        "https://workspace.example/api/v2#secret-canary",
+        "https://[fe80::1%25eth0]:8000/api/v2",
+        f"https://workspace.example/{'a' * 2000}",
     ],
 )
 async def test_qwencloud_structural_rejection_stops_before_discovery_client(endpoint):
     discovery_client = AsyncMock()
+    log_messages: list[str] = []
     service = LocalLLMProviderCatalogService(
         provider_catalog_loader=lambda: {"QwenCloud": ["qwen3.8-max"]},
         settings_loader=lambda: {
@@ -700,11 +739,17 @@ async def test_qwencloud_structural_rejection_stops_before_discovery_client(endp
         discovery_client=discovery_client,
     )
 
-    result = await service.discover_models(provider="QwenCloud")
+    sink_id = logger.add(log_messages.append, format="{message}")
+    try:
+        result = await service.discover_models(provider="QwenCloud")
+    finally:
+        logger.remove(sink_id)
 
     assert result.status == "unsupported"
     assert result.error is not None
     assert result.error.kind == "unsupported_endpoint"
+    assert "secret-canary" not in repr(result)
+    assert "secret-canary" not in "".join(log_messages)
     discovery_client.assert_not_awaited()
 
 
@@ -820,7 +865,9 @@ def test_local_discovered_model_cache_operations_enforce_runtime_policy():
         ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/models"),
     ],
 )
-async def test_cloud_provider_default_endpoints_resolve(provider, list_key, expected_url):
+async def test_cloud_provider_default_endpoints_resolve(
+    provider, list_key, expected_url
+):
     seen_urls: list[str] = []
 
     async def fake_client(**kwargs):

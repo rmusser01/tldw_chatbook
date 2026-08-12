@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Literal, Never, cast
-from urllib.parse import urlsplit
 
 import requests
 from loguru import logger
@@ -35,6 +33,10 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
+from tldw_chatbook.LLM_Calls.qwencloud_url import (
+    QwenCloudBaseURLValidationError,
+    normalize_qwencloud_base_url as _normalize_qwencloud_base_url,
+)
 from tldw_chatbook.config import (
     ProviderSettingsError,
     get_runtime_config_snapshot,
@@ -47,10 +49,8 @@ logger = logger.bind(module="qwencloud")
 
 QwenCloudAPIMode = Literal["responses", "chat_completions"]
 
-_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 _DEFAULT_KEY_ENV_VAR = "DASHSCOPE_API_KEY"
 _API_MODES: frozenset[str] = frozenset({"responses", "chat_completions"})
-_ENDPOINT_SUFFIXES = ("/chat/completions", "/responses")
 _REASONING_EFFORTS: frozenset[str] = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
@@ -347,71 +347,10 @@ def normalize_qwencloud_base_url(api_base_url: str | None) -> str:
     Raises:
         ChatConfigurationError: If the URL is unsafe or malformed.
     """
-    candidate = _DEFAULT_BASE_URL if api_base_url is None else api_base_url
-    if not isinstance(candidate, str) or not candidate.strip():
-        raise _configuration_error("QwenCloud API base URL is required.")
-    candidate = candidate.strip().rstrip("/")
-    if (
-        any(character.isspace() for character in candidate)
-        or any(ord(character) < 32 or ord(character) == 127 for character in candidate)
-        or "?" in candidate
-        or "#" in candidate
-    ):
-        raise _configuration_error("QwenCloud API base URL is malformed.")
-
     try:
-        parsed = urlsplit(candidate)
-        parsed_port = parsed.port
-    except ValueError as exc:
-        raise _configuration_error("QwenCloud API base URL is malformed.") from exc
-
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-        raise _configuration_error(
-            "QwenCloud API base URL must be an absolute HTTP(S) URL."
-        )
-    if parsed.username is not None or parsed.password is not None:
-        raise _configuration_error(
-            "QwenCloud API base URL must not contain credentials."
-        )
-    if any(character in parsed.netloc for character in '\\%|^{}<>"`'):
-        raise _configuration_error("QwenCloud API base URL authority is malformed.")
-    if parsed.query or parsed.fragment:
-        raise _configuration_error(
-            "QwenCloud API base URL must not contain a query or fragment."
-        )
-    if parsed.netloc.endswith(":") or (
-        parsed_port is not None and not 0 < parsed_port < 65536
-    ):
-        raise _configuration_error("QwenCloud API base URL is malformed.")
-    if (
-        "\\" in parsed.path
-        or "//" in parsed.path
-        or re.search(r"%(?![0-9A-Fa-f]{2})", parsed.path) is not None
-        or any(character.isspace() for character in parsed.path)
-        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
-    ):
-        raise _configuration_error("QwenCloud API base URL path is malformed.")
-
-    path = parsed.path.rstrip("/")
-    if path.endswith("/models"):
-        raise _configuration_error(
-            "QwenCloud API base URL must not use the models endpoint."
-        )
-    if "/responses/" in path or "/chat/completions/" in path:
-        raise _configuration_error(
-            "QwenCloud API base URL contains a non-terminal request endpoint."
-        )
-    for suffix in _ENDPOINT_SUFFIXES:
-        if path.endswith(suffix):
-            path = path[: -len(suffix)]
-            if any(path.endswith(other) for other in _ENDPOINT_SUFFIXES):
-                raise _configuration_error(
-                    "QwenCloud API base URL contains a repeated endpoint suffix."
-                )
-            break
-
-    authority = parsed.netloc
-    return f"{parsed.scheme.lower()}://{authority}{path}".rstrip("/")
+        return _normalize_qwencloud_base_url(api_base_url)
+    except QwenCloudBaseURLValidationError as exc:
+        raise _configuration_error(str(exc)) from exc
 
 
 def resolve_qwencloud_api_key(

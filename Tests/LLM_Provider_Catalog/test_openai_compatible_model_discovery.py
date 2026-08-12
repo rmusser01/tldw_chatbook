@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import httpx
 import pytest
 
+from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
+from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
     discover_openai_compatible_models,
@@ -29,7 +33,6 @@ def test_chat_completions_url_maps_to_models_url():
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses/",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions/",
-        "https://user:secret@dashscope-intl.aliyuncs.com/compatible-mode/v1/responses?api_key=secret#fragment",
     ],
 )
 def test_qwencloud_models_url_normalizes_base_and_both_request_endpoints(endpoint):
@@ -52,7 +55,6 @@ def test_qwencloud_models_url_normalizes_base_and_both_request_endpoints(endpoin
         "https://workspace.example/api/v2/responses/",
         "https://workspace.example/api/v2/chat/completions",
         "https://workspace.example/api/v2/chat/completions/",
-        "https://user:secret@workspace.example/api/v2/responses?api_key=secret#fragment",
     ],
 )
 def test_qwencloud_custom_prefix_normalizes_base_and_request_endpoints(endpoint):
@@ -69,9 +71,6 @@ def test_qwencloud_custom_prefix_normalizes_base_and_request_endpoints(endpoint)
 @pytest.mark.parametrize(
     "endpoint",
     [
-        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses-extra",
-        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions-extra",
-        "https://workspace.example/api/v2/myresponses",
         "https://workspace.example/api/v2/responses/extra",
         "https://workspace.example/api/v2/chat/completions/extra",
         "https://user:secret@/api/v2/responses",
@@ -154,17 +153,126 @@ def test_qwencloud_discovery_preserves_safe_encoded_prefix_data(endpoint, expect
     assert build_models_url(endpoint, "qwencloud") == expected
 
 
-def test_qwencloud_discovery_preserves_valid_ipv6_port_and_safe_url_stripping():
-    endpoint = (
-        "https://user:secret@[2001:db8::1]:8443/api/v2/responses/"
-        "?api_key=secret#fragment"
-    )
+@pytest.mark.parametrize(
+    ("endpoint", "expected_base"),
+    [
+        ("https://workspace.example", "https://workspace.example"),
+        ("https://workspace.example/api/v2", "https://workspace.example/api/v2"),
+        (
+            "https://workspace.example/api/v2/responses",
+            "https://workspace.example/api/v2",
+        ),
+        (
+            "https://workspace.example/api/v2/chat/completions/",
+            "https://workspace.example/api/v2",
+        ),
+        (
+            "https://workspace.example/api/RESPONSES",
+            "https://workspace.example/api/RESPONSES",
+        ),
+        (
+            "https://workspace.example/tenant-responses/api/v2",
+            "https://workspace.example/tenant-responses/api/v2",
+        ),
+        (
+            "https://workspace.example/completion-gateway/api/v2",
+            "https://workspace.example/completion-gateway/api/v2",
+        ),
+        (
+            "https://workspace.example/api/v2/responses-extra",
+            "https://workspace.example/api/v2/responses-extra",
+        ),
+        (
+            "https://workspace.example/api/v2/chat/completions-extra",
+            "https://workspace.example/api/v2/chat/completions-extra",
+        ),
+        (
+            "https://workspace.example/api/v2/myresponses",
+            "https://workspace.example/api/v2/myresponses",
+        ),
+    ],
+)
+def test_qwencloud_discovery_matches_runtime_base_contract(endpoint, expected_base):
+    original_endpoint = endpoint
+
+    assert normalize_qwencloud_base_url(endpoint) == expected_base
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
+    assert build_models_url(endpoint, "qwencloud") == f"{expected_base}/models"
+    assert endpoint == original_endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://user:secret-canary@workspace.example/api/v2",
+        "https://workspace.example/api/v2?api_key=secret-canary",
+        "https://workspace.example/api/v2#secret-canary",
+        "https://[fe80::1%25eth0]:8000/api/v2",
+    ],
+)
+def test_qwencloud_discovery_rejects_runtime_invalid_endpoint_without_secret_output(
+    endpoint,
+):
+    with pytest.raises(ChatConfigurationError):
+        normalize_qwencloud_base_url(endpoint)
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
+    assert "secret-canary" not in build_models_url(endpoint, "qwencloud")
+    assert "secret-canary" not in fingerprint_endpoint(endpoint)
+
+
+def test_qwencloud_discovery_rejects_oversized_endpoint_before_classification():
+    endpoint = f"https://workspace.example/{'a' * 2000}"
+
+    with pytest.raises(ChatConfigurationError):
+        normalize_qwencloud_base_url(endpoint)
+
+    assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is False
+
+
+def test_catalog_rejects_oversized_endpoint_before_url_parsing(monkeypatch):
+    endpoint = f"https://workspace.example/{'a' * 2000}"
+    parser = Mock(side_effect=AssertionError("oversized endpoint was parsed"))
+    monkeypatch.setattr(openai_compatible_model_discovery, "urlparse", parser)
+
+    assert supports_openai_compatible_model_discovery("vllm", endpoint) is False
+    assert fingerprint_endpoint(endpoint) == endpoint
+    parser.assert_not_called()
+
+
+def test_qwencloud_discovery_preserves_valid_ipv6_port():
+    endpoint = "https://[2001:db8::1]:8443/api/v2/responses/"
 
     assert supports_openai_compatible_model_discovery("qwencloud", endpoint) is True
     assert (
         build_models_url(endpoint, "qwencloud")
         == "https://[2001:db8::1]:8443/api/v2/models"
     )
+
+
+def test_non_qwen_discovery_preserves_scoped_ipv6_zone_id_support():
+    endpoint = "http://[fe80::1%25eth0]:8000/v1"
+
+    assert supports_openai_compatible_model_discovery("vllm", endpoint) is True
+    assert build_models_url(endpoint, "vllm") == f"{endpoint}/models"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://workspace.example%evil/v1",
+        "http://workspace.example|evil/v1",
+        "http://workspace.example^evil/v1",
+        "http://workspace.example/v1//",
+        "http://workspace.example/%zz/v1/chat/completions",
+        "http://workspace.example/../v1/chat/completions",
+        "http://workspace.example/api%2fv1/chat/completions",
+        "http://workspace.example/res%70onses/v1/chat/completions",
+        "http://workspace.example/v1/chat/completions/chat/completions",
+    ],
+)
+def test_non_qwen_discovery_still_rejects_malformed_endpoint_structure(endpoint):
+    assert supports_openai_compatible_model_discovery("vllm", endpoint) is False
 
 
 def test_qwencloud_discovery_preserves_safe_reserved_word_inside_custom_prefix():
@@ -630,9 +738,12 @@ async def test_discovery_returns_typed_error_for_unsupported_endpoint():
 
 
 def test_openrouter_api_v1_path_maps_to_models():
-    assert supports_openai_compatible_model_discovery(
-        "openrouter", "https://openrouter.ai/api/v1"
-    ) is True
+    assert (
+        supports_openai_compatible_model_discovery(
+            "openrouter", "https://openrouter.ai/api/v1"
+        )
+        is True
+    )
     assert (
         build_models_url("https://openrouter.ai/api/v1", "openrouter")
         == "https://openrouter.ai/api/v1/models"
@@ -640,9 +751,12 @@ def test_openrouter_api_v1_path_maps_to_models():
 
 
 def test_zai_paas_v4_path_maps_to_models():
-    assert supports_openai_compatible_model_discovery(
-        "zai", "https://api.z.ai/api/paas/v4"
-    ) is True
+    assert (
+        supports_openai_compatible_model_discovery(
+            "zai", "https://api.z.ai/api/paas/v4"
+        )
+        is True
+    )
     assert (
         build_models_url("https://api.z.ai/api/paas/v4", "zai")
         == "https://api.z.ai/api/paas/v4/models"
@@ -672,9 +786,17 @@ async def test_anthropic_paginates_with_after_id():
         seen_headers.update({k.lower(): v for k, v in request.headers.items()})
         page = len(requests)
         payload = (
-            {"data": [{"id": f"claude-{page}"}], "has_more": True, "last_id": f"claude-{page}"}
+            {
+                "data": [{"id": f"claude-{page}"}],
+                "has_more": True,
+                "last_id": f"claude-{page}",
+            }
             if page == 1
-            else {"data": [{"id": "claude-2"}], "has_more": False, "last_id": "claude-2"}
+            else {
+                "data": [{"id": "claude-2"}],
+                "has_more": False,
+                "last_id": "claude-2",
+            }
         )
         return httpx.Response(200, json=payload)
 
