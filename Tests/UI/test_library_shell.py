@@ -5057,12 +5057,25 @@ async def test_library_shell_rail_search_submit_runs_search_canvas_query():
             )
 
         assert screen._library_selected_row_id == "browse-search"
+        # task-15512: this pinned `top_k: 5`, which is
+        # LIBRARY_RAG_FALLBACK_TOP_K -- the value used only when NO RAG profile
+        # resolves. The Library canvas carries no depth control, so production
+        # resolves the active profile's `default_top_k` and falls back to 5
+        # only when the profile is unresolvable (TASK-15020/B3). The literal
+        # was pinning the fallback, so it broke the moment a profile became
+        # resolvable here. Assert against the profile resolver -- a different
+        # code path from the rail-submit wiring under test -- rather than a
+        # number that encodes "no profile exists".
+        from tldw_chatbook.Library.library_rag_state import (
+            library_rag_profile_top_k,
+        )
+
         assert service.calls == [
             {
                 "query": "zeta",
                 "scope": ("notes", "media", "conversations"),
                 "mode": "search",
-                "top_k": 5,
+                "top_k": library_rag_profile_top_k(),
                 "include_citations": True,
             }
         ]

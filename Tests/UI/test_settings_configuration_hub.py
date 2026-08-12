@@ -734,6 +734,11 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "api_settings.<provider>.api_key_env_var",
         "api_settings.<provider>.api_mode",
         "api_settings.<provider>.model_defaults.<model>",
+        # task-15512: added by 2d88425ba (conversation memory and compaction
+        # controls), which gave this category a genuinely new owned section --
+        # the screen writes it at `_save_provider_category` -- but left this
+        # exhaustive tuple behind. Stale contract, not a product change.
+        "model_capabilities.models.<model>.context_window",
     )
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -743,6 +748,10 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
         "console.background_effects.*",
+        # task-15512: same commit as the context-window entry above
+        # (2d88425ba) -- new owned sections, tuple left behind.
+        "console.conversation_budget_*",
+        "console.compaction_*",
         "chat_defaults.streaming",
         "chat_defaults.temperature",
         "chat_defaults.top_p",

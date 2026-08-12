@@ -37,12 +37,13 @@ Measured on `origin/dev` at `d85e6cff1`:
   -- same shape: empty saved list where a `chat_defaults` provider entry was expected.
 
 - `test_library_shell.py::test_library_shell_rail_search_submit_runs_search_canvas_query`
-  -- the rail search runs with a different scope than the test expects: got
-  `('notes', 'media', 'conversations')` where the expected call carried a
-  narrower scope. This one is NEWER than the other five: it passes at dev
-  `5bf47b2fe` and fails at dev `fe5019489`, so it was introduced by a merge in
-  between. Worth bisecting that range first -- a search silently widening its
-  scope is user-visible.
+  -- **corrected**: an earlier note here said the search scope had widened.
+  That was misread from a truncated pytest diff. The actual delta is `top_k`:
+  the test pinned `5`, which is `LIBRARY_RAG_FALLBACK_TOP_K`, the value used
+  only when NO RAG profile resolves. The Library canvas has no depth control,
+  so production resolves the active profile's `default_top_k` (TASK-15020/B3)
+  and falls back to 5 only when unresolvable. The literal was pinning the
+  fallback and broke the moment a profile became resolvable. Stale contract.
 
 ## Triage outcome (2026-08-11)
 
@@ -80,14 +81,24 @@ repopulation is indistinguishable from a user edit.
 So those two are **not** stale contracts; they assert the save persists and it
 genuinely does not. They stay red until task-15610 is fixed.
 
-Still to triage: `test_settings_ownership_records_cover_categories_and_runtime_boundaries`
-(one extra ownership record, `model_capabilities.models.<model>.context_window`),
-`test_console_registers_footer_workbench_shortcuts` (footer hint gained
-`/ queue`), and the search-scope one below.
+**Stale contracts, fixed here.** Three tests pinned values that a feature
+legitimately changed and nobody updated:
+
+* `test_settings_ownership_records_cover_categories_and_runtime_boundaries` --
+  `2d88425ba` (conversation memory and compaction controls) gave Providers &
+  Models and Console Behaviour new owned config sections
+  (`model_capabilities.models.<model>.context_window`,
+  `console.conversation_budget_*`, `console.compaction_*`) and left two
+  exhaustive tuples behind.
+* `test_console_registers_footer_workbench_shortcuts` -- `14cc326e4` (visible
+  prompt queue) made Enter genuinely "send / queue".
+* `test_library_shell_rail_search_submit_runs_search_canvas_query` -- see above;
+  now asserts against `library_rag_profile_top_k()` rather than a literal that
+  encoded "no profile exists".
 
 ## Acceptance Criteria
 
-- [ ] Each of the six failures is attributed to its causing change, with the commit identified
-- [ ] It is established whether the three save-related failures are stale contracts or a genuine break in the Settings save path, with evidence either way
-- [ ] Any genuine product break found is fixed rather than absorbed into the tests' expectations
+- [x] Each of the six failures is attributed to its causing change, with the commit identified
+- [x] It is established whether the three save-related failures are stale contracts or a genuine break in the Settings save path, with evidence either way
+- [x] Any genuine product break found is fixed rather than absorbed into the tests' expectations (the log-call crash is fixed; the save refusal is filed as task-15610 rather than absorbed)
 - [ ] All six pass on dev
