@@ -24,7 +24,7 @@ The unwired design intended the following capabilities; they are not current Con
 1. **FileAuditSystem** (`code_audit_tool.py`): Reference audit engine
 2. **CodeAuditTool** (`code_audit_tool.py`): Retired System A task wrapper
 3. **FileOperationMonitor** (`file_operation_hooks.py`): Reference integration hooks, currently uninstalled
-4. **Configuration**: Historical settings in `config.toml`
+4. **Configuration**: Historical System A flag plus proposed, unconsumed `[audit]` configuration
 
 ### Data Flow
 
