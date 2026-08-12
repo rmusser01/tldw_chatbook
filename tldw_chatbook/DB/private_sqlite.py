@@ -357,6 +357,13 @@ _SQLITE_OWNER_POLICIES = {
         centralized_backup_allowed=True,
         preserve_read_only_source_mode=True,
     ),
+    "tts.profile_migration_publication": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_publication",
+        _READ_ONLY_URI,
+        "TTS migration publication immutably revalidates exact prepared and "
+        "retained artifacts before and after durable namespace replacement.",
+        preserve_read_only_source_mode=True,
+    ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _PRIVATE_AND_READ_ONLY,
