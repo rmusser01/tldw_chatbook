@@ -679,9 +679,12 @@ def _mutation_flags(mutation_result: object) -> tuple[bool, bool] | None:
 def _same_saved_semantics(
     first: ProviderDraftIdentity, second: ProviderDraftIdentity
 ) -> bool:
+    credential_source_matches = first.credential_source == second.credential_source or (
+        first.credential_source == "draft" and second.credential_source == "stored"
+    )
     return (
         first.provider_key == second.provider_key
         and first.connection_identity == second.connection_identity
-        and first.credential_source == second.credential_source
+        and credential_source_matches
         and first.credential_revision == second.credential_revision
     )

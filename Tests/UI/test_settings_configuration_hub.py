@@ -6345,11 +6345,11 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     assert len(mutations) == 1
     sections, _deletes = mutations[0]
     assert sections["api_settings.openai"]["api_base_url"] == (
-        "https://proxy.example.com/v1/chat/completions"
+        "https://proxy.example.com/v1"
     )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
-        == "https://proxy.example.com/v1/chat/completions"
+        == "https://proxy.example.com/v1"
     )
 
 
@@ -6385,11 +6385,11 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
     assert len(mutations) == 1
     sections, _deletes = mutations[0]
     assert sections["api_settings.openai"]["api_base_url"] == (
-        "https://proxy.example.com/v1/chat/completions"
+        "https://proxy.example.com/v1"
     )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
-        == "https://proxy.example.com/v1/chat/completions"
+        == "https://proxy.example.com/v1"
     )
 
 
@@ -6574,14 +6574,14 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
     assert len(mutations) == 1
     sections, _deletes = mutations[0]
     assert sections["api_settings.OpenAI"]["api_base_url"] == (
-        "https://proxy.example.com/v1/chat/completions"
+        "https://proxy.example.com/v1"
     )
     assert sections["api_settings.OpenAI"]["api_key_env_var"] == (
         "CHATBOOK_OPENAI_API_KEY"
     )
     assert "openai" not in app.app_config["api_settings"]
     assert app.app_config["api_settings"]["OpenAI"] == {
-        "api_base_url": "https://proxy.example.com/v1/chat/completions",
+        "api_base_url": "https://proxy.example.com/v1",
         "model": "gpt-4.1",
         "api_key_env_var": "CHATBOOK_OPENAI_API_KEY",
     }
@@ -6897,9 +6897,9 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
     assert "api_url" in deletes["api_settings.llama_cpp"]
     assert sections["chat_defaults"] == {
         "provider": "llama_cpp",
-        "model": "gpt-4.1",
+        "model": "",
     }
-    assert app.app_config["api_settings"]["llama_cpp"] == {"model": "gpt-4.1"}
+    assert app.app_config["api_settings"]["llama_cpp"] == {"model": ""}
 
 
 @pytest.mark.asyncio

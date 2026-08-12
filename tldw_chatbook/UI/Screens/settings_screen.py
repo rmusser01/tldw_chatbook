@@ -67,6 +67,8 @@ from ...Chat.provider_readiness import get_provider_readiness, provider_config_k
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
+    provider_setup_draft_identity,
+    resolve_remembered_provider_model,
 )
 from ...Chat.provider_test_evidence import (
     ProviderDraftIdentity,
@@ -8455,9 +8457,17 @@ class SettingsScreen(BaseAppScreen):
                 else loaded_provider
             )
         )
-        model = self.query_one("#settings-model-value", Input).value.strip() or str(
-            loaded_values["model"]
-        )
+        model = self.query_one("#settings-model-value", Input).value.strip()
+        if not model:
+            if provider_config_key(provider) == provider_config_key(loaded_provider):
+                model = str(loaded_values["model"])
+            else:
+                model = (
+                    resolve_remembered_provider_model(
+                        self._app_config_mapping(), provider
+                    )
+                    or ""
+                )
         endpoint = self.query_one(
             "#settings-provider-endpoint-value", Input
         ).value.strip()
@@ -8613,7 +8623,8 @@ class SettingsScreen(BaseAppScreen):
     def _provider_current_credential_source(self, provider: str) -> str:
         draft = self._provider_draft()
         dirty = draft.dirty_keys if draft is not None else set()
-        if "api_key" in dirty:
+        api_key_dirty = "api_key" in dirty
+        if api_key_dirty:
             try:
                 if self.query_one("#settings-provider-api-key", Input).value.strip():
                     return "draft"
@@ -8628,8 +8639,14 @@ class SettingsScreen(BaseAppScreen):
             env_var = str(
                 self._provider_setting_values_mapping().get("credential_env_var") or ""
             ).strip()
+        if api_key_dirty:
+            return "environment" if env_var else "none"
         if "credential_env_var" in dirty and env_var:
             return "environment"
+        if env_var:
+            return "environment"
+        if self._provider_api_key_value(provider):
+            return "stored"
         readiness = get_provider_readiness(
             provider,
             self._provider_test_staged_config(provider),
@@ -8650,25 +8667,33 @@ class SettingsScreen(BaseAppScreen):
         endpoint = str(values.get("endpoint") or "").strip()
         if not provider or not endpoint:
             return None
+        credential_source = self._provider_current_credential_source(provider)
         try:
-            setup = build_provider_setup_mutation(
+            return provider_setup_draft_identity(
                 ProviderSetupDraft(
                     provider=provider,
                     model=str(values.get("model") or "").strip(),
                     endpoint=endpoint,
-                    credential_source=self._provider_current_credential_source(
-                        provider
-                    ),
+                    credential_source=credential_source,
                     credential_revision=getattr(
                         self, "_provider_credential_revision", 0
                     ),
                     draft_generation=getattr(self, "_provider_draft_generation", 0),
+                    credential_value=(
+                        str(values.get("api_key") or "").strip()
+                        if credential_source == "draft"
+                        else None
+                    ),
+                    credential_env_var=(
+                        str(values.get("credential_env_var") or "").strip()
+                        if credential_source == "environment"
+                        else None
+                    ),
                 ),
                 self._app_config_mapping(),
             )
         except (ProviderSettingsError, ValueError):
             return None
-        return setup.semantic_identity
 
     def _provider_config_entry(
         self, provider: str
@@ -8895,10 +8920,10 @@ class SettingsScreen(BaseAppScreen):
         return ""
 
     def _provider_model_default(self, provider: str) -> str:
-        configured_model = str(
-            self._provider_config(provider).get("model") or ""
-        ).strip()
-        if configured_model and configured_model != "None":
+        configured_model = resolve_remembered_provider_model(
+            self._app_config_mapping(), provider
+        )
+        if configured_model is not None and configured_model != "None":
             return configured_model
         return self._provider_catalog_model_default(provider)
 
@@ -18570,41 +18595,27 @@ class SettingsScreen(BaseAppScreen):
                         return
 
             tested_identity = self._provider_current_draft_identity()
-            saved_credential_source = self._provider_current_credential_source(
-                provider
-            )
-            if api_key_dirty:
-                if api_key:
-                    saved_credential_source = "stored"
-                elif credential_env_var:
-                    saved_credential_source = "environment"
-                else:
-                    saved_credential_source = "none"
-            if credential_dirty:
-                if credential_env_var:
-                    saved_credential_source = "environment"
-                elif api_key or (
-                    not api_key_dirty and self._provider_api_key_value(provider)
-                ):
-                    saved_credential_source = "stored"
-                else:
-                    saved_credential_source = "none"
+            credential_source = self._provider_current_credential_source(provider)
             try:
                 setup_mutation = build_provider_setup_mutation(
                     ProviderSetupDraft(
                         provider=provider,
                         model=model,
                         endpoint=endpoint,
-                        credential_source=saved_credential_source,
+                        credential_source=credential_source,
                         credential_revision=getattr(
                             self, "_provider_credential_revision", 0
                         ),
                         draft_generation=getattr(
                             self, "_provider_draft_generation", 0
                         ),
-                        credential_value=api_key if api_key_dirty else None,
+                        credential_value=(
+                            api_key if credential_source == "draft" else None
+                        ),
                         credential_env_var=(
-                            credential_env_var if credential_dirty else None
+                            credential_env_var
+                            if credential_source == "environment"
+                            else None
                         ),
                     ),
                     self._app_config_mapping(),

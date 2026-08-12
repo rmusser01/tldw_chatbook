@@ -110,6 +110,80 @@ def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
     assert rebound.model_ids == ("model-a", "model-b")
 
 
+def test_exact_draft_credential_save_rebases_to_stored_source():
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source="draft",
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=8,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+    rebound = store.evidence_for(saved)
+    assert rebound is not None
+    assert rebound.identity.credential_source == "stored"
+    assert rebound.model_ids == ("model-a", "model-b")
+
+
+@pytest.mark.parametrize(
+    ("tested_source", "saved_source"),
+    [
+        ("stored", "environment"),
+        ("stored", "none"),
+        ("environment", "stored"),
+        ("none", "stored"),
+    ],
+)
+def test_other_credential_source_transitions_do_not_rebase(tested_source, saved_source):
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source=tested_source,
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source=saved_source,
+        credential_revision=8,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+    assert store.evidence_for(saved) is None
+
+
+def test_draft_to_stored_revision_change_does_not_rebase():
+    tested = _semantic_identity(
+        "https://example.test/v1/models",
+        credential_source="draft",
+        credential_revision=8,
+        draft_generation=4,
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=9,
+        draft_generation=5,
+    )
+    store = _settled_store(tested)
+
+    assert not _rebase_after_save(
+        store, tested, saved, ConfigMutationResult(True, True, None)
+    )
+
+
 @pytest.mark.parametrize(
     "changed",
     [

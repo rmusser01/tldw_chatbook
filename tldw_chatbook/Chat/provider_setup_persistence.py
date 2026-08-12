@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from unicodedata import category as unicode_category
+from urllib.parse import urlsplit, urlunsplit
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
@@ -22,8 +23,23 @@ from .provider_test_evidence import CredentialSource, ProviderDraftIdentity
 _MAX_MODEL_CHARS = 120
 _MAX_SECRET_CHARS = 8192
 _MAX_CONFIG_PROVIDERS = 256
+_MAX_MUTATION_SECTIONS = 3
+_MAX_MUTATION_KEYS = 16
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+_SECTION_NAME_PATTERN = re.compile(r"[A-Za-z0-9_. -]{1,192}")
+_CONFIG_KEY_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_MAPPING_PROXY_TYPE = type(MappingProxyType({}))
+_ENDPOINT_KEY_PRECEDENCE = (
+    "api_base_url",
+    "api_base",
+    "base_url",
+    "api_url",
+    "endpoint",
+)
+_API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
+_ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+_MUTATION_CONSTRUCTION_TOKEN = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +222,22 @@ class ProviderSetupDraft:
             and _ENV_VAR_PATTERN.fullmatch(self.credential_env_var) is None
         ):
             raise ValueError("Credential environment variable is invalid.")
+        credential_value = (
+            self.credential_value.strip() if self.credential_value is not None else ""
+        )
+        credential_env_var = (
+            self.credential_env_var.strip()
+            if self.credential_env_var is not None
+            else ""
+        )
+        if self.credential_source in {"draft", "stored"} and credential_env_var:
+            raise ValueError("Credential setup is invalid.")
+        if self.credential_source == "environment" and credential_value:
+            raise ValueError("Credential setup is invalid.")
+        if self.credential_source == "none" and (
+            credential_value or credential_env_var
+        ):
+            raise ValueError("Credential setup is invalid.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,11 +247,14 @@ class ProviderSetupMutation:
     section_values: Mapping[str, Mapping[str, object]]
     delete_keys: Mapping[str, tuple[str, ...]]
     semantic_identity: ProviderDraftIdentity | None
+    _construction_token: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _validate_provider_setup_mutation(self)
 
     def __repr__(self) -> str:
         set_keys = {
-            section: tuple(values)
-            for section, values in self.section_values.items()
+            section: tuple(values) for section, values in self.section_values.items()
         }
         return (
             "ProviderSetupMutation("
@@ -270,9 +305,9 @@ def build_provider_setup_mutation(
     if model is None:
         model = ""
 
-    provider_section = (
-        f"api_settings.{_configured_section_key(app_config, ownership)}"
-    )
+    provider_section = f"api_settings.{_configured_section_key(app_config, ownership)}"
+    provider_settings = _provider_settings(app_config, ownership)
+    endpoint_key = _selected_endpoint_key(provider_settings, ownership)
     provider_values: dict[str, object] = {ownership.model_key: model}
     section_values: dict[str, dict[str, object]] = {
         provider_section: provider_values,
@@ -287,42 +322,68 @@ def build_provider_setup_mutation(
     endpoint = draft.endpoint.strip()
     if endpoint:
         resolution = resolve_provider_endpoint(ownership.provider_key, endpoint)
-        if resolution.persisted_endpoint is None:
+        persisted_endpoint = _persisted_endpoint_for_owner(
+            ownership.provider_key,
+            endpoint_key,
+            resolution.persisted_endpoint,
+            resolution.chat_url,
+        )
+        if persisted_endpoint is None:
             raise ValueError("Endpoint is invalid.")
-        provider_values[ownership.endpoint_key] = resolution.persisted_endpoint
-        section_values["provider_setup.confirmed"] = {
-            ownership.provider_key: True
-        }
+        provider_values[endpoint_key] = persisted_endpoint
+        section_values["provider_setup.confirmed"] = {ownership.provider_key: True}
         connection_identity = canonical_connection_identity(
             ownership.provider_key,
-            resolution.persisted_endpoint,
+            persisted_endpoint,
         )
         if connection_identity is None:
             raise ValueError("Endpoint is invalid.")
-        semantic_identity = ProviderDraftIdentity(
-            provider_key=ownership.provider_key,
-            connection_identity=connection_identity,
-            credential_source=draft.credential_source,
-            credential_revision=draft.credential_revision,
-            draft_generation=draft.draft_generation,
-        )
     else:
-        deletes[provider_section] = [ownership.endpoint_key]
+        deletes[provider_section] = [endpoint_key]
         deletes["provider_setup.confirmed"] = [ownership.provider_key]
 
     stored_key, environment_key = ownership.credential_keys
-    if draft.credential_value is not None:
-        credential_value = draft.credential_value.strip()
-        if credential_value:
-            provider_values[stored_key] = credential_value
-        else:
-            deletes.setdefault(provider_section, []).append(stored_key)
-    if draft.credential_env_var is not None:
-        env_var = draft.credential_env_var.strip()
-        if env_var:
-            provider_values[environment_key] = env_var
-        else:
-            deletes.setdefault(provider_section, []).append(environment_key)
+    credential_source = draft.credential_source
+    saved_credential_source: CredentialSource = credential_source
+    credential_value = (
+        draft.credential_value.strip() if draft.credential_value is not None else ""
+    )
+    credential_env_var = (
+        draft.credential_env_var.strip() if draft.credential_env_var is not None else ""
+    )
+    if credential_source == "draft":
+        if not credential_value:
+            raise ValueError("Credential setup is invalid.")
+        provider_values[stored_key] = credential_value
+        deletes.setdefault(provider_section, []).append(environment_key)
+        saved_credential_source = "stored"
+    elif credential_source == "stored":
+        stored_value = credential_value or _existing_credential_value(
+            provider_settings.get(stored_key)
+        )
+        if not stored_value:
+            raise ValueError("Credential setup is invalid.")
+        provider_values[stored_key] = stored_value
+        deletes.setdefault(provider_section, []).append(environment_key)
+    elif credential_source == "environment":
+        env_var = credential_env_var or _existing_environment_name(
+            provider_settings.get(environment_key)
+        )
+        if not env_var:
+            raise ValueError("Credential setup is invalid.")
+        provider_values[environment_key] = env_var
+        deletes.setdefault(provider_section, []).append(stored_key)
+    else:
+        deletes.setdefault(provider_section, []).extend((stored_key, environment_key))
+
+    if endpoint:
+        semantic_identity = ProviderDraftIdentity(
+            provider_key=ownership.provider_key,
+            connection_identity=connection_identity,
+            credential_source=saved_credential_source,
+            credential_revision=draft.credential_revision,
+            draft_generation=draft.draft_generation,
+        )
 
     frozen_sections = MappingProxyType(
         {
@@ -342,6 +403,26 @@ def build_provider_setup_mutation(
         section_values=frozen_sections,
         delete_keys=frozen_deletes,
         semantic_identity=semantic_identity,
+        _construction_token=_MUTATION_CONSTRUCTION_TOKEN,
+    )
+
+
+def provider_setup_draft_identity(
+    draft: ProviderSetupDraft,
+    app_config: object,
+) -> ProviderDraftIdentity | None:
+    """Return the exact tested-draft identity before save-source rebasing."""
+
+    mutation = build_provider_setup_mutation(draft, app_config)
+    saved_identity = mutation.semantic_identity
+    if saved_identity is None:
+        return None
+    return ProviderDraftIdentity(
+        provider_key=saved_identity.provider_key,
+        connection_identity=saved_identity.connection_identity,
+        credential_source=draft.credential_source,
+        credential_revision=draft.credential_revision,
+        draft_generation=draft.draft_generation,
     )
 
 
@@ -350,6 +431,7 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
 
     if type(mutation) is not ProviderSetupMutation:
         raise ValueError("Provider setup mutation is invalid.")
+    _validate_provider_setup_mutation(mutation)
     return apply_settings_mutation_to_cli_config(
         mutation.section_values,
         delete_keys=mutation.delete_keys,
@@ -379,15 +461,15 @@ def provider_setup_is_explicitly_configured(
     current_settings = _provider_settings(app_config, ownership)
     template_settings = _provider_settings(DEFAULT_CONFIG_FROM_TOML, ownership)
     owned_keys = (
-        ownership.endpoint_key,
+        *_ENDPOINT_KEY_PRECEDENCE,
         ownership.model_key,
         *ownership.credential_keys,
     )
     for key in owned_keys:
         current_value = current_settings.get(key)
-        if _safe_nonempty_scalar(current_value) and current_value != template_settings.get(
-            key
-        ):
+        if _safe_nonempty_scalar(
+            current_value
+        ) and current_value != template_settings.get(key):
             return True
 
     current_defaults = app_config.get("chat_defaults")
@@ -432,6 +514,246 @@ def _provider_settings(
             continue
         return settings if isinstance(settings, Mapping) else {}
     return {}
+
+
+def _selected_endpoint_key(
+    provider_settings: Mapping[str, object],
+    ownership: _ProviderOwnership,
+) -> str:
+    for key in _ENDPOINT_KEY_PRECEDENCE:
+        if key in provider_settings:
+            return key
+    return ownership.endpoint_key
+
+
+def _persisted_endpoint_for_owner(
+    provider_key: str,
+    endpoint_key: str,
+    root_endpoint: str | None,
+    chat_url: str | None,
+) -> str | None:
+    if provider_key in _ROOT_ENDPOINT_PROVIDER_KEYS:
+        return root_endpoint
+    if endpoint_key in _API_BASE_ENDPOINT_KEYS:
+        return _api_base_from_chat_url(chat_url)
+    return chat_url
+
+
+def _api_base_from_chat_url(chat_url: str | None) -> str | None:
+    if type(chat_url) is not str:
+        return None
+    try:
+        parsed = urlsplit(chat_url)
+    except ValueError:
+        return None
+    segments = parsed.path.split("/")
+    if len(segments) < 3 or segments[-2:] != ["chat", "completions"]:
+        return None
+    base_path = "/".join(segments[:-2]) or "/"
+    return urlunsplit((parsed.scheme, parsed.netloc, base_path, "", ""))
+
+
+def _existing_credential_value(value: object) -> str | None:
+    if type(value) is not str:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        _validate_credential_value(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _existing_environment_name(value: object) -> str | None:
+    if type(value) is not str:
+        return None
+    candidate = value.strip()
+    if not candidate or _ENV_VAR_PATTERN.fullmatch(candidate) is None:
+        return None
+    return candidate
+
+
+def _validate_provider_setup_mutation(mutation: object) -> None:
+    error = ValueError("Provider setup mutation is invalid.")
+    if type(mutation) is not ProviderSetupMutation:
+        raise error
+    try:
+        section_values = mutation.section_values
+        delete_keys = mutation.delete_keys
+        semantic_identity = mutation.semantic_identity
+        construction_token = mutation._construction_token
+    except Exception as exc:
+        raise error from exc
+    if construction_token is not _MUTATION_CONSTRUCTION_TOKEN:
+        raise error
+    if (
+        type(section_values) is not _MAPPING_PROXY_TYPE
+        or type(delete_keys) is not _MAPPING_PROXY_TYPE
+    ):
+        raise error
+    if not 1 <= len(section_values) <= _MAX_MUTATION_SECTIONS:
+        raise error
+    if len(delete_keys) > _MAX_MUTATION_SECTIONS:
+        raise error
+
+    total_keys = 0
+    for section, values in section_values.items():
+        if (
+            type(section) is not str
+            or _SECTION_NAME_PATTERN.fullmatch(section) is None
+            or type(values) is not _MAPPING_PROXY_TYPE
+            or not values
+        ):
+            raise error
+        total_keys += len(values)
+        for key, value in values.items():
+            if (
+                type(key) is not str
+                or _CONFIG_KEY_PATTERN.fullmatch(key) is None
+                or type(value) not in {str, bool}
+            ):
+                raise error
+    for section, keys in delete_keys.items():
+        if (
+            type(section) is not str
+            or _SECTION_NAME_PATTERN.fullmatch(section) is None
+            or type(keys) is not tuple
+            or not keys
+            or len(keys) != len(set(keys))
+        ):
+            raise error
+        total_keys += len(keys)
+        if any(
+            type(key) is not str or _CONFIG_KEY_PATTERN.fullmatch(key) is None
+            for key in keys
+        ):
+            raise error
+        set_keys = section_values.get(section, {})
+        if any(key in set_keys for key in keys):
+            raise error
+    if total_keys > _MAX_MUTATION_KEYS:
+        raise error
+
+    chat_defaults = section_values.get("chat_defaults")
+    if type(chat_defaults) is not _MAPPING_PROXY_TYPE or set(chat_defaults) != {
+        "provider",
+        "model",
+    }:
+        raise error
+    provider = chat_defaults.get("provider")
+    model = chat_defaults.get("model")
+    if type(provider) is not str or type(model) is not str:
+        raise error
+    try:
+        ownership = _ownership_for(provider)
+    except ValueError as exc:
+        raise error from exc
+    if model and _safe_model(model) != model:
+        raise error
+
+    provider_sections = {
+        section
+        for section in (*section_values, *delete_keys)
+        if section.startswith("api_settings.")
+    }
+    if len(provider_sections) != 1:
+        raise error
+    provider_section = next(iter(provider_sections))
+    try:
+        section_ownership = _ownership_for(
+            provider_section.removeprefix("api_settings.")
+        )
+    except ValueError as exc:
+        raise error from exc
+    if section_ownership.provider_key != ownership.provider_key:
+        raise error
+
+    allowed_sections = {
+        provider_section,
+        "chat_defaults",
+        "provider_setup.confirmed",
+    }
+    if not set(section_values).issubset(allowed_sections) or not set(
+        delete_keys
+    ).issubset({provider_section, "provider_setup.confirmed"}):
+        raise error
+    provider_values = section_values.get(provider_section)
+    if type(provider_values) is not _MAPPING_PROXY_TYPE:
+        raise error
+    allowed_provider_keys = {
+        ownership.model_key,
+        *ownership.credential_keys,
+        *_ENDPOINT_KEY_PRECEDENCE,
+    }
+    if not set(provider_values).issubset(allowed_provider_keys):
+        raise error
+    if provider_values.get(ownership.model_key) != model:
+        raise error
+    provider_deletes = delete_keys.get(provider_section, ())
+    if not set(provider_deletes).issubset(
+        {*ownership.credential_keys, *_ENDPOINT_KEY_PRECEDENCE}
+    ):
+        raise error
+
+    set_endpoint_keys = [
+        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_values
+    ]
+    deleted_endpoint_keys = [
+        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_deletes
+    ]
+    if len(set_endpoint_keys) + len(deleted_endpoint_keys) != 1:
+        raise error
+
+    stored_key, environment_key = ownership.credential_keys
+    stored_is_set = stored_key in provider_values
+    environment_is_set = environment_key in provider_values
+    stored_is_deleted = stored_key in provider_deletes
+    environment_is_deleted = environment_key in provider_deletes
+    if stored_is_set and environment_is_deleted and not environment_is_set:
+        desired_source: CredentialSource = "stored"
+    elif environment_is_set and stored_is_deleted and not stored_is_set:
+        desired_source = "environment"
+    elif (
+        stored_is_deleted
+        and environment_is_deleted
+        and not stored_is_set
+        and not environment_is_set
+    ):
+        desired_source = "none"
+    else:
+        raise error
+
+    if set_endpoint_keys:
+        confirmation = section_values.get("provider_setup.confirmed")
+        if (
+            type(confirmation) is not _MAPPING_PROXY_TYPE
+            or dict(confirmation) != {ownership.provider_key: True}
+            or "provider_setup.confirmed" in delete_keys
+            or type(semantic_identity) is not ProviderDraftIdentity
+        ):
+            raise error
+        endpoint_value = provider_values[set_endpoint_keys[0]]
+        if type(endpoint_value) is not str:
+            raise error
+        connection_identity = canonical_connection_identity(
+            ownership.provider_key, endpoint_value
+        )
+        if (
+            connection_identity is None
+            or semantic_identity.provider_key != ownership.provider_key
+            or semantic_identity.connection_identity != connection_identity
+            or semantic_identity.credential_source != desired_source
+        ):
+            raise error
+    else:
+        if (
+            "provider_setup.confirmed" in section_values
+            or delete_keys.get("provider_setup.confirmed") != (ownership.provider_key,)
+            or semantic_identity is not None
+        ):
+            raise error
 
 
 def _configured_section_key(

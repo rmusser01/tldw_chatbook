@@ -1,4 +1,5 @@
 from dataclasses import fields
+from types import MappingProxyType
 
 import pytest
 
@@ -6,6 +7,7 @@ from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
 from tldw_chatbook.Chat.provider_setup_persistence import (
     ProviderSetupDraft,
+    ProviderSetupMutation,
     build_provider_setup_mutation,
     persist_provider_setup,
     provider_credential_keys,
@@ -119,14 +121,14 @@ def test_setup_mutation_updates_llama_pair_endpoint_model_and_confirmation():
         "provider": "llama_cpp",
         "model": "qwen",
     }
-    assert mutation.section_values["provider_setup.confirmed"] == {
-        "llama_cpp": True
-    }
+    assert mutation.section_values["provider_setup.confirmed"] == {"llama_cpp": True}
     assert mutation.section_values["api_settings.llama_cpp"] == {
         "api_url": "http://127.0.0.1:8080",
         "model": "qwen",
     }
-    assert mutation.delete_keys == {}
+    assert mutation.delete_keys == {
+        "api_settings.llama_cpp": ("api_key", "api_key_env_var")
+    }
     assert mutation.semantic_identity is not None
     assert mutation.semantic_identity.provider_key == "llama_cpp"
     assert mutation.semantic_identity.connection_identity == (
@@ -179,9 +181,229 @@ def test_custom_setup_mutation_persists_full_chat_url_for_all_input_forms(
         "provider": confirmation,
         "model": "model-a",
     }
-    assert mutation.section_values["provider_setup.confirmed"] == {
-        confirmation: True
+    assert mutation.section_values["provider_setup.confirmed"] == {confirmation: True}
+
+
+@pytest.mark.parametrize(
+    ("provider", "config", "endpoint", "expected_key", "expected_endpoint"),
+    [
+        ("llama_cpp", {}, "https://example.test", "api_url", "https://example.test"),
+        ("llama_cpp", {}, "https://example.test/v1", "api_url", "https://example.test"),
+        (
+            "llama_cpp",
+            {},
+            "https://example.test/v1/chat/completions",
+            "api_url",
+            "https://example.test",
+        ),
+        (
+            "llama_cpp",
+            {},
+            "https://example.test/v1/models",
+            "api_url",
+            "https://example.test",
+        ),
+        (
+            "local_llamacpp",
+            {},
+            "https://example.test/proxy/v1/models",
+            "api_url",
+            "https://example.test/proxy",
+        ),
+        (
+            "custom",
+            {},
+            "https://example.test",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "custom",
+            {},
+            "https://example.test/v1",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "custom_2",
+            {},
+            "https://example.test/v1/chat/completions",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api",
+            {},
+            "https://example.test/v1/models",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "custom_openai_api_2",
+            {},
+            "https://example.test/proxy/v1/models",
+            "api_url",
+            "https://example.test/proxy/v1/chat/completions",
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_base_url": "https://old.test/v1"}}},
+            "https://example.test",
+            "api_base_url",
+            "https://example.test/v1",
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_base_url": "https://old.test/v1"}}},
+            "https://example.test/v1",
+            "api_base_url",
+            "https://example.test/v1",
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_base_url": "https://old.test/v1"}}},
+            "https://example.test/v1/chat/completions",
+            "api_base_url",
+            "https://example.test/v1",
+        ),
+        (
+            "openai",
+            {"api_settings": {"openai": {"api_base_url": "https://old.test/v1"}}},
+            "https://example.test/v1/models",
+            "api_base_url",
+            "https://example.test/v1",
+        ),
+        (
+            "qwencloud",
+            {"api_settings": {"qwencloud": {"api_base_url": "https://old.test/v1"}}},
+            "https://example.test/proxy/v1/models",
+            "api_base_url",
+            "https://example.test/proxy/v1",
+        ),
+        (
+            "ollama",
+            {},
+            "https://example.test",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "ollama",
+            {},
+            "https://example.test/v1",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "ollama",
+            {},
+            "https://example.test/v1/chat/completions",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "ollama",
+            {},
+            "https://example.test/v1/models",
+            "api_url",
+            "https://example.test/v1/chat/completions",
+        ),
+        (
+            "ollama",
+            {},
+            "https://example.test/proxy/v1/models",
+            "api_url",
+            "https://example.test/proxy/v1/chat/completions",
+        ),
+    ],
+)
+def test_persisted_endpoint_shape_matches_provider_and_owned_key(
+    provider, config, endpoint, expected_key, expected_endpoint
+):
+    mutation = build_provider_setup_mutation(
+        _draft(provider=provider, endpoint=endpoint), config
+    )
+    provider_values = next(
+        values
+        for section, values in mutation.section_values.items()
+        if section.startswith("api_settings.")
+    )
+
+    assert provider_values[expected_key] == expected_endpoint
+
+
+@pytest.mark.parametrize(
+    ("endpoint_key", "expected_endpoint"),
+    [
+        ("api_base_url", "https://new.example.test/v1"),
+        ("api_base", "https://new.example.test/v1"),
+        ("base_url", "https://new.example.test/v1"),
+        ("api_url", "https://new.example.test/v1/chat/completions"),
+        ("endpoint", "https://new.example.test/v1/chat/completions"),
+    ],
+)
+def test_setup_mutation_preserves_each_existing_endpoint_key(
+    endpoint_key, expected_endpoint
+):
+    config = {"api_settings": {"openai": {endpoint_key: "https://old.example.test/v1"}}}
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", endpoint="https://new.example.test/v1/models"),
+        config,
+    )
+    provider_values = mutation.section_values["api_settings.openai"]
+
+    assert provider_values[endpoint_key] == expected_endpoint
+    assert (
+        not (
+            {"api_base_url", "api_base", "base_url", "api_url", "endpoint"}
+            - {endpoint_key}
+        )
+        & provider_values.keys()
+    )
+
+
+def test_existing_endpoint_key_uses_settings_read_precedence_without_shadow_key():
+    config = {
+        "api_settings": {
+            "openai": {
+                "api_url": "https://shadowed.example.test/v1/chat/completions",
+                "base_url": "https://selected.example.test/v1",
+                "endpoint": "https://also-shadowed.example.test/v1/chat/completions",
+            }
+        }
     }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", endpoint="https://new.example.test/proxy/v1/models"),
+        config,
+    )
+
+    assert mutation.section_values["api_settings.openai"] == {
+        "base_url": "https://new.example.test/proxy/v1",
+        "model": "qwen",
+    }
+
+
+def test_endpoint_clear_deletes_the_existing_owned_alias_only():
+    config = {
+        "api_settings": {
+            "openai": {
+                "api_base": "https://selected.example.test/v1",
+                "api_url": "https://shadowed.example.test/v1/chat/completions",
+            }
+        }
+    }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", endpoint=""), config
+    )
+
+    assert mutation.delete_keys["api_settings.openai"] == (
+        "api_base",
+        "api_key",
+        "api_key_env_var",
+    )
 
 
 def test_setup_mutation_preserves_an_established_config_section_alias():
@@ -242,7 +464,11 @@ def test_endpoint_clear_deletes_only_owned_endpoint_and_confirmation():
         "chat_defaults": {"provider": "llama_cpp", "model": "qwen"},
     }
     assert mutation.delete_keys == {
-        "api_settings.llama_cpp": ("api_url",),
+        "api_settings.llama_cpp": (
+            "api_url",
+            "api_key",
+            "api_key_env_var",
+        ),
         "provider_setup.confirmed": ("llama_cpp",),
     }
     assert mutation.semantic_identity is None
@@ -263,9 +489,13 @@ def test_credential_replacement_and_clear_are_sparse_and_secret_safe():
     )
 
     assert replacement.section_values["api_settings.openai"]["api_key"] == secret
+    assert replacement.semantic_identity.credential_source == "stored"
+    assert replacement.delete_keys["api_settings.openai"] == ("api_key_env_var",)
     assert secret not in repr(replacement)
     assert secret not in repr(replacement.semantic_identity)
-    assert secret not in repr(_draft(credential_value=secret))
+    assert secret not in repr(
+        _draft(credential_source="draft", credential_value=secret)
+    )
 
     cleared = build_provider_setup_mutation(
         _draft(
@@ -273,12 +503,14 @@ def test_credential_replacement_and_clear_are_sparse_and_secret_safe():
             endpoint="https://api.example.test/v1",
             credential_source="none",
             credential_revision=5,
-            credential_value="",
         ),
         {},
     )
     assert "api_key" not in cleared.section_values["api_settings.openai"]
-    assert cleared.delete_keys["api_settings.openai"] == ("api_key",)
+    assert cleared.delete_keys["api_settings.openai"] == (
+        "api_key",
+        "api_key_env_var",
+    )
 
 
 def test_environment_credential_persists_only_variable_name_not_value(monkeypatch):
@@ -298,6 +530,7 @@ def test_environment_credential_persists_only_variable_name_not_value(monkeypatc
     assert mutation.section_values["api_settings.openai"]["api_key_env_var"] == (
         "PRIVATE_PROVIDER_KEY"
     )
+    assert mutation.delete_keys["api_settings.openai"] == ("api_key",)
     assert "environment-secret" not in repr(mutation)
     assert "environment-secret" not in str(mutation.section_values)
 
@@ -321,9 +554,82 @@ def test_credential_clear_can_remove_stored_and_environment_keys_together():
     )
 
 
+def test_stored_credential_can_reuse_existing_value_and_deletes_environment_source():
+    config = {
+        "api_settings": {
+            "openai": {
+                "api_key": "existing-secret",
+                "api_key_env_var": "OLD_ENV",
+            }
+        }
+    }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", credential_source="stored"), config
+    )
+
+    assert (
+        mutation.section_values["api_settings.openai"]["api_key"] == "existing-secret"
+    )
+    assert mutation.delete_keys["api_settings.openai"] == ("api_key_env_var",)
+    assert "existing-secret" not in repr(mutation)
+
+
+def test_environment_credential_can_reuse_existing_name_and_deletes_stored_source():
+    config = {
+        "api_settings": {
+            "openai": {
+                "api_key": "existing-secret",
+                "api_key_env_var": "EXISTING_ENV",
+            }
+        }
+    }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", credential_source="environment"), config
+    )
+
+    assert (
+        mutation.section_values["api_settings.openai"]["api_key_env_var"]
+        == "EXISTING_ENV"
+    )
+    assert mutation.delete_keys["api_settings.openai"] == ("api_key",)
+    assert "existing-secret" not in repr(mutation)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"credential_source": "draft", "credential_value": None},
+        {
+            "credential_source": "draft",
+            "credential_value": "new",
+            "credential_env_var": "ENV",
+        },
+        {"credential_source": "stored", "credential_value": None},
+        {
+            "credential_source": "stored",
+            "credential_env_var": "ENV",
+            "credential_value": "new",
+        },
+        {"credential_source": "environment", "credential_env_var": None},
+        {
+            "credential_source": "environment",
+            "credential_env_var": "ENV",
+            "credential_value": "new",
+        },
+        {"credential_source": "none", "credential_value": "new"},
+        {"credential_source": "none", "credential_env_var": "ENV"},
+    ],
+)
+def test_credential_source_rejects_contradictory_or_incomplete_states(overrides):
+    with pytest.raises(ValueError, match="Credential"):
+        build_provider_setup_mutation(_draft(provider="openai", **overrides), {})
+
+
 def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
     secret = "sk-private-draft-value"
-    draft = _draft(credential_value=secret)
+    draft = _draft(credential_source="draft", credential_value=secret)
     mutation = build_provider_setup_mutation(draft, {})
 
     assert [item.name for item in fields(ProviderSetupDraft)] == [
@@ -342,6 +648,130 @@ def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
     assert secret not in repr(mutation)
     with pytest.raises(AttributeError):
         draft.model = "changed"
+
+
+def test_setup_mutation_requires_exact_immutable_mapping_shapes():
+    valid = build_provider_setup_mutation(_draft(), {})
+
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=MappingProxyType(
+                {
+                    section: MappingProxyType(dict(values))
+                    for section, values in valid.section_values.items()
+                }
+            ),
+            delete_keys=MappingProxyType(dict(valid.delete_keys)),
+            semantic_identity=valid.semantic_identity,
+        )
+
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=dict(valid.section_values),
+            delete_keys=valid.delete_keys,
+            semantic_identity=valid.semantic_identity,
+        )
+
+    with pytest.raises(TypeError):
+        valid.section_values["new"] = MappingProxyType({"key": "value"})
+    with pytest.raises(TypeError):
+        valid.section_values["api_settings.llama_cpp"]["model"] = "changed"
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=MappingProxyType(
+                {
+                    section: dict(values)
+                    for section, values in valid.section_values.items()
+                }
+            ),
+            delete_keys=valid.delete_keys,
+            semantic_identity=valid.semantic_identity,
+        )
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=valid.section_values,
+            delete_keys=MappingProxyType({"api_settings.llama_cpp": ["api_key"]}),
+            semantic_identity=valid.semantic_identity,
+        )
+
+
+def test_setup_mutation_rejects_overlapping_or_incoherent_owned_keys():
+    valid = build_provider_setup_mutation(_draft(), {})
+    overlapping_deletes = MappingProxyType({"api_settings.llama_cpp": ("api_url",)})
+
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=valid.section_values,
+            delete_keys=overlapping_deletes,
+            semantic_identity=valid.semantic_identity,
+        )
+
+    forged_sections = MappingProxyType(
+        {
+            **dict(valid.section_values),
+            "unrelated.section": MappingProxyType({"secret": "canary-secret"}),
+        }
+    )
+    with pytest.raises(ValueError, match="mutation") as error:
+        ProviderSetupMutation(
+            section_values=forged_sections,
+            delete_keys=valid.delete_keys,
+            semantic_identity=valid.semantic_identity,
+        )
+    assert "canary-secret" not in str(error.value)
+
+    with pytest.raises(ValueError, match="mutation"):
+        ProviderSetupMutation(
+            section_values=valid.section_values,
+            delete_keys=valid.delete_keys,
+            semantic_identity=None,
+        )
+
+
+def test_setup_mutation_rejects_unbounded_or_unsafe_section_shapes():
+    valid = build_provider_setup_mutation(_draft(), {})
+    too_many_sections = MappingProxyType(
+        {
+            **dict(valid.section_values),
+            "extra.one": MappingProxyType({"key": "value"}),
+        }
+    )
+    unsafe_section = MappingProxyType(
+        {
+            **{
+                section: values
+                for section, values in valid.section_values.items()
+                if section != "api_settings.llama_cpp"
+            },
+            "api_settings.llama_cpp\nsecret": valid.section_values[
+                "api_settings.llama_cpp"
+            ],
+        }
+    )
+
+    for section_values in (too_many_sections, unsafe_section):
+        with pytest.raises(ValueError, match="mutation"):
+            ProviderSetupMutation(
+                section_values=section_values,
+                delete_keys=valid.delete_keys,
+                semantic_identity=valid.semantic_identity,
+            )
+
+
+def test_persist_revalidates_instances_that_bypass_construction(monkeypatch):
+    forged = object.__new__(ProviderSetupMutation)
+    object.__setattr__(forged, "section_values", {"bad": {"api_key": "secret-canary"}})
+    object.__setattr__(forged, "delete_keys", {})
+    object.__setattr__(forged, "semantic_identity", None)
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: pytest.fail("forged mutation reached persistence"),
+    )
+
+    with pytest.raises(ValueError, match="mutation") as error:
+        persist_provider_setup(forged)
+    assert "secret-canary" not in str(error.value)
 
 
 @pytest.mark.parametrize(

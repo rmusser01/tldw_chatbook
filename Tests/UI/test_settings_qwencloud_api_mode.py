@@ -19,6 +19,8 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 
 
@@ -44,6 +46,52 @@ def _switch_to_qwencloud(screen) -> None:
     provider = screen.query_one("#settings-provider-value", Select)
     provider.value = "qwencloud"
     screen.handle_provider_value_changed(Select.Changed(provider, "qwencloud"))
+
+
+def _capture_atomic_writes(
+    monkeypatch,
+    result: ConfigMutationResult | None = None,
+):
+    mutation_result = result or ConfigMutationResult(True, True, None)
+    calls: list[tuple[dict[str, dict[str, object]], dict[str, tuple[str, ...]]]] = []
+
+    def write(section_values, *, delete_keys=None):
+        calls.append(
+            (
+                {
+                    section: deepcopy(dict(values))
+                    for section, values in section_values.items()
+                },
+                {section: tuple(keys) for section, keys in (delete_keys or {}).items()},
+            )
+        )
+        return mutation_result
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        write,
+    )
+    return calls
+
+
+def _expected_qwen_sections(
+    *,
+    endpoint: str,
+    mode: str,
+    provider_section: str = "qwencloud",
+    env_var: str = "DASHSCOPE_API_KEY",
+) -> dict[str, dict[str, object]]:
+    return {
+        f"api_settings.{provider_section}": {
+            "model": "qwen3.8-max",
+            "api_base_url": endpoint,
+            "api_key_env_var": env_var,
+            **({"api_mode": mode} if provider_section == "qwencloud" else {}),
+        },
+        "chat_defaults": {"provider": "qwencloud", "model": "qwen3.8-max"},
+        "provider_setup.confirmed": {"qwencloud": True},
+    }
 
 
 @pytest.mark.asyncio
@@ -162,11 +210,7 @@ async def test_returning_qwencloud_mode_to_original_removes_only_its_namespace()
 @pytest.mark.asyncio
 async def test_immediate_qwencloud_save_snapshots_visible_mode(monkeypatch):
     app = _qwencloud_app(api_mode="responses")
-    saved: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -177,7 +221,15 @@ async def test_immediate_qwencloud_save_snapshots_visible_mode(monkeypatch):
         mode.value = "chat_completions"
         screen.action_settings_save_category(allow_text_entry_focus=True)
 
-        assert saved == [("api_settings.qwencloud", "api_mode", "chat_completions")]
+        assert calls == [
+            (
+                _expected_qwen_sections(
+                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    mode="chat_completions",
+                ),
+                {"api_settings.qwencloud": ("api_key",)},
+            )
+        ]
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == (
             "chat_completions"
         )
@@ -222,9 +274,8 @@ async def test_qwencloud_readiness_overlays_draft_mode_without_persisting():
 @pytest.mark.asyncio
 async def test_qwencloud_save_failure_preserves_mode_input_and_draft(monkeypatch):
     app = _qwencloud_app(api_mode="responses")
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda _section, _key, _value: False,
+    calls = _capture_atomic_writes(
+        monkeypatch, ConfigMutationResult(False, False, "before_replace")
     )
     host = DestinationHarness(app, "settings")
 
@@ -243,48 +294,32 @@ async def test_qwencloud_save_failure_preserves_mode_input_and_draft(monkeypatch
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
-        assert "Failed to save" in str(
-            screen.query_one("#settings-provider-save-result", Static).content
+        assert len(calls) == 1
+        assert (
+            "not fully applied"
+            in str(
+                screen.query_one("#settings-provider-save-result", Static).content
+            ).lower()
         )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failing_key", ["api_base_url", "api_mode"])
+@pytest.mark.parametrize(
+    "result",
+    [
+        ConfigMutationResult(False, False, "before_replace"),
+        ConfigMutationResult(True, False, "cache_reload"),
+    ],
+    ids=("before-replace", "cache-reload"),
+)
 async def test_qwencloud_canonical_multifield_save_failure_is_atomic(
     monkeypatch,
-    failing_key,
+    result,
 ):
     app = _qwencloud_app(api_mode="responses")
     original_api_settings = deepcopy(app.app_config["api_settings"])
     disk_api_settings = deepcopy(original_api_settings)
-    legacy_calls: list[tuple[str, str, object]] = []
-    atomic_calls: list[dict] = []
-
-    def legacy_save(section, key, value):
-        legacy_calls.append((section, key, value))
-        if section != "api_settings.qwencloud":
-            return True
-        if key == failing_key:
-            return False
-        disk_api_settings["qwencloud"][key] = value
-        return True
-
-    def atomic_save(section_values, *, delete_keys=None):
-        atomic_calls.append(deepcopy(dict(section_values)))
-        values = section_values["api_settings.qwencloud"]
-        if failing_key in values:
-            return False
-        disk_api_settings["qwencloud"].update(values)
-        return True
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        legacy_save,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
-        atomic_save,
-    )
+    atomic_calls = _capture_atomic_writes(monkeypatch, result)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -302,14 +337,14 @@ async def test_qwencloud_canonical_multifield_save_failure_is_atomic(
         await pilot.click("#settings-save-category")
 
         assert atomic_calls == [
-            {
-                "api_settings.qwencloud": {
-                    "api_base_url": "https://new.example.test/compatible-mode/v1",
-                    "api_mode": "chat_completions",
-                }
-            }
+            (
+                _expected_qwen_sections(
+                    endpoint="https://new.example.test/compatible-mode/v1",
+                    mode="chat_completions",
+                ),
+                {"api_settings.qwencloud": ("api_key",)},
+            )
         ]
-        assert legacy_calls == []
         assert disk_api_settings == original_api_settings
         assert app.app_config["api_settings"] == original_api_settings
         assert endpoint.value == "https://new.example.test/compatible-mode/v1"
@@ -317,8 +352,11 @@ async def test_qwencloud_canonical_multifield_save_failure_is_atomic(
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["endpoint"] == endpoint.value
         assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
-        assert "Failed to save" in str(
-            screen.query_one("#settings-provider-save-result", Static).content
+        assert (
+            "not fully applied"
+            in str(
+                screen.query_one("#settings-provider-save-result", Static).content
+            ).lower()
         )
 
 
@@ -327,17 +365,7 @@ async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
     monkeypatch,
 ):
     app = _qwencloud_app(api_mode="responses")
-    atomic_calls: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda *_args: pytest.fail("canonical Qwen batch must not save per key"),
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: (
-            atomic_calls.append(deepcopy(dict(section_values))) or True
-        ),
-    )
+    atomic_calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -355,12 +383,13 @@ async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
         await pilot.click("#settings-save-category")
 
         assert atomic_calls == [
-            {
-                "api_settings.qwencloud": {
-                    "api_base_url": "https://new.example.test/compatible-mode/v1",
-                    "api_mode": "chat_completions",
-                }
-            }
+            (
+                _expected_qwen_sections(
+                    endpoint="https://new.example.test/compatible-mode/v1",
+                    mode="chat_completions",
+                ),
+                {"api_settings.qwencloud": ("api_key",)},
+            )
         ]
         assert app.app_config["api_settings"]["qwencloud"]["api_base_url"] == (
             "https://new.example.test/compatible-mode/v1"
@@ -377,28 +406,7 @@ async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
 ):
     app = _qwencloud_app(api_mode="responses")
 
-    atomic_write_count = 0
-
-    def save_batch(_section_values, *, delete_keys=None):
-        nonlocal atomic_write_count
-        atomic_write_count += 1
-        return True
-
-    legacy_write_count = 0
-
-    def save_legacy(_section, _key, _value):
-        nonlocal legacy_write_count
-        legacy_write_count += 1
-        return True
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
-        save_batch,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        save_legacy,
-    )
+    atomic_calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
     credential = "local-test-credential"
 
@@ -424,8 +432,10 @@ async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
         for _ in range(4):
             await pilot.pause()
 
-        assert atomic_write_count == 1
-        assert legacy_write_count == 0
+        assert len(atomic_calls) == 1
+        sections, deletes = atomic_calls[0]
+        assert sections["api_settings.qwencloud"]["api_key"] == credential
+        assert deletes["api_settings.qwencloud"] == ("api_key_env_var",)
         assert api_key.value == ""
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
         stored_provider = app.app_config["api_settings"]["qwencloud"]
@@ -441,8 +451,7 @@ async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
         for _ in range(2):
             await pilot.pause()
 
-        assert atomic_write_count == 1
-        assert legacy_write_count == 0
+        assert len(atomic_calls) == 1
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
         stored_key = app.app_config["api_settings"]["qwencloud"]["api_key"]
         assert isinstance(stored_key, str)
@@ -527,11 +536,7 @@ async def test_saving_other_provider_never_mutates_qwencloud_mode(monkeypatch):
         "api_base_url": "https://api.openai.com/v1",
         "model": "gpt-4.1",
     }
-    saved: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -550,7 +555,10 @@ async def test_saving_other_provider_never_mutates_qwencloud_mode(monkeypatch):
         await pilot.click("#settings-save-category")
 
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
-        assert not any(section == "api_settings.qwencloud" for section, _, _ in saved)
+        assert len(calls) == 1
+        sections, deletes = calls[0]
+        assert "api_settings.qwencloud" not in sections
+        assert "api_settings.qwencloud" not in deletes
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
 
@@ -573,11 +581,7 @@ async def test_qwencloud_api_mode_save_and_revert_exact_values(
     selected_mode: str,
 ):
     app = _qwencloud_app(api_mode=saved_mode)
-    saved: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -589,8 +593,14 @@ async def test_qwencloud_api_mode_save_and_revert_exact_values(
         screen.handle_provider_api_mode_changed(Select.Changed(mode, selected_mode))
         await pilot.click("#settings-save-category")
 
-        assert saved == [
-            ("api_settings.qwencloud", "api_mode", selected_mode),
+        assert calls == [
+            (
+                _expected_qwen_sections(
+                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    mode=selected_mode,
+                ),
+                {"api_settings.qwencloud": ("api_key",)},
+            )
         ]
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == selected_mode
         draft = screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
@@ -619,11 +629,7 @@ async def test_invalid_persisted_qwencloud_mode_blocks_save_and_send(
 ):
     app = _qwencloud_app(api_mode=invalid_mode)
     app.app_config["api_settings"]["qwencloud"]["api_key"] = "KEY-CANARY"
-    saved: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -637,7 +643,7 @@ async def test_invalid_persisted_qwencloud_mode_blocks_save_and_send(
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 
-        assert saved == []
+        assert calls == []
         assert "QwenCloud API mode is invalid" in str(
             screen.query_one("#settings-provider-save-result", Static).content
         )
@@ -664,11 +670,7 @@ async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
     monkeypatch,
 ):
     app = _qwencloud_app(api_mode="invalid")
-    saved: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -698,7 +700,15 @@ async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
 
         await pilot.click("#settings-save-category")
 
-        assert saved == [("api_settings.qwencloud", "api_mode", "responses")]
+        assert calls == [
+            (
+                _expected_qwen_sections(
+                    endpoint="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    mode="responses",
+                ),
+                {"api_settings.qwencloud": ("api_key",)},
+            )
+        ]
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
 
 
@@ -746,28 +756,7 @@ async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
         "QwenCloud": dict(alias_fields),
         "openai": dict(other_provider),
     }
-    atomic_mutations: list[tuple[dict, dict | None]] = []
-    noncanonical_writes: list[tuple[str, str, object]] = []
-
-    def save_atomic(section_values, *, delete_keys=None):
-        atomic_mutations.append(
-            (
-                deepcopy(dict(section_values)),
-                deepcopy(dict(delete_keys)) if delete_keys is not None else None,
-            )
-        )
-        return True
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        save_atomic,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: (
-            noncanonical_writes.append((section, key, value)) or True
-        ),
-    )
+    atomic_mutations = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -781,11 +770,22 @@ async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
         )
         await pilot.click("#settings-save-category")
 
-    assert noncanonical_writes == []
     assert atomic_mutations == [
         (
-            {"api_settings.qwencloud": {"api_mode": "chat_completions"}},
-            {"api_settings.QwenCloud": ("api_mode",)},
+            {
+                "api_settings.QwenCloud": {
+                    "model": "qwen3.8-max",
+                    "api_base_url": "https://proxy.example.com/compatible-mode/v1",
+                    "api_key_env_var": "DASHSCOPE_API_KEY",
+                },
+                "chat_defaults": {
+                    "provider": "qwencloud",
+                    "model": "qwen3.8-max",
+                },
+                "provider_setup.confirmed": {"qwencloud": True},
+                "api_settings.qwencloud": {"api_mode": "chat_completions"},
+            },
+            {"api_settings.QwenCloud": ("api_key", "api_mode")},
         )
     ]
     assert app.app_config["api_settings"]["qwencloud"] == {
@@ -855,18 +855,7 @@ async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
     app = _qwencloud_app()
     app.app_config["api_settings"] = {"qwencloud": ["not-a-table"]}
     original_api_settings = deepcopy(app.app_config["api_settings"])
-    writes: list[tuple[str, str, object]] = []
-    atomic_writes: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: writes.append((section, key, value)) or True,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: (
-            atomic_writes.append(deepcopy(dict(section_values))) or True
-        ),
-    )
+    atomic_writes = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -900,7 +889,6 @@ async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
         await pilot.click("#settings-save-category")
         await pilot.pause()
 
-        assert writes == []
         assert atomic_writes == []
         assert app.app_config["api_settings"] == original_api_settings
         assert "Advanced Config" in str(
@@ -928,11 +916,7 @@ async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical
         else [("QwenCloud", []), ("qwencloud", canonical)]
     )
     app.app_config["api_settings"] = dict(entries)
-    writes: list[tuple[str, str, object]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: writes.append((section, key, value)) or True,
-    )
+    calls = _capture_atomic_writes(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -952,11 +936,21 @@ async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical
         await pilot.pause()
         await pilot.click("#settings-save-category")
 
-        assert writes == [
+        assert calls == [
             (
-                "api_settings.qwencloud",
-                "api_base_url",
-                "https://new.example.test/compatible-mode/v1",
+                {
+                    "api_settings.qwencloud": {
+                        "model": "qwen3.8-max",
+                        "api_base_url": "https://new.example.test/compatible-mode/v1",
+                        "api_key_env_var": "CANONICAL_ENV",
+                    },
+                    "chat_defaults": {
+                        "provider": "qwencloud",
+                        "model": "qwen3.8-max",
+                    },
+                    "provider_setup.confirmed": {"qwencloud": True},
+                },
+                {"api_settings.qwencloud": ("api_key",)},
             )
         ]
         assert app.app_config["api_settings"]["QwenCloud"] == []
@@ -1000,19 +994,8 @@ async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
             "model": "qwen3.8-max",
         }
     }
-    atomic_mutations: list[tuple[dict, dict | None]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: (
-            atomic_mutations.append(
-                (dict(section_values), dict(delete_keys) if delete_keys else None)
-            )
-            or True
-        ),
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda _section, _key, _value: False,
+    atomic_mutations = _capture_atomic_writes(
+        monkeypatch, ConfigMutationResult(False, False, "before_replace")
     )
     host = DestinationHarness(app, "settings")
 
@@ -1030,7 +1013,13 @@ async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
 
         await pilot.click("#settings-save-category")
 
-        assert atomic_mutations == []
+        assert len(atomic_mutations) == 1
+        sections, deletes = atomic_mutations[0]
+        assert sections["api_settings.QwenCloud"]["api_base_url"] == (
+            "https://new.example.test/compatible-mode/v1"
+        )
+        assert sections["api_settings.qwencloud"] == {"api_mode": "chat_completions"}
+        assert "api_mode" in deletes["api_settings.QwenCloud"]
         assert "qwencloud" not in app.app_config["api_settings"]
         assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
@@ -1050,16 +1039,8 @@ async def test_qwencloud_alias_mode_migration_waits_for_profile_write(
             "model": "qwen3.8-max",
         }
     }
-    atomic_mutations: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: (
-            atomic_mutations.append(dict(section_values)) or True
-        ),
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda _section, key, _value: key != "model_defaults",
+    atomic_mutations = _capture_atomic_writes(
+        monkeypatch, ConfigMutationResult(False, False, "before_replace")
     )
     host = DestinationHarness(app, "settings")
 
@@ -1077,7 +1058,16 @@ async def test_qwencloud_alias_mode_migration_waits_for_profile_write(
 
         await pilot.click("#settings-save-category")
 
-        assert atomic_mutations == []
+        assert len(atomic_mutations) == 1
+        sections, deletes = atomic_mutations[0]
+        assert (
+            sections["api_settings.QwenCloud"]["model_defaults"]["qwen3.8-max"][
+                "temperature"
+            ]
+            == 0.25
+        )
+        assert sections["api_settings.qwencloud"] == {"api_mode": "chat_completions"}
+        assert "api_mode" in deletes["api_settings.QwenCloud"]
         assert "qwencloud" not in app.app_config["api_settings"]
         assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
         assert mode.value == "chat_completions"
@@ -1099,20 +1089,8 @@ async def test_qwencloud_alias_mode_migration_waits_for_context_write(
         }
     }
     app.app_config["model_capabilities"] = {}
-    atomic_mutations: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
-        lambda section_values, *, delete_keys=None: (
-            atomic_mutations.append(dict(section_values)) or True
-        ),
-    )
-
-    def save_setting(section, _key, _value):
-        return section != "model_capabilities.models"
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        save_setting,
+    atomic_mutations = _capture_atomic_writes(
+        monkeypatch, ConfigMutationResult(False, False, "before_replace")
     )
     host = DestinationHarness(app, "settings")
 
@@ -1130,7 +1108,14 @@ async def test_qwencloud_alias_mode_migration_waits_for_context_write(
 
         await pilot.click("#settings-save-category")
 
-        assert atomic_mutations == []
+        assert len(atomic_mutations) == 1
+        sections, deletes = atomic_mutations[0]
+        assert (
+            sections["model_capabilities.models"]["qwen3.8-max"]["context_window"]
+            == 32768
+        )
+        assert sections["api_settings.qwencloud"] == {"api_mode": "chat_completions"}
+        assert "api_mode" in deletes["api_settings.QwenCloud"]
         assert "qwencloud" not in app.app_config["api_settings"]
         assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
         assert mode.value == "chat_completions"
