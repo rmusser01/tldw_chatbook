@@ -5,15 +5,21 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    FirstRunSetupWizard,
+    ProviderStep,
+    SetupWizardContainer,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +91,27 @@ def _build_clean_first_run_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
     return app
+
+
+@pytest.mark.asyncio
+async def test_initial_first_run_mount_has_no_unrelated_provider_catalog_calls() -> None:
+    app_instance = MagicMock(app_config={})
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock()
+    app_instance.llm_provider_catalog_scope_service = scope_service
+    wizard = FirstRunSetupWizard(app_instance)
+
+    class _WizardHost(App):
+        def compose(self) -> ComposeResult:
+            yield wizard
+
+    host = _WizardHost()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        provider_step = wizard.query_one(SetupWizardContainer).query_one(ProviderStep)
+        assert provider_step.selected_provider_key == ""
+
+    scope_service.discover_models.assert_not_awaited()
 
 
 async def _wait_until(

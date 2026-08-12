@@ -11,6 +11,7 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -477,6 +478,7 @@ class ProviderStep(SetupStep):
         *,
         discover: Optional[Callable[..., Any]] = None,
         probe: Optional[Callable[..., Any]] = None,
+        local_discover: Optional[Callable[..., Any]] = None,
         environ: Optional[Mapping[str, str]] = None,
         **kwargs: Any,
     ) -> None:
@@ -486,16 +488,26 @@ class ProviderStep(SetupStep):
             probe_settings_endpoint,
         )
 
-        self._discover = discover or discover_local_servers
+        # ``discover`` is the selected-provider seam. The provider-neutral
+        # localhost scan stays separate so an untouched mount can never pass
+        # an application config mapping to a provider/catalog service.
+        self._discover = discover
+        self._local_discover = local_discover or discover_local_servers
         self._probe = probe or probe_settings_endpoint
         self._environ = dict(environ) if environ is not None else dict(os.environ)
         self.probe_generation = 0
+        self._local_discovery_generation = 0
+        self._local_discovery_started = False
+        self._selected_provider_models: dict[str, tuple[str, ...]] = {}
+        self._selected_discovery_done: asyncio.Event | None = None
         self.selected_provider_key: str = ""
         self.provider_value_for_chat_defaults: str = ""
         self._last_committed_provider_value: Optional[str] = None
         self._entered_key = False
         self._clear_requested = False
         self._provider_choice_interacted = False
+        if wizard is not None:
+            setattr(wizard, "_first_run_provider_discovery_owner", self)
 
     def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Chat.console_provider_support import (
@@ -628,22 +640,64 @@ class ProviderStep(SetupStep):
 
     def on_show(self) -> None:
         super().on_show()
-        self._start_discovery()
+        if not self._local_discovery_started:
+            self._local_discovery_started = True
+            self._start_discovery()
+
+    def on_hide(self) -> None:
+        super().on_hide()
+        self._cancel_discovery_workers()
+
+    def on_unmount(self) -> None:
+        self._cancel_discovery_workers()
+
+    def _cancel_discovery_workers(self) -> None:
+        """Invalidate and cancel setup-owned network work without publishing."""
+
+        if self._selected_discovery_done is not None:
+            self._selected_discovery_done.set()
+        self.probe_generation += 1
+        self._local_discovery_generation += 1
+        try:
+            for group in (
+                "setup-provider-discovery",
+                "setup-provider-probe",
+                "setup-provider-local-discovery",
+            ):
+                self.workers.cancel_group(self, group)
+        except Exception:
+            pass
 
     def _start_discovery(self) -> None:
-        self.run_worker(self._discover_servers(), exclusive=True,
-                        group="setup-provider-discovery")
+        self._local_discovery_generation += 1
+        generation = self._local_discovery_generation
+        self.run_worker(
+            partial(self._discover_servers, generation),
+            exclusive=True,
+            group="setup-provider-local-discovery",
+        )
 
-    async def _discover_servers(self) -> None:
+    async def _discover_servers(self, generation: int) -> None:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         try:
-            servers = tuple(await self._discover(app_config) or ())
-        except Exception:
-            logger.debug("Wizard local discovery failed", exc_info=True)
+            servers = tuple(await self._local_discover(app_config) or ())
+        except Exception as exc:
+            logger.debug(
+                "Wizard local discovery failed (error_type={})",
+                type(exc).__name__,
+            )
             return
-        if not servers:
+        if (
+            generation != self._local_discovery_generation
+            or not self.is_mounted
+            or not self.is_active
+            or not servers
+        ):
             return
-        self.detected_server = servers[0]
+        self._apply_discovered_server(servers[0])
+
+    def _apply_discovered_server(self, server: Any) -> None:
+        self.detected_server = server
         banner = self.query_one("#setup-provider-detected", Static)
         banner.update(
             f"Found a local server at {self.detected_server.base_url} "
@@ -652,6 +706,171 @@ class ProviderStep(SetupStep):
         banner.remove_class("hidden")
         use_button = self.query_one("#setup-provider-use-detected", Button)
         use_button.remove_class("hidden")
+
+    @staticmethod
+    def _canonical_provider_key(provider_key: str) -> str:
+        from tldw_chatbook.Chat.console_provider_support import (
+            resolve_console_provider_identity,
+        )
+
+        return resolve_console_provider_identity(provider_key).readiness_key
+
+    def _begin_selected_provider_discovery(self, provider_key: str) -> None:
+        """Start one selected-provider probe/catalog request generation."""
+
+        canonical_key = self._canonical_provider_key(provider_key)
+        if not canonical_key:
+            return
+        if self._selected_discovery_done is not None:
+            self._selected_discovery_done.set()
+        self.probe_generation += 1
+        generation = self.probe_generation
+        self._selected_provider_models.clear()
+        self._selected_discovery_done = asyncio.Event()
+        try:
+            self.workers.cancel_group(self, "setup-provider-probe")
+        except Exception:
+            pass
+        self.query_one("#setup-provider-probe-status", Static).update(
+            "Checking the selected provider…"
+        )
+        self.run_worker(
+            partial(
+                self._discover_selected_provider,
+                canonical_key,
+                generation,
+            ),
+            exclusive=True,
+            group="setup-provider-discovery",
+        )
+
+    def _owns_selected_discovery(self, provider_key: str, generation: int) -> bool:
+        return (
+            generation == self.probe_generation
+            and provider_key == self.selected_provider_key
+            and self.is_mounted
+            and self.is_active
+        )
+
+    async def _discover_selected_provider(
+        self, provider_key: str, generation: int
+    ) -> None:
+        provider_result: tuple[Any, ...] = ()
+        models: tuple[str, ...] = ()
+        attempted = False
+        failed = False
+        try:
+            if self._discover is not None:
+                attempted = True
+                try:
+                    provider_result = tuple(
+                        await asyncio.wait_for(
+                            self._discover(provider_key),
+                            timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
+                        )
+                        or ()
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failed = True
+                    logger.debug(
+                        "Wizard selected provider discovery failed "
+                        "(error_type={})",
+                        type(exc).__name__,
+                    )
+            if not self._owns_selected_discovery(provider_key, generation):
+                return
+
+            scope_service = getattr(
+                self.wizard.app_instance,
+                "llm_provider_catalog_scope_service",
+                None,
+            )
+            discover_models = getattr(scope_service, "discover_models", None)
+            if callable(discover_models):
+                attempted = True
+                try:
+                    result = await asyncio.wait_for(
+                        discover_models(
+                            mode="local",
+                            provider=provider_key,
+                            staged_settings=None,
+                        ),
+                        timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
+                    )
+                    if str(getattr(result, "status", "")) == "success":
+                        models = tuple(
+                            model
+                            for model in (getattr(result, "models", ()) or ())
+                            if isinstance(model, str) and model.strip()
+                        )
+                    else:
+                        failed = True
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failed = True
+                    logger.debug(
+                        "Wizard selected model discovery failed "
+                        "(error_type={})",
+                        type(exc).__name__,
+                    )
+            if not self._owns_selected_discovery(provider_key, generation):
+                return
+
+            self._selected_provider_models[provider_key] = models
+            setattr(
+                self.wizard,
+                "_first_run_selected_provider_models",
+                dict(self._selected_provider_models),
+            )
+            discovered_server = next(
+                (
+                    item
+                    for item in provider_result
+                    if getattr(item, "provider_key", None) == provider_key
+                    and getattr(item, "base_url", None)
+                ),
+                None,
+            )
+            if discovered_server is not None:
+                self._apply_discovered_server(discovered_server)
+
+            from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+            display = provider_display_name(provider_key)
+            status = self.query_one("#setup-provider-probe-status", Static)
+            if models:
+                status.update(f"Found {len(models)} model(s) for {display}.")
+            elif failed:
+                status.update(
+                    f"Couldn't discover models for {display}. You can continue anyway."
+                )
+            elif attempted:
+                status.update(f"Checked {display}; no models were reported.")
+            else:
+                status.update("")
+        finally:
+            done = self._selected_discovery_done
+            if done is not None and generation == self.probe_generation:
+                done.set()
+
+    async def _models_from_selected_discovery(
+        self, provider_key: str
+    ) -> tuple[str, ...] | None:
+        """Return this generation's models without starting another request."""
+
+        canonical_key = self._canonical_provider_key(provider_key)
+        if canonical_key != self.selected_provider_key:
+            return None
+        if canonical_key in self._selected_provider_models:
+            return self._selected_provider_models[canonical_key]
+        done = self._selected_discovery_done
+        if done is None:
+            return None
+        await done.wait()
+        return self._selected_provider_models.get(canonical_key)
 
     @on(Button.Pressed, "#setup-provider-use-detected")
     def _on_use_detected(self) -> None:
@@ -670,9 +889,9 @@ class ProviderStep(SetupStep):
             read_provider_secret_presence,
         )
 
+        provider_key = self._canonical_provider_key(provider_key)
         provider_changed = provider_key != self.selected_provider_key
         self.selected_provider_key = provider_key
-        self.probe_generation += 1
         self._clear_requested = False
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         presence = read_provider_secret_presence(
@@ -700,6 +919,8 @@ class ProviderStep(SetupStep):
             key_input.display = True
             actions.add_class("hidden")
         self.query_one("#setup-provider-probe-status", Static).update("")
+        if provider_changed:
+            self._begin_selected_provider_discovery(provider_key)
 
     def _select_provider_option(self, option: Option) -> None:
         provider_key = getattr(option, "provider_key", None)
@@ -796,16 +1017,27 @@ class ProviderStep(SetupStep):
     def _launch_probe(self, *, api_key: str | None = None) -> None:
         self.probe_generation += 1
         generation = self.probe_generation
+        provider_key = self.selected_provider_key
         base_url = getattr(self, "detected_base_url", None)
         self.query_one("#setup-provider-probe-status", Static).update("Testing…")
         self.run_worker(
-            self._run_probe(generation, base_url=base_url, api_key=api_key),
+            self._run_probe(
+                generation,
+                provider_key=provider_key,
+                base_url=base_url,
+                api_key=api_key,
+            ),
             exclusive=True,
             group="setup-provider-probe",
         )
 
     async def _run_probe(
-        self, generation: int, *, base_url: str | None, api_key: str | None
+        self,
+        generation: int,
+        *,
+        provider_key: str,
+        base_url: str | None,
+        api_key: str | None,
     ) -> None:
         import httpx
 
@@ -818,10 +1050,13 @@ class ProviderStep(SetupStep):
         # header via the http_client seam (probe_settings_endpoint has no
         # auth parameter by design). Providers without a known compatible
         # endpoint resolve to "couldn't verify — save anyway".
-        target = base_url or self._cloud_probe_base_url(self.selected_provider_key)
+        target = base_url or self._cloud_probe_base_url(provider_key)
         if not target:
             self.apply_probe_result(
-                generation, reachable=False, summary="No test endpoint for this provider."
+                generation,
+                provider_key=provider_key,
+                reachable=False,
+                summary="No test endpoint for this provider.",
             )
             return
         client = None
@@ -838,14 +1073,24 @@ class ProviderStep(SetupStep):
                     else DISCOVERY_PROBE_TIMEOUT_SECONDS
                 ),
                 http_client=client,
+                provider=provider_key,
             )
             self.apply_probe_result(
-                generation, reachable=outcome.reachable, summary=outcome.summary
+                generation,
+                provider_key=provider_key,
+                reachable=outcome.reachable,
+                summary=outcome.summary,
             )
-        except Exception:
-            logger.debug("Wizard provider probe failed", exc_info=True)
+        except Exception as exc:
+            logger.debug(
+                "Wizard provider probe failed (error_type={})",
+                type(exc).__name__,
+            )
             self.apply_probe_result(
-                generation, reachable=False, summary="Probe errored."
+                generation,
+                provider_key=provider_key,
+                reachable=False,
+                summary="Probe errored.",
             )
         finally:
             if client is not None:
@@ -863,9 +1108,18 @@ class ProviderStep(SetupStep):
             "mistral": "https://api.mistral.ai",
         }.get(provider_key, "")
 
-    def apply_probe_result(self, generation: int, *, reachable: bool, summary: str) -> None:
+    def apply_probe_result(
+        self,
+        generation: int,
+        *,
+        reachable: bool,
+        summary: str,
+        provider_key: str | None = None,
+    ) -> None:
         """Render a probe outcome only if it is still current (no stale ✓)."""
-        if generation != self.probe_generation:
+        if generation != self.probe_generation or (
+            provider_key is not None and provider_key != self.selected_provider_key
+        ):
             return
         prefix = "✓ " if reachable else "✗ "
         suffix = "" if reachable else "  Couldn't verify — you can save anyway."
@@ -1067,9 +1321,30 @@ class ModelStep(SetupStep):
 
         models: list[str] = []
         discover = self._discover_models
+        owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            try:
+                selected_models = await asyncio.wait_for(
+                    owner._models_from_selected_discovery(provider_key),
+                    timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                selected_models = None
+            if selected_models is not None:
+                models = list(selected_models)
+            # ProviderStep owns setup network work for this selection. If the
+            # user advances before it finishes, use curated fallback rather
+            # than issuing the same provider catalog request from ModelStep.
+            discover = None
         if discover is None:
-            service = getattr(
-                self.wizard.app_instance, "llm_provider_catalog_scope_service", None
+            service = (
+                None
+                if isinstance(owner, ProviderStep)
+                else getattr(
+                    self.wizard.app_instance,
+                    "llm_provider_catalog_scope_service",
+                    None,
+                )
             )
             if service is not None:
 

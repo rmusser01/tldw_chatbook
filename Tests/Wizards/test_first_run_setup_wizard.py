@@ -315,7 +315,13 @@ async def test_next_button_click_drives_quick_track_to_completion():
         }
 
 
-def _provider_step(wizard=None, environ=None, discover=None, probe=None):
+def _provider_step(
+    wizard=None,
+    environ=None,
+    discover=None,
+    probe=None,
+    local_discover=None,
+):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -328,8 +334,9 @@ def _provider_step(wizard=None, environ=None, discover=None, probe=None):
     return ProviderStep(
         wizard=wizard,
         config=WizardStepConfig(id="provider", title="Provider", step_number=2),
-        discover=discover or AsyncMock(return_value=()),
+        discover=discover,
         probe=probe or AsyncMock(),
+        local_discover=local_discover or AsyncMock(return_value=()),
         environ=environ or {},
     )
 
@@ -341,6 +348,257 @@ class _StepHost(App):
 
     def compose(self) -> ComposeResult:
         yield self._step
+
+
+@pytest.mark.asyncio
+async def test_first_run_contacts_only_selected_provider():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    selected_discovery = AsyncMock(return_value=())
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=SimpleNamespace(status="success", models=("ollama-model",))
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={}, llm_provider_catalog_scope_service=scope_service
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=selected_discovery)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        notify_spy = MagicMock()
+        app.notify = notify_spy
+        await pilot.pause()
+
+        step.select_provider("Ollama")
+        await pilot.pause(0.1)
+
+        assert [call.args[0] for call in selected_discovery.await_args_list] == [
+            "ollama"
+        ]
+        assert [
+            call.kwargs["provider"]
+            for call in scope_service.discover_models.await_args_list
+        ] == ["ollama"]
+        notify_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_generation_discards_late_prior_provider():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    openai_started = asyncio.Event()
+    ollama_started = asyncio.Event()
+    release_ollama = asyncio.Event()
+
+    async def discover(provider_key):
+        if provider_key == "openai":
+            openai_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                return ("openai-late",)
+        ollama_started.set()
+        await release_ollama.wait()
+        return ("ollama-current",)
+
+    scope_service = MagicMock()
+
+    async def discover_models(*, provider, **_kwargs):
+        return SimpleNamespace(status="success", models=(f"{provider}-scope",))
+
+    scope_service.discover_models = AsyncMock(side_effect=discover_models)
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={}, llm_provider_catalog_scope_service=scope_service
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=discover)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await asyncio.wait_for(openai_started.wait(), timeout=2)
+        step.select_provider("ollama")
+        await asyncio.wait_for(ollama_started.wait(), timeout=2)
+        await pilot.pause()
+
+        status = str(
+            step.query_one("#setup-provider-probe-status", Static).renderable
+        )
+        assert "openai" not in status.casefold()
+        assert step.selected_provider_key == "ollama"
+
+        release_ollama.set()
+        await pilot.pause(0.1)
+        status = str(
+            step.query_one("#setup-provider-probe-status", Static).renderable
+        )
+        assert "ollama" in status.casefold()
+        assert "openai" not in status.casefold()
+        assert step._selected_provider_models == {
+            "ollama": ("ollama-scope",)
+        }
+
+    wizard.wizard_data = {
+        "provider": {"provider_key": "ollama", "provider_value": "ollama"}
+    }
+    model_step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=None,
+    )
+    model_host = _StepHost(model_step)
+    async with model_host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        model_step.on_show()
+        await pilot.pause(0.1)
+        model_ids = [
+            str(getattr(button, "_model_id", button.label))
+            for button in model_step.query_one(
+                "#setup-model-choice", RadioSet
+            ).query(RadioButton)
+        ]
+        assert model_ids == ["ollama-scope"]
+
+    assert [
+        call.kwargs["provider"]
+        for call in scope_service.discover_models.await_args_list
+    ] == ["ollama"]
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_same_selection_idempotent_and_retry_adds_one():
+    from unittest.mock import AsyncMock
+
+    selected_discovery = AsyncMock(return_value=())
+    step = _provider_step(discover=selected_discovery)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("ollama")
+        await pilot.pause()
+        step.select_provider("Ollama")
+        await pilot.pause()
+        assert selected_discovery.await_count == 1
+
+        step._begin_selected_provider_discovery("ollama")
+        await pilot.pause()
+        assert selected_discovery.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_reentry_and_unmount_do_not_duplicate_or_mutate_late():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    started = asyncio.Event()
+    returned_after_cancel = asyncio.Event()
+
+    async def discover(_provider_key):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            returned_after_cancel.set()
+            return ("late-private-value",)
+
+    selected_discovery = AsyncMock(side_effect=discover)
+    step = _provider_step(discover=selected_discovery)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        step.on_show()
+        await pilot.pause()
+        selected_discovery.assert_not_awaited()
+
+        step.select_provider("ollama")
+        await asyncio.wait_for(started.wait(), timeout=2)
+        status_widget = step.query_one("#setup-provider-probe-status", Static)
+        before = str(status_widget.renderable)
+        await step.remove()
+        await asyncio.wait_for(returned_after_cancel.wait(), timeout=2)
+        await pilot.pause()
+
+        assert selected_discovery.await_count == 1
+        assert str(status_widget.renderable) == before
+        assert step._selected_provider_models == {}
+
+
+@pytest.mark.asyncio
+async def test_provider_initial_mount_only_runs_provider_neutral_local_discovery():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    local_discover = AsyncMock(return_value=())
+    selected_discovery = AsyncMock(return_value=())
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=SimpleNamespace(status="success", models=())
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={}, llm_provider_catalog_scope_service=scope_service
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(
+        wizard=wizard,
+        discover=selected_discovery,
+        local_discover=local_discover,
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+
+    local_discover.assert_awaited_once_with({})
+    selected_discovery.assert_not_awaited()
+    scope_service.discover_models.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_provider_explicit_test_feedback_is_preserved():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock(
+        return_value=SimpleNamespace(reachable=True, summary="Provider is reachable.")
+    )
+    step = _provider_step(probe=probe)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        await pilot.pause()
+        step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.1)
+
+        probe.assert_awaited_once()
+        assert probe.await_args.kwargs["provider"] == "openai"
+        status = str(
+            step.query_one("#setup-provider-probe-status", Static).renderable
+        )
+        assert status.startswith("✓ ")
+        assert "reachable" in status.casefold()
 
 
 @pytest.mark.asyncio
@@ -639,7 +897,10 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=(server,)))
+    step = _provider_step(
+        wizard=wizard,
+        local_discover=AsyncMock(return_value=(server,)),
+    )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
@@ -690,7 +951,7 @@ async def test_provider_step_tab_from_list_reaches_key_input_before_detected_but
     server = DiscoveredLocalServer(
         provider_key="llama_cpp", base_url="http://127.0.0.1:8080", model_ids=("m1",)
     )
-    step = _provider_step(discover=AsyncMock(return_value=(server,)))
+    step = _provider_step(local_discover=AsyncMock(return_value=(server,)))
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
