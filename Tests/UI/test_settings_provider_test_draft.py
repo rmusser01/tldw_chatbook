@@ -74,6 +74,7 @@ def test_equivalent_url_save_rebases_evidence_only_after_fully_applied():
     partial = ConfigMutationResult(True, False, "cache_reload")
     assert not store.rebase_after_save(tested, saved, partial)
     assert store.evidence_for(saved) is None
+    assert store.evidence_for(tested) is None
 
     store = _settled_store(tested)
     applied = ConfigMutationResult(True, True, None)
@@ -147,7 +148,47 @@ def test_failed_save_does_not_rebase_evidence_to_saved_identity():
         ConfigMutationResult(False, False, "before_replace"),
     )
     assert store.evidence_for(saved) is None
-    assert store.evidence_for(tested) is not None
+    assert store.evidence_for(tested) is None
+
+
+def test_conflict_invalidates_even_when_mutation_claims_fully_applied():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = _settled_store(tested)
+
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None, conflict=True),
+    )
+    assert store.evidence_for(tested) is None
+    assert store.evidence_for(saved) is None
+
+
+def test_conflict_invalidates_active_test_token():
+    tested = _semantic_identity(
+        "https://example.test/v1/chat/completions", draft_generation=1
+    )
+    saved = _semantic_identity(
+        "https://example.test/v1/models", draft_generation=2
+    )
+    store = ProviderTestEvidenceStore()
+    token = store.begin(tested)
+
+    assert not store.rebase_after_save(
+        tested,
+        saved,
+        ConfigMutationResult(True, True, None, conflict=True),
+    )
+    assert store.evidence_for(tested) is None
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(tested, "reachable", ("model-a",)),
+    )
 
 
 def test_successful_save_cannot_rebase_to_an_older_draft_generation():

@@ -108,6 +108,51 @@ def test_models_404_never_becomes_verified_or_connection_failed():
 
 
 @pytest.mark.parametrize(
+    ("issue", "expected"),
+    [
+        ("provider_missing", "provider"),
+        ("credential_missing", "credential"),
+        ("endpoint_missing", "endpoint"),
+        ("invalid_settings", "settings"),
+        (None, "configuration"),
+    ],
+)
+def test_incomplete_verdict_names_bounded_configuration_issue(issue, expected):
+    verdict = provider_readiness_verdict(
+        ProviderReadinessSnapshot(
+            "incomplete",
+            "not_tested",
+            "missing",
+            configuration_issue=issue,
+        )
+    )
+
+    assert verdict.code == "incomplete"
+    assert expected in verdict.detail.lower()
+
+
+@pytest.mark.parametrize("issue", ["secret-field", [], 3])
+def test_snapshot_rejects_invalid_configuration_issue(issue):
+    with pytest.raises(ValueError):
+        ProviderReadinessSnapshot(
+            "incomplete",
+            "not_tested",
+            "missing",
+            configuration_issue=issue,
+        )
+
+
+def test_configured_snapshot_rejects_configuration_issue():
+    with pytest.raises(ValueError):
+        ProviderReadinessSnapshot(
+            "configured",
+            "not_tested",
+            "missing",
+            configuration_issue="credential_missing",
+        )
+
+
+@pytest.mark.parametrize(
     ("category", "expected"),
     [
         ("timeout", "timed out"),
@@ -272,7 +317,44 @@ def test_probe_outcome_rejects_string_in_place_of_model_id_tuple():
         token,
         SimpleNamespace(state="reachable", model_ids="model-a", category=None),
     )
-    assert store.evidence_for(identity).endpoint == "testing"
+    assert store.evidence_for(identity) is None
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(identity, "reachable", ("model-a",)),
+    )
+
+
+def test_rejected_settle_consumes_token_and_clears_testing_evidence():
+    from types import SimpleNamespace
+
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+
+    assert not store.settle(token, SimpleNamespace(state="testing", model_ids=()))
+    assert store.evidence_for(identity) is None
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(identity, "reachable", ("model-a",)),
+    )
+
+
+def test_settle_contains_raising_outcome_and_still_consumes_token():
+    class RaisingOutcome:
+        @property
+        def state(self):
+            raise RuntimeError("server-secret")
+
+    store = ProviderTestEvidenceStore()
+    identity = _evidence_identity()
+    token = store.begin(identity)
+
+    assert not store.settle(token, RaisingOutcome())
+    assert store.evidence_for(identity) is None
+    assert not store.settle(
+        token,
+        ProviderTestEvidence(identity, "reachable", ("model-a",)),
+    )
 
 
 def test_evidence_records_are_frozen_slotted_and_secret_free():
@@ -366,6 +448,7 @@ def test_provider_draft_identity_rejects_noncanonical_or_secret_bearing_values(k
         ("model_listing_unavailable", ("model-a",), "http_status"),
         ("model_listing_unavailable", (), "timeout"),
         ("testing", (), "timeout"),
+        ("changed_since_test", (), None),
         ([], (), None),
         ("unreachable", (), []),
     ],
@@ -387,18 +470,222 @@ def test_provider_readiness_snapshot_confirms_only_returned_model_choice():
         identity, "reachable", ("model-a", "model-b")
     )
 
-    assert readiness.snapshot(selected_model="model-b", evidence=evidence) == (
+    assert readiness.snapshot(
+        selected_model="model-b",
+        evidence=evidence,
+        current_identity=identity,
+    ) == (
         ProviderReadinessSnapshot("configured", "reachable", "confirmed")
     )
-    assert readiness.snapshot(selected_model="model-c", evidence=evidence).model == (
-        "unconfirmed"
-    )
-    assert readiness.snapshot(selected_model="", evidence=evidence).model == "missing"
+    assert readiness.snapshot(
+        selected_model="model-c",
+        evidence=evidence,
+        current_identity=identity,
+    ).model == "unconfirmed"
+    assert readiness.snapshot(
+        selected_model="",
+        evidence=evidence,
+        current_identity=identity,
+    ).model == "missing"
 
     failure = ProviderTestEvidence(identity, "unreachable", (), "timeout")
-    assert readiness.snapshot(
-        selected_model="model-b", evidence=failure
-    ).category == "timeout"
+    assert (
+        readiness.snapshot(
+            selected_model="model-b",
+            evidence=failure,
+            current_identity=identity,
+        ).category
+        == "timeout"
+    )
+
+
+@pytest.mark.parametrize(
+    "current_identity",
+    [
+        None,
+        _evidence_identity(provider="openai"),
+        _evidence_identity(
+            endpoint="http://127.0.0.1:8002/v1/chat/completions"
+        ),
+        _evidence_identity(credential_source="draft"),
+        _evidence_identity(credential_revision=1),
+        _evidence_identity(draft_generation=2),
+    ],
+    ids=[
+        "missing-current-identity",
+        "provider",
+        "endpoint",
+        "credential-source",
+        "credential-revision",
+        "generation",
+    ],
+)
+def test_snapshot_fails_closed_when_evidence_identity_is_not_current(
+    current_identity,
+):
+    readiness = get_provider_readiness(
+        "custom", {"api_settings": {"custom": {}}}, environ={}
+    )
+    tested_identity = _evidence_identity()
+    evidence = ProviderTestEvidence(
+        tested_identity, "reachable", ("model-a",)
+    )
+
+    snapshot = readiness.snapshot(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=current_identity,
+    )
+    verdict = readiness.verdict(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=current_identity,
+    )
+
+    assert snapshot.endpoint == "changed_since_test"
+    assert snapshot.model == "unconfirmed"
+    assert verdict.code == "changed_since_test"
+    assert verdict.verified is False
+    assert "changed since test" in verdict.detail.lower()
+
+
+def test_snapshot_exact_identity_can_confirm_returned_model():
+    readiness = get_provider_readiness(
+        "custom", {"api_settings": {"custom": {}}}, environ={}
+    )
+    identity = _evidence_identity()
+    evidence = ProviderTestEvidence(identity, "reachable", ("model-a",))
+
+    verdict = readiness.verdict(
+        selected_model="model-a",
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert verdict.code == "verified"
+    assert verdict.verified is True
+
+
+def _legacy_readiness(**overrides):
+    values = {
+        "provider": "OpenAI",
+        "provider_key": "openai",
+        "requires_api_key": True,
+        "ready": False,
+        "api_key": None,
+        "api_key_source": None,
+        "env_var": "OPENAI_API_KEY",
+        "reason": "Missing API key",
+        "recovery": "Set OPENAI_API_KEY.",
+    }
+    values.update(overrides)
+    return ProviderReadiness(**values)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ready": True, "reason": "Almost ready", "recovery": None},
+        {"ready": True, "reason": "Ready", "recovery": "Retry."},
+        {"ready": False, "reason": "Ready"},
+        {"ready": True, "reason": "Ready", "recovery": None},
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "secret-value",
+        },
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key_source": "env:OPENAI_API_KEY",
+        },
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "placeholder-not-a-real-key",
+            "api_key_source": "env:OTHER_KEY",
+        },
+        {
+            "ready": True,
+            "reason": "Ready",
+            "recovery": None,
+            "api_key": "placeholder-not-a-real-key",
+            "api_key_source": ["invalid"],
+        },
+        {"api_key": "secret-value"},
+        {"api_key_source": "config:api_settings.openai.api_key"},
+    ],
+)
+def test_provider_readiness_rejects_contradictory_legacy_states(overrides):
+    with pytest.raises(ValueError) as error:
+        _legacy_readiness(**overrides)
+
+    assert "secret-value" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "readiness",
+    [
+        _legacy_readiness(),
+        _legacy_readiness(
+            ready=True,
+            api_key="configured-key",
+            api_key_source="config:api_settings.openai.api_key",
+            reason="Ready",
+            recovery=None,
+        ),
+        _legacy_readiness(
+            ready=True,
+            api_key="environment-key",
+            api_key_source="env:OPENAI_API_KEY",
+            reason="Ready",
+            recovery=None,
+        ),
+        _legacy_readiness(
+            provider="Ollama",
+            provider_key="ollama",
+            requires_api_key=False,
+            ready=True,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Ready",
+            recovery=None,
+        ),
+        _legacy_readiness(
+            provider="No provider",
+            provider_key="",
+            requires_api_key=False,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason="Select a provider",
+            recovery="Choose a provider and model before sending.",
+        ),
+    ],
+)
+def test_provider_readiness_accepts_coherent_legacy_states(readiness):
+    assert readiness.configuration_facet == (
+        "configured" if readiness.ready else "incomplete"
+    )
+
+
+def test_provider_readiness_preserves_legacy_field_order():
+    assert [item.name for item in fields(ProviderReadiness)] == [
+        "provider",
+        "provider_key",
+        "requires_api_key",
+        "ready",
+        "api_key",
+        "api_key_source",
+        "env_var",
+        "reason",
+        "recovery",
+    ]
 
 
 def test_environment_rotation_is_resolved_on_each_readiness_call(monkeypatch):

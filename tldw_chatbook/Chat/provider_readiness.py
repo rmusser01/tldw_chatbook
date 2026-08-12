@@ -37,6 +37,8 @@ from ..config import (
 )
 from .provider_test_evidence import (
     ConfigurationFacet,
+    ConfigurationIssueCode,
+    ProviderDraftIdentity,
     ProviderReadinessSnapshot,
     ProviderReadinessVerdict,
     ProviderTestEvidence,
@@ -124,24 +126,88 @@ class ProviderReadiness:
     reason: str
     recovery: str | None
 
+    def __post_init__(self) -> None:
+        """Reject legacy boolean states that contradict their structured truth."""
+        if type(self.ready) is not bool or type(self.requires_api_key) is not bool:
+            raise ValueError("Provider readiness flags are invalid.")
+        if self.ready:
+            if self.reason != "Ready" or self.recovery is not None:
+                raise ValueError("Ready provider state is inconsistent.")
+        elif self.reason == "Ready":
+            raise ValueError("Blocked provider state is inconsistent.")
+
+        has_key = self.api_key is not None
+        has_source = self.api_key_source is not None
+        if has_key != has_source:
+            raise ValueError("Provider credential source is inconsistent.")
+        if not self.ready and (has_key or has_source):
+            raise ValueError("Blocked provider cannot retain a credential.")
+        if self.ready and self.requires_api_key and not has_key:
+            raise ValueError("Ready keyed provider requires a credential source.")
+        if has_key:
+            if not is_valid_provider_api_key(self.api_key):
+                raise ValueError("Provider credential state is invalid.")
+            source = self.api_key_source or ""
+            if (
+                not isinstance(source, str)
+                or not source
+                or len(source) > 256
+                or not source.isprintable()
+            ):
+                raise ValueError("Provider credential source is invalid.")
+            if source.startswith("env:"):
+                if (
+                    not isinstance(self.env_var, str)
+                    or not self.env_var
+                    or len(self.env_var) > 128
+                    or not self.env_var.isprintable()
+                    or source != f"env:{self.env_var}"
+                ):
+                    raise ValueError("Environment credential source is inconsistent.")
+            elif not source.startswith("config:") or source == "config:":
+                raise ValueError("Provider credential source is invalid.")
+
     @property
     def configuration_facet(self) -> ConfigurationFacet:
         """Compatibility-safe structured view of configuration readiness."""
         return "configured" if self.ready else "incomplete"
+
+    @property
+    def configuration_issue(self) -> ConfigurationIssueCode | None:
+        """Return a bounded explanation for an incomplete legacy state."""
+        if self.ready:
+            return None
+        if self.reason == "Select a provider":
+            return "provider_missing"
+        if self.reason == "Missing API key":
+            return "credential_missing"
+        if self.reason in {"Invalid provider settings", "Unknown provider"}:
+            return "invalid_settings"
+        return None
 
     def snapshot(
         self,
         *,
         selected_model: object = "",
         evidence: ProviderTestEvidence | None = None,
+        current_identity: ProviderDraftIdentity | None = None,
     ) -> ProviderReadinessSnapshot:
         """Combine legacy configuration readiness with current test evidence."""
         model_id = selected_model.strip() if isinstance(selected_model, str) else ""
-        endpoint = evidence.endpoint if evidence is not None else "not_tested"
+        evidence_is_current = bool(
+            evidence is not None
+            and current_identity is not None
+            and evidence.identity == current_identity
+            and current_identity.provider_key == self.provider_key
+        )
+        if evidence is not None and not evidence_is_current:
+            endpoint = "changed_since_test"
+        else:
+            endpoint = evidence.endpoint if evidence is not None else "not_tested"
         if not model_id:
             model = "missing"
         elif (
-            evidence is not None
+            evidence_is_current
             and evidence.endpoint == "reachable"
             and model_id in evidence.model_ids
         ):
@@ -152,7 +218,8 @@ class ProviderReadiness:
             configuration=self.configuration_facet,
             endpoint=endpoint,
             model=model,
-            category=evidence.category if evidence is not None else None,
+            category=evidence.category if evidence_is_current else None,
+            configuration_issue=self.configuration_issue,
         )
 
     def verdict(
@@ -160,10 +227,15 @@ class ProviderReadiness:
         *,
         selected_model: object = "",
         evidence: ProviderTestEvidence | None = None,
+        current_identity: ProviderDraftIdentity | None = None,
     ) -> ProviderReadinessVerdict:
         """Return one structured verdict while preserving legacy properties."""
         return provider_readiness_verdict(
-            self.snapshot(selected_model=selected_model, evidence=evidence)
+            self.snapshot(
+                selected_model=selected_model,
+                evidence=evidence,
+                current_identity=current_identity,
+            )
         )
 
     @property

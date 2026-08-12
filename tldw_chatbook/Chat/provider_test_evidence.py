@@ -17,9 +17,16 @@ EndpointFacet = Literal[
     "reachable",
     "unreachable",
     "model_listing_unavailable",
+    "changed_since_test",
 ]
 ModelFacet = Literal["missing", "confirmed", "unconfirmed"]
 CredentialSource = Literal["none", "stored", "environment", "draft"]
+ConfigurationIssueCode = Literal[
+    "provider_missing",
+    "credential_missing",
+    "endpoint_missing",
+    "invalid_settings",
+]
 EndpointFailureCategory = Literal[
     "timeout",
     "connection_refused",
@@ -38,6 +45,7 @@ ReadinessVerdictCode = Literal[
     "model_listing_unavailable",
     "model_unconfirmed",
     "verified",
+    "changed_since_test",
 ]
 
 _CONFIGURATION_FACETS = frozenset({"incomplete", "configured"})
@@ -48,10 +56,20 @@ _ENDPOINT_FACETS = frozenset(
         "reachable",
         "unreachable",
         "model_listing_unavailable",
+        "changed_since_test",
     }
 )
+_EVIDENCE_ENDPOINT_FACETS = _ENDPOINT_FACETS - {"changed_since_test"}
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
 _CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment", "draft"})
+_CONFIGURATION_ISSUES = frozenset(
+    {
+        "provider_missing",
+        "credential_missing",
+        "endpoint_missing",
+        "invalid_settings",
+    }
+)
 _VERDICT_CODES = frozenset(
     {
         "incomplete",
@@ -62,6 +80,7 @@ _VERDICT_CODES = frozenset(
         "model_listing_unavailable",
         "model_unconfirmed",
         "verified",
+        "changed_since_test",
     }
 )
 _FAILURE_CATEGORIES = frozenset(
@@ -84,6 +103,12 @@ _FAILURE_DETAILS = {
     "invalid_payload": "The model listing endpoint returned an invalid response.",
     "connection_error": "The model listing request had a connection error.",
 }
+_CONFIGURATION_ISSUE_DETAILS = {
+    "provider_missing": "Select a provider.",
+    "credential_missing": "Provider credentials are missing.",
+    "endpoint_missing": "Provider endpoint is missing.",
+    "invalid_settings": "Provider settings are invalid.",
+}
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _MAX_PROVIDER_KEY_CHARS = 128
 _MAX_CONNECTION_ENDPOINT_CHARS = 4096
@@ -101,6 +126,7 @@ class ProviderReadinessSnapshot:
     endpoint: EndpointFacet
     model: ModelFacet
     category: EndpointFailureCategory | None = None
+    configuration_issue: ConfigurationIssueCode | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, str) or (
@@ -116,6 +142,13 @@ class ProviderReadinessSnapshot:
             or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Endpoint failure category is invalid.")
+        if self.configuration_issue is not None and (
+            not isinstance(self.configuration_issue, str)
+            or self.configuration_issue not in _CONFIGURATION_ISSUES
+        ):
+            raise ValueError("Configuration issue is invalid.")
+        if self.configuration == "configured" and self.configuration_issue is not None:
+            raise ValueError("Configured readiness cannot include an issue.")
         if self.endpoint == "unreachable":
             return
         if self.endpoint == "model_listing_unavailable" and self.category in {
@@ -162,9 +195,18 @@ def provider_readiness_verdict(
 
     if not isinstance(snapshot, ProviderReadinessSnapshot):
         raise ValueError("Readiness snapshot is invalid.")  # noqa: TRY004
+    if snapshot.endpoint == "changed_since_test":
+        return ProviderReadinessVerdict(
+            "changed_since_test",
+            "Provider settings changed since test; test again.",
+        )
     if snapshot.configuration == "incomplete":
         return ProviderReadinessVerdict(
-            "incomplete", "Provider configuration is incomplete."
+            "incomplete",
+            _CONFIGURATION_ISSUE_DETAILS.get(
+                snapshot.configuration_issue,
+                "Provider configuration is incomplete.",
+            ),
         )
     if snapshot.endpoint == "testing":
         return ProviderReadinessVerdict("testing", "Testing the model listing endpoint.")
@@ -252,7 +294,10 @@ class ProviderTestEvidence:
     def __post_init__(self) -> None:
         if not isinstance(self.identity, ProviderDraftIdentity):
             raise ValueError("Provider evidence identity is invalid.")  # noqa: TRY004
-        if not isinstance(self.endpoint, str) or self.endpoint not in _ENDPOINT_FACETS:
+        if (
+            not isinstance(self.endpoint, str)
+            or self.endpoint not in _EVIDENCE_ENDPOINT_FACETS
+        ):
             raise ValueError("Provider evidence endpoint facet is invalid.")
         _validate_model_ids(self.model_ids)
         if self.category is not None and (
@@ -328,14 +373,15 @@ class ProviderTestEvidenceStore:
                 token, _ProviderTestToken
             ):
                 return False
+            self._current_token = None
+            self._evidence = None
             try:
                 evidence = _coerce_probe_evidence(token._identity, outcome)
-            except (AttributeError, TypeError, ValueError):
+            except Exception:  # noqa: BLE001 - malformed probe objects fail closed.
                 return False
             if evidence.endpoint in {"not_tested", "testing"}:
                 return False
             self._evidence = evidence
-            self._current_token = None
             return True
 
     def evidence_for(
@@ -377,15 +423,16 @@ class ProviderTestEvidenceStore:
         ):
             return False
         with self._lock:
-            evidence = self._evidence
-            if evidence is None or evidence.identity != tested_identity:
+            if bool(getattr(mutation_result, "conflict", False)):
+                self._evidence = None
+                self._current_token = None
                 return False
             if not bool(getattr(mutation_result, "fully_applied", False)):
-                if bool(getattr(mutation_result, "file_replaced", False)) or bool(
-                    getattr(mutation_result, "conflict", False)
-                ):
-                    self._evidence = None
-                    self._current_token = None
+                self._evidence = None
+                self._current_token = None
+                return False
+            evidence = self._evidence
+            if evidence is None or evidence.identity != tested_identity:
                 return False
             if evidence.endpoint == "testing" or not _same_saved_semantics(
                 tested_identity, saved_identity
