@@ -21,11 +21,11 @@ commit to its existing upstream, without leaving the app.
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
 **Database** | **Files**. Click **Files** — while the workspace loads you'll
-briefly see "Opening File Notes…". The rail and the rest of the Library
-shell stay visible; the workspace fills the canvas pane next to them, the
-same as every other Notes view. Click **Database**, or press **Escape**, to
-switch back; either switch first saves any unsaved edits on the side you're
-leaving.
+briefly see "Opening File Notes…". At 120 columns and wider, the rail stays
+visible and the workspace fills the canvas pane next to it. On compact
+terminals, Library shows the File Notes canvas as the single visible stage so
+its controls remain on-screen; **Escape** or **Database** returns to Database
+Notes. Either switch first saves any unsaved edits on the side you're leaving.
 
 ## Layout tour
 
@@ -39,13 +39,15 @@ leaving.
 - **Navigator** (left) — a "Search file contents…" input, the **Files** tree
   of everything under the linked folder, a **Search results** tree that
   appears only while a query is active, and the **Session Git (N)** button —
-  N counts the files changed in this session.
+  N counts the files changed in this session. Large folders and direct-path
+  search fallbacks show 100 rows at a time; activate **Load more** to append
+  the next 100 without rebuilding the entire tree.
 - **Editor pane** (right) — a breadcrumb ("No file selected" until you open
   one; "Recently deleted: \<path\>" right after a delete), a save-status
   label (Idle / Dirty / Saving / Saved / Conflict / Error, sometimes with a
   detail after a dash), a path input with placeholder "relative/path.md",
-  two toolbars (**New Move Delete Restore Protect** and
-  **Reload Save Copy Refresh**), the text editor itself, and an action-status
+  two toolbars (**New Delete Restore Save draft as copy More file actions**
+  and the disclosed secondary actions), the text editor itself, and an action-status
   line where results like "Deleted. Restore remains available." appear.
 - **Session Git panel** — pressing **Session Git (N)** swaps the whole
   workspace for the staging, commit, and guarded-push panel described below;
@@ -65,7 +67,8 @@ leaving.
 ### Editor toolbar
 
 The path input ("relative/path.md") is the target for **New**, **Move**, and
-**Save Copy** — type where you want the file to go, then press the button.
+**Save draft as copy** or **Export exact copy**: type where you want the file
+to go, then press the relevant button.
 
 | Control | What it does |
 |---|---|
@@ -74,13 +77,18 @@ The path input ("relative/path.md") is the target for **New**, **Move**, and
 | **Delete** | Two-press: first press shows "Click Delete again to confirm.", second deletes ("Deleted. Restore remains available.") |
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
-| **Reload** | Re-reads the open file from disk, replacing the editor contents |
-| **Save Copy** | Writes the editor text as-is to the typed path; only enabled while the save status is Dirty, Conflict, or Error |
+| **Reload** / **Discard draft and reload** | Re-reads the open file from disk. In Conflict or Error, the destructive label is shown and the first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Save draft as copy** | Writes the complete editor draft to the typed path; only enabled while the save status is Dirty, Conflict, or Error |
+| **Export exact copy** | Replaces **Save draft as copy** for a large read-only file and streams the complete current disk bytes, not the visible excerpt, to an absent typed path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
-Saving is automatic — edit and the status walks Dirty → Saving → Saved. If
-the file changed on disk underneath you the status shows Conflict; **Reload**
-takes the disk version.
+Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
+file changes on disk underneath you, the status shows Conflict and keeps the
+draft in the editor. **Discard draft and reload** first reads the current disk
+version and asks for confirmation. **Cancel** or **Escape** preserves the exact
+draft and conflict; confirming rechecks the root, file, editing session, and
+disk version before it replaces the draft. If any of those changed, reload
+stops with recovery guidance and leaves the draft untouched.
 
 ### Session Git — stage and commit session edits, then push the exact commit
 
@@ -213,7 +221,8 @@ not available.
    and opened; start typing and it saves automatically.
 3. **Find text across files.** Type a query into "Search file contents…" —
    a **Search results** tree appears under the **Files** tree; pick a result
-   to open that file. Clear the query and the tree disappears.
+   to open that file. Activate **Load more** when a direct-path result set has
+   another 100 rows. Clear the query and the tree disappears.
 4. **Stage and commit this session's edits, then push the exact commit.** Press
    **Session Git (N)**,
    trust the repository if asked, press **Stage all (N)**, then
@@ -235,6 +244,7 @@ not available.
 | Up / Down (Session Git panel) | Select a row |
 | Tab (Session Git panel) | Move into the selected row's actions |
 | Enter (Session Git panel) | Run the highlighted action |
+| Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to **Discard draft and reload** |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
 
@@ -254,7 +264,10 @@ not available.
 ## Quirks & troubleshooting
 
 - **Per-file caps: 8 MB and 2,000,000 characters.** Edits that would push a
-  file past either limit are refused at save time.
+  file past either limit are refused at save time. A body above 200,000
+  characters opens read-only with exact byte and character sizes and a labeled
+  first-100,000-character excerpt. Use **Export exact copy** to stream the
+  complete current file to a new path; the excerpt is never used as the copy.
 - **Staging is session-scoped and whole-file.** Only files touched in this
   session appear in the panel, and staging records each file's complete
   current state — not a partial diff. A path you already staged outside

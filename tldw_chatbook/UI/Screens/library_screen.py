@@ -1566,6 +1566,12 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "back to Database"),
     )
 
+    LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "cancel reload"),
+    )
+
     #: task-2856 AC2: a detail/viewer surface (media viewer, note editor,
     #: prompt editor) -- Escape goes back to that surface's list.
     LIBRARY_DETAIL_BACK_SHORTCUTS = (
@@ -3273,6 +3279,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             return self.LIBRARY_LIST_SHORTCUTS
         if self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if (
+                workspace is not None
+                and workspace.reload_confirmation_active
+            ):
+                return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
             return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
@@ -3586,6 +3598,10 @@ class LibraryScreen(BaseAppScreen):
             }
         )
 
+    def _library_notes_compact_workflow_active(self) -> bool:
+        """Return whether either Notes source owns compact canvas routing."""
+        return self._library_notes_workflow_active() or self._file_notes_active()
+
     def _library_notes_focus_region(
         self,
     ) -> Literal["", "navigator", "editor", "preview", "context", "create", "sync"]:
@@ -3641,6 +3657,13 @@ class LibraryScreen(BaseAppScreen):
             return f"create-template:{template_key}"
 
         widget_id = focused.id or ""
+        if widget_id and self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            if workspace is not None and self._library_notes_widget_is_within(
+                focused,
+                workspace,
+            ):
+                return f"file-notes:{widget_id}"
         direct_roles = {
             "library-notes-filter": "filter",
             "library-note-title": "title",
@@ -3825,6 +3848,15 @@ class LibraryScreen(BaseAppScreen):
                 "create": "#library-notes-create-back",
                 "sync": "#library-notes-sync-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
+        elif role.startswith("file-notes:"):
+            widget_id = role.removeprefix("file-notes:")
+            workspace = self._library_file_notes_workspace
+            if workspace is None or not widget_id:
+                return None
+            try:
+                return workspace.query_one(f"#{widget_id}", Widget)
+            except (NoMatches, QueryError):
+                return None
         if selector is not None:
             try:
                 return self.query_one(selector, Widget)
@@ -4053,7 +4085,7 @@ class LibraryScreen(BaseAppScreen):
             return "notes"
         if identity.stage == "rail":
             return "rail"
-        if identity.stage == "notes" and self._library_notes_workflow_active():
+        if identity.stage == "notes" and self._library_notes_compact_workflow_active():
             return "notes"
         if self._library_notes_focus_region() in {
             "editor",
@@ -4068,7 +4100,8 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_compact_stage_applies(self) -> bool:
         """Scope single-stage behavior to Library entry and active Notes routes."""
         return (
-            self._library_notes_stage == "rail" or self._library_notes_workflow_active()
+            self._library_notes_stage == "rail"
+            or self._library_notes_compact_workflow_active()
         )
 
     def _apply_library_notes_stage_visibility(self) -> None:
@@ -4405,6 +4438,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_last_user_focus,
             self._library_notes_interaction_focus,
             self._library_notes_last_presented_focus,
+            self._library_notes_responsive_focus_memory,
         ):
             if (
                 cached is not None
@@ -11862,12 +11896,27 @@ class LibraryScreen(BaseAppScreen):
         # must follow this same transition or Escape works unadvertised.
         self._register_footer_shortcuts()
         self.refresh(recompose=True)
+        # The production app can recompose Library after the initial mount-time
+        # responsive callback. Measure again once the Files canvas owns its
+        # final shell geometry so a compact terminal cannot retain stale wide
+        # presentation state from startup.
+        self.call_after_refresh(self._update_library_notes_responsive_state)
 
     @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
         """Return to Database Notes only after the File Notes leave guard."""
         event.stop()
         await self._return_to_library_database_notes()
+
+    @on(LibraryFileNotesWorkspace.ReloadConfirmationChanged)
+    def _handle_file_notes_reload_confirmation_changed(
+        self,
+        event: LibraryFileNotesWorkspace.ReloadConfirmationChanged,
+    ) -> None:
+        """Keep footer and F1 help truthful for the inline decision state."""
+        event.stop()
+        if event.control is self._library_file_notes_workspace:
+            self._register_footer_shortcuts()
 
     async def _return_to_library_database_notes(self) -> None:
         """Leave File Notes and return to the Database Notes view.
@@ -11902,6 +11951,10 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to ``_file_notes_active()``, so it only
         ever runs while Files mode genuinely owns the Notes canvas.
         """
+        workspace = self._library_file_notes_workspace
+        if workspace is not None and workspace.cancel_reload_confirmation():
+            self._register_footer_shortcuts()
+            return
         await self._return_to_library_database_notes()
 
     @on(Button.Pressed, ".library-rail-row")

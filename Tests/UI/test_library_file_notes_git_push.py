@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Label, TextArea
+from textual.widgets import Button, Collapsible, Label, TextArea
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
@@ -29,6 +29,9 @@ from Tests.UI.test_library_file_notes_git import (  # noqa: E402
     _row,
     _status,
     _text,
+)
+from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
+    library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_push import (  # noqa: E402
     PushAuthorizationProjection,
@@ -775,7 +778,7 @@ async def test_push_authorization_dialog_brackets_ipv6_endpoint_summary() -> Non
 
 @pytest.mark.asyncio
 async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
-    """A row-derived or consequence-light final review must fail this test."""
+    """The immutable review must lead with outcomes and retain exact detail."""
     panel = git_panel_module.LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _PushPanelHarness(panel)
@@ -791,12 +794,46 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         assert not panel.query_one("#file-notes-git-list-surface").display
         body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
         assert body.styles.overflow_y == "auto"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-what-changes-heading")
+        ) == "What changes"
         assert _text(panel.query_one("#file-notes-git-push-review-lead")) == (
-            "Push 1 commit created from 2 session notes to origin/session-notes."
+            "Pushes 1 reviewed commit created from 2 session notes."
         )
         assert _text(panel.query_one("#file-notes-git-push-review-subject")) == (
-            "Subject: Publish exact session notes"
+            "Commit subject: Publish exact session notes"
         )
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-destination-heading")
+        ) == "Where it goes"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-destination")
+        ) == "origin/session-notes"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-scope-heading")
+        ) == "Exact scope"
+        assert _text(panel.query_one("#file-notes-git-push-review-counts")) == (
+            "2 session notes: New 1 · Modified 1"
+        )
+        notes = panel.query_one("#file-notes-git-push-review-notes", TextArea)
+        assert notes.read_only
+        assert notes.text == "Modified: folder/one.md\nNew: two.md"
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-effects-heading")
+        ) == "Side effects"
+        assert _text(panel.query_one("#file-notes-git-push-review-effects")) == (
+            "Remote hooks, branch policy, CI, or mirrors may run."
+        )
+        assert _text(panel.query_one("#file-notes-git-push-review-later-edits")) == (
+            "Later note edits remain local and are not added to this commit."
+        )
+
+        technical = panel.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        )
+        assert technical.title == "Technical details"
+        assert technical.collapsed
         assert _text(panel.query_one("#file-notes-git-push-review-candidate")) == (
             f"Candidate OID: {'d' * 40}"
         )
@@ -815,27 +852,20 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         assert "push.example.test:443" in _text(
             panel.query_one("#file-notes-git-push-review-endpoint")
         )
-        assert _text(panel.query_one("#file-notes-git-push-review-counts")) == (
-            "Included changes: New 1 · Modified 1"
-        )
-        notes = panel.query_one("#file-notes-git-push-review-notes", TextArea)
-        assert notes.read_only
-        assert notes.text == "Modified: folder/one.md\nNew: two.md"
         assert _text(panel.query_one("#file-notes-git-push-review-lease")) == (
             f"Expected-parent lease: refs/heads/session-notes:{'a' * 40}"
         )
         assert _text(panel.query_one("#file-notes-git-push-review-transport")) == (
-            "Secure transport: HTTPS with certificate verification; existing "
-            "noninteractive authentication only; terminal prompts disabled"
+            "Transport: HTTPS with certificate verification"
+        )
+        assert _text(
+            panel.query_one("#file-notes-git-push-review-authentication")
+        ) == (
+            "Authentication: existing noninteractive credentials only; "
+            "terminal prompts disabled"
         )
         assert _text(panel.query_one("#file-notes-git-push-review-local-hooks")) == (
             "Local pre-push hooks will not run"
-        )
-        assert _text(panel.query_one("#file-notes-git-push-review-remote-effects")) == (
-            "Remote hooks, branch policy, CI, or mirrors may run"
-        )
-        assert _text(panel.query_one("#file-notes-git-push-review-later-edits")) == (
-            "Later note edits remain local and are not added to this commit"
         )
         assert _text(panel.query_one("#file-notes-git-push-review-objects")) == (
             "Git publishes the reviewed commit and required Git objects; this "
@@ -852,6 +882,8 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "file-notes-git-push-confirm",
         )
 
+        technical.collapsed = False
+        await pilot.pause()
         details.press()
         await pilot.pause()
         _assert_last_push_action(app, "endpoint_details", 41)
@@ -1084,7 +1116,10 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             lambda: back.has_focus,
             "compact push Back did not receive focus",
         )
-        assert str(primary.label) == primary_label
+        assert str(primary.label) == library_disabled_action_label(
+            primary_label,
+            not action_enabled,
+        )
         assert primary.region.width >= len(primary_label) + 2
         assert body.region.x == footer.region.x == panel.content_region.x
         assert body.region.width == footer.region.width == panel.content_region.width
@@ -1110,6 +1145,13 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
                 "#file-notes-git-push-review-details",
                 Button,
             )
+            technical = panel.query_one(
+                "#file-notes-git-push-review-technical",
+                Collapsible,
+            )
+            technical_title = technical.query_one("CollapsibleTitle", Widget)
+            assert technical.collapsed
+            assert details not in app.screen._compositor.visible_widgets
             body.focus()
             prior_scroll = body.scroll_y
             await pilot.press("pagedown")
@@ -1123,9 +1165,19 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             await pilot.press("shift+tab")
             assert back.has_focus
             await pilot.press("shift+tab")
-            assert notes.has_focus
+            assert technical_title.has_focus
+            assert technical_title in app.screen._compositor.visible_widgets
+            assert technical_title.region.height == 1
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not technical.collapsed
             await pilot.press("shift+tab")
+            assert notes.has_focus
+            technical_title.focus()
+            await pilot.press("tab")
+            await pilot.pause()
             assert details.has_focus
+            assert details in app.screen._compositor.visible_widgets
             await pilot.press("enter")
             await pilot.pause()
             _assert_last_push_action(app, "endpoint_details", operation_id)
@@ -1336,10 +1388,18 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
         assert workspace._push_review_handle is handle
         assert workspace._push_review_projection is not None
 
-        workspace.query_one(
+        technical = workspace.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        )
+        technical.collapsed = False
+        await pilot.pause()
+        details = workspace.query_one(
             "#file-notes-git-push-review-details",
             Button,
-        ).press()
+        )
+        details.focus()
+        details.press()
         await _until(
             pilot,
             lambda: isinstance(
@@ -1350,10 +1410,7 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
         )
         await pilot.press("escape")
         await pilot.pause()
-        assert workspace.query_one(
-            "#file-notes-git-push-review-details",
-            Button,
-        ).has_focus
+        assert details.has_focus
 
         service.cancel_push_result = True
         workspace.query_one("#file-notes-git-push-back", Button).press()
