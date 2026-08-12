@@ -17941,6 +17941,9 @@ class ChatScreen(BaseAppScreen):
         import secrets
         import shutil
 
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        target = validate_path_simple(target, probe_existing=False)
         extension = canonical_video_extension(artifact.extension)
         if target.suffix != f".{extension}":
             raise ValueError("external video target extension does not match")
@@ -18269,6 +18272,9 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _normalize_pending_video_target(target: Path, extension: str) -> Path:
         """Append the canonical suffix or require its exact lowercase spelling."""
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        target = validate_path_simple(target, probe_existing=False)
         canonical = canonical_video_extension(extension)
         if not target.suffix:
             return target.with_suffix(f".{canonical}")

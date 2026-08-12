@@ -1312,6 +1312,60 @@ def test_external_copy_rejects_mismatched_suffix_before_any_filesystem_action(
     assert not target.exists()
 
 
+def test_external_copy_rejects_dangerous_path_before_any_filesystem_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact = _artifact(b"webm bytes", extension="webm")
+    target = Path(f"{tmp_path}/safe/../../chosen.webm")
+    actions: list[str] = []
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_require_external_video_pinned_capabilities",
+        staticmethod(lambda: actions.append("capability")),
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_external_video_parent_identity",
+        staticmethod(lambda _parent: actions.append("target-inspection")),
+    )
+    real_mkdir = Path.mkdir
+
+    def tracking_mkdir(self, *args, **kwargs):
+        actions.append("mkdir")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
+    try:
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            ChatScreen._copy_pending_video_external(artifact, target, None)
+    finally:
+        artifact.close()
+
+    assert actions == []
+
+
+@pytest.mark.asyncio
+async def test_external_picker_validates_path_before_target_inspection(
+    tmp_path: Path,
+) -> None:
+    artifact = _artifact(b"webm bytes", extension="webm")
+    dangerous = Path(f"{tmp_path}/safe/../../chosen.webm")
+    harness = _OutcomeHarness(
+        actions=["save_external", dangerous, None], video_store=object()
+    )
+    inspected: list[Path] = []
+    harness._external_video_target_identity = lambda target: inspected.append(target)
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert inspected == []
+    assert any("generated video format" in message for message, _ in harness.notifications)
+    assert artifact.stream.closed
+
+
 @pytest.mark.asyncio
 async def test_external_success_opens_file_and_appends_no_card(tmp_path: Path) -> None:
     artifact = _artifact(b"external")

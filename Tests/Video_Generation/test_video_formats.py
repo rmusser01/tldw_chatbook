@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 import pytest
 
 
@@ -39,6 +41,15 @@ def test_canonical_video_extension_rejects_noncanonical_values(value):
 
     with pytest.raises(ValueError, match="^unsupported video container$"):
         canonical_video_extension(value)
+
+
+def test_canonical_video_extension_accepts_canonical_strenum_value():
+    from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
+
+    class VideoFormat(StrEnum):
+        MP4 = "mp4"
+
+    assert canonical_video_extension(VideoFormat.MP4) == "mp4"
 
 
 @pytest.mark.parametrize(
