@@ -2736,12 +2736,17 @@
     }
   ],
   "incident": {
+    "final_base": "82b595049d97836482c118cfeb4d31df537a86a1",
     "planning_base": "82b595049d97836482c118cfeb4d31df537a86a1",
     "recorded_base": "6d72f15f8332b6469a5d644d409b80914634a8dd"
   },
   "owners": [
     {
       "path": "tldw_chatbook/Agents/agent_service.py",
+      "reviewed_final": {
+        "call_count": 9,
+        "diagnostic_digest": "c26d6259980ee1423134"
+      },
       "starting": {
         "call_count": 9,
         "diagnostic_digest": "578de6bb91649fc9fc87"
@@ -2749,6 +2754,10 @@
     },
     {
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "reviewed_final": {
+        "call_count": 12,
+        "diagnostic_digest": "7caa9d8c2694081e94e9"
+      },
       "starting": {
         "call_count": 12,
         "diagnostic_digest": "7caa9d8c2694081e94e9"
@@ -2756,6 +2765,10 @@
     },
     {
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "reviewed_final": {
+        "call_count": 35,
+        "diagnostic_digest": "3fe98a6ceaea040d40d0"
+      },
       "starting": {
         "call_count": 35,
         "diagnostic_digest": "5361a9926d2d6bede509"
@@ -2763,6 +2776,10 @@
     },
     {
       "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "reviewed_final": {
+        "call_count": 40,
+        "diagnostic_digest": "fa7c38a237c70af496f0"
+      },
       "starting": {
         "call_count": 40,
         "diagnostic_digest": "354cf52f8e1d76bbb9b8"
@@ -2770,6 +2787,10 @@
     },
     {
       "path": "tldw_chatbook/Chat/console_context_compaction.py",
+      "reviewed_final": {
+        "call_count": 2,
+        "diagnostic_digest": "27d289b999d66e754418"
+      },
       "starting": {
         "call_count": 2,
         "diagnostic_digest": "ad596e6fde321c7720f4"
@@ -2777,6 +2798,10 @@
     },
     {
       "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "reviewed_final": {
+        "call_count": 2,
+        "diagnostic_digest": "9bd43df1945e3a46d316"
+      },
       "starting": {
         "call_count": 2,
         "diagnostic_digest": "747b675587167a1bec60"
@@ -2784,6 +2809,10 @@
     },
     {
       "path": "tldw_chatbook/MCP/client.py",
+      "reviewed_final": {
+        "call_count": 48,
+        "diagnostic_digest": "e7bcc40dca9cfbb410a2"
+      },
       "starting": {
         "call_count": 48,
         "diagnostic_digest": "7110f1c19a6a982f290a"
@@ -2791,6 +2820,10 @@
     },
     {
       "path": "tldw_chatbook/MCP/local_server_tools.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "5a6a84d5e177534348d2"
+      },
       "starting": {
         "call_count": 1,
         "diagnostic_digest": "5a6a84d5e177534348d2"
@@ -2798,6 +2831,10 @@
     },
     {
       "path": "tldw_chatbook/MCP/prompts.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "af163025ed5780b49a46"
+      },
       "starting": {
         "call_count": 1,
         "diagnostic_digest": "af163025ed5780b49a46"
@@ -2805,6 +2842,10 @@
     },
     {
       "path": "tldw_chatbook/MCP/server.py",
+      "reviewed_final": {
+        "call_count": 8,
+        "diagnostic_digest": "86cbb8127d9b610be073"
+      },
       "starting": {
         "call_count": 8,
         "diagnostic_digest": "86cbb8127d9b610be073"
@@ -2812,6 +2853,10 @@
     },
     {
       "path": "tldw_chatbook/RAG_Search/fusion.py",
+      "reviewed_final": {
+        "call_count": 8,
+        "diagnostic_digest": "e12415663481f423ce12"
+      },
       "starting": {
         "call_count": 8,
         "diagnostic_digest": "97d06c55271a5f01c549"
@@ -2819,6 +2864,10 @@
     },
     {
       "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "reviewed_final": {
+        "call_count": 57,
+        "diagnostic_digest": "afdb701a44cfbab8d686"
+      },
       "starting": {
         "call_count": 57,
         "diagnostic_digest": "283cb4ecf295fff754bc"
@@ -2826,6 +2875,10 @@
     },
     {
       "path": "tldw_chatbook/RAG_Search/simplified/search_service.py",
+      "reviewed_final": {
+        "call_count": 5,
+        "diagnostic_digest": "57ac009dd80f8d7028b8"
+      },
       "starting": {
         "call_count": 5,
         "diagnostic_digest": "57ac009dd80f8d7028b8"
@@ -2833,6 +2886,10 @@
     },
     {
       "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "reviewed_final": {
+        "call_count": 9,
+        "diagnostic_digest": "0b1335167a73055b1007"
+      },
       "starting": {
         "call_count": 9,
         "diagnostic_digest": "a748c6b9e50e24ec30f5"
@@ -2840,6 +2897,10 @@
     },
     {
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "reviewed_final": {
+        "call_count": 158,
+        "diagnostic_digest": "eef7b929c039940e51f5"
+      },
       "starting": {
         "call_count": 158,
         "diagnostic_digest": "eef7b929c039940e51f5"
@@ -2847,6 +2908,10 @@
     },
     {
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "reviewed_final": {
+        "call_count": 86,
+        "diagnostic_digest": "61a06caa0e6395465287"
+      },
       "starting": {
         "call_count": 86,
         "diagnostic_digest": "ae0fac2e87bf1a6ee81c"
@@ -2854,6 +2919,10 @@
     },
     {
       "path": "tldw_chatbook/app.py",
+      "reviewed_final": {
+        "call_count": 305,
+        "diagnostic_digest": "c377907bd43881566943"
+      },
       "starting": {
         "call_count": 305,
         "diagnostic_digest": "dec5c30c1ad1b1b1c8fc"
@@ -2861,6 +2930,10 @@
     },
     {
       "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "reviewed_final": {
+        "call_count": 31,
+        "diagnostic_digest": "62ea61e3ba363d516a6e"
+      },
       "starting": {
         "call_count": 31,
         "diagnostic_digest": "62ea61e3ba363d516a6e"
@@ -2868,12 +2941,16 @@
     },
     {
       "path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "84a766671e679a7f5287"
+      },
       "starting": {
         "call_count": 1,
         "diagnostic_digest": "f90a373ef5fcc81a8c1c"
       }
     }
   ],
-  "review_status": "planned",
+  "review_status": "reviewed",
   "schema_version": 1
 }

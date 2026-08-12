@@ -1061,10 +1061,22 @@ def _task_15103_manifest_pair_at(revision: str, path: str) -> tuple[int, str]:
 
 @lru_cache(maxsize=1)
 def _task_15103_complete_history(planning_base: str) -> dict[str, Any]:
-    """Reconstruct every owner transition independently of ledger provenance."""
-    stored_inventory = json.loads(
-        diagnostic_inventory.INVENTORY_PATH.read_text(encoding="utf-8")
+    """Reconstruct every owner transition independently of ledger provenance.
+
+    The stored baseline is read from the immutable ``recorded_base`` tree,
+    not the live manifest: the incident's history is a fixed fact, and Task
+    7's regeneration rewrites the live file — reading it here would send the
+    stored-revision scan hunting for post-repair populations that exist in
+    no dev-reachable revision.
+    """
+    stored_manifest_source = _task_15103_git_source(
+        TASK_15103_RECORDED_BASE,
+        "Docs/security/production-diagnostic-inventory.json",
     )
+    assert stored_manifest_source is not None, (
+        "recorded_base must carry the stored production manifest"
+    )
+    stored_inventory = json.loads(stored_manifest_source)
     stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
     histories: dict[str, list[tuple[str, str]]] = {}
     for path in TASK_15103_OWNER_STARTING:
@@ -1559,7 +1571,7 @@ def _task_15103_claim_group_transitions(
 
 
 def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
-    """Tie the planned ledger to canonical AST populations and Git changes."""
+    """Tie the ledger to canonical AST populations and Git changes."""
     _task_15103_validate_review_ledger(ledger)
     planning_base = ledger["incident"]["planning_base"]
     stored_inventory = json.loads(
@@ -1570,16 +1582,23 @@ def _task_15103_validate_canonical_reconciliation(ledger: Any) -> None:
         stored_inventory["persistent_sink_topology"]
         == current_inventory["persistent_sink_topology"]
     )
-    stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
-    current_rows = {row["path"]: row for row in current_inventory["owners"]}
-    changed_paths = {
-        path
-        for path in set(stored_rows) | set(current_rows)
-        if stored_rows.get(path) != current_rows.get(path)
-    }
-    assert changed_paths == set(TASK_15103_OWNER_STARTING), (
-        "canonical inventory delta must contain the exact 19-owner path set"
-    )
+    if ledger["review_status"] == "planned":
+        # While planned, the checked manifest is deliberately stale: the
+        # incident IS the stored-to-generated delta, and it must span the
+        # exact 19-owner set. Once reviewed, the manifest is regenerated and
+        # the stored-vs-live comparison is owned by
+        # test_task_15103_reviewed_final_state_is_ledger_exact against the
+        # real (unforged) inventory.
+        stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
+        current_rows = {row["path"]: row for row in current_inventory["owners"]}
+        changed_paths = {
+            path
+            for path in set(stored_rows) | set(current_rows)
+            if stored_rows.get(path) != current_rows.get(path)
+        }
+        assert changed_paths == set(TASK_15103_OWNER_STARTING), (
+            "canonical inventory delta must contain the exact 19-owner path set"
+        )
     history = _task_15103_complete_history(planning_base)
 
     groups_by_owner: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1718,7 +1737,7 @@ def _task_15103_checkpoint_evidence(seed: str) -> dict[str, Any]:
     }
 
 
-def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
+def test_task_15103_review_ledger_canonical_schema_and_arithmetic(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
@@ -1741,7 +1760,9 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
 
     _task_15103_validate_canonical_reconciliation(ledger)
 
-    assert ledger["review_status"] == "planned"
+    # Task 7 flipped the lifecycle: the checked-in ledger is now reviewed,
+    # and regressing it to planned would re-open the incident.
+    assert ledger["review_status"] == "reviewed"
     starting = {
         owner["path"]: (
             owner["starting"]["call_count"],
@@ -1772,6 +1793,78 @@ def test_task_15103_review_ledger_canonical_planned_schema_and_arithmetic(
     assert reconciled == TASK_15103_EXPECTED_ATOM_MULTIPLICITY
     assert sum(pair[0] for pair in reconciled.values()) == 76
     assert sum(pair[1] for pair in reconciled.values()) == 91
+
+
+def test_task_15103_reviewed_final_state_is_ledger_exact() -> None:
+    """Task 7 fail-close: live source equals the ledger's reviewed end state.
+
+    Three bindings, each against the REAL inventory (no monkeypatched
+    candidates): the checked manifest equals the regenerated inventory, every
+    owner's ``reviewed_final`` evidence equals live source, and each owner's
+    live semantic population equals its recorded baseline population plus
+    exactly the ledger's net proposed-minus-removed atom multiset. A repair
+    that drifted from a frozen group contract, an unledgered new diagnostic,
+    or a reverted repair all fail here by digest or by multiset.
+    """
+    ledger = json.loads(TASK_15103_REVIEW_PATH.read_text(encoding="utf-8"))
+    assert ledger["review_status"] == "reviewed", (
+        "the checked-in ledger must stay reviewed after Task 7"
+    )
+    stored_inventory = json.loads(
+        diagnostic_inventory.INVENTORY_PATH.read_text(encoding="utf-8")
+    )
+    current_inventory = diagnostic_inventory.build_inventory()
+    assert (
+        stored_inventory["persistent_sink_topology"]
+        == current_inventory["persistent_sink_topology"]
+    )
+    stored_rows = {row["path"]: row for row in stored_inventory["owners"]}
+    current_rows = {row["path"]: row for row in current_inventory["owners"]}
+    assert stored_rows == current_rows, (
+        "the checked manifest must equal the regenerated live inventory"
+    )
+    for owner in ledger["owners"]:
+        path = owner["path"]
+        live = current_rows[path]
+        assert (live["call_count"], live["diagnostic_digest"]) == (
+            owner["reviewed_final"]["call_count"],
+            owner["reviewed_final"]["diagnostic_digest"],
+        ), f"{path} reviewed_final evidence must match live source"
+
+    history = _task_15103_complete_history(ledger["incident"]["planning_base"])
+    groups_by_owner: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for group in ledger["change_groups"]:
+        groups_by_owner[group["owner_path"]].append(group)
+    for owner in ledger["owners"]:
+        path = owner["path"]
+        recorded, _details = _task_15103_population_and_details_at(
+            history["recorded_revisions"][path], path
+        )
+        net: Counter[str] = Counter()
+        net.update(
+            _task_15103_group_atom_counter(groups_by_owner[path], "proposed_surviving")
+        )
+        net.subtract(_task_15103_group_atom_counter(groups_by_owner[path], "removed"))
+        live_population, _live_details = _task_15103_population(
+            tuple(
+                discover_diagnostic_calls(
+                    (REPO_ROOT / path).read_text(encoding="utf-8"), module=path
+                )
+            )
+        )
+        # Per-digest identity: live == max(0, recorded + net). The clamp is
+        # exact, not lenient: a drift-INTRODUCED unsafe atom appears in its
+        # group only as a removal (its introduction is recorded as a Git
+        # transition, not an atom), so recorded+net lands at -1 for exactly
+        # those digests and the reviewed final state must hold zero of them.
+        for digest in sorted(set(recorded) | set(net) | set(live_population)):
+            expected_count = max(0, recorded.get(digest, 0) + net.get(digest, 0))
+            assert live_population.get(digest, 0) == expected_count, (
+                f"{path} digest {digest[:16]} count "
+                f"{live_population.get(digest, 0)} != reviewed expectation "
+                f"{expected_count} (recorded {recorded.get(digest, 0)}, "
+                f"ledger net {net.get(digest, 0)})"
+            )
 
 
 def test_task_15103_review_ledger_canonical_provenance_revisions_exist() -> None:

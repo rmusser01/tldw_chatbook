@@ -22,10 +22,10 @@ Latest-dev stop-gate revalidation on exact `origin/dev` `82b595049d97836482c118c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Unsafe private values or exception details in the recorded delta are repaired without changing unrelated production behavior
-- [ ] #2 The persistent-diagnostic inventory is regenerated with only reviewed owner changes and unchanged six-file sink topology
-- [ ] #3 The focused architecture checker and regression coverage pass without constructing a test application
-- [ ] #4 Every generated-versus-stored delta for the recorded 19 owner paths is reviewed under ADR-029
+- [x] #1 Unsafe private values or exception details in the recorded delta are repaired without changing unrelated production behavior
+- [x] #2 The persistent-diagnostic inventory is regenerated with only reviewed owner changes and unchanged six-file sink topology
+- [x] #3 The focused architecture checker and regression coverage pass without constructing a test application
+- [x] #4 Every generated-versus-stored delta for the recorded 19 owner paths is reviewed under ADR-029
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,3 +58,52 @@ ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 Reason: this task enforces the existing ADR-029 privacy boundary without
 changing persistent-sink ownership, storage, or the metadata policy.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Resumed after the Task-1 evidence phase (ledger schema + forgery matrix,
+commits `93341871a..3b663504a`) with the execution order inverted: production
+repairs first, one manifest regeneration at the end, instead of re-freezing
+the boundary against every dev advance.
+
+**Repairs (Tasks 3-6 equivalent, four commits):** all 43 metadata-repair
+groups across 12 files were repaired to their frozen ledger contracts —
+`logger.<method>("<fixed_event>")` plus only ledger-permitted expressions; no
+exception capture, no interpolated ids, no `.bind()` fields. The 12
+justified-deletion groups were verified already-resolved in dev history, and
+G091's proposed intermediate is consumed by reviewed-safe G062 (chain nets
+out; no edit). Every repaired call was digest-verified against
+`proposed_surviving` with the gate's own extractor. Six test files that had
+codified the leaky shapes (structured compaction/decision extras, value-named
+RAG warnings, crash-guard widget repr) were updated to the event-only
+contracts. In `session.py`/`library_screen.py` the repaired calls use an
+unbound loguru alias because the frozen contracts carry no fields — the
+file-level `module=` bind is folded into digests by the extractor, and
+nothing in Logging_Config consumes that extra.
+
+**Close-out (Task 7 equivalent):** ledger flipped to `reviewed` with
+mechanically derived `final_base` + per-owner `reviewed_final` pairs;
+manifest regenerated once — exactly the 19 recorded owner rows changed,
+sinks byte-equal, totals 485→488 / 1,144→1,180 / 6,962→6,990 as recorded.
+The canonical node is now status-aware (stored-vs-live delta is a
+planned-lifecycle assertion), and a new
+`test_task_15103_reviewed_final_state_is_ledger_exact` node fail-closes the
+final state against the real inventory: manifest == live, `reviewed_final`
+== live, and per-digest `live == max(0, recorded + ledger net)` — the clamp
+is exact because drift-introduced atoms appear in groups only as removals.
+
+**Deviations from the written plan:** the per-batch privacy-sentinel test
+files and the five apply_patch manifest mutants were not built; final-state
+enforcement is carried by the reviewed-state node + the existing forgery
+matrix instead. Task 2's full alias/scoping extractor hardening remains open
+(tracked in the plan) — the known control-flow alias gap is documented and
+did not affect any of the 101 ledger groups.
+
+**Defect found in the shipped Task-1 gate:** `_task_15103_complete_history`
+read its stored baseline from the LIVE manifest, so the first legitimate
+regeneration sent the stored-revision scan hunting for post-repair
+populations that exist in no dev-reachable revision (and onto a
+conflict-markered historical blob). It now reads the immutable
+`recorded_base` tree, which matches the stale baseline on all 19 owner rows.
+<!-- SECTION:NOTES:END -->
