@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence, cast
@@ -1637,6 +1637,137 @@ def require_artifact_save_supported(
         )
 
 
+_PROMPT_SELECTION_SQLITE_MAX_INTEGER = 2**63 - 1
+_PROMPT_SELECTION_ARTIFACT_TYPES = frozenset({"prompt", "recipe"})
+
+
+def _require_prompt_selection_integer(value: object, *, field_name: str) -> None:
+    if type(value) is not int or not 1 <= value <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER:
+        raise ValueError(f"{field_name} must be a positive integer in SQLite range.")
+
+
+def _require_prompt_selection_title(value: object) -> None:
+    if type(value) is not str or not value.strip():
+        raise ValueError("title must be non-empty exact text.")
+
+
+def _require_prompt_selection_artifact_type(value: object) -> None:
+    if type(value) is not str or value not in _PROMPT_SELECTION_ARTIFACT_TYPES:
+        raise ValueError("artifact_type must be exactly 'prompt' or 'recipe'.")
+
+
+@dataclass(frozen=True, slots=True)
+class PromptSelectionEntry:
+    """One Prompt identity and version captured at selection time.
+
+    Attributes:
+        local_id: Positive SQLite-range local Prompt row ID.
+        expected_version: Positive version captured when selected.
+        title: Non-empty literal Prompt or Recipe title captured when selected.
+        artifact_type: Exact supported artifact type.
+    """
+
+    local_id: int = dataclass_field(repr=False)
+    expected_version: int = dataclass_field(repr=False)
+    title: str = dataclass_field(repr=False)
+    artifact_type: ArtifactType = dataclass_field(repr=False)
+
+    def __post_init__(self) -> None:
+        _require_prompt_selection_integer(self.local_id, field_name="local_id")
+        _require_prompt_selection_integer(
+            self.expected_version, field_name="expected_version"
+        )
+        _require_prompt_selection_title(self.title)
+        _require_prompt_selection_artifact_type(self.artifact_type)
+
+
+@dataclass(frozen=True, slots=True)
+class PromptSelectionBasket:
+    """Immutable cross-page Prompt selection with semantic generations.
+
+    Attributes:
+        entries: Selected entries in selection order.
+        generation: Non-negative counter advanced once per semantic change.
+    """
+
+    entries: tuple[PromptSelectionEntry, ...] = dataclass_field(default=(), repr=False)
+    generation: int = dataclass_field(default=0, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.entries) is not tuple:
+            raise TypeError("entries must be an exact tuple.")
+        if any(type(entry) is not PromptSelectionEntry for entry in self.entries):
+            raise TypeError("entries must contain exact PromptSelectionEntry values.")
+        local_ids = tuple(entry.local_id for entry in self.entries)
+        if len(set(local_ids)) != len(local_ids):
+            raise ValueError("entries must use unique local IDs.")
+        if type(self.generation) is not int or self.generation < 0:
+            raise ValueError("generation must be a non-negative integer.")
+
+    @property
+    def canonical_entries(self) -> tuple[PromptSelectionEntry, ...]:
+        """Return selected entries in deterministic ascending local-ID order."""
+        return tuple(sorted(self.entries, key=lambda entry: entry.local_id))
+
+    def toggle(self, entry: PromptSelectionEntry) -> PromptSelectionBasket:
+        """Toggle one exact entry, capturing it only when newly selected.
+
+        Args:
+            entry: Valid selection entry for the activated page row.
+
+        Returns:
+            New selection state with one semantic generation change.
+
+        Raises:
+            TypeError: If ``entry`` is not an exact selection entry.
+        """
+        if type(entry) is not PromptSelectionEntry:
+            raise TypeError("entry must be an exact PromptSelectionEntry.")
+        for index, selected in enumerate(self.entries):
+            if selected.local_id == entry.local_id:
+                return PromptSelectionBasket(
+                    self.entries[:index] + self.entries[index + 1 :],
+                    self.generation + 1,
+                )
+        return PromptSelectionBasket(self.entries + (entry,), self.generation + 1)
+
+    def select_page(
+        self, page: tuple[PromptSelectionEntry, ...]
+    ) -> PromptSelectionBasket:
+        """Add valid page entries without replacing prior captured values.
+
+        Args:
+            page: Exact tuple of selection entries from one settled page.
+
+        Returns:
+            New state when at least one identity is added, otherwise this state.
+
+        Raises:
+            TypeError: If the page tuple or any entry has the wrong exact type.
+        """
+        if type(page) is not tuple:
+            raise TypeError("page must be an exact tuple.")
+        if any(type(entry) is not PromptSelectionEntry for entry in page):
+            raise TypeError("page must contain exact PromptSelectionEntry values.")
+        selected_ids = {entry.local_id for entry in self.entries}
+        additions: list[PromptSelectionEntry] = []
+        for entry in page:
+            if entry.local_id not in selected_ids:
+                additions.append(entry)
+                selected_ids.add(entry.local_id)
+        if not additions:
+            return self
+        return PromptSelectionBasket(
+            self.entries + tuple(additions), self.generation + 1
+        )
+
+    def clear(self) -> PromptSelectionBasket:
+        """Clear all entries, advancing only when selection actually changes."""
+        if not self.entries:
+            return self
+        return PromptSelectionBasket(generation=self.generation + 1)
+
+
 @dataclass(frozen=True)
 class PromptListRow:
     """One row in the Library prompts canvas's list view.
@@ -1649,6 +1780,8 @@ class PromptListRow:
             comment for why keywords are never shown here) -- with either
             part (no details, or no timestamp) omitted, along with its
             separator.
+        version: Positive Prompt version exposed by the page row.
+        checked: Whether this Prompt identity is in the current selection.
     """
 
     prompt_id: int
@@ -1658,6 +1791,13 @@ class PromptListRow:
     type_label: str = "Prompt"
     lane_summary: str = "Empty"
     source_label: str = "Local"
+    version: int = 1
+    checked: bool = False
+
+    def __post_init__(self) -> None:
+        _require_prompt_selection_integer(self.version, field_name="version")
+        if type(self.checked) is not bool:
+            raise TypeError("checked must be a bool.")
 
 
 @dataclass(frozen=True)
@@ -1697,11 +1837,29 @@ class PromptsListState:
         count: ``len(rows)``.
         sort: The sort mode used to build ``rows`` (``"newest"`` or
             ``"name"``), echoed back for the caller's toggle label.
+        select_mode: Whether selection controls and checked rows are active.
+        total_selected: Number selected across every page and search.
+        selected_on_page: Number selected on the current projected page.
     """
 
     rows: tuple[PromptListRow, ...]
     count: int
     sort: str
+    select_mode: bool = False
+    total_selected: int = 0
+    selected_on_page: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.select_mode) is not bool:
+            raise TypeError("select_mode must be a bool.")
+        for field_name, value in (
+            ("total_selected", self.total_selected),
+            ("selected_on_page", self.selected_on_page),
+        ):
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer.")
+        if self.selected_on_page > self.total_selected:
+            raise ValueError("selected_on_page cannot exceed total_selected.")
 
 
 @dataclass(frozen=True)
@@ -1869,9 +2027,26 @@ def _resolve_editor_prompt_id(detail: Mapping[str, Any]) -> int | None:
     return _to_int(detail.get("id"))
 
 
-def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
-    prompt_id = _to_int(record.get("local_id")) or _to_int(record.get("id"))
-    if prompt_id is None:
+def _row(
+    record: Mapping[str, Any],
+    *,
+    now: datetime,
+    checked_ids: frozenset[int] = frozenset(),
+) -> PromptListRow | None:
+    raw_prompt_id = record.get("local_id") if "local_id" in record else record.get("id")
+    version = record.get("version")
+    name = record.get("name")
+    raw_artifact_type = record.get("artifact_type", "prompt")
+    if (
+        type(raw_prompt_id) is not int
+        or not 1 <= raw_prompt_id <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
+        or type(version) is not int
+        or not 1 <= version <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
+        or type(name) is not str
+        or not name.strip()
+        or type(raw_artifact_type) is not str
+        or raw_artifact_type not in _PROMPT_SELECTION_ARTIFACT_TYPES
+    ):
         return None
     # Task 8b D2/U1: surfaces the prompt's PURPOSE (details) instead of
     # `author · age` -- author (and keywords, never present on list rows
@@ -1881,9 +2056,7 @@ def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
     raw_timestamp = _timestamp_raw(record)
     age = format_console_relative_age(raw_timestamp, now=now) if raw_timestamp else ""
     secondary = " · ".join(part for part in (details, age) if part)
-    artifact_type: ArtifactType = (
-        "recipe" if record.get("artifact_type") == "recipe" else "prompt"
-    )
+    artifact_type = cast(ArtifactType, raw_artifact_type)
     has_system = record.get("has_system_prompt")
     if not isinstance(has_system, bool):
         has_system = bool(_raw_text(record.get("system_prompt")).strip())
@@ -1900,13 +2073,15 @@ def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
         lane_summary = "Empty"
     source = _text(record.get("backend")) or "local"
     return PromptListRow(
-        prompt_id=prompt_id,
-        name=_text(record.get("name")),
+        prompt_id=raw_prompt_id,
+        name=name.strip(),
         secondary=secondary,
         artifact_type=artifact_type,
         type_label=artifact_type.title(),
         lane_summary=lane_summary,
         source_label=source.title(),
+        version=version,
+        checked=raw_prompt_id in checked_ids,
     )
 
 
@@ -1954,24 +2129,49 @@ def build_prompts_list_state(
 
 
 def build_prompt_browse_list_state(
-    result: PromptBrowseResult, *, now: datetime
+    result: PromptBrowseResult,
+    *,
+    now: datetime,
+    selection: PromptSelectionBasket | None = None,
+    select_mode: bool = False,
 ) -> PromptsListState:
     """Project an exact service-backed page without filtering or sorting it.
 
     Args:
         result: Immutable browse result whose page order is authoritative.
         now: Reference time used for row-relative timestamps.
+        selection: Immutable cross-page selection to project into page rows.
+        select_mode: Whether the list should expose selection-mode controls.
 
     Returns:
-        Display rows in the service-provided order with normalized local ids.
+        Display rows in service order with exact versions and selection counts.
+
+    Raises:
+        TypeError: If ``selection`` or ``select_mode`` has the wrong type.
     """
+    if selection is None:
+        selected_entries: tuple[PromptSelectionEntry, ...] = ()
+    elif type(selection) is PromptSelectionBasket:
+        selected_entries = selection.entries
+    else:
+        raise TypeError("selection must be a PromptSelectionBasket or None.")
+    if type(select_mode) is not bool:
+        raise TypeError("select_mode must be a bool.")
+    selected_ids = frozenset(entry.local_id for entry in selected_entries)
     rows = tuple(
-        row for row in (_row(record, now=now) for record in result.items) if row
+        row
+        for row in (
+            _row(record, now=now, checked_ids=selected_ids) for record in result.items
+        )
+        if row
     )
     return PromptsListState(
         rows=rows,
         count=len(rows),
         sort="name" if result.scope.sort_by == "name" else "newest",
+        select_mode=select_mode,
+        total_selected=len(selected_entries),
+        selected_on_page=sum(row.checked for row in rows),
     )
 
 

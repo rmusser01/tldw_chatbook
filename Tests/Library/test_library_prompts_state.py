@@ -13,6 +13,8 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptArtifactDraft,
     PromptHistoryRestoreOutcome,
     PromptListRow,
+    PromptSelectionBasket,
+    PromptSelectionEntry,
     apply_prompt_history_count,
     apply_prompt_history_page,
     apply_prompt_history_preview,
@@ -55,6 +57,19 @@ from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
 
+
+class _PromptSelectionInt(int):
+    """An integer lookalike that strict selection boundaries must reject."""
+
+
+class _PromptSelectionStr(str):
+    """A text lookalike that strict selection boundaries must reject."""
+
+
+class _PromptSelectionTuple(tuple):
+    """A tuple lookalike that strict selection boundaries must reject."""
+
+
 PROMPT_A = {
     "id": 1,
     "name": "Summarize",
@@ -81,6 +96,7 @@ PROMPT_C = {
     "details": "Ideas for the offsite",
     "keywords": ["kw1", "kw2"],
     "last_modified": "2026-07-07T11:00:00+00:00",
+    "version": 1,
 }
 
 
@@ -957,12 +973,14 @@ def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
                     "id": "local:prompt:uuid-z",
                     "local_id": 9,
                     "name": "Zulu",
+                    "version": 5,
                     "last_modified": datetime(2020, 1, 1, tzinfo=timezone.utc),
                 },
                 {
                     "id": "local:prompt:uuid-a",
                     "local_id": 4,
                     "name": "Alpha",
+                    "version": 2,
                     "last_modified": "2030-01-01T00:00:00+00:00",
                 },
             ],
@@ -975,13 +993,285 @@ def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
 
     state = prompts_state_module.build_prompt_browse_list_state(result, now=NOW)
 
-    assert [(row.prompt_id, row.name) for row in state.rows] == [
-        (9, "Zulu"),
-        (4, "Alpha"),
+    assert [(row.prompt_id, row.name, row.version) for row in state.rows] == [
+        (9, "Zulu", 5),
+        (4, "Alpha", 2),
     ]
     assert state.count == 2
     assert state.sort == "name"
     assert result.items[0]["last_modified"] == "2020-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "field"),
+    [
+        (
+            {
+                "local_id": True,
+                "expected_version": 1,
+                "title": "Title",
+                "artifact_type": "prompt",
+            },
+            "local_id",
+        ),
+        (
+            {
+                "local_id": _PromptSelectionInt(1),
+                "expected_version": 1,
+                "title": "Title",
+                "artifact_type": "prompt",
+            },
+            "local_id",
+        ),
+        (
+            {
+                "local_id": 2**63,
+                "expected_version": 1,
+                "title": "Title",
+                "artifact_type": "prompt",
+            },
+            "local_id",
+        ),
+        (
+            {
+                "local_id": 1,
+                "expected_version": 0,
+                "title": "Title",
+                "artifact_type": "prompt",
+            },
+            "expected_version",
+        ),
+        (
+            {
+                "local_id": 1,
+                "expected_version": False,
+                "title": "Title",
+                "artifact_type": "prompt",
+            },
+            "expected_version",
+        ),
+        (
+            {
+                "local_id": 1,
+                "expected_version": 1,
+                "title": "",
+                "artifact_type": "prompt",
+            },
+            "title",
+        ),
+        (
+            {
+                "local_id": 1,
+                "expected_version": 1,
+                "title": _PromptSelectionStr("Title"),
+                "artifact_type": "prompt",
+            },
+            "title",
+        ),
+        (
+            {
+                "local_id": 1,
+                "expected_version": 1,
+                "title": "Title",
+                "artifact_type": "Prompt",
+            },
+            "artifact_type",
+        ),
+    ],
+)
+def test_selection_entry_rejects_malformed_identity_and_display_fields(kwargs, field):
+    with pytest.raises((TypeError, ValueError), match=field):
+        PromptSelectionEntry(**kwargs)
+
+
+@pytest.mark.parametrize("entries", [[], _PromptSelectionTuple(())])
+def test_selection_basket_requires_an_exact_tuple(entries):
+    entry = PromptSelectionEntry(1, 1, "One", "prompt")
+    payload = entries if entries else type(entries)((entry,))
+
+    with pytest.raises(TypeError, match="entries"):
+        PromptSelectionBasket(entries=payload)
+
+
+def test_selection_basket_accumulates_across_pages_and_sorts_canonical_entries():
+    empty = PromptSelectionBasket()
+    first = empty.select_page(
+        (
+            PromptSelectionEntry(9, 2, "Nine", "prompt"),
+            PromptSelectionEntry(3, 4, "Three", "recipe"),
+        )
+    )
+    second = first.select_page((PromptSelectionEntry(5, 7, "Five", "prompt"),))
+
+    assert empty.entries == ()
+    assert [entry.local_id for entry in second.entries] == [9, 3, 5]
+    assert [entry.local_id for entry in second.canonical_entries] == [3, 5, 9]
+    assert first.generation == 1
+    assert second.generation == 2
+
+
+def test_selection_select_page_preserves_existing_captured_version():
+    basket = PromptSelectionBasket()
+    selected = basket.toggle(PromptSelectionEntry(7, 3, "Literal [name]", "recipe"))
+
+    same = selected.select_page((PromptSelectionEntry(7, 99, "new", "prompt"),))
+
+    assert same is selected
+    assert same.entries[0].expected_version == 3
+    assert same.entries[0].title == "Literal [name]"
+    assert same.entries[0].artifact_type == "recipe"
+    assert same.generation == selected.generation
+    assert same.canonical_entries == selected.entries
+
+
+def test_selection_toggle_off_then_on_captures_the_newer_row():
+    old = PromptSelectionEntry(7, 3, "Old", "prompt")
+    newer = PromptSelectionEntry(7, 8, "New", "recipe")
+    selected = PromptSelectionBasket().toggle(old)
+
+    removed = selected.toggle(newer)
+    reselected = removed.toggle(newer)
+
+    assert removed.entries == ()
+    assert reselected.entries == (newer,)
+    assert reselected.generation == selected.generation + 2
+
+
+def test_selection_select_page_suppresses_duplicates_without_generation_churn():
+    entry = PromptSelectionEntry(7, 3, "Seven", "prompt")
+    selected = PromptSelectionBasket().select_page((entry, entry))
+
+    same = selected.select_page((PromptSelectionEntry(7, 9, "New", "recipe"),))
+
+    assert selected.entries == (entry,)
+    assert selected.generation == 1
+    assert same is selected
+
+
+def test_selection_clear_changes_generation_only_when_nonempty():
+    empty = PromptSelectionBasket()
+    selected = empty.toggle(PromptSelectionEntry(7, 3, "Seven", "prompt"))
+    cleared = selected.clear()
+
+    assert empty.clear() is empty
+    assert cleared.entries == ()
+    assert cleared.generation == selected.generation + 1
+    assert cleared.clear() is cleared
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        [PromptSelectionEntry(1, 1, "One", "prompt")],
+        _PromptSelectionTuple((PromptSelectionEntry(1, 1, "One", "prompt"),)),
+        (object(),),
+    ],
+)
+def test_selection_select_page_rejects_malformed_page_shapes(page):
+    basket = PromptSelectionBasket()
+
+    with pytest.raises(TypeError, match="page"):
+        basket.select_page(page)
+    assert basket.entries == ()
+
+
+def test_selection_browse_projection_exposes_checked_versions_and_page_counts():
+    scope = prompts_state_module.PromptBrowseScope(page_size=2)
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:prompt:a",
+                    "local_id": 7,
+                    "name": "Literal [name]",
+                    "version": 99,
+                    "artifact_type": "recipe",
+                },
+                {
+                    "id": "local:prompt:b",
+                    "local_id": 9,
+                    "name": "Nine",
+                    "version": 2,
+                    "artifact_type": "prompt",
+                },
+            ],
+            "total_items": 2,
+            "total_pages": 1,
+            "current_page": 1,
+            "per_page": 2,
+        },
+    )
+    selection = PromptSelectionBasket(
+        entries=(
+            PromptSelectionEntry(7, 3, "Literal [name]", "recipe"),
+            PromptSelectionEntry(11, 4, "Hidden", "prompt"),
+        ),
+        generation=2,
+    )
+    before = selection.entries
+
+    state = prompts_state_module.build_prompt_browse_list_state(
+        result, now=NOW, selection=selection, select_mode=True
+    )
+
+    assert [(row.prompt_id, row.version, row.checked) for row in state.rows] == [
+        (7, 99, True),
+        (9, 2, False),
+    ]
+    assert state.select_mode is True
+    assert state.total_selected == 2
+    assert state.selected_on_page == 1
+    assert selection.entries is before
+    assert selection.entries[0].expected_version == 3
+    assert selection.generation == 2
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"local_id": True, "name": "Bad id", "version": 1},
+        {"local_id": 2, "name": "Missing version"},
+        {"local_id": 3, "name": "Bad version", "version": 0},
+        {"local_id": 4, "name": "", "version": 1},
+        {
+            "local_id": 5,
+            "name": "Bad type",
+            "version": 1,
+            "artifact_type": "unknown",
+        },
+    ],
+)
+def test_selection_browse_projection_drops_malformed_page_rows(malformed):
+    result = _direct_prompt_browse_result(
+        [{"local_id": 1, "name": "Valid", "version": 2}, malformed],
+        total_items=2,
+    )
+
+    state = prompts_state_module.build_prompt_browse_list_state(
+        result, now=NOW, selection=PromptSelectionBasket(), select_mode=True
+    )
+
+    assert [(row.prompt_id, row.version) for row in state.rows] == [(1, 2)]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "field"),
+    [
+        ({"prompt_id": 1, "name": "One", "secondary": "", "version": 0}, "version"),
+        (
+            {"prompt_id": 1, "name": "One", "secondary": "", "version": True},
+            "version",
+        ),
+        (
+            {"prompt_id": 1, "name": "One", "secondary": "", "checked": 1},
+            "checked",
+        ),
+    ],
+)
+def test_selection_list_row_rejects_invalid_version_or_checked(kwargs, field):
+    with pytest.raises((TypeError, ValueError), match=field):
+        PromptListRow(**kwargs)
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():
@@ -1046,6 +1336,7 @@ def test_list_state_secondary_shows_details_and_age():
         name="Summarize",
         secondary="Summarizes text · 3m",
         lane_summary="System + User",
+        version=2,
     )
 
 
