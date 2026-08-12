@@ -125,7 +125,22 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
     """
 
     # Reactive properties
-    characters = reactive([], recompose=True)
+    #
+    # `characters` intentionally has NO `recompose=True`: `compose()` below
+    # never reads `self.characters` (the table is built empty, with only
+    # its columns, and populated imperatively by `_refresh_character_table`,
+    # called from `watch_characters`). A `recompose=True` here was
+    # previously a silent no-op only because the same-object self-assignment
+    # bug (task-15479) meant the reactive never actually fired; once fixed
+    # to fire correctly (e.g. via `mutate_reactive`), `recompose=True` would
+    # tear down and rebuild the whole widget subtree -- discarding the rows
+    # `_refresh_character_table` just added (nothing repopulates them after
+    # a recompose) and any in-progress UI state (selected voice, sample
+    # text, Collapsible expand state) -- on every single add/remove.
+    # Confirmed live: with `recompose=True` restored, a fresh
+    # `#character-table` query after settling reports `row_count == 0` even
+    # though `self.characters` holds the added item.
+    characters = reactive([])
     selected_character_index = reactive(-1)
     voice_assignments = reactive({})
     provider = reactive("openai")
@@ -452,7 +467,13 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
             description="Manually added character",
         )
         self.characters.append(new_character)
-        self.characters = self.characters  # Trigger reactive update
+        # `characters` holds a mutable list; assigning it back to itself
+        # (the previous approach) compares equal by identity and never
+        # fires `watch_characters`, so the table would silently go stale
+        # (task-15479). `mutate_reactive` is the idiom this codebase already
+        # uses for forcing a mutated-in-place reactive to re-run its watcher
+        # (see settings_screen.py's `_refresh_settings_workspaces_pane`).
+        self.mutate_reactive(CharacterVoiceWidget.characters)
 
     def _remove_selected_character(self) -> None:
         """Remove the selected character"""
@@ -462,7 +483,9 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
             if character.name in self.voice_assignments:
                 del self.voice_assignments[character.name]
 
-            self.characters = self.characters  # Trigger reactive update
+            # Same dead-self-assignment bug as `_add_character_manually`
+            # above (task-15479): force the watcher via `mutate_reactive`.
+            self.mutate_reactive(CharacterVoiceWidget.characters)
             self.selected_character_index = min(
                 self.selected_character_index, len(self.characters) - 1
             )
@@ -471,7 +494,14 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
     def _reset_all_voices(self) -> None:
         """Reset all voice assignments to narrator"""
         self.voice_assignments.clear()
-        self.voice_assignments = self.voice_assignments  # Trigger reactive
+        # Same dead-self-assignment shape as `characters` above (task-15479
+        # AC #2 grep sweep). No `watch_voice_assignments` exists today, so
+        # this was a pure no-op either way; `mutate_reactive` is the correct
+        # idiom regardless, and keeps this reactive honest if a watcher is
+        # ever added later. The explicit `_refresh_character_table()` /
+        # `_update_assignment_summary()` calls right below are what actually
+        # keep the UI in sync today.
+        self.mutate_reactive(CharacterVoiceWidget.voice_assignments)
         self._refresh_character_table()
         self._update_assignment_summary()
         self.app.notify("All voices reset to narrator", severity="information")
