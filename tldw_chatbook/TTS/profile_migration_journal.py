@@ -60,6 +60,20 @@ PROFILE_MIGRATION_ROLLBACK_LEAVES: Final = {
 }
 
 
+def _canonical_migration_leaves(
+    slot: ProfileMigrationPublicationSlot,
+    target: str,
+) -> tuple[str, str]:
+    """Return the only candidate and rollback leaves authorized for a slot."""
+
+    if type(slot) is not ProfileMigrationPublicationSlot or type(target) is not str:
+        raise ValueError
+    return (
+        PROFILE_MIGRATION_CANDIDATE_LEAVES[slot],
+        PROFILE_MIGRATION_ROLLBACK_LEAVES[slot],
+    )
+
+
 class _OpaqueAuthority:
     """Refuse generic serialization and copying of private authority."""
 
@@ -583,7 +597,9 @@ def _validate_recovery_rows(
             if value in leaves:
                 raise ValueError
             leaves.add(value)
-        if row.rollback != f".{row.target}.{row.slot.value}.rollback":
+        if (row.candidate, row.rollback) != _canonical_migration_leaves(
+            row.slot, row.target
+        ):
             raise ValueError
 
 

@@ -70,7 +70,7 @@ def _publication_fixture(
     for label in slots:
         slot, candidate_version, prior_version, target_name = slot_values[label]
         target = tmp_path / target_name
-        candidate = tmp_path / f".{label}.candidate.sqlite3"
+        candidate = tmp_path / publication.PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]
         _store(target, version=prior_version, marker=f"old-{label}")
         _store(candidate, version=candidate_version, marker=f"new-{label}")
         artifacts.append(
@@ -123,9 +123,12 @@ def _link_then_unlink(source: Path, destination: Path, *, finish: bool) -> None:
 
 
 def _paths(artifact: object, destination: object) -> tuple[Path, Path, Path]:
+    publication, _recovery = _modules()
     candidate = artifact._path
     target = destination._path
-    rollback = target.with_name(f".{target.name}.{artifact._slot.value}.rollback")
+    rollback = target.with_name(
+        publication.PROFILE_MIGRATION_ROLLBACK_LEAVES[artifact._slot]
+    )
     return candidate, target, rollback
 
 
@@ -505,9 +508,13 @@ def test_fresh_backup_destination_recovers_without_inventing_prior(
     publication, recovery = _modules()
     slot = publication.ProfileMigrationPublicationSlot
     active = tmp_path / "profiles.sqlite3"
-    active_candidate = tmp_path / ".active.candidate.sqlite3"
+    active_candidate = (
+        tmp_path / publication.PROFILE_MIGRATION_CANDIDATE_LEAVES[slot.ACTIVE]
+    )
     backup = tmp_path / "profiles.pre-v4.sqlite3"
-    backup_candidate = tmp_path / ".pre-v4.candidate.sqlite3"
+    backup_candidate = (
+        tmp_path / publication.PROFILE_MIGRATION_CANDIDATE_LEAVES[slot.PRE_V4]
+    )
     old_active = _store(active, version=3, marker="old-active")
     expected_active = _store(active_candidate, version=4, marker="new-active")
     expected_backup = _store(backup_candidate, version=3, marker="new-backup")
@@ -529,7 +536,9 @@ def test_fresh_backup_destination_recovers_without_inventing_prior(
     )
     _write_journal(publication, active, artifacts, destinations, phase=phase)
     if phase == "complete":
-        active_rollback = active.with_name(f".{active.name}.active.rollback")
+        active_rollback = active.with_name(
+            publication.PROFILE_MIGRATION_ROLLBACK_LEAVES[slot.ACTIVE]
+        )
         _link_then_unlink(active, active_rollback, finish=True)
         _link_then_unlink(active_candidate, active, finish=True)
         _link_then_unlink(backup_candidate, backup, finish=True)

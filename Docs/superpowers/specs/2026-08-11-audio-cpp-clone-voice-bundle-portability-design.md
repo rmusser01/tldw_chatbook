@@ -359,7 +359,11 @@ each exact journal/candidate/rollback leaf without replacement, wipes and
 fsyncs the pinned regular-file descriptor, and retains that exact owner-only
 `0600` zero-byte inode under one stable tombstone name per finite logical leaf.
 The tombstone set is bounded by the journal and the candidate/rollback leaves
-for the maximum three migration slots and does not grow on replay. Tombstones
+for the maximum three migration slots and does not grow on replay. Candidate
+and rollback authority is closed by slot to
+`.profile-migration-{active|pre-v3|pre-v4}.candidate.sqlite3` and the matching
+`.rollback.sqlite3` leaf. Preparation rejects any other leaf before hashing,
+and journal construction and parsing enforce the same mapping. Tombstones
 contain no profile or journal bytes, are never parsed as recovery authority,
 and are reusable only after exact parent/inode/type/uid/mode/link/zero-length
 and sidecar validation. A foreign, substituted, or nonzero occupant is never

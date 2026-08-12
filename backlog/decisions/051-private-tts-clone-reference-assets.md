@@ -152,6 +152,11 @@ shape bounds these tombstones to one stable leaf for the journal plus one per
 candidate/rollback logical leaf (at most three slots), never one per attempt.
 They are ignored as recovery authority and may be reused only after exact
 inode, owner, mode, type, link-count, zero-length, parent, and sidecar checks.
+A prepared artifact is admitted only under its closed slot leaf
+`.profile-migration-{active|pre-v3|pre-v4}.candidate.sqlite3`; rollback authority
+uses the corresponding `.profile-migration-{slot}.rollback.sqlite3` leaf.
+Noncanonical input is rejected before hashing or journal admission, so caller
+names cannot expand the owned recovery namespace.
 A foreign, substituted, or nonzero holding leaf is preserved and makes cleanup
 boundedly unavailable. This retained zero-byte state is required to avoid a
 racy pathname unlink; it does not weaken best-effort deletion of private bytes.

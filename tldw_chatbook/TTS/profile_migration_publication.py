@@ -19,6 +19,7 @@ from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
     PROFILE_MIGRATION_CANDIDATE_LEAVES,
+    PROFILE_MIGRATION_ROLLBACK_LEAVES,
     PROFILE_MIGRATION_SLOT_SEQUENCES,
     ParsedProfileMigrationJournal,
     ProfileMigrationJournalSlot,
@@ -315,6 +316,8 @@ def prepare_profile_migration_artifact(
         if type(slot) is not ProfileMigrationPublicationSlot:
             raise ValueError
         selected, parent = _prepare_parent(path)
+        if selected.name != PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]:
+            raise ValueError
         file_identity = selected.lstat()
         artifact = PreparedProfileMigrationArtifact(
             _IDENTITY_FACTORY_TOKEN,
@@ -331,28 +334,6 @@ def prepare_profile_migration_artifact(
         if not isinstance(error, Exception):
             raise
         raise _safe_failure() from None
-
-
-def _acquire_profile_migration_candidate_path(
-    parent: str | os.PathLike[str],
-    *,
-    slot: ProfileMigrationPublicationSlot,
-) -> Path:
-    """Acquire one canonical empty candidate, reusing its exact tombstone."""
-
-    if type(slot) is not ProfileMigrationPublicationSlot:
-        raise TypeError
-    directory = lexical_path(parent)
-    selected = directory / PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]
-    selected, parent_identity = _prepare_parent(selected)
-    parent_fd, file_fd, _identity, _authority = open_new_or_reused_private_file(
-        selected,
-        parent_authority=ParentAuthority(parent_identity),
-        tombstone_key=_CANDIDATE_TOMBSTONES[slot],
-    )
-    os.close(file_fd)
-    os.close(parent_fd)
-    return selected
 
 
 def retain_profile_migration_destination(
@@ -442,9 +423,9 @@ def _journal_authority(
             (
                 ProfileMigrationJournalSlot(
                     slot=artifact._slot,
-                    candidate=artifact._path.name,
+                    candidate=PROFILE_MIGRATION_CANDIDATE_LEAVES[artifact._slot],
                     target=destination._path.name,
-                    rollback=f".{destination._path.name}.{artifact._slot.value}.rollback",
+                    rollback=PROFILE_MIGRATION_ROLLBACK_LEAVES[artifact._slot],
                     had_prior=destination._file_identity is not None,
                 ),
                 artifact._file_identity,
@@ -768,6 +749,7 @@ def _claim(
             or artifact._thread_id != get_ident()
             or destination._thread_id != get_ident()
             or artifact._slot is not destination._slot
+            or artifact._path.name != PROFILE_MIGRATION_CANDIDATE_LEAVES[artifact._slot]
             or artifact._slot in seen_slots
             or artifact._path in seen_paths
             or destination._path in seen_paths
@@ -929,7 +911,7 @@ def publish_profile_migration(
                 artifact=artifact,
                 destination=destination,
                 rollback_path=destination._path.with_name(
-                    f".{destination._path.name}.{artifact._slot.value}.rollback"
+                    PROFILE_MIGRATION_ROLLBACK_LEAVES[artifact._slot]
                 ),
                 parent_authority=parent_authority,
             )
