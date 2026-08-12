@@ -4,7 +4,7 @@ title: Honor TLDW_CONFIG_PATH when persisting startup defaults
 status: Done
 assignee: []
 created_date: '2026-08-12 06:35'
-updated_date: '2026-08-12 16:57'
+updated_date: '2026-08-12 17:05'
 labels:
   - config
   - privacy
@@ -45,14 +45,13 @@ Reason: regression-only characterization of the existing effective-config bounda
 
 <!-- SECTION:NOTES:BEGIN -->
 - Regression-only closeout; no production app or config code changed.
-- Commits `ce5cf39d1` and `e6909deb5` add and privacy-harden `Tests/ProductionApp/test_config_profile_isolation.py`. The regression drives the real `TldwCli` from mounted startup through approved quit, wraps the app-module shutdown persistence seam, records an effective-path boolean, and proves the distinct decoy remains byte-identical.
+- The lifecycle regression drives the real `TldwCli` from mounted startup through approved quit, wraps the app-module shutdown persistence symbol, records effective-path selection as a boolean, and proves the distinct decoy remains byte-identical. It delegates to the current production config persistence function rather than copying the seam.
 - The child receives only a minimal process environment plus disposable home/XDG/temp/data locations; model-catalog networking is disabled before import. Diagnostics are limited to booleans, counts, constant messages, and sanitized phase/error labels.
-- Mutation RED: 1 failed after effective-path selection was temporarily forced away from the override; restored named GREEN: 1 passed. The mutation command excluded the ProductionApp parent conftest so the child lifecycle, rather than parent collection setup, observed the mutation. Fresh final focused verification: 4 passed in 5.28s with no warnings.
-- Ruff passed on the new test; `py_compile` passed with output confined to a temporary directory; branch and cached diff checks passed. Scope and privacy review found only the intended design, plan, regression, UAT, TASK-3401.14, lesson, and TASK-15674 files, with no credentials, private source paths, media, build/cache artifacts, or production mutation residue.
-- Commits `15fe69703` and `5c1e15709` correct the UAT and TASK-3401.14 evidence and update the live-verification lesson: fingerprint drift proves mutation, not writer identity. Design and execution are documented in the effective-config isolation spec and plan.
-- Added/modified paths: `Tests/ProductionApp/test_config_profile_isolation.py`; the effective-config design and plan; the ComfyUI H3 UAT; `backlog/docs/lessons-live-verification.md`; TASK-3401.14; and TASK-15674.
+- Mutation evidence before final integration: forcing effective-path selection away from the override produced 1 failed RED; restoring production produced 1 passed GREEN. The mutation-only command excluded the ProductionApp parent conftest so the child lifecycle, rather than parent collection setup, observed the mutation. Rebase did not change the effective-path seam or test behavior, so mutation was not repeated.
+- Final-review correction: fetched and rebased the isolated branch without conflicts onto current `origin/dev`; it was 0 commits behind after integration. The exact post-rebase focused selection passed 4 tests in 6.54 seconds with one `RequestsDependencyWarning` about installed HTTP dependency compatibility. No broad suite was run.
+- Ruff passed on the new test. `py_compile` passed with output confined to a temporary directory. The shell lacked a portable `python` command, so these gates used the repository virtual environment without recording its developer-local path in tracked evidence.
+- Final diff, scope, privacy, credential-value, and artifact audits passed. The branch contains exactly the effective-config design and plan, lifecycle regression, corrected ComfyUI H3 UAT, live-verification lesson, TASK-3401.14, and TASK-15674; `tldw_chatbook/config.py` and `tldw_chatbook/app.py` have no branch-introduced diff.
+- Documentation corrections preserve the observed default-config fingerprint drift and precautionary restore while removing the unsupported writer attribution. The lesson now records that fingerprint drift proves mutation, not actor identity. A post-review correction also replaced three developer-local interpreter paths in the plan with portable commands.
 - ADR required: no. ADR path: N/A. Reason: regression-only characterization of an existing effective-config boundary; no storage, security, runtime, or cross-module decision changed.
-- Deviation: the mutation-only collection boundary noted above. Per user instruction, no broad or full suite was run. The existing incident lesson was updated; no new unresolved lesson emerged.
-
-- Post-review privacy correction: the execution plan replaced three developer-local absolute interpreter paths with portable `python` commands. This documentation-only correction resolves the path finding and does not change production or test behavior. Pytest was not rerun; the immediately preceding focused evidence remains 4 passed in 5.28s with no warnings. The final branch privacy and scope audits were repeated after this correction.
+- No new unresolved lesson emerged. All commit references were intentionally omitted after rebase so closeout evidence does not retain stale rewritten hashes.
 <!-- SECTION:NOTES:END -->

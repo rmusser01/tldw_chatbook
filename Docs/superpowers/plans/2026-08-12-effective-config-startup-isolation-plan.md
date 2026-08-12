@@ -364,3 +364,9 @@ git commit -m "docs: close config profile isolation task"
 Confirm normal `git status --short` is clean, production code is unchanged from
 `origin/dev`, and the final report states focused test counts and warnings without
 claiming a broad suite was run.
+
+Final verification (2026-08-12): the isolated branch was rebased without conflicts
+onto current `origin/dev` and was zero commits behind. The exact focused selection
+passed 4 tests in 6.54 seconds with one dependency-compatibility warning; Ruff and
+temporary-output `py_compile` passed. Scope, privacy, artifact, diff, and
+production-code checks passed. No broad suite was run.
