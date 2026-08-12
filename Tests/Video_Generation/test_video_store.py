@@ -454,6 +454,8 @@ def test_invalid_explicit_extension_fails_before_root_creation(
     tmp_path, extension, method
 ):
     store = VideoStore(root=tmp_path / "generated-videos")
+    stream = io.BytesIO(b"video")
+    stream.seek(3)
 
     with pytest.raises(ValueError, match="unsupported video container"):
         if method == "save":
@@ -462,11 +464,14 @@ def test_invalid_explicit_extension_fails_before_root_creation(
             store.adopt_oversized(
                 "message",
                 "clip",
-                io.BytesIO(b"video"),
+                stream,
                 size_bytes=5,
                 extension=extension,
             )
     assert not store.root.exists()
+    if method == "adopt_oversized":
+        assert stream.tell() == 0
+        assert not stream.closed
 
 
 @pytest.mark.parametrize("extension", ["", ".mp4", "mov", "MP4", "mp4.exe"])
@@ -696,7 +701,7 @@ def test_public_writes_reject_internal_stage_namespace_without_mutation(
     assert not list(store.root.rglob(".video-stage-*"))
     if operation == "adopt":
         assert not stream.closed
-        assert stream.tell() == 7
+        assert stream.tell() == 0
 
 
 @pytest.mark.parametrize("occupied_extension", ["mp4", "webm"])

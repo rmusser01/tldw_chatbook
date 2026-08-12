@@ -392,13 +392,6 @@ class VideoStore:
             raise ValueError("refusing to adopt an empty video payload")
         try:
             path = self._video_path(message_id, slug, extension)
-        except VideoStoreSaveError:
-            try:
-                stream.seek(0)
-            except (OSError, ValueError):
-                pass
-            raise
-        try:
             try:
                 stream.seek(0)
             except (OSError, ValueError) as exc:
