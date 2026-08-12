@@ -1,6 +1,10 @@
 """Strict contracts for atomic local Prompt batch mutations."""
 
+import os
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +15,124 @@ from tldw_chatbook.Prompt_Management.prompt_batch_models import (
     PromptDeleteReceiptEntry,
     PromptRestoreResultEntry,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
+    """Run an import probe without inherited profile or module state."""
+    data_home = tmp_path / "data"
+    config_home = tmp_path / "config"
+    home = tmp_path / "home"
+    for path in (data_home, config_home, home):
+        path.mkdir(parents=True, exist_ok=True)
+    environment = {
+        **os.environ,
+        "TLDW_TEST_MODE": "1",
+        "XDG_DATA_HOME": str(data_home),
+        "XDG_CONFIG_HOME": str(config_home),
+        "HOME": str(home),
+        "PYTHONPATH": str(REPO_ROOT),
+    }
+    environment.pop("PYTEST_CURRENT_TEST", None)
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+
+def test_config_first_then_batch_model_imports_in_fresh_process(tmp_path: Path):
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import tldw_chatbook.config
+from tldw_chatbook.Prompt_Management.prompt_batch_models import PromptBatchTarget
+PromptBatchTarget(1, 1)
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_app_imports_in_fresh_process_without_prompt_config_cycle(tmp_path: Path):
+    result = _run_isolated_python(tmp_path, "import tldw_chatbook.app")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_batch_model_import_does_not_eagerly_import_prompt_services(
+    tmp_path: Path,
+):
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import sys
+from tldw_chatbook.Prompt_Management.prompt_batch_models import PromptBatchTarget
+forbidden = {
+    'tldw_chatbook.config',
+    'tldw_chatbook.Prompt_Management.Prompts_Interop',
+    'tldw_chatbook.Prompt_Management.local_prompt_service',
+    'tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service',
+    'tldw_chatbook.Prompt_Management.server_prompt_service',
+}
+assert forbidden.isdisjoint(sys.modules), forbidden.intersection(sys.modules)
+PromptBatchTarget(1, 1)
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_prompt_management_lazy_public_exports_preserve_class_identities():
+    import tldw_chatbook.Prompt_Management as prompt_management
+
+    from tldw_chatbook.Prompt_Management import (
+        LocalPromptService,
+        PromptChatbookBackend,
+        PromptChatbookScopeService,
+        ServerPromptService,
+    )
+    from tldw_chatbook.Prompt_Management.local_prompt_service import (
+        LocalPromptService as DirectLocalPromptService,
+    )
+    from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import (
+        PromptChatbookBackend as DirectPromptChatbookBackend,
+        PromptChatbookScopeService as DirectPromptChatbookScopeService,
+    )
+    from tldw_chatbook.Prompt_Management.server_prompt_service import (
+        ServerPromptService as DirectServerPromptService,
+    )
+
+    assert LocalPromptService is DirectLocalPromptService
+    assert PromptChatbookBackend is DirectPromptChatbookBackend
+    assert PromptChatbookScopeService is DirectPromptChatbookScopeService
+    assert ServerPromptService is DirectServerPromptService
+    assert prompt_management.__all__ == [
+        "LocalPromptService",
+        "PromptChatbookBackend",
+        "PromptChatbookScopeService",
+        "ServerPromptService",
+    ]
+
+
+def test_prompt_management_submodule_imports_remain_available(tmp_path: Path):
+    result = _run_isolated_python(
+        tmp_path,
+        """
+from tldw_chatbook.Prompt_Management import Prompts_Interop
+from tldw_chatbook.Prompt_Management import prompt_scope_service
+assert Prompts_Interop.__name__.endswith('.Prompts_Interop')
+assert prompt_scope_service.__name__.endswith('.prompt_scope_service')
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 class _IntSubclass(int):
