@@ -1,0 +1,188 @@
+{
+  "evidence_label": "task603_bounded_dictation_matrix",
+  "platforms": {
+    "linux-aarch64": {
+      "evidence_label": "task603_bounded_dictation",
+      "evidence_name": "linux-aarch64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "aarch64",
+        "python": "3.12.13",
+        "system": "Linux"
+      },
+      "pytest": {
+        "duration_seconds": 6.454000000000001,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries": "passed",
+          "Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge": "passed",
+          "Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition": "passed",
+          "Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31627875630",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "linux-x86_64": {
+      "evidence_label": "task603_bounded_dictation",
+      "evidence_name": "linux-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.13",
+        "system": "Linux"
+      },
+      "pytest": {
+        "duration_seconds": 7.132,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries": "passed",
+          "Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge": "passed",
+          "Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition": "passed",
+          "Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31627875630",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "macos-arm64": {
+      "evidence_label": "task603_bounded_dictation",
+      "evidence_name": "macos-arm64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "arm64",
+        "python": "3.12.10",
+        "system": "Darwin"
+      },
+      "pytest": {
+        "duration_seconds": 5.001,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries": "passed",
+          "Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge": "passed",
+          "Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition": "passed",
+          "Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31627875630",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "macos-x86_64": {
+      "evidence_label": "task603_bounded_dictation",
+      "evidence_name": "macos-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Darwin"
+      },
+      "pytest": {
+        "duration_seconds": 8.797,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries": "passed",
+          "Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge": "passed",
+          "Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition": "passed",
+          "Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31627875630",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "windows-x86_64": {
+      "evidence_label": "task603_bounded_dictation",
+      "evidence_name": "windows-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Windows"
+      },
+      "pytest": {
+        "duration_seconds": 7.0760000000000005,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up": "passed",
+          "Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits": "passed",
+          "Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries": "passed",
+          "Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge": "passed",
+          "Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition": "passed",
+          "Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31627875630",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    }
+  },
+  "run": {
+    "tested_commit": "f609966d732b18b806e735294e6c41da6269d196",
+    "workflow_run_attempt": "1",
+    "workflow_run_id": "31627875630",
+    "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31627875630"
+  },
+  "schema_version": 1,
+  "status": "passed"
+}
