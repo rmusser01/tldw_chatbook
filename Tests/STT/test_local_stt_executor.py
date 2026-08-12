@@ -1544,6 +1544,37 @@ def _managed_request_values(
     return service, root, dependency, identity
 
 
+def _managed_reference_tuple(reference: object) -> tuple[str, str, str]:
+    return (reference.artifact_id, reference.revision, reference.variant)
+
+
+def _submit_managed_runtime(
+    executor: LocalSTTExecutor,
+    tmp_path: Path,
+    root: object,
+    identity: ModelIdentity,
+    callbacks: _Callbacks,
+    *,
+    attempt_id: str,
+    hold: bool = False,
+) -> int:
+    options = {"transcription_provider": "parakeet-onnx"}
+    if hold:
+        options["test_worker_hold"] = True
+    return executor.submit(
+        attempt_id=attempt_id,
+        job_id=f"job-{attempt_id}",
+        source=FileAudioSource(tmp_path / "fixture.wav"),
+        identity=identity,
+        options=options,
+        managed_store_root=tmp_path / "store",
+        managed_artifact_ref=_managed_reference_tuple(root.reference),
+        on_event=callbacks.on_event,
+        on_result=callbacks.on_result,
+        on_failure=callbacks.on_failure,
+    )
+
+
 def _external_dependency_request(
     tmp_path: Path,
     dependency: object,
@@ -1614,6 +1645,151 @@ def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
 
     ModelArtifactService(tmp_path / "store").delete(dependency.reference)
     assert service.artifact_path(dependency.reference).exists() is False
+
+
+@pytest.mark.parametrize("target_name", ("root", "dependency"))
+def test_idle_resident_recycle_releases_exact_managed_lease(
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    service, root, dependency, identity = _managed_request_values(tmp_path)
+    target = root.reference if target_name == "root" else dependency.reference
+    executor = _resident_executor()
+    callbacks = _Callbacks()
+    try:
+        _submit_managed_runtime(
+            executor,
+            tmp_path,
+            root,
+            identity,
+            callbacks,
+            attempt_id=f"idle-{target_name}",
+        )
+        _wait_for_terminal(callbacks)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(
+                tmp_path / "store",
+                lease_timeout_seconds=0.01,
+            ).delete(target)
+
+        assert (
+            executor.recycle_idle_managed_reference(_managed_reference_tuple(target))
+            is True
+        )
+        assert executor.resident_identity is None
+        service.delete(target)
+        assert service.artifact_path(target).exists() is False
+    finally:
+        executor.close()
+
+
+def test_active_resident_refuses_recycle_without_cancelling_attempt(
+    tmp_path: Path,
+) -> None:
+    _service, root, dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    callbacks = _Callbacks()
+    try:
+        _submit_managed_runtime(
+            executor,
+            tmp_path,
+            root,
+            identity,
+            callbacks,
+            attempt_id="active-recycle",
+            hold=True,
+        )
+        _wait_until(
+            lambda: any(
+                event.phase is WorkerPhase.TRANSCRIBING for event in callbacks.events
+            )
+        )
+
+        assert (
+            executor.recycle_idle_managed_reference(
+                _managed_reference_tuple(dependency.reference)
+            )
+            is False
+        )
+        assert executor.busy is True
+        assert callbacks.terminal.is_set() is False
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(
+                tmp_path / "store",
+                lease_timeout_seconds=0.01,
+            ).delete(dependency.reference)
+    finally:
+        executor.force_stop("active-recycle")
+        executor.close()
+
+
+def test_nonmatching_resident_refuses_recycle_and_remains_reusable(
+    tmp_path: Path,
+) -> None:
+    _service, root, _dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+    try:
+        first_generation = _submit_managed_runtime(
+            executor,
+            tmp_path,
+            root,
+            identity,
+            first,
+            attempt_id="nonmatching-first",
+        )
+        _wait_for_terminal(first)
+
+        assert (
+            executor.recycle_idle_managed_reference(
+                ("other-model", "other-revision", "f32")
+            )
+            is False
+        )
+        second_generation = _submit_managed_runtime(
+            executor,
+            tmp_path,
+            root,
+            identity,
+            second,
+            attempt_id="nonmatching-second",
+        )
+        _wait_for_terminal(second)
+
+        assert second_generation == first_generation
+        assert second.results[0].payload["runtime_load_number"] == 1
+    finally:
+        executor.close()
+
+
+def test_unproven_idle_recycle_cannot_report_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service, root, _dependency, identity = _managed_request_values(tmp_path)
+    executor = _resident_executor()
+    callbacks = _Callbacks()
+    try:
+        _submit_managed_runtime(
+            executor,
+            tmp_path,
+            root,
+            identity,
+            callbacks,
+            attempt_id="unproven-idle",
+        )
+        _wait_for_terminal(callbacks)
+        monkeypatch.setattr(executor, "_retire_idle_worker_locked", lambda: False)
+
+        assert (
+            executor.recycle_idle_managed_reference(
+                _managed_reference_tuple(root.reference)
+            )
+            is False
+        )
+    finally:
+        executor.close()
 
 
 def test_provider_builder_receives_the_full_verified_managed_handle(
