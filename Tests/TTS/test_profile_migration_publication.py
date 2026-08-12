@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import asdict, fields, is_dataclass
 import errno
 from hashlib import sha256
 import importlib
 import inspect
+import io
 import json
 import os
+import pickle
 import sqlite3
 import stat
 from pathlib import Path
@@ -465,6 +468,104 @@ def test_parsed_authority_is_not_dataclass_flattenable_or_introspectable(
         }
         rendered = json.dumps(structured, sort_keys=True)
         assert all(private not in rendered for private in private_values)
+
+
+def test_authority_objects_refuse_pickle_copy_and_state_access(tmp_path: Path) -> None:
+    module = _publication_module()
+    journal_module = importlib.import_module(
+        "tldw_chatbook.TTS.profile_migration_journal"
+    )
+    parent = tmp_path.stat()
+    digest = (b"PRIVATE_AUTHORITY_DIGEST_" * 2)[:32]
+    evidence = journal_module._ArtifactEvidence(
+        parent.st_dev,
+        parent.st_ino + 17,
+        41,
+        digest,
+        4,
+    )
+    artifact_capsule = journal_module._ArtifactAuthorityCapsule(
+        parent.st_dev,
+        parent.st_ino + 17,
+        41,
+        digest,
+        4,
+    )
+    parent_capsule = journal_module._ParentAuthorityCapsule(
+        parent.st_dev,
+        parent.st_ino,
+    )
+    row = module.ProfileMigrationJournalSlot._with_authority(
+        slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+        candidate=".candidate.sqlite3",
+        target="profiles.sqlite3",
+        rollback=".profiles.sqlite3.active.rollback",
+        had_prior=False,
+        candidate_evidence=evidence,
+        prior_evidence=None,
+    )
+    authority = journal_module._JournalAuthority(
+        parent.st_dev,
+        parent.st_ino,
+        (row,),
+    )
+    parsed = module.ParsedProfileMigrationJournal(
+        2,
+        "prepared",
+        (row,),
+        parent.st_dev,
+        parent.st_ino,
+    )
+    objects = (artifact_capsule, evidence, parent_capsule, row, authority, parsed)
+    private_canaries = (
+        digest,
+        digest.hex().encode("ascii"),
+        str(parent.st_dev).encode("ascii"),
+        str(parent.st_ino).encode("ascii"),
+        str(parent.st_ino + 17).encode("ascii"),
+    )
+
+    for value in objects:
+        for protocol in range(2, 6):
+            sink = io.BytesIO()
+            with pytest.raises(TypeError, match="private_authority") as caught:
+                pickle.Pickler(sink, protocol=protocol).dump(value)
+            assert caught.value.__cause__ is None
+            assert caught.value.__context__ is None
+            assert all(canary not in sink.getvalue() for canary in private_canaries)
+            assert all(
+                canary.decode("ascii", "ignore") not in repr(caught.value)
+                for canary in private_canaries
+            )
+        for operation in (copy.copy, copy.deepcopy):
+            with pytest.raises(TypeError, match="private_authority"):
+                operation(value)
+        with pytest.raises(TypeError, match="private_authority"):
+            value.__getstate__()
+
+    assert parsed.version == 2
+    assert parsed.phase == "prepared"
+    assert parsed.slots == ("active",)
+    assert parsed.matches_parent(parent)
+    assert row.matches_candidate(
+        os.stat_result(
+            (
+                parent.st_mode,
+                parent.st_ino + 17,
+                parent.st_dev,
+                1,
+                parent.st_uid,
+                parent.st_gid,
+                41,
+                parent.st_atime,
+                parent.st_mtime,
+                parent.st_ctime,
+            )
+        ),
+        byte_length=41,
+        sha256_digest=digest,
+        schema_version=4,
+    )
 
 
 def test_later_journal_frames_bind_without_repeating_authority(tmp_path: Path) -> None:

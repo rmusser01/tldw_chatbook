@@ -7,7 +7,7 @@ import os
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
-from typing import Final
+from typing import Final, NoReturn, SupportsIndex
 
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
@@ -37,7 +37,34 @@ class ProfileMigrationPublicationStage(StrEnum):
     FINAL_JOURNAL_DURABLE = "final_journal_durable"
 
 
-class _ArtifactAuthorityCapsule:
+class _OpaqueAuthority:
+    """Refuse generic serialization and copying of private authority."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def _refuse() -> NoReturn:
+        raise TypeError("private_authority")
+
+    def __reduce__(self) -> NoReturn:
+        self._refuse()
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        del protocol
+        self._refuse()
+
+    def __getstate__(self) -> NoReturn:
+        self._refuse()
+
+    def __copy__(self) -> NoReturn:
+        self._refuse()
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        self._refuse()
+
+
+class _ArtifactAuthorityCapsule(_OpaqueAuthority):
     """Non-serializable exact artifact authority."""
 
     __slots__ = ("__values",)
@@ -98,7 +125,7 @@ class _ArtifactAuthorityCapsule:
         )
 
 
-class _ArtifactEvidence:
+class _ArtifactEvidence(_OpaqueAuthority):
     """Opaque exact artifact evidence used only through bounded methods."""
 
     __slots__ = ("__authority",)
@@ -155,7 +182,7 @@ class _ArtifactEvidence:
         )
 
 
-class ProfileMigrationJournalSlot:
+class ProfileMigrationJournalSlot(_OpaqueAuthority):
     """One recognized relative namespace row in a journal."""
 
     __slots__ = (
@@ -345,7 +372,7 @@ class ProfileMigrationJournalSlot:
         return None
 
 
-class _ParentAuthorityCapsule:
+class _ParentAuthorityCapsule(_OpaqueAuthority):
     __slots__ = ("__identity",)
     __identity: tuple[int, int]
 
@@ -365,7 +392,7 @@ class _ParentAuthorityCapsule:
         return (identity.st_dev, identity.st_ino) == self.__identity
 
 
-class _JournalAuthority:
+class _JournalAuthority(_OpaqueAuthority):
     __slots__ = ("__parent", "__rows")
     __parent: _ParentAuthorityCapsule
     __rows: tuple[ProfileMigrationJournalSlot, ...]
@@ -396,7 +423,7 @@ class _JournalAuthority:
         return self.__rows
 
 
-class ParsedProfileMigrationJournal:
+class ParsedProfileMigrationJournal(_OpaqueAuthority):
     """Path-free facts from one exact recognized publication journal."""
 
     __slots__ = ("__parent", "__phase", "__recovery_rows", "__version")
