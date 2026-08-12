@@ -134,8 +134,9 @@ The current `/generate-video` grammar and Settings surface remain MP4-only in
 this task. Initial WebM selection is therefore the explicit programmatic
 `run_video_generation(video_format="webm")` seam used by focused tests and by a
 future provider/UI task. Generic ComfyUI supports WebM through that seam when a
-custom workflow's output control, descriptor suffix, response MIME, and request
-format all agree. This task does not add a new Console token or setting merely to
+custom workflow's selected output descriptor suffix, response MIME, and request
+format all agree. Generic workflows have no additional universal output-control
+field contract. This task does not add a new Console token or setting merely to
 expose a format that the shipped workflows do not produce.
 
 Regeneration is not allowed to use the helper default: it passes the persisted
