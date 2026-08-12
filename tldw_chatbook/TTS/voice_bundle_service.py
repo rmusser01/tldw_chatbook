@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from secrets import token_hex
+from threading import Event
 from time import monotonic
 from typing import Any, Final, Literal, NoReturn, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
@@ -185,7 +186,8 @@ class TTSVoiceBundleImportResult:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _SourceFingerprint:
-    identity: tuple[int, int, int, int, int, int, int, int]
+    parent_identity: tuple[int, int, int, int]
+    identity: tuple[int, int, int, int, int, int, int, int, int]
     digest: str
 
 
@@ -199,6 +201,13 @@ class _CopyResult:
 class _WorkerOutcome:
     code: str | None
     result: object | None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _PublicOutcome:
+    code: str | None = None
+    control: Literal["cancelled"] | None = None
+    result: object | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -274,7 +283,7 @@ def _identity(info: os.stat_result) -> tuple[int, int]:
 
 def _source_identity(
     info: os.stat_result,
-) -> tuple[int, int, int, int, int, int, int, int]:
+) -> tuple[int, int, int, int, int, int, int, int, int]:
     return (
         info.st_dev,
         info.st_ino,
@@ -284,6 +293,16 @@ def _source_identity(
         info.st_nlink,
         info.st_size,
         info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _parent_identity(info: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        stat.S_IFMT(info.st_mode),
+        info.st_uid,
     )
 
 
@@ -467,13 +486,15 @@ def _copy_and_inspect(
         parent_before = os.lstat(source.parent)
         if not stat.S_ISDIR(parent_before.st_mode):
             raise TTSVoiceBundleError("source_changed")
+        parent_identity = _parent_identity(parent_before)
         parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
         try:
             parent_opened = os.fstat(parent_fd)
             parent_named = os.lstat(source.parent)
-            if _identity(parent_before) != _identity(parent_opened) or _identity(
-                parent_opened
-            ) != _identity(parent_named):
+            if (
+                _parent_identity(parent_opened) != parent_identity
+                or _parent_identity(parent_named) != parent_identity
+            ):
                 raise TTSVoiceBundleError("source_changed")
             initial = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
             if not _owned_source(initial):
@@ -517,7 +538,7 @@ def _copy_and_inspect(
             _test_boundary("source_copy_complete")
             final_opened = os.fstat(source_fd)
             final_named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
-            current = _SourceFingerprint(identity, digest.hexdigest())
+            current = _SourceFingerprint(parent_identity, identity, digest.hexdigest())
             if (
                 copied != identity[6]
                 or _source_identity(final_opened) != identity
@@ -557,16 +578,28 @@ def _copy_and_inspect(
         _test_boundary("source_post_inspection")
         parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
         try:
+            parent_opened = os.fstat(parent_fd)
+            parent_named = os.lstat(source.parent)
             final_named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
-            if _source_identity(final_named) != identity:
+            if (
+                _parent_identity(parent_opened) != parent_identity
+                or _parent_identity(parent_named) != parent_identity
+                or _source_identity(final_named) != identity
+            ):
                 raise TTSVoiceBundleError("source_changed")
         finally:
             os.close(parent_fd)
         _test_boundary("source_pre_fingerprint")
         parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
         try:
+            parent_opened = os.fstat(parent_fd)
+            parent_named = os.lstat(source.parent)
             final_named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
-            if _source_identity(final_named) != identity:
+            if (
+                _parent_identity(parent_opened) != parent_identity
+                or _parent_identity(parent_named) != parent_identity
+                or _source_identity(final_named) != identity
+            ):
                 raise TTSVoiceBundleError("source_changed")
         finally:
             os.close(parent_fd)
@@ -616,12 +649,76 @@ def _copy_and_inspect_sync(
         return _WorkerOutcome("operation_failed", None)
 
 
-def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
+def _fingerprint_source_sync(
+    source: Path, expected: _SourceFingerprint
+) -> _WorkerOutcome:
+    """Revalidate exact parent, inode metadata, and all source bytes."""
+
+    parent_fd = -1
+    source_fd = -1
+    try:
+        parent_named = os.lstat(source.parent)
+        if _parent_identity(parent_named) != expected.parent_identity:
+            raise TTSVoiceBundleError("source_changed")
+        parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
+        parent_opened = os.fstat(parent_fd)
+        if _parent_identity(parent_opened) != expected.parent_identity:
+            raise TTSVoiceBundleError("source_changed")
+        named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        if _source_identity(named) != expected.identity or not _private_file(named):
+            raise TTSVoiceBundleError("source_changed")
+        source_fd = os.open(source.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+        opened = os.fstat(source_fd)
+        if _source_identity(opened) != expected.identity:
+            raise TTSVoiceBundleError("source_changed")
+        digest = sha256()
+        size = 0
+        while True:
+            chunk = os.read(source_fd, _COPY_CHUNK_BYTES)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_BUNDLE_ARCHIVE_BYTES:
+                raise TTSVoiceBundleError("source_changed")
+            digest.update(chunk)
+        final_opened = os.fstat(source_fd)
+        final_named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        final_parent = os.fstat(parent_fd)
+        lexical_parent = os.lstat(source.parent)
+        if (
+            size != expected.identity[6]
+            or digest.hexdigest() != expected.digest
+            or _source_identity(final_opened) != expected.identity
+            or _source_identity(final_named) != expected.identity
+            or _parent_identity(final_parent) != expected.parent_identity
+            or _parent_identity(lexical_parent) != expected.parent_identity
+        ):
+            raise TTSVoiceBundleError("source_changed")
+        return _WorkerOutcome(None, True)
+    except TTSVoiceBundleError as error:
+        return _WorkerOutcome(error.code, None)
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            raise
+        return _WorkerOutcome("operation_failed", None)
+    finally:
+        if source_fd >= 0:
+            os.close(source_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _publish_sync(
+    destination: Path, payload: bytes, cancellation: Event | None = None
+) -> _WorkerOutcome:
     parent_fd = -1
     temporary_fd = -1
     temporary_leaf = f".{destination.name}.{token_hex(16)}.tmp"
     temporary_identity: tuple[int, int] | None = None
+    published_identity: tuple[int, int] | None = None
+    parent_identity: tuple[int, int, int, int] | None = None
     published = False
+    durable = False
     code: str | None = None
     try:
         if not _posix_supported():
@@ -632,9 +729,11 @@ def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
         parent_fd = os.open(destination.parent, _DIRECTORY_FLAGS)
         opened_parent = os.fstat(parent_fd)
         named_parent = os.lstat(destination.parent)
-        if _identity(before) != _identity(opened_parent) or _identity(
-            opened_parent
-        ) != _identity(named_parent):
+        parent_identity = _parent_identity(opened_parent)
+        if (
+            _parent_identity(before) != parent_identity
+            or _parent_identity(named_parent) != parent_identity
+        ):
             raise TTSVoiceBundleError("destination_changed")
         try:
             os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
@@ -662,7 +761,9 @@ def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
             view = view[written:]
         os.fsync(temporary_fd)
         _test_boundary("destination_pre_publish")
-        if _identity(os.lstat(destination.parent)) != _identity(opened_parent):
+        if cancellation is not None and cancellation.is_set():
+            raise asyncio.CancelledError
+        if _parent_identity(os.lstat(destination.parent)) != parent_identity:
             raise TTSVoiceBundleError("destination_changed")
         temporary_named = os.stat(
             temporary_leaf, dir_fd=parent_fd, follow_symlinks=False
@@ -682,6 +783,8 @@ def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
         except FileExistsError:
             raise TTSVoiceBundleError("destination_changed") from None
         published = True
+        published_identity = temporary_identity
+        _test_boundary("destination_post_link")
         destination_info = os.stat(
             destination.name, dir_fd=parent_fd, follow_symlinks=False
         )
@@ -689,27 +792,60 @@ def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
             destination_info, links=(2,)
         ):
             raise TTSVoiceBundleError("destination_changed")
+        if cancellation is not None and cancellation.is_set():
+            raise asyncio.CancelledError
         os.unlink(temporary_leaf, dir_fd=parent_fd)
         temporary_identity = None
         os.fsync(parent_fd)
         settled = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
-        if not _private_file(settled) or _identity(settled) != _identity(
-            destination_info
+        descriptor = os.open(destination.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+        try:
+            final_opened = os.fstat(descriptor)
+            digest = sha256()
+            size = 0
+            while True:
+                chunk = os.read(descriptor, _COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+        finally:
+            os.close(descriptor)
+        if (
+            not _private_file(settled)
+            or _identity(settled) != _identity(destination_info)
+            or _identity(final_opened) != _identity(settled)
+            or size != len(payload)
+            or digest.digest() != sha256(payload).digest()
+            or _parent_identity(os.fstat(parent_fd)) != parent_identity
+            or _parent_identity(os.lstat(destination.parent)) != parent_identity
         ):
             raise TTSVoiceBundleError("destination_changed")
+        _test_boundary("destination_post_fsync")
+        if cancellation is not None and cancellation.is_set():
+            raise asyncio.CancelledError
+        durable = True
     except TTSVoiceBundleError as error:
         code = error.code
     except BaseException as error:
-        if not isinstance(error, Exception):
+        if isinstance(error, asyncio.CancelledError):
+            code = "cancelled"
+        elif not isinstance(error, Exception):
             raise
-        code = "operation_failed"
+        else:
+            code = "operation_failed"
     finally:
         if temporary_fd >= 0:
-            os.close(temporary_fd)
+            try:
+                os.close(temporary_fd)
+            except OSError:
+                code = "cleanup_failed"
         if parent_fd >= 0 and temporary_identity is not None:
             try:
                 named = os.stat(temporary_leaf, dir_fd=parent_fd, follow_symlinks=False)
-                if _identity(named) == temporary_identity and _private_file(named):
+                if _identity(named) == temporary_identity and _private_file(
+                    named, links=(1, 2)
+                ):
                     os.unlink(temporary_leaf, dir_fd=parent_fd)
                 else:
                     code = "cleanup_failed"
@@ -717,16 +853,45 @@ def _publish_sync(destination: Path, payload: bytes) -> _WorkerOutcome:
                 pass
             except OSError:
                 code = "cleanup_failed"
-        if code is not None and published and parent_fd >= 0:
-            # Once linked, publication is complete; never remove an ambiguous final.
-            code = "destination_changed"
+        if code is not None and published and not durable and parent_fd >= 0:
+            try:
+                final = os.stat(
+                    destination.name, dir_fd=parent_fd, follow_symlinks=False
+                )
+                if (
+                    published_identity is not None
+                    and _identity(final) == published_identity
+                    and _private_file(final)
+                ):
+                    os.unlink(destination.name, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
+                    published = False
+                else:
+                    code = "cleanup_failed"
+            except FileNotFoundError:
+                published = False
+            except OSError:
+                code = "cleanup_failed"
+        try:
+            if (
+                parent_fd >= 0
+                and parent_identity is not None
+                and _parent_identity(os.fstat(parent_fd)) != parent_identity
+            ):
+                code = "destination_changed"
+        except OSError:
+            code = "cleanup_failed"
         if parent_fd >= 0:
-            os.close(parent_fd)
-    return _WorkerOutcome(code, None if code else True)
+            try:
+                os.close(parent_fd)
+            except OSError:
+                code = "cleanup_failed"
+    return _WorkerOutcome(None if durable else code, durable)
 
 
 async def _await_retained(
     task: asyncio.Task[_T],
+    cancellation_callback: Callable[[], None] | None = None,
 ) -> tuple[asyncio.CancelledError | None, _T]:
     cancellation: asyncio.CancelledError | None = None
     caller = asyncio.current_task()
@@ -739,6 +904,8 @@ async def _await_retained(
             if current > requests:
                 cancellation = cancellation or error
                 requests = current
+                if cancellation_callback is not None:
+                    cancellation_callback()
         except BaseException:
             if not task.done():
                 raise
@@ -757,6 +924,49 @@ def _canonical_reference(reference: TTSCloneReference) -> CanonicalTTSCloneRefer
         channels=reference.summary.channels,
         sample_encoding=reference.summary.sample_encoding,
     )
+
+
+def _valid_dependency_snapshot(
+    value: object, requirement: TTSCloneRecipeRequirement
+) -> AudioCppGuidedDependencySnapshot | None:
+    if type(value) is not AudioCppGuidedDependencySnapshot:
+        return None
+    snapshot = cast(AudioCppGuidedDependencySnapshot, value)
+    if snapshot.state not in {"exact", "missing", "mismatch", "pending"}:
+        return None
+    if any(
+        type(item) is not int or item < 0
+        for item in (
+            snapshot.provider_configuration_revision,
+            snapshot.saved_generation,
+            snapshot.applied_generation,
+        )
+    ):
+        return None
+    if type(snapshot.pending_configuration) is not bool:
+        return None
+    for item in (snapshot.saved_requirement, snapshot.applied_requirement):
+        if item is not None and type(item) is not TTSCloneRecipeRequirement:
+            return None
+    if snapshot.pending_configuration != (snapshot.state == "pending"):
+        return None
+    if snapshot.state == "exact" and not (
+        snapshot.saved_requirement == requirement
+        and snapshot.applied_requirement == requirement
+        and snapshot.saved_generation == snapshot.applied_generation
+    ):
+        return None
+    if snapshot.state == "missing" and (
+        snapshot.saved_requirement is not None
+        or snapshot.applied_requirement is not None
+    ):
+        return None
+    if snapshot.state == "mismatch" and (
+        snapshot.saved_requirement == requirement
+        and snapshot.applied_requirement == requirement
+    ):
+        return None
+    return snapshot
 
 
 def _profile_matches(
@@ -808,7 +1018,9 @@ class TTSVoiceBundlePortabilityService:
         self._session_lock = asyncio.Lock()
         self._sessions: dict[TTSVoiceBundleHandle, _Session] = {}
         self._workers: set[asyncio.Task[object]] = set()
+        self._owned_calls: set[asyncio.Task[object]] = set()
         self._calls: set[asyncio.Task[object]] = set()
+        self._inspection_reservations = 0
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
 
@@ -822,6 +1034,8 @@ class TTSVoiceBundlePortabilityService:
                 outcome = await self._run_worker(_prepare_root_sync, self._root)
             except asyncio.CancelledError:
                 raise
+            except TTSVoiceBundleError as error:
+                raise TTSVoiceBundleError(error.code) from None
             except BaseException as error:
                 if not isinstance(error, Exception):
                     raise
@@ -830,11 +1044,32 @@ class TTSVoiceBundlePortabilityService:
                 tuple[Path, tuple[int, int]], outcome
             )
 
-    def _track_call(self) -> asyncio.Task[object] | None:
+    async def _admit(self, *, inspection: bool = False) -> asyncio.Task[object]:
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
-        if call is not None:
+        if call is None:
+            raise TTSVoiceBundleError("operation_failed")
+        async with self._session_lock:
+            if self._closed:
+                raise TTSVoiceBundleError("operation_failed")
+            self._expire_sessions()
+            if (
+                inspection
+                and len(self._sessions) + self._inspection_reservations
+                >= _SESSION_LIMIT
+            ):
+                raise TTSVoiceBundleError("operation_failed")
             self._calls.add(call)
+            if inspection:
+                self._inspection_reservations += 1
         return call
+
+    async def _release(
+        self, call: asyncio.Task[object], *, inspection: bool = False
+    ) -> None:
+        async with self._session_lock:
+            self._calls.discard(call)
+            if inspection:
+                self._inspection_reservations -= 1
 
     async def _run_worker(
         self, function: Callable[..., object], *args: object
@@ -850,6 +1085,31 @@ class TTSVoiceBundlePortabilityService:
         if cancellation is not None:
             raise cancellation
         return result
+
+    async def _run_worker_settled(
+        self, function: Callable[..., object], *args: object
+    ) -> tuple[Literal["cancelled"] | None, object]:
+        cancellation_event = Event()
+        worker: asyncio.Task[object] = asyncio.create_task(
+            asyncio.to_thread(function, *args, cancellation_event)
+        )
+        self._workers.add(worker)
+        try:
+            cancellation, result = await _await_retained(worker, cancellation_event.set)
+        finally:
+            self._workers.discard(worker)
+        return ("cancelled" if cancellation is not None else None), result
+
+    async def _run_owned_call(
+        self, awaitable: object
+    ) -> tuple[Literal["cancelled"] | None, object]:
+        task = asyncio.create_task(cast(Any, awaitable))
+        self._owned_calls.add(task)
+        try:
+            cancellation, result = await _await_retained(task)
+        finally:
+            self._owned_calls.discard(task)
+        return ("cancelled" if cancellation is not None else None), result
 
     async def _copy_source(
         self, source: Path, expected: _SourceFingerprint | None
@@ -872,28 +1132,48 @@ class TTSVoiceBundlePortabilityService:
             ) from None
         return cast(_CopyResult, outcome.result)
 
-    async def inspect(
+    async def _inspect_impl(
         self, source: Path | str | os.PathLike[str]
     ) -> TTSVoiceBundleReview:
-        """Copy and validate one unchanged hostile source into a safe review."""
-
-        call = self._track_call()
+        call = await self._admit(inspection=True)
         try:
-            if self._closed:
-                raise TTSVoiceBundleError("operation_failed")
             selected = _source_path(source)
-            async with self._session_lock:
-                self._expire_sessions()
-                if len(self._sessions) >= _SESSION_LIMIT:
-                    raise TTSVoiceBundleError("operation_failed")
             copied = await self._copy_source(selected, None)
             evidence = await self._review_evidence(copied.bundle)
             return await self._issue_session(
                 selected, copied.source_fingerprint, evidence
             )
         finally:
-            if call is not None:
-                self._calls.discard(call)
+            await self._release(call, inspection=True)
+
+    async def _inspect_outcome(self, source: object) -> _PublicOutcome:
+        try:
+            result = await self._inspect_impl(cast(Any, source))
+            return _PublicOutcome(result=result)
+        except asyncio.CancelledError:
+            return _PublicOutcome(control="cancelled")
+        except TTSVoiceBundleError as error:
+            return _PublicOutcome(code=error.code)
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            return _PublicOutcome(code="operation_failed")
+
+    async def inspect(
+        self, source: Path | str | os.PathLike[str]
+    ) -> TTSVoiceBundleReview:
+        """Copy and validate one unchanged hostile source into a safe review."""
+
+        outcome = await self._inspect_outcome(source)
+        del source
+        if outcome.control is not None:
+            del outcome
+            raise asyncio.CancelledError from None
+        if outcome.code is not None or type(outcome.result) is not TTSVoiceBundleReview:
+            code = outcome.code or "operation_failed"
+            del outcome
+            raise TTSVoiceBundleError(cast(Any, code)) from None
+        return cast(TTSVoiceBundleReview, outcome.result)
 
     def _expire_sessions(self) -> None:
         now = self._clock()
@@ -963,7 +1243,8 @@ class TTSVoiceBundlePortabilityService:
                 bundle.recipe_requirement
             )
         )
-        if type(dependency) is not AudioCppGuidedDependencySnapshot:
+        dependency = _valid_dependency_snapshot(dependency, bundle.recipe_requirement)
+        if dependency is None:
             raise TTSVoiceBundleError("operation_failed")
         if self._repository.generation != generation:
             raise TTSVoiceBundleError("stale_inspection")
@@ -1065,28 +1346,52 @@ class TTSVoiceBundlePortabilityService:
                 return candidate_id, candidate_name
         raise TTSVoiceBundleError("operation_failed")
 
-    async def commit(
+    async def _consume_session(
+        self, handle: object
+    ) -> tuple[asyncio.Task[object], _Session]:
+        call = cast(asyncio.Task[object] | None, asyncio.current_task())
+        if call is None:
+            raise TTSVoiceBundleError("operation_failed")
+        async with self._session_lock:
+            if self._closed:
+                raise TTSVoiceBundleError("operation_failed")
+            self._expire_sessions()
+            if type(handle) is not TTSVoiceBundleHandle or not handle._belongs_to(
+                self._identity
+            ):
+                raise TTSVoiceBundleError("stale_inspection")
+            session = self._sessions.pop(handle, None)
+            if session is None:
+                raise TTSVoiceBundleError("stale_inspection")
+            self._calls.add(call)
+        return call, session
+
+    async def _verify_source(self, session: _Session) -> None:
+        outcome = cast(
+            _WorkerOutcome,
+            await self._run_worker(
+                _fingerprint_source_sync,
+                session.source,
+                session.source_fingerprint,
+            ),
+        )
+        if outcome.code is not None or outcome.result is not True:
+            raise TTSVoiceBundleError(
+                cast(Any, outcome.code or "operation_failed")
+            ) from None
+
+    async def _commit_impl(
         self,
         handle: TTSVoiceBundleHandle,
         choice: TTSVoiceBundleImportChoice,
     ) -> TTSVoiceBundleImportResult:
-        """Consume, revalidate, and commit one reviewed import exactly once."""
-
-        call = self._track_call()
+        if type(choice) is not TTSVoiceBundleImportChoice:
+            raise TTSVoiceBundleError("operation_failed")
+        call, session = await self._consume_session(handle)
         try:
-            if type(choice) is not TTSVoiceBundleImportChoice:
-                raise TTSVoiceBundleError("operation_failed")
-            async with self._session_lock:
-                self._expire_sessions()
-                if type(handle) is not TTSVoiceBundleHandle or not handle._belongs_to(
-                    self._identity
-                ):
-                    raise TTSVoiceBundleError("stale_inspection")
-                session = self._sessions.pop(handle, None)
-            if session is None:
-                raise TTSVoiceBundleError("stale_inspection")
             copied = await self._copy_source(session.source, session.source_fingerprint)
             refreshed = await self._review_evidence(copied.bundle)
+            await self._verify_source(session)
             if refreshed.visible_key() != session.evidence.visible_key():
                 review = await self._issue_session(
                     session.source, copied.source_fingerprint, refreshed
@@ -1125,29 +1430,69 @@ class TTSVoiceBundlePortabilityService:
                 inactive_consent=choice.inactive_consent,
             )
             _test_boundary("commit_pre_repository")
-            result = await self._repository.commit_bundle_import(command)
+            await self._verify_source(session)
+            control, result = await self._run_owned_call(
+                self._repository.commit_bundle_import(command)
+            )
+            if control is not None:
+                raise asyncio.CancelledError from None
+            if type(result) is not ProfileStoreResult:
+                raise TTSVoiceBundleError("operation_failed")
+            repository_result = cast(ProfileStoreResult[TTSBundleImportResult], result)
             if (
-                type(result) is not ProfileStoreResult
-                or result.generation != refreshed.repository_generation
-                or type(result.value) is not TTSBundleImportResult
+                repository_result.generation != refreshed.repository_generation
+                or type(repository_result.value) is not TTSBundleImportResult
             ):
                 raise TTSVoiceBundleError("operation_failed")
-            if result.value.kind == "stale_inspection":
+            if repository_result.value.kind == "stale_inspection":
                 successor = await self._review_evidence(copied.bundle)
                 review = await self._issue_session(
                     session.source, copied.source_fingerprint, successor
                 )
                 return TTSVoiceBundleImportResult("stale_inspection", review=review)
-            assert result.value.profile is not None
+            assert repository_result.value.profile is not None
             return TTSVoiceBundleImportResult(
-                cast(TTSVoiceBundleImportResultStatus, result.value.kind),
-                profile=result.value.profile,
+                cast(TTSVoiceBundleImportResultStatus, repository_result.value.kind),
+                profile=repository_result.value.profile,
             )
         finally:
-            if call is not None:
-                self._calls.discard(call)
+            await self._release(call)
 
-    async def export(
+    async def _commit_outcome(self, handle: object, choice: object) -> _PublicOutcome:
+        try:
+            result = await self._commit_impl(cast(Any, handle), cast(Any, choice))
+            return _PublicOutcome(result=result)
+        except asyncio.CancelledError:
+            return _PublicOutcome(control="cancelled")
+        except TTSVoiceBundleError as error:
+            return _PublicOutcome(code=error.code)
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            return _PublicOutcome(code="operation_failed")
+
+    async def commit(
+        self,
+        handle: TTSVoiceBundleHandle,
+        choice: TTSVoiceBundleImportChoice,
+    ) -> TTSVoiceBundleImportResult:
+        """Consume, revalidate, and commit one reviewed import exactly once."""
+
+        outcome = await self._commit_outcome(handle, choice)
+        del handle, choice
+        if outcome.control is not None:
+            del outcome
+            raise asyncio.CancelledError from None
+        if (
+            outcome.code is not None
+            or type(outcome.result) is not TTSVoiceBundleImportResult
+        ):
+            code = outcome.code or "operation_failed"
+            del outcome
+            raise TTSVoiceBundleError(cast(Any, code)) from None
+        return cast(TTSVoiceBundleImportResult, outcome.result)
+
+    async def _export_impl(
         self,
         profile_id: UUID,
         destination: Path | str | os.PathLike[str],
@@ -1156,13 +1501,11 @@ class TTSVoiceBundlePortabilityService:
         expected_revision: int,
         acknowledged: bool,
     ) -> None:
-        """Publish one deterministic, acknowledged bundle without overwrite."""
-
-        call = self._track_call()
+        call = await self._admit()
         try:
             if acknowledged is not True:
                 raise TTSVoiceBundleError("acknowledgement_required")
-            if self._closed or type(profile_id) is not UUID:
+            if type(profile_id) is not UUID:
                 raise TTSVoiceBundleError("operation_failed")
             result = await self._repository.get_profile(profile_id)
             if (
@@ -1205,26 +1548,129 @@ class TTSVoiceBundlePortabilityService:
             )
             payload = encode_clone_voice_bundle(bundle)
             selected = _source_path(destination)
-            outcome = cast(
-                _WorkerOutcome, await self._run_worker(_publish_sync, selected, payload)
+            control, raw_outcome = await self._run_worker_settled(
+                _publish_sync, selected, payload
             )
+            outcome = cast(_WorkerOutcome, raw_outcome)
             del payload, bundle, reference
+            if outcome.result is True and outcome.code is None:
+                return
+            if control is not None or outcome.code == "cancelled":
+                raise asyncio.CancelledError from None
             if outcome.code is not None:
                 raise TTSVoiceBundleError(cast(Any, outcome.code)) from None
         finally:
-            if call is not None:
-                self._calls.discard(call)
+            await self._release(call)
+
+    async def _export_outcome(
+        self,
+        profile_id: object,
+        destination: object,
+        expected_generation: object,
+        expected_revision: object,
+        acknowledged: object,
+    ) -> _PublicOutcome:
+        try:
+            await self._export_impl(
+                cast(Any, profile_id),
+                cast(Any, destination),
+                expected_generation=cast(Any, expected_generation),
+                expected_revision=cast(Any, expected_revision),
+                acknowledged=cast(Any, acknowledged),
+            )
+            return _PublicOutcome(result=True)
+        except asyncio.CancelledError:
+            return _PublicOutcome(control="cancelled")
+        except TTSVoiceBundleError as error:
+            return _PublicOutcome(code=error.code)
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            return _PublicOutcome(code="operation_failed")
+
+    async def export(
+        self,
+        profile_id: UUID,
+        destination: Path | str | os.PathLike[str],
+        *,
+        expected_generation: int,
+        expected_revision: int,
+        acknowledged: bool,
+    ) -> None:
+        """Publish one deterministic, acknowledged bundle without overwrite."""
+
+        outcome = await self._export_outcome(
+            profile_id,
+            destination,
+            expected_generation,
+            expected_revision,
+            acknowledged,
+        )
+        del (
+            profile_id,
+            destination,
+            expected_generation,
+            expected_revision,
+            acknowledged,
+        )
+        if outcome.control is not None:
+            del outcome
+            raise asyncio.CancelledError from None
+        if outcome.code is not None or outcome.result is not True:
+            code = outcome.code or "operation_failed"
+            del outcome
+            raise TTSVoiceBundleError(cast(Any, code)) from None
 
     def seal(self) -> None:
         self._closed = True
 
+    async def _invalidate_impl(self, handle: object) -> None:
+        call = await self._admit()
+        try:
+            async with self._session_lock:
+                if type(handle) is TTSVoiceBundleHandle and handle._belongs_to(
+                    self._identity
+                ):
+                    self._sessions.pop(handle, None)
+        finally:
+            await self._release(call)
+
+    async def _invalidate_outcome(self, handle: object) -> _PublicOutcome:
+        try:
+            await self._invalidate_impl(handle)
+            return _PublicOutcome(result=True)
+        except asyncio.CancelledError:
+            return _PublicOutcome(control="cancelled")
+        except TTSVoiceBundleError as error:
+            return _PublicOutcome(code=error.code)
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            return _PublicOutcome(code="operation_failed")
+
+    async def invalidate(self, handle: TTSVoiceBundleHandle) -> None:
+        """Idempotently discard one retained review authority."""
+
+        outcome = await self._invalidate_outcome(handle)
+        del handle
+        if outcome.control is not None:
+            del outcome
+            raise asyncio.CancelledError from None
+        if outcome.code is not None:
+            code = outcome.code
+            del outcome
+            raise TTSVoiceBundleError(cast(Any, code)) from None
+
     async def close(self) -> None:
         """Seal admission and retain settlement of every service-owned call."""
 
-        if self._close_task is None:
-            self.seal()
-            self._close_task = asyncio.create_task(self._complete_close())
-        cancellation, _ = await _await_retained(self._close_task)
+        async with self._session_lock:
+            if self._close_task is None:
+                self._closed = True
+                self._sessions.clear()
+                self._close_task = asyncio.create_task(self._complete_close())
+            close_task = self._close_task
+        cancellation, _ = await _await_retained(close_task)
         if cancellation is not None:
             raise cancellation
 
@@ -1235,18 +1681,19 @@ class TTSVoiceBundlePortabilityService:
 
     async def _complete_close(self) -> None:
         current = asyncio.current_task()
-        calls = [call for call in self._calls if call is not current]
-        if calls:
+        while True:
+            async with self._session_lock:
+                retained = tuple(
+                    task
+                    for task in self._calls | self._workers | self._owned_calls
+                    if task is not current and not task.done()
+                )
+                if not retained:
+                    self._sessions.clear()
+                    return
             await asyncio.gather(
-                *(asyncio.shield(call) for call in calls), return_exceptions=True
+                *(asyncio.shield(task) for task in retained), return_exceptions=True
             )
-        workers = tuple(self._workers)
-        if workers:
-            await asyncio.gather(
-                *(asyncio.shield(worker) for worker in workers), return_exceptions=True
-            )
-        async with self._session_lock:
-            self._sessions.clear()
 
 
 __all__ = [

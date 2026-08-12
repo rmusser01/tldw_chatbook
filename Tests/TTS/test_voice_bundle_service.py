@@ -8,6 +8,8 @@ import os
 import pickle
 import stat
 import struct
+import threading
+from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -31,6 +33,7 @@ from tldw_chatbook.TTS.profile_repository import (
 )
 from tldw_chatbook.TTS.profile_types import (
     ProfileStoreResult,
+    TTSGenerationProfile,
     TTSProfileCollisionSnapshot,
     TTSProfileDraft,
 )
@@ -212,6 +215,42 @@ def _service(tmp_path: Path, **kwargs):
 def _write_source(path: Path, bundle: TTSCloneVoiceBundle | None = None) -> None:
     path.write_bytes(encode_clone_voice_bundle(bundle or _bundle()))
     path.chmod(0o644)
+
+
+def _install_export_record(
+    repository: _Repository,
+) -> tuple[TTSCloneVoiceBundle, TTSGenerationProfile]:
+    bundle = _bundle()
+    profile = command_to_profile(
+        SimpleNamespace(
+            choice="create",
+            source_profile_id=PROFILE_ID,
+            copy_profile_id=None,
+            copy_display_name=None,
+            source_draft=bundle.profile.draft,
+            canonical_reference=bundle.reference,
+            recipe_requirement=bundle.recipe_requirement,
+        )
+    )
+    from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
+
+    reference = TTSCloneReference(
+        summary=profile.reference,
+        wav_bytes=bundle.reference.wav_bytes,
+        reference_text=bundle.reference.reference_text,
+        sha256=bundle.reference.sha256,
+        recipe_requirement=bundle.recipe_requirement,
+    )
+
+    async def get_profile(_profile_id):
+        return ProfileStoreResult(repository.generation, profile)
+
+    async def get_reference(*_args, **_kwargs):
+        return ProfileStoreResult(repository.generation, reference)
+
+    repository.get_profile = get_profile
+    repository.get_reference = get_reference
+    return bundle, profile
 
 
 @pytest.mark.asyncio
@@ -877,3 +916,562 @@ async def test_close_waits_for_active_inspection_before_returning(
     await closing
     await service.wait_closed()
     assert list((tmp_path / "owned-portability").iterdir()) == []
+
+
+def _exception_graph_values(error: BaseException) -> list[object]:
+    pending: list[object] = [error]
+    values: list[object] = []
+    seen: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        values.append(value)
+        if isinstance(value, BaseException):
+            pending.extend(value.args)
+            pending.extend(
+                item
+                for item in (value.__cause__, value.__context__)
+                if item is not None
+            )
+            traceback = value.__traceback__
+            while traceback is not None:
+                if (
+                    traceback.tb_frame.f_globals.get("__name__")
+                    == bundle_service.__name__
+                ):
+                    pending.extend(traceback.tb_frame.f_locals.values())
+                traceback = traceback.tb_next
+        elif type(value) is dict:
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif type(value) in (list, tuple, set, frozenset):
+            pending.extend(value)
+        elif not isinstance(value, type) and is_dataclass(value):
+            pending.extend(getattr(value, field.name) for field in fields(value))
+    return values
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collaborator", ("repository", "dependency"))
+async def test_public_inspect_severs_private_collaborator_exception_graph(
+    tmp_path: Path,
+    collaborator: str,
+) -> None:
+    source = tmp_path / "CANARY-selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, dependency = _service(tmp_path)
+    canary = f"CANARY-{collaborator}-private-value"
+
+    if collaborator == "repository":
+
+        async def fail(*_args, **_kwargs):
+            raise RuntimeError(canary)
+
+        repository.get_profile_collisions = fail
+    else:
+
+        async def fail(_requirement):
+            raise RuntimeError(canary)
+
+        dependency.audio_cpp_guided_dependency_snapshot = fail
+
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed") as caught:
+        await service.inspect(source)
+
+    error = caught.value
+    assert str(error) == "operation_failed"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    service_frames: list[str] = []
+    traceback = error.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_globals.get("__name__") == bundle_service.__name__:
+            service_frames.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    assert service_frames == ["inspect"]
+    assert all(canary not in repr(value) for value in _exception_graph_values(error))
+    assert all(
+        "CANARY-selected" not in repr(value) for value in _exception_graph_values(error)
+    )
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_inspect_preserves_unsupported_platform_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, _repository, _dependency = _service(tmp_path)
+    monkeypatch.setattr(bundle_service, "_posix_supported", lambda: False)
+
+    with pytest.raises(TTSVoiceBundleError, match="unsupported_platform"):
+        await service.inspect(source)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("state", "unknown"),
+        ("provider_configuration_revision", -1),
+        ("saved_generation", True),
+        ("pending_configuration", True),
+        ("saved_requirement", None),
+        ("applied_requirement", TTSCloneRecipeRequirement("other", 1, "other")),
+    ),
+)
+async def test_invalid_dependency_snapshot_fails_before_review_publication(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, dependency = _service(tmp_path)
+    forged = _dependency()
+    object.__setattr__(forged, field, value)
+    dependency.snapshot = forged
+
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+        await service.inspect(source)
+    assert repository.commits == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_is_idempotent_and_foreign_handles_are_bounded(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, _dependency = _service(tmp_path)
+    foreign, _foreign_repository, _foreign_dependency = _service(tmp_path / "other")
+    review = await service.inspect(source)
+
+    await service.invalidate(review.handle)
+    await service.invalidate(review.handle)
+    await foreign.invalidate(review.handle)
+    with pytest.raises(TTSVoiceBundleError, match="stale_inspection"):
+        await service.commit(
+            review.handle,
+            TTSVoiceBundleImportChoice("create", False),
+        )
+    assert repository.commits == []
+    await service.close()
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+        await service.invalidate(review.handle)
+    await foreign.close()
+
+
+@pytest.mark.asyncio
+async def test_commit_detects_same_size_mutation_with_restored_mtime_before_submit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    first = encode_clone_voice_bundle(_bundle(sample=0))
+    second = encode_clone_voice_bundle(_bundle(sample=1))
+    assert len(first) == len(second)
+    source.write_bytes(first)
+    source.chmod(0o600)
+    service, repository, _dependency = _service(tmp_path)
+    review = await service.inspect(source)
+    original_mtime = source.stat().st_mtime_ns
+
+    def mutate(boundary: str) -> None:
+        if boundary != "commit_pre_repository":
+            return
+        source.write_bytes(second)
+        source.chmod(0o600)
+        os.utime(source, ns=(original_mtime, original_mtime))
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", mutate)
+    with pytest.raises(TTSVoiceBundleError, match="source_changed"):
+        await service.commit(
+            review.handle,
+            TTSVoiceBundleImportChoice("create", False),
+        )
+    assert repository.commits == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_source_parent_substitution_during_review_fails_closed(
+    tmp_path: Path,
+) -> None:
+    selected_parent = tmp_path / "selected-parent"
+    selected_parent.mkdir()
+    source = selected_parent / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, _dependency = _service(tmp_path)
+    review = await service.inspect(source)
+    moved_parent = tmp_path / "moved-parent"
+    os.rename(selected_parent, moved_parent)
+    selected_parent.mkdir()
+    _write_source(selected_parent / source.name)
+
+    with pytest.raises(TTSVoiceBundleError, match="source_changed"):
+        await service.commit(
+            review.handle,
+            TTSVoiceBundleImportChoice("create", False),
+        )
+    assert repository.commits == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_repository_commit_is_retained_across_cancellation_and_close(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, _dependency = _service(tmp_path)
+    review = await service.inspect(source)
+    entered = asyncio.Event()
+    commit_future: asyncio.Future[ProfileStoreResult[TTSBundleImportResult]] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    async def blocked(command):
+        repository.commits.append(command)
+        entered.set()
+        return await commit_future
+
+    repository.commit_bundle_import = blocked
+    committing = asyncio.create_task(
+        service.commit(
+            review.handle,
+            TTSVoiceBundleImportChoice("create", False),
+        )
+    )
+    await entered.wait()
+    committing.cancel()
+    closing = asyncio.create_task(service.close())
+    await asyncio.sleep(0)
+    assert not commit_future.cancelled()
+    assert not committing.done()
+    assert not closing.done()
+    command = repository.commits[0]
+    commit_future.set_result(
+        ProfileStoreResult(
+            repository.generation,
+            TTSBundleImportResult("created", command_to_profile(command)),
+        )
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await committing
+    await closing
+
+
+@pytest.mark.asyncio
+async def test_export_cancellation_after_durable_publication_returns_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency = _service(tmp_path)
+    bundle = _bundle()
+    profile = command_to_profile(
+        SimpleNamespace(
+            choice="create",
+            source_profile_id=PROFILE_ID,
+            copy_profile_id=None,
+            copy_display_name=None,
+            source_draft=bundle.profile.draft,
+            canonical_reference=bundle.reference,
+            recipe_requirement=bundle.recipe_requirement,
+        )
+    )
+    from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
+
+    reference = TTSCloneReference(
+        summary=profile.reference,
+        wav_bytes=bundle.reference.wav_bytes,
+        reference_text=bundle.reference.reference_text,
+        sha256=bundle.reference.sha256,
+        recipe_requirement=bundle.recipe_requirement,
+    )
+
+    async def get_profile(_profile_id):
+        return ProfileStoreResult(repository.generation, profile)
+
+    async def get_reference(*_args, **_kwargs):
+        return ProfileStoreResult(repository.generation, reference)
+
+    repository.get_profile = get_profile
+    repository.get_reference = get_reference
+    real_publish = bundle_service._publish_sync
+    entered = threading.Event()
+    release = threading.Event()
+
+    def publish_then_wait(*args):
+        outcome = real_publish(*args)
+        entered.set()
+        release.wait(5)
+        return outcome
+
+    monkeypatch.setattr(bundle_service, "_publish_sync", publish_then_wait)
+    exporting = asyncio.create_task(
+        service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    )
+    await asyncio.to_thread(entered.wait, 5)
+    assert destination.exists()
+    exporting.cancel()
+    await asyncio.sleep(0)
+    assert not exporting.done()
+    release.set()
+    await exporting
+    assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault_boundary", ("destination_post_link", "destination_post_fsync")
+)
+async def test_export_post_link_fault_leaves_no_unreported_final(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_boundary: str,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency = _service(tmp_path)
+    bundle = _bundle()
+    profile = command_to_profile(
+        SimpleNamespace(
+            choice="create",
+            source_profile_id=PROFILE_ID,
+            copy_profile_id=None,
+            copy_display_name=None,
+            source_draft=bundle.profile.draft,
+            canonical_reference=bundle.reference,
+            recipe_requirement=bundle.recipe_requirement,
+        )
+    )
+    from tldw_chatbook.TTS.profile_reference_types import TTSCloneReference
+
+    reference = TTSCloneReference(
+        summary=profile.reference,
+        wav_bytes=bundle.reference.wav_bytes,
+        reference_text=bundle.reference.reference_text,
+        sha256=bundle.reference.sha256,
+        recipe_requirement=bundle.recipe_requirement,
+    )
+
+    async def get_profile(_profile_id):
+        return ProfileStoreResult(repository.generation, profile)
+
+    async def get_reference(*_args, **_kwargs):
+        return ProfileStoreResult(repository.generation, reference)
+
+    repository.get_profile = get_profile
+    repository.get_reference = get_reference
+
+    def fault(boundary: str) -> None:
+        if boundary == fault_boundary:
+            raise OSError("CANARY-post-link-private")
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", fault)
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+        await service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    assert not destination.exists()
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "seam",
+    (
+        "source_hook",
+        "commit_repository",
+        "export_repository",
+        "codec",
+        "destination_hook",
+    ),
+)
+async def test_public_operations_sever_all_collaborator_exception_graphs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    seam: str,
+) -> None:
+    service, repository, _dependency_service = _service(tmp_path)
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    canary = f"CANARY-{seam}-private"
+
+    if seam == "source_hook":
+
+        def fail_source(_boundary: str) -> None:
+            raise RuntimeError(canary)
+
+        monkeypatch.setattr(bundle_service, "_test_boundary", fail_source)
+        operation = service.inspect(source)
+    elif seam == "commit_repository":
+        review = await service.inspect(source)
+
+        async def fail_commit(_command):
+            raise RuntimeError(canary)
+
+        repository.commit_bundle_import = fail_commit
+        operation = service.commit(
+            review.handle, TTSVoiceBundleImportChoice("create", False)
+        )
+    else:
+        _bundle_value, profile = _install_export_record(repository)
+        if seam == "export_repository":
+
+            async def fail_profile(_profile_id):
+                raise RuntimeError(canary)
+
+            repository.get_profile = fail_profile
+        elif seam == "codec":
+
+            def fail_codec(_bundle_value):
+                raise RuntimeError(canary)
+
+            monkeypatch.setattr(bundle_service, "encode_clone_voice_bundle", fail_codec)
+        else:
+
+            def fail_destination(boundary: str) -> None:
+                if boundary == "destination_pre_publish":
+                    raise RuntimeError(canary)
+
+            monkeypatch.setattr(bundle_service, "_test_boundary", fail_destination)
+        operation = service.export(
+            PROFILE_ID,
+            tmp_path / "exported.tldw-voice.zip",
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+
+    with pytest.raises(TTSVoiceBundleError, match="operation_failed") as caught:
+        await operation
+    error = caught.value
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert all(canary not in repr(value) for value in _exception_graph_values(error))
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_close_atomically_seals_every_public_admission(
+    tmp_path: Path,
+) -> None:
+    service, repository, _dependency_service = _service(tmp_path)
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    review = await service.inspect(source)
+    _bundle_value, profile = _install_export_record(repository)
+    await service.close()
+
+    operations = (
+        service.inspect(source),
+        service.commit(review.handle, TTSVoiceBundleImportChoice("create", False)),
+        service.export(
+            PROFILE_ID,
+            tmp_path / "after-close.tldw-voice.zip",
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        ),
+        service.invalidate(review.handle),
+    )
+    for operation in operations:
+        with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+            await operation
+    assert repository.commits == []
+
+
+@pytest.mark.asyncio
+async def test_export_preserves_unsupported_platform_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, repository, _dependency_service = _service(tmp_path)
+    _bundle_value, profile = _install_export_record(repository)
+    monkeypatch.setattr(bundle_service, "_posix_supported", lambda: False)
+    with pytest.raises(TTSVoiceBundleError, match="unsupported_platform"):
+        await service.export(
+            PROFILE_ID,
+            tmp_path / "unsupported.tldw-voice.zip",
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_dependency_refresh_mutation_is_detected_before_commit_hook(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, dependency_service = _service(tmp_path)
+    review = await service.inspect(source)
+    replacement = encode_clone_voice_bundle(_bundle(sample=1))
+    original_mtime = source.stat().st_mtime_ns
+    original = dependency_service.audio_cpp_guided_dependency_snapshot
+
+    async def mutate_then_snapshot(requirement):
+        source.write_bytes(replacement)
+        source.chmod(0o600)
+        os.utime(source, ns=(original_mtime, original_mtime))
+        return await original(requirement)
+
+    dependency_service.audio_cpp_guided_dependency_snapshot = mutate_then_snapshot
+    with pytest.raises(TTSVoiceBundleError, match="source_changed"):
+        await service.commit(review.handle, TTSVoiceBundleImportChoice("create", False))
+    assert repository.commits == []
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_export_destination_parent_substitution_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "selected-parent"
+    parent.mkdir()
+    service, repository, _dependency_service = _service(tmp_path / "service")
+    _bundle_value, profile = _install_export_record(repository)
+    destination = parent / "portable.tldw-voice.zip"
+    moved = tmp_path / "moved-parent"
+
+    def substitute(boundary: str) -> None:
+        if boundary != "destination_pre_publish":
+            return
+        os.rename(parent, moved)
+        parent.mkdir()
+        (parent / "foreign-marker").write_bytes(b"foreign")
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", substitute)
+    with pytest.raises(TTSVoiceBundleError, match="destination_changed"):
+        await service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    assert not destination.exists()
+    assert (parent / "foreign-marker").read_bytes() == b"foreign"
+    assert list(moved.iterdir()) == []
+    await service.close()
