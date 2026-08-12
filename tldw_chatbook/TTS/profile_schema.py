@@ -1235,6 +1235,53 @@ def validate_profile_store_rows(
         raise _repository_error("corrupt_data") from None
 
 
+def validate_profile_store_version(
+    connection: sqlite3.Connection,
+    expected_version: int,
+) -> None:
+    """Fully validate one exact supported persisted schema and its domain.
+
+    This validator is intentionally path-free so private migration and restore
+    candidates can reuse the live store's exact schema/domain codecs without
+    discovering or opening the configured repository file.
+
+    Args:
+        connection: Caller-owned connection to the candidate store.
+        expected_version: Exact supported schema version required on disk.
+
+    Raises:
+        ProfileRepositoryError: If schema, integrity, foreign keys, or any
+            decoded domain value fails closed validation.
+        BaseException: A caller control-flow signal preserved unchanged.
+    """
+
+    try:
+        if type(expected_version) is not int or expected_version not in (1, 2, 3, 4):
+            raise ValueError
+        version_row = connection.execute("PRAGMA user_version").fetchone()
+        if (
+            version_row is None
+            or len(version_row) != 1
+            or type(version_row[0]) is not int
+            or version_row[0] != expected_version
+        ):
+            raise ValueError
+        _validate_schema(connection, expected_version=expected_version)
+        _validate_full_integrity(connection)
+        validate_profile_store_rows(connection)
+        if expected_version >= 3:
+            _validate_migration_reference_rows(
+                connection,
+                schema_version=expected_version,
+            )
+    except ProfileRepositoryError:
+        raise
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            raise
+        raise _repository_error("schema_corrupt") from None
+
+
 def _source_identity(value: os.stat_result) -> tuple[int, ...]:
     return (
         value.st_dev,

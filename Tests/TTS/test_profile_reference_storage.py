@@ -15,6 +15,11 @@ import pytest
 import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2, v2_to_v3
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_candidate import (
+    ProfileMigrationBoundary,
+    ProfileMigrationBoundaryRequest,
+    step_profile_migration_candidate,
+)
 from tldw_chatbook.TTS.profile_reference_storage import (
     PROFILE_WITH_REFERENCE_SELECT,
     REFERENCE_ID_INDEX,
@@ -137,6 +142,109 @@ def _domain_rows(
         return profiles, assignments
     finally:
         connection.close()
+
+
+def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    boundary_rows: list[tuple[object, ...]] = []
+
+    result = step_profile_migration_candidate(
+        connection,
+        boundary_sink=lambda borrowed, request: boundary_rows.append(
+            _candidate_reference_row(borrowed, request)
+        ),
+    )
+
+    assert tuple(request.kind for request in result.boundaries) == (
+        ProfileMigrationBoundary.PRE_V4,
+    )
+    assert boundary_rows == [reference_before]
+    final = sqlite3.connect(path)
+    try:
+        final_row = final.execute(
+            f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+            (PROFILE_ID,),
+        ).fetchone()
+        assert tuple(final_row[:12]) == reference_before
+        assert final_row[12:] == (None, None)
+    finally:
+        final.close()
+
+
+def _candidate_reference_row(
+    connection: sqlite3.Connection,
+    request: ProfileMigrationBoundaryRequest,
+) -> tuple[object, ...]:
+    assert request == ProfileMigrationBoundaryRequest(
+        ProfileMigrationBoundary.PRE_V4,
+        3,
+    )
+    return tuple(
+        connection.execute(
+            f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+            (PROFILE_ID,),
+        ).fetchone()
+    )
+
+
+def test_v3_candidate_rejects_corrupt_reference_before_boundary(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "PRIVATE-candidate.sqlite3"
+    _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(f"UPDATE {REFERENCE_TABLE} SET sha256 = ?", ("0" * 64,))
+    connection.commit()
+    calls: list[ProfileMigrationBoundary] = []
+
+    with _safe_error("reference_unavailable") as caught:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda _borrowed, request: calls.append(request.kind),
+        )
+
+    assert calls == []
+    assert str(path) not in repr(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_candidate_step_rejects_private_reference_mutation_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def mutate_reference(candidate: sqlite3.Connection) -> None:
+        real_migration(candidate)
+        candidate.execute(
+            f"UPDATE {REFERENCE_TABLE} SET reference_text = 'Changed transcript'"
+        )
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, mutate_reference)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection)
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert (
+            tuple(reopened.execute(f"SELECT * FROM {REFERENCE_TABLE}").fetchone())
+            == before
+        )
+    finally:
+        reopened.close()
 
 
 def test_v4_reference_schema_has_exact_owned_shape(tmp_path: Path) -> None:

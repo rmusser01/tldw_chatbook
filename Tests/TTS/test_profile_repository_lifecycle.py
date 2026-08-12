@@ -25,6 +25,10 @@ import pytest
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _raw_migrate_v1_to_v2
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_candidate import (
+    ProfileMigrationBoundary,
+    step_profile_migration_candidate,
+)
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
     encode_profile,
@@ -321,6 +325,38 @@ def _build_populated_v2_store_at(path: Path, *, display_name: str = "Legacy") ->
         connection.commit()
     finally:
         connection.close()
+
+
+def test_restore_candidate_uses_path_free_version_stepper_without_touching_active(
+    tmp_path: Path,
+) -> None:
+    active_path = tmp_path / "active.sqlite3"
+    restore_path = tmp_path / "restore-candidate.sqlite3"
+    active = open_profile_store(active_path)
+    active.close()
+    active_before = active_path.read_bytes()
+    _build_populated_v1_store_at(restore_path)
+    restore = sqlite3.connect(restore_path)
+    restore.row_factory = sqlite3.Row
+    observed: list[ProfileMigrationBoundary] = []
+
+    result = step_profile_migration_candidate(
+        restore,
+        boundary_sink=lambda _borrowed, request: observed.append(request.kind),
+    )
+
+    assert result.source_version == 1
+    assert observed == [
+        ProfileMigrationBoundary.PRE_V3,
+        ProfileMigrationBoundary.PRE_V4,
+    ]
+    assert active_path.read_bytes() == active_before
+    assert not tuple(tmp_path.glob("active.sqlite3-*"))
+    migrated = sqlite3.connect(restore_path)
+    try:
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+    finally:
+        migrated.close()
 
 
 def _test_online_backup(source_path: Path, destination_path: Path) -> None:

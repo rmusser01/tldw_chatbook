@@ -6,6 +6,7 @@ import inspect
 import sqlite3
 import tempfile
 from collections.abc import Callable, Mapping
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -15,6 +16,11 @@ import pytest
 import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_candidate import (
+    ProfileMigrationBoundary,
+    ProfileMigrationBoundaryRequest,
+    step_profile_migration_candidate,
+)
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNMENT_PROFILE_INDEX,
     BUSY_TIMEOUT_MS,
@@ -192,6 +198,308 @@ def _build_populated_v1_store(db_path: Path) -> None:
         connection.commit()
     finally:
         connection.close()
+
+
+def _build_candidate_version(db_path: Path, version: int) -> sqlite3.Connection:
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    for source_version in range(version):
+        MIGRATIONS[source_version](connection)
+    if version > 0:
+        _insert_profile(connection, _profile())
+    connection.commit()
+    return connection
+
+
+@pytest.mark.parametrize(
+    ("source_version", "expected_boundaries"),
+    [
+        (0, (ProfileMigrationBoundary.PRE_V3, ProfileMigrationBoundary.PRE_V4)),
+        (1, (ProfileMigrationBoundary.PRE_V3, ProfileMigrationBoundary.PRE_V4)),
+        (2, (ProfileMigrationBoundary.PRE_V3, ProfileMigrationBoundary.PRE_V4)),
+        (3, (ProfileMigrationBoundary.PRE_V4,)),
+    ],
+)
+def test_candidate_stepper_emits_exact_boundaries_in_version_order(
+    tmp_path: Path,
+    source_version: int,
+    expected_boundaries: tuple[ProfileMigrationBoundary, ...],
+) -> None:
+    connection = _build_candidate_version(
+        tmp_path / f"candidate-v{source_version}.sqlite3",
+        source_version,
+    )
+    observed: list[tuple[ProfileMigrationBoundaryRequest, int]] = []
+
+    result = step_profile_migration_candidate(
+        connection,
+        boundary_sink=lambda borrowed, request: observed.append(
+            (request, borrowed.execute("PRAGMA user_version").fetchone()[0])
+        ),
+    )
+
+    assert result.source_version == source_version
+    assert result.final_version == CURRENT_PROFILE_SCHEMA_VERSION == 4
+    assert result.boundaries == tuple(request for request, _version in observed)
+    assert tuple(request.kind for request, _version in observed) == expected_boundaries
+    assert (
+        tuple(version for _request, version in observed)
+        == tuple(request.schema_version for request, _version in observed)
+        == tuple(
+            2 if kind is ProfileMigrationBoundary.PRE_V3 else 3
+            for kind in expected_boundaries
+        )
+    )
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+
+
+def test_candidate_boundaries_preserve_exact_source_and_intermediate_domain(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+    source_domain = profile_schema._migration_domain_snapshot(connection)
+    observations: list[
+        tuple[
+            ProfileMigrationBoundary,
+            tuple[tuple[tuple[object, ...], ...], tuple[tuple[object, ...], ...]],
+        ]
+    ] = []
+
+    step_profile_migration_candidate(
+        connection,
+        boundary_sink=lambda borrowed, request: observations.append(
+            (request.kind, profile_schema._migration_domain_snapshot(borrowed))
+        ),
+    )
+
+    assert observations == [
+        (ProfileMigrationBoundary.PRE_V3, source_domain),
+        (ProfileMigrationBoundary.PRE_V4, source_domain),
+    ]
+
+
+def test_candidate_boundary_failure_is_bounded_closes_and_does_not_continue(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "PRIVATE-candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+    calls: list[ProfileMigrationBoundary] = []
+
+    def fail_boundary(
+        _borrowed: sqlite3.Connection,
+        request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        calls.append(request.kind)
+        raise RuntimeError(f"PRIVATE boundary failure at {path}")
+
+    with _safe_error("migration_failed") as caught:
+        step_profile_migration_candidate(connection, boundary_sink=fail_boundary)
+
+    assert calls == [ProfileMigrationBoundary.PRE_V3]
+    assert str(path) not in repr(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        reopened.close()
+
+
+def test_candidate_boundary_borrow_is_query_only(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+
+    def mutate_boundary(
+        borrowed: sqlite3.Connection,
+        _request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        borrowed.execute("UPDATE tts_generation_profiles SET revision = revision + 1")
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection, boundary_sink=mutate_boundary)
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            reopened.execute("SELECT revision FROM tts_generation_profiles").fetchone()[
+                0
+            ]
+            == _profile().revision
+        )
+    finally:
+        reopened.close()
+
+
+def test_candidate_post_step_validation_failure_rolls_back_and_stops_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+    calls: list[ProfileMigrationBoundary] = []
+    real_validate = profile_schema.validate_profile_store_version
+
+    def fail_v3(candidate: sqlite3.Connection, version: int) -> None:
+        real_validate(candidate, version)
+        if version == 3:
+            raise RuntimeError("PRIVATE post-step validation")
+
+    monkeypatch.setattr(profile_schema, "validate_profile_store_version", fail_v3)
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda _borrowed, request: calls.append(request.kind),
+        )
+
+    assert calls == [ProfileMigrationBoundary.PRE_V3]
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("source_kind", ["newer", "partial", "malformed"])
+def test_candidate_uncertain_source_refuses_before_boundary_callback(
+    tmp_path: Path,
+    source_kind: str,
+) -> None:
+    path = tmp_path / f"PRIVATE-{source_kind}.sqlite3"
+    if source_kind == "newer":
+        connection = sqlite3.connect(path)
+        connection.execute("PRAGMA user_version = 5")
+    elif source_kind == "partial":
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE TABLE unexpected(value TEXT)")
+    else:
+        path.write_bytes(b"PRIVATE malformed sqlite")
+        connection = sqlite3.connect(path)
+    connection.commit()
+    calls: list[ProfileMigrationBoundary] = []
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda _borrowed, request: calls.append(request.kind),
+        )
+
+    assert caught.value.code in {
+        "schema_unsupported",
+        "schema_partial",
+        "schema_corrupt",
+    }
+    assert calls == []
+    assert str(path) not in repr(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_candidate_boundary_borrow_cannot_outlive_candidate_ownership(
+    tmp_path: Path,
+) -> None:
+    connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 3)
+    retained: list[sqlite3.Connection] = []
+
+    step_profile_migration_candidate(
+        connection,
+        boundary_sink=lambda borrowed, _request: retained.append(borrowed),
+    )
+
+    assert retained == [connection]
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        retained[0].execute("SELECT 1")
+
+
+def test_candidate_boundary_value_is_immutable_and_payload_free() -> None:
+    request = ProfileMigrationBoundaryRequest(ProfileMigrationBoundary.PRE_V4, 3)
+
+    with pytest.raises(FrozenInstanceError):
+        request.schema_version = 4  # type: ignore[misc]
+
+    assert "sqlite" not in repr(request).casefold()
+    assert not hasattr(request, "connection")
+    assert not hasattr(request, "path")
+
+
+def test_candidate_validates_source_boundaries_and_each_post_step_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 2)
+    real_validate = profile_schema.validate_profile_store_version
+    validated_versions: list[int] = []
+
+    def tracked(candidate: sqlite3.Connection, version: int) -> None:
+        validated_versions.append(version)
+        real_validate(candidate, version)
+
+    monkeypatch.setattr(profile_schema, "validate_profile_store_version", tracked)
+
+    step_profile_migration_candidate(connection, boundary_sink=lambda *_args: None)
+
+    assert validated_versions == [2, 2, 3, 3, 4]
+
+
+def test_candidate_step_rejects_valid_domain_mutation_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = _build_candidate_version(path, 2)
+    real_migration = MIGRATIONS[2]
+
+    def mutate_domain(candidate: sqlite3.Connection) -> None:
+        real_migration(candidate)
+        candidate.execute(
+            "UPDATE tts_generation_profiles "
+            "SET display_name = 'Changed', normalized_name = 'changed'"
+        )
+
+    monkeypatch.setitem(MIGRATIONS, 2, mutate_domain)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection)
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert (
+            reopened.execute(
+                "SELECT display_name FROM tts_generation_profiles"
+            ).fetchone()[0]
+            == _profile().display_name
+        )
+    finally:
+        reopened.close()
+
+
+def test_candidate_callback_control_flow_is_preserved_after_close(
+    tmp_path: Path,
+) -> None:
+    class StopCandidate(BaseException):
+        pass
+
+    connection = _build_candidate_version(tmp_path / "candidate.sqlite3", 2)
+    signal = StopCandidate()
+
+    with pytest.raises(StopCandidate) as caught:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda *_args: (_ for _ in ()).throw(signal),
+        )
+
+    assert caught.value is signal
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
 
 
 def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) -> None:
