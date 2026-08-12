@@ -922,7 +922,7 @@ Review for absolute paths, credentials, exception text, post-provision network
 access, model caching, and activation/preference state. Commit the three new
 files and this updated plan as ci(stt): verify external Parakeet platforms.
 
-- [ ] **Step 5: Push, bootstrap the labeled draft PR, and monitor the matrix**
+- [x] **Step 5: Push, bootstrap the labeled draft PR, and monitor the matrix**
 
 Push the rebased branch, create or reuse a draft PR targeting dev, and apply
 task-598-platform-evidence only after the workflow commit is visible remotely.
@@ -931,7 +931,7 @@ bound. If a lane fails, inspect only that lane and its JSON. Fix only proven
 product/packaging or probe defects; remove and reapply the label for a rerun.
 Never substitute an architecture or accelerator for a failed CPU lane.
 
-- [ ] **Step 6: Persist evidence and close TASK-598 only if honest**
+- [x] **Step 6: Persist evidence and close TASK-598 only if honest**
 
 After all lanes pass, download and validate all four JSON artifacts and confirm
 their SHA/run identity. Commit one normalized platform-evidence.json with the

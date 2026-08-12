@@ -1,4 +1,34 @@
-# TASK-598 focused macOS external-mode evidence
+# TASK-598 external-mode evidence
+
+## Native platform matrix
+
+The four remaining wheel-supported targets passed the bounded native workflow
+at commit `9e006d3e618bf228305e3de575d1a4aac699a1d3` in
+[GitHub Actions run 31553729188](https://github.com/rmusser01/tldw_chatbook/actions/runs/31553729188):
+
+| Target | Python | ONNX Runtime | v2 total / inference | v3 total / inference |
+| --- | --- | --- | --- | --- |
+| Linux x86_64 | 3.12.13 | 1.28.0 | 35.79 s / 3.88 s | 13.65 s / 3.74 s |
+| Linux aarch64 | 3.12.13 | 1.28.0 | 44.03 s / 3.05 s | 17.86 s / 3.00 s |
+| Windows x86_64 | 3.12.10 | 1.28.0 | 31.00 s / 5.97 s | 27.48 s / 6.16 s |
+| macOS x86_64 | 3.12.10 | 1.23.2 | 48.76 s / 6.31 s | 37.13 s / 6.23 s |
+
+Each lane installed the declared native transcription extra without a CI-only
+runtime pin, provisioned the exact managed Silero VAD, verified external v2 and
+v3 INT8 descriptor roots, deleted an optional managed copy, and transcribed
+generated four-second zero PCM through `CPUExecutionProvider`. Every lane kept
+`artifact_root` null, recorded only the exact managed VAD dependency, left the
+external/cache/store/source preference unchanged, retained no managed
+Parakeet readiness or active selector, shut down cleanly, and uploaded a
+path-private JSON artifact that passed the repository validator. Generated
+zero PCM proves runtime execution and lifecycle behavior, not transcription
+quality. Normalized results and source-artifact digests are in
+[`platform-evidence.json`](platform-evidence.json).
+
+Together with the macOS arm64 smoke below, all five platform gates required by
+TASK-598 AC7 have evidence.
+
+## Focused macOS arm64 smoke
 
 Evidence label: `isolated_macos_external_mode_in_memory_production_path`.
 
@@ -50,14 +80,20 @@ command with the repository virtual environment and no keyword filtering:
 Initial evidence result at `e18a4e4d7`: **6 failed, 1248 passed, 1 skipped,
 16 warnings in 356.88 seconds**.
 
-Final reviewed-head result at `bdd2f25e3`: **3 failed, 1262 passed, 1 skipped,
-9 warnings in 376.78 seconds**. The two UI test-double failures were corrected
-and passed in this union; the earlier First Run union-order failure also passed.
-Two localhost artifact fixtures were still denied permission to bind
-`127.0.0.1` by the sandbox. The remaining dispatch import-state assertion
-passed in isolation in 0.37 seconds. Both localhost fixture nodes then passed
-outside the sandbox in one focused run (2 passed in 1.62 seconds). The union
-was not run again.
+Final Task-12 union at `9e006d3e6`, after adding the CI evidence tests, reached
+**1361 passed, 2 failed, 1 skipped, 11 warnings, and 2 teardown errors in
+348.52 seconds**. The two errors were TASK-598 mounted-test fixtures that had
+not neutralized an existing periodic Ollama localhost availability probe under
+the repository network guard; both exact nodes pass after the test-only fix.
+The two failures are the same unrelated `mcp-tools-workspace-save` missing-
+tooltip assertion for the `mcp` and `tools_settings` aliases. They reproduce
+independently, and both the audit and MCP implementation are unchanged from
+`origin/dev`. The task does not alter that separate MCP baseline defect.
+
+All directly affected dispatch and mounted Models surfaces then passed in one
+focused run (**89 passed**), and the two final standalone mounted nodes passed
+together. The earlier dispatch import assertion was made suite-order
+independent and passes in the union.
 
 ## Static verification
 
@@ -74,11 +110,10 @@ was not run again.
   hits were synthetic test paths and the intended `Path.home()` picker
   default.
 
-## Status and open gates
+## Status
 
-TASK-598 remains **In Progress**. This host supports the available macOS arm64
-external-mode evidence, but the exact changed-test union is not fully green in
-the sandbox.
-Native source verification, copy/delete, and real ONNX CPU smoke remain open on
-Linux x86_64, Linux aarch64, Windows x86_64, and macOS x86_64. No Linux or
-Windows readiness claim is made.
+All TASK-598 behavior and all five wheel-supported platform gates are now
+evidenced. AC7 is satisfied. The Backlog task remains **In Progress** rather
+than being marked Done because the exact changed-test union still includes the
+two unrelated, reproducible MCP tooltip baseline failures described above;
+this evidence update does not hide or broaden scope to repair them.
