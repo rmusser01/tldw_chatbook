@@ -1195,10 +1195,7 @@ class ConsoleChatStore:
                 overrides=overrides,
             )
         except Exception:
-            logger.bind(
-                session_id=session_id,
-                conversation_id=session.persisted_conversation_id,
-            ).exception(
+            logger.error(
                 "Failed to persist Console context policy; in-memory policy "
                 "keeps the applied value."
             )
@@ -4240,10 +4237,7 @@ class ConsoleChatStore:
             return
         writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
-            logger.bind(
-                session_id=session.id,
-                conversation_id=session.persisted_conversation_id,
-            ).warning(
+            logger.warning(
                 "Skipped staged Console context-policy flush: persistence "
                 "adapter exposes no policy write seam."
             )
@@ -4254,10 +4248,7 @@ class ConsoleChatStore:
                 overrides=session.context_policy_overrides,
             )
         except Exception:
-            logger.bind(
-                session_id=session.id,
-                conversation_id=session.persisted_conversation_id,
-            ).exception("Failed to flush Console context policy on first persist.")
+            logger.error("Failed to flush Console context policy on first persist.")
 
     def _resolve_context_policy_on_resume(self, session_id: str) -> None:
         """Hydrate one persisted session's local policy without app-root state."""
@@ -4271,10 +4262,7 @@ class ConsoleChatStore:
             result = reader(session.persisted_conversation_id)
         except Exception:
             session.context_policy_error = "context_policy_read_failed"
-            logger.bind(
-                session_id=session_id,
-                conversation_id=session.persisted_conversation_id,
-            ).exception("Failed to read Console context policy on resume.")
+            logger.error("Failed to read Console context policy on resume.")
             return
         if isinstance(result, ConsoleContextPolicyOverrides):
             session.context_policy_overrides = result
