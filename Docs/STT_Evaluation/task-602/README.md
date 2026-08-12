@@ -1,42 +1,100 @@
-# TASK-602 focused macOS evidence
+# TASK-602 native Parakeet platform evidence
 
-Evidence label: `native_macos_focused_smoke`.
+Evidence label: `task602_native_parakeet_matrix`.
 
-This is focused implementation evidence for TASK-602 on one Apple-silicon
-macOS host. It is not a quality benchmark, does not cover Windows or Linux,
-and does not open the semantic-default promotion gate reserved for TASK-605.
-Exact host, artifact, audio, timing, and result data is in
-[`macos-evidence.json`](macos-evidence.json).
+TASK-602's required native CPU matrix passed on one executable commit. The
+machine-readable result is
+[`platform-evidence.json`](platform-evidence.json).
 
-## What passed
+## Passing run
 
-- The existing managed acquisition service downloaded and verified exact v2
-  INT8, v3 INT8, and v2 F32 roots plus the pinned Silero VAD dependency in a
-  temporary store. VAD was reused after the first closure.
-- Real `onnx-asr==0.12.0` CPU inference transcribed synthesized English with
-  v2 INT8 and v2 F32 and synthesized French with v3 INT8. The v3 result kept
-  requested `fr`, effective `auto`, null detected language, and the
-  `requested_language_not_enforced` warning.
-- A 40-second input used the managed VAD and one ASR batch per segment.
-  Cancellation observed immediately before the second segment prevented that
-  second batch. The same loaded runtime handled two follow-up jobs.
-- A real long-form request without a managed VAD failed with
-  `artifact_incompatible`, a normalized failed-attempt record, and the
-  `retry_faster_whisper` action.
-- The focused union passed 454 tests. The localhost acquisition test was run
-  separately with permission to bind an ephemeral loopback port and passed.
+- Tested commit: `60d8b73b9c9223cef696e9bc3577d186af7e26be`
+- Workflow run: [31618353807](https://github.com/rmusser01/tldw_chatbook/actions/runs/31618353807)
+- Run attempt: `1`
+- Trigger: the explicit `task-602-platform-evidence` PR label
+- Python: 3.12 on every lane
 
-## Deliberate exclusions and open gates
+| Evidence lane | Native host | ONNX Runtime | Result |
+| --- | --- | --- | --- |
+| `linux-x86_64` | Linux x86_64 | 1.28.0 | Passed |
+| `linux-aarch64` | Linux aarch64 | 1.28.0 | Passed |
+| `windows-x86_64` | Windows x86_64 | 1.28.0 | Passed |
+| `macos-arm64` | macOS arm64 | 1.28.0 | Passed |
+| `macos-x86_64` | macOS x86_64 | 1.23.2 | Passed |
 
-The focused union deselected the unrelated, pre-existing optional-feature
-inventory failure for the `frontmatter` extra. That mismatch predates TASK-602
-and is not part of this work stream.
+Every lane resolved `onnx-asr==0.12.0`, `faster-whisper==1.2.1`, and
+`ctranslate2==4.8.1`, selected `CPUExecutionProvider`, completed cleanup, and
+passed all required checks:
 
-Ruff passed on the changed files except for two unrelated pre-existing findings
-in `Tests/Library/test_library_ingest_runner.py` (an unused local at line 2925
-and an unused local import at line 3162). Compileall, TOML/JSON parsing, and
-`git diff --check` passed.
+- package resolution and the cheap runtime probe;
+- exact managed Parakeet v2 INT8 CPU inference;
+- exact managed Parakeet v3 INT8 CPU inference;
+- managed long-form Silero VAD;
+- cancellation before the second segment batch;
+- same-identity resident batch reuse with held artifact leases; and
+- normalized `retry_faster_whisper` recovery wiring.
 
-Windows and Linux native wheel/install/runtime gates remain open because those
-hosts are unavailable. TASK-602 therefore remains in progress even though the
-macOS implementation evidence is green.
+The exact shared artifact identities were:
+
+- Parakeet v2 INT8 revision
+  `0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c`, closure
+  fingerprint `d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0`;
+- Parakeet v3 INT8 revision
+  `8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c`, closure
+  fingerprint `9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8`;
+- Silero VAD F32 revision
+  `b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6`.
+
+## Evidence integrity
+
+Each named platform artifact was downloaded to a separate temporary directory
+and independently validated with the checked-in normalizer. The aggregate was
+then created only through that normalizer and validated again:
+
+```bash
+python .github/scripts/task602_platform_evidence.py \
+  --validate-aggregate Docs/STT_Evaluation/task-602/platform-evidence.json
+```
+
+The aggregate requires exactly the five expected platforms, the same tested
+commit, workflow run, attempt, canonical URL, and passed status. It excludes
+local paths, commands, transcripts, exceptions, environment values, PIDs,
+handles, credentials, and temporary names.
+
+## Fixture attribution
+
+The smoke used PyTorch Audio's 16 kHz mono VOiCES tutorial sample,
+`Lab41-SRI-VOiCES-src-sp0307-ch127535-sg0042.wav`, under CC BY 4.0. The runner
+downloaded it from the PyTorch tutorial-assets host and required SHA-256
+`c65fcd726d6b08c82c1e5dc7558f863cd8d483e3ed2f4a7bcf271dc1865ada14` before
+inference. The fixture is not committed to this repository.
+
+## Failed executable attempt retained for audit
+
+The first labeled run,
+[31616382421](https://github.com/rmusser01/tldw_chatbook/actions/runs/31616382421),
+tested commit `aea7bd11be687383dd6f156de94bba51472156b3`. Linux aarch64 failed before
+runtime load because the evidence adapter supplied an internal artifact lease
+key object where the production executor request requires the public
+three-string artifact reference. The strict normalizer recorded the lane red,
+and the remaining lanes were cancelled rather than retried.
+
+The adapter was corrected with a focused regression test, the complete local
+affected gate passed, and a brand-new five-lane run
+[31617299767](https://github.com/rmusser01/tldw_chatbook/actions/runs/31617299767)
+passed on commit `2542cdb43da7b7d74416e979be412595efc6922e`. A later PR review removed one
+unreachable duplicate raise and completed a public docstring. Although these
+changes did not alter runtime behavior, they changed the executable evidence
+file, so the final five-lane run was repeated on the reviewed commit rather
+than combining results across commits. The initial failure was an
+evidence-runner defect, not a native runtime or production containment
+failure.
+
+## Scope
+
+This evidence closes TASK-602's five-platform native wheel/runtime gate. The
+earlier Apple-silicon focused smoke in [`macos-evidence.json`](macos-evidence.json)
+remains historical implementation evidence. Neither record promotes semantic
+defaults, removes the legacy provider, adds accelerator support, or turns this
+expensive release gate into general CI; those decisions remain outside
+TASK-602.
