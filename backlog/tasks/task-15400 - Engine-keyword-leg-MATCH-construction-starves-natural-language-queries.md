@@ -4,7 +4,7 @@ title: Engine keyword-leg MATCH construction starves natural-language queries
 status: In Progress
 assignee: []
 created_date: '2026-08-11'
-updated_date: '2026-08-12 00:07'
+updated_date: '2026-08-12 04:00'
 labels:
   - rag
   - retrieval
@@ -128,3 +128,9 @@ Arc plan: Docs/superpowers/plans/2026-08-11-rag-keyword-leg-match-construction.m
 4. Ship the winner: default flips to the sweep's winner; disclosed oracle updates; docstring's under-review block resolved from the TABLE.
 5. Re-stamp + closure: one deliberate baseline re-stamp, README census/headroom prose, live TUI check (natural-language prompt query through Library RAG Answer), 15400 Done with the sweep table verbatim.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task-3 sweep run (gated, 2026-08-11): census and 20 / and_trim 21 / or 28 / and_or 29; control self-check reproduced the shipped 20/53. Hard constraint (a) DISQUALIFIES both or AND and_then_or — the vector-blind fixture kw-plant-maintenance-record loses its hybrid rescue under both (mech absent), and (b) is violated too (scoped/recall 1.000 -> 0.429, keyword/recall -0.062, vocab+paraphrase MRR -0.13/-0.115). The spec's by-construction argument was true of the SUB-LEG and false of the LEG: _keyword_search merges sub-legs round-robin (interleave_rankings), so other sub-legs falling back demotes the untouched AND row from leg rank 1 to 2, and fusion consumes leg rank (0.0500 -> 0.0429, below the vector row at rank 11). Computed WINNER under the pre-registered rule = and_stopword_trim (census 21, +pm-vendor-chaser; prompt gated pin flips 0.000 -> 0.200; zero regressions in any mode; 0 extra FTS queries). Escaping suite 37 green; plain/semantic cells byte-identical across all four constructions. Full table: .superpowers/sdd/2026-08-11-rag-keyword-leg-match-construction/task-3-report.md
+<!-- SECTION:NOTES:END -->
