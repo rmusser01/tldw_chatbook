@@ -76,7 +76,7 @@ MAX_PROFILE_MIGRATION_JOURNAL_BYTES: Final = 4096
 _PHASES: Final = frozenset(
     {"prepared", "publishing", "restoring", "complete", "unavailable"}
 )
-_CANONICAL_SLOT_ORDERS: Final = frozenset(
+PROFILE_MIGRATION_SLOT_SEQUENCES: Final = frozenset(
     {
         (ProfileMigrationPublicationSlot.ACTIVE,),
         (
@@ -97,7 +97,7 @@ def _validate_recovery_rows(
 ) -> None:
     if (
         type(rows) is not tuple
-        or tuple(row.slot for row in rows) not in _CANONICAL_SLOT_ORDERS
+        or tuple(row.slot for row in rows) not in PROFILE_MIGRATION_SLOT_SEQUENCES
     ):
         raise ValueError
     leaves: set[str] = set()
@@ -246,16 +246,11 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
         expected_rows: tuple[ProfileMigrationJournalSlot, ...] | None = None
         previous_phase: str | None = None
         for frame in complete_frames:
-            try:
-                previous_phase, recovery_rows = _decode_journal_frame(
-                    frame,
-                    previous_phase=previous_phase,
-                    expected_rows=expected_rows,
-                )
-            except Exception:
-                if previous_phase is None:
-                    raise
-                break
+            previous_phase, recovery_rows = _decode_journal_frame(
+                frame,
+                previous_phase=previous_phase,
+                expected_rows=expected_rows,
+            )
             expected_rows = recovery_rows
         assert expected_rows is not None and previous_phase is not None
         result = ParsedProfileMigrationJournal(1, previous_phase, expected_rows)
@@ -270,6 +265,7 @@ def parse_profile_migration_journal(raw: bytes) -> ParsedProfileMigrationJournal
 
 
 __all__ = [
+    "PROFILE_MIGRATION_SLOT_SEQUENCES",
     "ParsedProfileMigrationJournal",
     "ProfileMigrationJournalSlot",
     "ProfileMigrationPublicationSlot",

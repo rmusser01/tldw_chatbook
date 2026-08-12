@@ -17,6 +17,7 @@ from tldw_chatbook.TTS import profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
+    PROFILE_MIGRATION_SLOT_SEQUENCES,
     ParsedProfileMigrationJournal,
     ProfileMigrationJournalSlot,
     ProfileMigrationPublicationSlot,
@@ -36,11 +37,6 @@ _SLOT_VERSION: Final = {
     ProfileMigrationPublicationSlot.ACTIVE: 4,
     ProfileMigrationPublicationSlot.PRE_V3: 2,
     ProfileMigrationPublicationSlot.PRE_V4: 3,
-}
-_SLOT_ORDER: Final = {
-    ProfileMigrationPublicationSlot.ACTIVE: 0,
-    ProfileMigrationPublicationSlot.PRE_V3: 1,
-    ProfileMigrationPublicationSlot.PRE_V4: 2,
 }
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _PUBLICATION_LOCK = Lock()
@@ -101,13 +97,16 @@ class RetainedProfileMigrationDestination(_OpaqueIdentity):
         self._must_exist = must_exist
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, repr=False)
 class _PublicationSlotState:
     artifact: PreparedProfileMigrationArtifact
     destination: RetainedProfileMigrationDestination
     rollback_path: Path
     prior_retained: bool = False
     candidate_published: bool = False
+
+    def __repr__(self) -> str:
+        return "_PublicationSlotState(<private>)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -680,18 +679,7 @@ def _claim(
     ):
         raise ValueError
     slots = tuple(artifact._slot for artifact in artifacts)
-    if slots not in {
-        (ProfileMigrationPublicationSlot.ACTIVE,),
-        (
-            ProfileMigrationPublicationSlot.ACTIVE,
-            ProfileMigrationPublicationSlot.PRE_V4,
-        ),
-        (
-            ProfileMigrationPublicationSlot.ACTIVE,
-            ProfileMigrationPublicationSlot.PRE_V3,
-            ProfileMigrationPublicationSlot.PRE_V4,
-        ),
-    }:
+    if slots not in PROFILE_MIGRATION_SLOT_SEQUENCES:
         raise ValueError
     seen_slots: set[ProfileMigrationPublicationSlot] = set()
     seen_paths: set[Path] = set()
@@ -786,7 +774,11 @@ def _write_new_journal(path: Path, payload: bytes) -> _JournalIdentity:
     raise body_error
 
 
-def _unlink_exact(path: Path, identity: os.stat_result | None) -> bool:
+def _unlink_exact(
+    path: Path,
+    identity: os.stat_result | None,
+    parent_identity: os.stat_result,
+) -> bool:
     if identity is None:
         return False
     parent_fd, leaf = private_paths._open_verified_parent(
@@ -794,6 +786,8 @@ def _unlink_exact(path: Path, identity: os.stat_result | None) -> bool:
         missing_leaf_allowed=True,
     )
     try:
+        if not private_paths._same_identity(os.fstat(parent_fd), parent_identity):
+            return False
         try:
             current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -804,6 +798,8 @@ def _unlink_exact(path: Path, identity: os.stat_result | None) -> bool:
             return False
         os.unlink(leaf, dir_fd=parent_fd)
         os.fsync(parent_fd)
+        if not private_paths._same_identity(os.fstat(parent_fd), parent_identity):
+            raise ValueError
         return True
     finally:
         os.close(parent_fd)
@@ -821,8 +817,12 @@ def _finish_claim(
             _ACTIVE_PUBLICATIONS.discard(key)
 
 
-def _cleanup_exact(path: Path, identity: os.stat_result | None) -> None:
-    if not _unlink_exact(path, identity):
+def _cleanup_exact(
+    path: Path,
+    identity: os.stat_result | None,
+    parent_identity: os.stat_result,
+) -> None:
+    if not _unlink_exact(path, identity, parent_identity):
         raise OSError
 
 
@@ -904,6 +904,7 @@ def publish_profile_migration(
                     _cleanup_exact(
                         state.rollback_path,
                         state.destination._file_identity,
+                        state.destination._parent_identity,
                     )
                 except BaseException as caught:
                     complete_cleanup_errors.append(caught)
@@ -913,7 +914,11 @@ def publish_profile_migration(
             and journal_identity is not None
         ):
             try:
-                _cleanup_exact(journal_path, journal_identity.file)
+                _cleanup_exact(
+                    journal_path,
+                    journal_identity.file,
+                    journal_identity.parent,
+                )
             except BaseException as caught:
                 complete_cleanup_errors.append(caught)
         _finish_claim(artifacts, destinations, key)
@@ -956,7 +961,11 @@ def publish_profile_migration(
         restore_cleanup_errors: list[BaseException] = []
         for artifact in artifacts:
             try:
-                _cleanup_exact(artifact._path, artifact._file_identity)
+                _cleanup_exact(
+                    artifact._path,
+                    artifact._file_identity,
+                    artifact._parent_identity,
+                )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
         if (
@@ -965,7 +974,11 @@ def publish_profile_migration(
             and journal_identity is not None
         ):
             try:
-                _cleanup_exact(journal_path, journal_identity.file)
+                _cleanup_exact(
+                    journal_path,
+                    journal_identity.file,
+                    journal_identity.parent,
+                )
             except BaseException as caught:
                 restore_cleanup_errors.append(caught)
         _finish_claim(artifacts, destinations, key)
@@ -983,7 +996,11 @@ def publish_profile_migration(
     prepublication_cleanup_errors: list[BaseException] = []
     for artifact in artifacts:
         try:
-            _cleanup_exact(artifact._path, artifact._file_identity)
+            _cleanup_exact(
+                artifact._path,
+                artifact._file_identity,
+                artifact._parent_identity,
+            )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)
     if not prepublication_cleanup_errors and journal_path is not None:
@@ -991,6 +1008,11 @@ def publish_profile_migration(
             _cleanup_exact(
                 journal_path,
                 None if journal_identity is None else journal_identity.file,
+                (
+                    destinations[0]._parent_identity
+                    if journal_identity is None
+                    else journal_identity.parent
+                ),
             )
         except BaseException as caught:
             prepublication_cleanup_errors.append(caught)

@@ -350,13 +350,92 @@ def test_parser_uses_last_valid_prefix_before_crash_suffix(tmp_path: Path) -> No
         module.encode_profile_migration_journal(rows, phase="prepared")
         + module.encode_profile_migration_journal(rows, phase="publishing")
         + b'{"checksum":"partial'
-        + module.encode_profile_migration_journal(rows, phase="restoring")
     )
 
     parsed = module.parse_profile_migration_journal(raw)
 
     assert parsed.phase == "publishing"
     assert parsed.recovery_rows == rows
+
+
+@pytest.mark.parametrize(
+    "terminated_suffix",
+    [
+        b"{}\n",
+        b"garbage\n",
+    ],
+)
+def test_parser_rejects_every_invalid_terminated_suffix(
+    tmp_path: Path,
+    terminated_suffix: bytes,
+) -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed") as caught:
+        module.parse_profile_migration_journal(prepared + terminated_suffix)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_parser_rejects_canonical_but_illegal_complete_transition() -> None:
+    module = _publication_module()
+    rows = (
+        module.ProfileMigrationJournalSlot(
+            slot=module.ProfileMigrationPublicationSlot.ACTIVE,
+            candidate=".candidate.sqlite3",
+            target="profiles.sqlite3",
+            rollback=".profiles.sqlite3.active.rollback",
+            had_prior=True,
+        ),
+    )
+    prepared = module.encode_profile_migration_journal(rows, phase="prepared")
+    complete = module.encode_profile_migration_journal(rows, phase="complete")
+
+    with pytest.raises(ProfileRepositoryError, match="migration_failed"):
+        module.parse_profile_migration_journal(prepared + complete)
+
+
+def test_cleanup_rejects_replacement_parent_even_for_exact_moved_inode(
+    tmp_path: Path,
+) -> None:
+    module = _publication_module()
+    owner = tmp_path / "owner"
+    owner.mkdir(mode=0o700)
+    authority = owner / "authority.sqlite3"
+    authority.write_bytes(b"private authority")
+    authority.chmod(0o600)
+    file_identity = authority.stat()
+    parent_identity = owner.stat()
+    displaced = tmp_path / "displaced"
+    owner.rename(displaced)
+    owner.mkdir(mode=0o700)
+    moved_authority = displaced / authority.name
+    moved_authority.rename(authority)
+    assert authority.stat().st_ino == file_identity.st_ino
+
+    assert module._unlink_exact(authority, file_identity, parent_identity) is False
+    assert authority.read_bytes() == b"private authority"
+
+
+def test_publication_slot_state_repr_redacts_rollback_path(tmp_path: Path) -> None:
+    module = _publication_module()
+    private_path = tmp_path / "PRIVATE rollback evidence"
+
+    state = module._PublicationSlotState(object(), object(), private_path)
+
+    assert str(private_path) not in repr(state)
+    assert "PRIVATE" not in repr(state)
 
 
 def test_prepublication_failure_is_bounded_and_context_free(tmp_path: Path) -> None:
@@ -477,12 +556,16 @@ def test_completed_rollback_cleanup_failure_retains_complete_journal(
     destination = _retained(module, active_path, slot.ACTIVE, "old")
     real_unlink = module._unlink_exact
 
-    def fail_rollback_cleanup(path: Path, identity: object) -> bool:
+    def fail_rollback_cleanup(
+        path: Path,
+        identity: object,
+        parent_identity: object,
+    ) -> bool:
         if path.name.endswith(".active.rollback"):
             if cleanup_failure == "exception":
                 raise OSError("PRIVATE cleanup failure")
             return False
-        return real_unlink(path, identity)
+        return real_unlink(path, identity, parent_identity)
 
     monkeypatch.setattr(module, "_unlink_exact", fail_rollback_cleanup)
 
@@ -524,10 +607,14 @@ def test_candidate_cleanup_failure_retains_recovery_journal(
     destination = _retained(module, active_path, slot.ACTIVE, "old")
     real_unlink = module._unlink_exact
 
-    def fail_candidate_cleanup(path: Path, identity: object) -> bool:
+    def fail_candidate_cleanup(
+        path: Path,
+        identity: object,
+        parent_identity: object,
+    ) -> bool:
         if path == candidate_path:
             return False
-        return real_unlink(path, identity)
+        return real_unlink(path, identity, parent_identity)
 
     monkeypatch.setattr(module, "_unlink_exact", fail_candidate_cleanup)
 
