@@ -54,6 +54,7 @@ from tldw_chatbook.TTS import (
     TTSProfilePageSnapshot,
 )
 from tldw_chatbook.TTS.profile_portability import PortableTTSProfile
+from tldw_chatbook.TTS.profile_service import TTSProfileDependencyProjection
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -10306,6 +10307,44 @@ async def test_character_tts_widget_emits_id_only_intents_for_available_profiles
         assert app.actions[0].profile_id == available.profile_id
         assert vars(app.actions[0]).keys() >= {"action", "profile_id"}
         assert "authority" not in vars(app.actions[0])
+
+
+async def test_character_tts_widget_refuses_dependency_blocked_inactive_profile() -> None:
+    profile = _character_tts_profile(1)
+    blocked = CharacterTTSProfileOption(
+        profile.profile_id,
+        profile.display_name,
+        "available",
+        dependency=TTSProfileDependencyProjection(
+            reason="recipe_missing",
+            display="Needs compatible model",
+            action="open_audio_cpp_settings",
+        ),
+    )
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(blocked,),
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        assert "Needs compatible model" in next(
+            str(label)
+            for label, value in selector._options
+            if value == str(profile.profile_id)
+        )
+        selector.value = str(profile.profile_id)
+        await pilot.pause()
+
+        assert app.actions == []
+        assert selector.value == "__global__"
 
 
 async def test_character_tts_suggestion_is_guidance_not_assignment() -> None:

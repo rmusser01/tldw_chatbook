@@ -13,13 +13,15 @@ from uuid import UUID, uuid4
 import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, DataTable, Input, Static, TextArea
 
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileRepositoryError,
     ProfileServiceError,
     STTSGeneratedAudio,
+    TTSCloneRecipeRequirement,
+    TTSCloneReferenceSummary,
     TTSGenerationProfile,
     TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
@@ -27,6 +29,10 @@ from tldw_chatbook.TTS import (
     TTSProfileDraft,
     TTSProfilePageSnapshot,
     TTSRequestedSelectionSnapshot,
+    TTSVoiceBundleHandle,
+    TTSVoiceBundleImportChoice,
+    TTSVoiceBundleImportResult,
+    TTSVoiceBundleReview,
 )
 from tldw_chatbook.TTS.profile_portability import (
     PortableTTSProfile,
@@ -38,6 +44,8 @@ from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_STORE_UNAVAILABLE_COPY,
     STTSProfileLibrary,
+    TTSVoiceBundleConsentModal,
+    voice_bundle_review_action,
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
@@ -2783,3 +2791,471 @@ async def test_profile_export_path_failure_never_logs_sensitive_destination(
 
     assert secret not in "".join(messages)
     assert status_copy == profile_library_module.PROFILE_ACTION_FAILED_COPY
+
+
+def _safe_bundle_review(
+    *,
+    dependency_state: str = "exact",
+    allowed_choices: tuple[str, ...] = ("create", "reuse", "copy"),
+    exact_private_duplicate: bool = True,
+) -> TTSVoiceBundleReview:
+    handle = object.__new__(TTSVoiceBundleHandle)
+    return TTSVoiceBundleReview(
+        handle=handle,
+        profile_id=uuid4(),
+        profile_name="Imported voice",
+        provider_id="audio_cpp",
+        model_id="model/a",
+        voice_id="voice/a",
+        recipe_id="recipe/a",
+        recipe_revision=2,
+        dependency_state=dependency_state,  # type: ignore[arg-type]
+        allowed_choices=allowed_choices,  # type: ignore[arg-type]
+        copy_profile_id=uuid4() if "copy" in allowed_choices else None,
+        copy_profile_name="Imported voice copy" if "copy" in allowed_choices else None,
+        exact_private_duplicate=exact_private_duplicate,
+    )
+
+
+@pytest.mark.parametrize(
+    ("choice", "dependency", "consent", "disabled"),
+    (
+        ("create", "exact", False, False),
+        ("create", "exact", True, False),
+        ("create", "missing", False, True),
+        ("create", "missing", True, False),
+        ("reuse", "exact", False, False),
+        ("reuse", "exact", True, False),
+        ("reuse", "missing", False, False),
+        ("reuse", "missing", True, False),
+        ("copy", "exact", False, False),
+        ("copy", "exact", True, False),
+        ("copy", "missing", False, True),
+        ("copy", "missing", True, False),
+    ),
+)
+def test_bundle_review_action_projection_is_the_single_operation_truth(
+    choice: str,
+    dependency: str,
+    consent: bool,
+    disabled: bool,
+) -> None:
+    review = _safe_bundle_review(dependency_state=dependency)
+    action = voice_bundle_review_action(
+        review,
+        choice,  # type: ignore[arg-type]
+        inactive_consent=consent,
+    )
+
+    assert action.operation == f"import_{choice}"
+    assert action.disabled is disabled
+    assert bool(action.recovery) is disabled
+
+
+def test_bundle_review_never_reuses_a_nonexact_or_migrated_candidate() -> None:
+    review = _safe_bundle_review(
+        allowed_choices=("create", "copy"),
+        exact_private_duplicate=False,
+    )
+
+    action = voice_bundle_review_action(review, "reuse", inactive_consent=False)
+
+    assert action.operation == "import_reuse"
+    assert action.disabled is True
+    assert action.recovery == "Choose an available destination."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((80, 24), (100, 30)))
+async def test_bundle_warning_acknowledgement_has_initial_focus_at_narrow_sizes(
+    size: tuple[int, int],
+) -> None:
+    class _ConsentHost(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(TTSVoiceBundleConsentModal(mode="import"))
+
+    app = _ConsentHost()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "bundle-warning-ack"
+        assert app.screen.query_one(
+            "#bundle-warning-continue", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_windows_disables_bundle_import_truthfully_but_keeps_json_export() -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+
+    async def _profile_loader() -> object:
+        return service
+
+    async def _bundle_loader() -> object:
+        raise AssertionError("disabled import must not resolve the service")
+
+    class _WindowsHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield STTSProfileLibrary(
+                _profile_loader,
+                voice_bundle_service_loader=_bundle_loader,
+                bundle_platform_supported=False,
+            )
+
+    app = _WindowsHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        )
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await pilot.pause()
+
+        assert app.query_one("#stts-profile-export-btn", Button).disabled is False
+        import_button = app.query_one("#stts-profile-import-btn", Button)
+        assert import_button.disabled is True
+        assert "Windows" in str(import_button.tooltip)
+
+
+def _clone_profile(index: int = 0) -> TTSGenerationProfile:
+    profile = _profile(index)
+    timestamp = datetime(2026, 7, 27, tzinfo=UTC)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="audio_cpp_clone_v1",
+        recipe_revision=1,
+        model_id=profile.model_id,
+    )
+    return replace(
+        profile,
+        reference=TTSCloneReferenceSummary(
+            reference_id=uuid4(),
+            byte_length=32000,
+            duration_ms=1000,
+            sample_rate_hz=16000,
+            channels=1,
+            sample_encoding="pcm_s16le",
+            created_at=timestamp,
+            updated_at=timestamp,
+            recipe_requirement=requirement,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_clone_export_keeps_sanitized_default_and_disables_bundle() -> None:
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+
+    async def _profile_loader() -> object:
+        return service
+
+    async def _bundle_loader() -> object:
+        raise AssertionError("disabled bundle export must not resolve the service")
+
+    class _WindowsCloneHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield STTSProfileLibrary(
+                _profile_loader,
+                voice_bundle_service_loader=_bundle_loader,
+                bundle_platform_supported=False,
+            )
+
+    app = _WindowsCloneHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        )
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await pilot.pause()
+        app.query_one("#stts-profile-export-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-export-choice-bundle")) == 1,
+        )
+
+        sanitized = app.screen.query_one("#stts-export-choice-sanitized", Button)
+        bundle = app.screen.query_one("#stts-export-choice-bundle", Button)
+        assert app.focused is sanitized
+        assert sanitized.disabled is False
+        assert bundle.disabled is True
+        assert "Windows" in str(bundle.tooltip)
+
+
+class _BundleUIService:
+    def __init__(self, profile: TTSGenerationProfile) -> None:
+        self.profile = profile
+        self.exports: list[tuple[object, ...]] = []
+        self.inspect_calls: list[Path] = []
+        self.commit_calls: list[tuple[TTSVoiceBundleHandle, TTSVoiceBundleImportChoice]] = []
+        self.invalidated: list[TTSVoiceBundleHandle] = []
+        self.reviews = [self._review()]
+        self.results: list[TTSVoiceBundleImportResult] = [
+            TTSVoiceBundleImportResult(status="created", profile=profile)
+        ]
+
+    def _review(self) -> TTSVoiceBundleReview:
+        return TTSVoiceBundleReview(
+            handle=object.__new__(TTSVoiceBundleHandle),
+            profile_id=self.profile.profile_id,
+            profile_name=self.profile.display_name,
+            provider_id=self.profile.provider_id,
+            model_id=self.profile.model_id,
+            voice_id=self.profile.voice_id,
+            recipe_id="audio_cpp_clone_v1",
+            recipe_revision=1,
+            dependency_state="exact",
+            allowed_choices=("create",),
+            copy_profile_id=None,
+            copy_profile_name=None,
+            exact_private_duplicate=False,
+        )
+
+    async def export(
+        self,
+        profile_id: UUID,
+        destination: Path,
+        *,
+        expected_generation: int,
+        expected_revision: int,
+        acknowledged: bool,
+    ) -> None:
+        self.exports.append(
+            (
+                profile_id,
+                destination,
+                expected_generation,
+                expected_revision,
+                acknowledged,
+            )
+        )
+
+    async def inspect(self, source: Path) -> TTSVoiceBundleReview:
+        self.inspect_calls.append(source)
+        return self.reviews.pop(0)
+
+    async def commit(
+        self,
+        handle: TTSVoiceBundleHandle,
+        choice: TTSVoiceBundleImportChoice,
+    ) -> TTSVoiceBundleImportResult:
+        self.commit_calls.append((handle, choice))
+        return self.results.pop(0)
+
+    async def invalidate(self, handle: TTSVoiceBundleHandle) -> None:
+        self.invalidated.append(handle)
+
+
+class _BundleActionHost(_ActionHost):
+    def __init__(self, service: object, bundle_service: _BundleUIService) -> None:
+        super().__init__(service)
+        self.bundle_service = bundle_service
+        self.bundle_service_requests = 0
+
+    async def _ensure_tts_voice_bundle_service(self) -> object:
+        self.bundle_service_requests += 1
+        return self.bundle_service
+
+
+class _LateInspectBundleService(_BundleUIService):
+    def __init__(self, profile: TTSGenerationProfile) -> None:
+        super().__init__(profile)
+        self.inspect_started = asyncio.Event()
+
+    async def inspect(self, source: Path) -> TTSVoiceBundleReview:
+        self.inspect_calls.append(source)
+        self.inspect_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            return self.reviews.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _clone_profile()
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    app = _BundleActionHost(service, bundle_service)
+    destination = tmp_path / "voice.tldw-voice.zip"
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, loaded = await _select_action_profile(app, pilot)
+
+        async def _destination() -> Path:
+            return destination
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_export_path", _destination)
+        app.query_one("#stts-profile-export-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-export-choice-sanitized")) == 1,
+        )
+        assert app.focused is not None
+        assert app.focused.id == "stts-export-choice-sanitized"
+        app.screen.query_one("#stts-export-choice-bundle", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        assert bundle_service.exports == []
+        assert app.focused is not None and app.focused.id == "bundle-warning-ack"
+        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+        await pilot.pause()
+        app.screen.query_one("#bundle-warning-continue", Button).press()
+
+        await _wait_until(pilot, lambda: len(bundle_service.exports) == 1)
+        assert bundle_service.exports == [
+            (
+                profile.profile_id,
+                destination,
+                loaded.repository_generation,
+                profile.revision,
+                True,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    successor = bundle_service._review()
+    bundle_service.results = [
+        TTSVoiceBundleImportResult(status="stale_inspection", review=successor),
+        TTSVoiceBundleImportResult(status="created", profile=profile),
+    ]
+    app = _BundleActionHost(service, bundle_service)
+    source = tmp_path / "voice.tldw-voice.zip"
+    picker_calls = 0
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            nonlocal picker_calls
+            picker_calls += 1
+            return source
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        assert picker_calls == 0
+        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+        await pilot.pause()
+        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-bundle-review-confirm")) == 1,
+        )
+        assert picker_calls == 1
+        assert bundle_service.inspect_calls == [source]
+        app.screen.query_one("#stts-bundle-review-confirm", Button).press()
+        await _wait_until(pilot, lambda: len(bundle_service.commit_calls) == 1)
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(app.screen.query("#stts-bundle-review-confirm")) == 1
+                and app.screen.query_one("#stts-bundle-review-confirm", Button).disabled
+                is False
+            ),
+        )
+        assert len(bundle_service.commit_calls) == 1
+        app.screen.query_one("#stts-bundle-review-confirm", Button).press()
+
+        await _wait_until(pilot, lambda: len(bundle_service.commit_calls) == 2)
+        assert [call[1].choice for call in bundle_service.commit_calls] == [
+            "create",
+            "create",
+        ]
+        assert bundle_service.commit_calls[0][0] is not successor.handle
+        assert bundle_service.commit_calls[1][0] is successor.handle
+
+
+@pytest.mark.asyncio
+async def test_import_review_cancel_invalidates_handle_without_committing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _BundleUIService(profile)
+    review_handle = bundle_service.reviews[0].handle
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+        await pilot.pause()
+        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#stts-bundle-review-cancel")) == 1,
+        )
+        app.screen.query_one("#stts-bundle-review-cancel", Button).press()
+        await _wait_until(pilot, lambda: bundle_service.invalidated == [review_handle])
+
+        assert bundle_service.commit_calls == []
+        assert library._active_bundle_handle is None
+
+
+@pytest.mark.asyncio
+async def test_unmount_invalidates_handle_returned_by_late_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    bundle_service = _LateInspectBundleService(profile)
+    late_handle = bundle_service.reviews[0].handle
+    app = _BundleActionHost(service, bundle_service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, _loaded = await _select_action_profile(app, pilot)
+
+        async def _source() -> Path:
+            return tmp_path / "voice.tldw-voice.zip"
+
+        monkeypatch.setattr(library, "_choose_voice_bundle_import_path", _source)
+        app.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+        app.screen.query_one("#bundle-warning-ack", Checkbox).toggle()
+        await pilot.pause()
+        app.screen.query_one("#bundle-warning-continue", Button).press()
+        await asyncio.wait_for(bundle_service.inspect_started.wait(), timeout=1)
+
+        await library.remove()
+        await _wait_until(pilot, lambda: bundle_service.invalidated == [late_handle])
+
+        assert bundle_service.commit_calls == []
+        assert len(app.screen.query("#stts-bundle-review-confirm")) == 0

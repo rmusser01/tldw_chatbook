@@ -1908,6 +1908,7 @@ class PersonasScreen(BaseAppScreen):
                 recovery_action=(
                     availability_by_id[loaded.profile.profile_id].recovery_action
                 ),
+                dependency=availability_by_id[loaded.profile.profile_id].dependency,
             )
             for loaded in snapshot.loaded_profiles
         )
@@ -1939,7 +1940,14 @@ class PersonasScreen(BaseAppScreen):
             if count is None
             else f"Used by {count} character{'s' if count != 1 else ''}"
         )
-        if current_availability.state == "available":
+        dependency = current_availability.dependency
+        if dependency.display:
+            status = (
+                f"{current.profile.display_name} · {dependency.display} · "
+                f"{count_copy}. Repair the compatible model dependency or remove "
+                "this assignment."
+            )
+        elif current_availability.state == "available":
             status = f"{current.profile.display_name} · Available · {count_copy}."
         elif current_availability.state == "unavailable":
             status = (
@@ -1965,6 +1973,8 @@ class PersonasScreen(BaseAppScreen):
                 f"{count_copy}. The exact selection is used as-is; the "
                 "assignment is preserved."
             )
+        if dependency.advisory_display:
+            status = f"{status} {dependency.advisory_display}."
         if suggested_profile_id is not None:
             suggested = next(
                 profile
@@ -2016,6 +2026,7 @@ class PersonasScreen(BaseAppScreen):
             or loaded.profile.revision != suggestion.profile_revision
             or availability is None
             or availability.state == "unavailable"
+            or availability.dependency.reason != "none"
         ):
             self._clear_character_tts_profile_suggestion()
             return None
@@ -2180,7 +2191,11 @@ class PersonasScreen(BaseAppScreen):
                 return
             if action == "assign" and profile_id is not None:
                 tokens = self._character_tts_profile_tokens(snapshot, profile_id)
-                if tokens is None or tokens[1].state == "unavailable":
+                if (
+                    tokens is None
+                    or tokens[1].state == "unavailable"
+                    or tokens[1].dependency.reason != "none"
+                ):
                     return
                 loaded, _availability = tokens
                 await service.set_assignment(

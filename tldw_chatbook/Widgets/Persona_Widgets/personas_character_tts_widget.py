@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID
 
@@ -12,7 +12,10 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Select, Static
 
 from ...TTS import ProfileAvailabilityState
-from ...TTS.profile_service import ProfileRecoveryAction
+from ...TTS.profile_service import (
+    ProfileRecoveryAction,
+    TTSProfileDependencyProjection,
+)
 from .personas_pane_messages import CharacterTTSAction, CharacterTTSActionRequested
 
 _GLOBAL_PROFILE_VALUE = "__global__"
@@ -55,6 +58,9 @@ class CharacterTTSProfileOption:
     display_name: str
     availability: ProfileAvailabilityState
     recovery_action: ProfileRecoveryAction = "refresh"
+    dependency: TTSProfileDependencyProjection = field(
+        default_factory=TTSProfileDependencyProjection
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -66,8 +72,15 @@ class CharacterTTSProfileOption:
             or self.availability not in {"available", "unavailable", "unverified"}
             or type(self.recovery_action) is not str
             or self.recovery_action not in {"none", "refresh", "edit"}
+            or type(self.dependency) is not TTSProfileDependencyProjection
         ):
             raise ValueError("invalid character TTS profile option")
+
+    @property
+    def assignable(self) -> bool:
+        """Return the same blocker truth used by the Profile Library."""
+
+        return self.availability != "unavailable" and self.dependency.reason == "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +149,10 @@ def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
     `TTS/profile_service.py`).
     """
 
+    if option.dependency.display:
+        return option.dependency.display
+    if option.dependency.advisory_display:
+        return f"{option.availability} · {option.dependency.advisory_display}"
     if option.availability == "unverified" and option.recovery_action == "none":
         return "no catalog check"
     return option.availability
@@ -369,7 +386,7 @@ class PersonasCharacterTTSWidget(Container):
             ),
             None,
         )
-        if option is None or option.availability == "unavailable":
+        if option is None or not option.assignable:
             self._restore_selected_value()
             return
         self.post_message(CharacterTTSActionRequested("assign", profile_id))

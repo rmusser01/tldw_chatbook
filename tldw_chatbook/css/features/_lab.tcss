@@ -1173,6 +1173,68 @@ Input.speech-setting-control:focus {
     border: none;
 }
 
+/* Voice-profile portability uses one scrollable, terminal-native review
+ * surface. The vertical action stack remains reachable at 80x24 without
+ * relying on pointer-only affordances or clipped horizontal controls. */
+TTSProfileExportChoiceModal,
+TTSVoiceBundleConsentModal,
+TTSVoiceBundleReviewModal {
+    align: center middle;
+    background: $background 75%;
+}
+
+.stts-portability-dialog {
+    width: 90%;
+    max-width: 76;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+    overflow-y: auto;
+}
+
+.stts-portability-title {
+    height: auto;
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+.stts-portability-copy,
+.stts-portability-recovery {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.stts-portability-recovery {
+    color: $warning;
+}
+
+.stts-portability-actions {
+    layout: vertical;
+    height: auto;
+    margin-top: 1;
+}
+
+.stts-portability-actions Button {
+    width: 100%;
+    height: 3;
+    min-width: 0;
+    margin-bottom: 1;
+}
+
+.stts-portability-actions Button:focus,
+.stts-portability-dialog Checkbox:focus,
+.stts-portability-dialog Select:focus,
+.stts-portability-dialog TextArea:focus {
+    outline: heavy $accent;
+}
+
+#stts-bundle-review-facts {
+    height: 9;
+    min-height: 6;
+}
+
 
 /* AudioBook actions live above the scroll region, so they stay on screen
  * whatever is expanded below. Inside it they measured at y=40 in a 26-row

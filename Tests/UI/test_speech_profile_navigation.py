@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
@@ -124,6 +124,30 @@ async def test_profile_library_navigation_waits_for_deferred_speech_body() -> No
                 and len(screen.query(STTSProfileLibrary)) == 1
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged() -> None:
+    app = _SpeechHost({"view": "profiles"})
+    app._ensure_tts_voice_bundle_service = AsyncMock()  # type: ignore[attr-defined]
+    screen = app.screen_under_test
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(screen.query(STTSProfileLibrary)) == 1
+                and len(screen.query("#stts-profile-import-btn")) == 1
+            ),
+        )
+        screen.query_one("#stts-profile-import-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+        )
+
+        app._ensure_tts_voice_bundle_service.assert_not_awaited()  # type: ignore[attr-defined]
+        app.screen.query_one("#bundle-warning-cancel", Button).press()
 
 
 @pytest.mark.asyncio
