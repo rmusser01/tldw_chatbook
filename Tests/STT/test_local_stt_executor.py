@@ -55,6 +55,7 @@ from tldw_chatbook.STT.executor import (
     ExecutorEvent,
     ExecutorFailure,
     ExecutorRequest,
+    ExecutorResident,
     ExecutorResult,
     ExecutorUnavailableError,
     LocalSourceChangedError,
@@ -108,9 +109,14 @@ def _request() -> ExecutorRequest:
 
 def test_protocol_objects_are_frozen_slotted_and_picklable() -> None:
     request = _request()
+    lease_refs = (
+        ("parakeet-v2", "revision-a", "int8"),
+        ("silero-vad", "vad-revision", "f32"),
+    )
     envelopes = (
         request,
         ExecutorEvent(3, "attempt-1", WorkerPhase.LOADING),
+        ExecutorResident(3, "attempt-1", request.identity, lease_refs),
         ExecutorResult(3, "attempt-1", {"content": "hello"}),
         ExecutorFailure(
             generation=3,
@@ -126,6 +132,16 @@ def test_protocol_objects_are_frozen_slotted_and_picklable() -> None:
     assert all(hasattr(type(value), "__slots__") for value in envelopes)
     with pytest.raises(FrozenInstanceError):
         request.generation = 4  # type: ignore[misc]
+
+
+def test_resident_managed_lease_references_require_canonical_tuples() -> None:
+    with pytest.raises(ValueError, match="managed_lease_refs"):
+        ExecutorResident(
+            3,
+            "attempt-1",
+            _identity(),
+            (("parakeet-v2", "", "int8"),),
+        )
 
 
 def test_executor_request_accepts_file_and_buffer_sources_without_a_job_id() -> None:
@@ -1641,6 +1657,14 @@ def test_provider_builder_receives_the_full_verified_managed_handle(
         assert handle.lease_keys == (
             *(reference.lease_key() for reference in handle.closure),
         )
+        assert resident.managed_lease_refs == tuple(
+            (
+                reference.artifact_id,
+                reference.revision,
+                reference.variant,
+            )
+            for reference in handle.closure
+        )
         assert captured["is_cancelled"]() is False
     finally:
         resident.close()
@@ -1666,6 +1690,13 @@ def test_external_runtime_holds_exact_vad_lease_across_reuse_and_close(
         handle = captured["handle"]
         assert captured["model_root"] == model.parent
         assert handle.references == (dependency.reference,)
+        assert resident.managed_lease_refs == (
+            (
+                dependency.reference.artifact_id,
+                dependency.reference.revision,
+                dependency.reference.variant,
+            ),
+        )
         assert dict(handle.paths)[dependency.reference] == service.artifact_path(
             dependency.reference
         )

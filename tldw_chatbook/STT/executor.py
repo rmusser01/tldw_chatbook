@@ -53,6 +53,8 @@ def _require_nonempty_text(field_name: str, value: str) -> None:
 
 def _canonical_dependency_refs(
     references: tuple[tuple[str, str, str], ...],
+    *,
+    field_name: str = "managed_dependency_refs",
 ) -> tuple[tuple[str, str, str], ...]:
     if type(references) is not tuple or any(
         type(reference) is not tuple
@@ -63,7 +65,7 @@ def _canonical_dependency_refs(
         )
         for reference in references
     ):
-        raise ValueError("managed_dependency_refs must contain three-string tuples")
+        raise ValueError(f"{field_name} must contain three-string tuples")
     return tuple(sorted(set(references)))
 
 
@@ -314,11 +316,20 @@ class ExecutorResident:
     generation: int
     attempt_id: str
     identity: ModelIdentity
+    managed_lease_refs: tuple[tuple[str, str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
         if type(self.identity) is not ModelIdentity:
             raise TypeError("identity must be a ModelIdentity")
+        object.__setattr__(
+            self,
+            "managed_lease_refs",
+            _canonical_dependency_refs(
+                self.managed_lease_refs,
+                field_name="managed_lease_refs",
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
