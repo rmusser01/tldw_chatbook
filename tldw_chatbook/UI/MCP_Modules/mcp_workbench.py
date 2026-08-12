@@ -1727,9 +1727,10 @@ class MCPWorkbench(Container):
         """The workspace-local agent tool set (fs_*/git_*/web_*) as HubTools.
 
         task-2838: the Hub catalog's fourth source. The provider is built
-        catalog-view only -- no ``todo_store`` (``todo_write`` is Console-
-        session-scoped, so it stays unregistered and absent here) and no
-        approval callbacks: state resolution happens hub-side, via the same
+        catalog-view only -- no Console ``SessionTodoStore``, so
+        ``todo_create``, ``todo_update``, ``todo_get``, and ``todo_list`` stay
+        unregistered and the retired ``todo_write`` remains absent. There are
+        no approval callbacks: state resolution happens hub-side, via the same
         `_sync_children()` `effective_tool_states()` pass against the same
         `mcp_permissions.json` store the Console agent gates on
         (`local:__local__` server key, `Agents/local_tool_provider.py`).

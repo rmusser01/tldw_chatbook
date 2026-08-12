@@ -70,11 +70,13 @@ permission to in the first place.
 
 Under the local source, Tools mode now starts with an always-visible **Local
 workspace + web tools** control. This provider is enabled by default and
-includes `web_search`, `web_fetch`, and `web_crawl` alongside workspace file,
-read-only Git, and session-todo tools. Turning the master switch off remains a
-supported opt-out. The same panel lets you set **Workspace root**, the directory
-that confines every `fs_*` path. A blank root uses the folder from which the app
-was launched; a non-blank root must be an existing directory.
+includes workspace file, read-only Git, and web tools (`web_search`,
+`web_fetch`, and `web_crawl`). The task tools `todo_create`, `todo_update`,
+`todo_get`, and `todo_list` require Console session state and are not Hub
+tools. Turning the master switch off remains a supported opt-out. The same
+panel lets you set **Workspace root**, the directory that confines every
+`fs_*` path. A blank root uses the folder from which the app was launched; a
+non-blank root must be an existing directory.
 
 Both changes are used by the next Console agent run. They do not grant tool
 permission: fresh permission state is still **Ask**, explicit Allow/Ask/Off

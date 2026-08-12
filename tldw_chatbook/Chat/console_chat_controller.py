@@ -16,7 +16,15 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Literal,
+    Protocol,
+    TypedDict,
+)
 from uuid import uuid4
 
 from loguru import logger
@@ -149,6 +157,10 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.session_todo_store import (
+    SessionTodoStore,
+    TodoChangeCallback,
+)
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -177,6 +189,13 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+class _TodoWiring(TypedDict, total=False):
+    """Typed optional task kwargs for ``LocalToolProvider`` composition."""
+
+    todo_store: SessionTodoStore
+    on_todo_change: TodoChangeCallback
 
 
 #: task-1337 (plan Task 8): raw built-in tool names the Console-composed
@@ -1280,6 +1299,7 @@ class ConsoleChatController:
             # ConsoleChatStore always supplies the authoritative epoch.
             def context_epoch(_session_id: str) -> int:
                 return 0
+
         self.prompt_queue_coordinator = ConsolePromptQueueCoordinator(
             registry=self.prompt_queue_registry,
             context_epoch=context_epoch,
@@ -1616,7 +1636,9 @@ class ConsoleChatController:
                 bool(activity.occupies_slot or activity.needs_approval)
                 for activity in activities
             ),
-            queued_session_count=sum(activity.has_queued_work for activity in activities),
+            queued_session_count=sum(
+                activity.has_queued_work for activity in activities
+            ),
             unsent_prompt_count=sum(activity.queued_count for activity in activities),
         )
 
@@ -2470,9 +2492,7 @@ class ConsoleChatController:
             session_id=session.id,
         )
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
-                turn_selection
-            )
+            resolution = await self.provider_gateway.resolve_for_send(turn_selection)
         except BaseException:
             # A readiness probe that raises or is cancelled AFTER the optimistic
             # USER echo must still fail that row — otherwise a never-sent USER
@@ -2576,9 +2596,7 @@ class ConsoleChatController:
         # never reach this hook -- this ordering just extends that same
         # rule to cover it too.
         if origin is ConsoleSubmissionOrigin.QUEUED and not (
-            self.prompt_queue_coordinator.authorizes(
-                queue_authorization, session.id
-            )
+            self.prompt_queue_coordinator.authorizes(queue_authorization, session.id)
         ):
             # Close/shutdown can tombstone the chain while this claimed turn
             # awaits readiness/substitution/RAG. Revalidate immediately before
@@ -3957,15 +3975,12 @@ class ConsoleChatController:
         "denied"/"denied-timeout" under the ``local:__local__`` server
         key.
 
-        Todo wiring (phase-3a Task 4): when ``session_id`` resolves to a
-        live session, the provider is handed THAT session's own ``todos``
-        list (replaced in place by ``todo_write``) plus an
-        ``on_todo_change`` that renders the updated list into the
-        transcript via ``ConsoleAgentBridge.append_todo_marker`` -- the
-        same in-memory, worker-thread, persist-free path the agent step
-        markers use. Without a session (or without a bridge), the
-        provider stays context-free and no ``todo_write`` spec is
-        registered.
+        Todo wiring (TASK-13216): when ``session_id`` resolves to a live
+        session, the provider is handed that session's stable task store
+        plus an ``on_todo_change`` callback that renders defensive task
+        snapshots via ``ConsoleAgentBridge.append_todo_marker``. Without a
+        session (or without a bridge), the provider stays context-free and
+        no task specs are registered.
 
         Args:
             session_id: THIS run's owning session id, bound into the
@@ -3998,9 +4013,7 @@ class ConsoleChatController:
                 "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
             )
         )
-        if not coerce_bool_setting(
-            local_tools_enabled, LOCAL_TOOLS_DEFAULT_ENABLED
-        ):
+        if not coerce_bool_setting(local_tools_enabled, LOCAL_TOOLS_DEFAULT_ENABLED):
             return None, None
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
@@ -4078,7 +4091,7 @@ class ConsoleChatController:
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
-    def _todo_wiring(self, session_id: str | None) -> dict:
+    def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
 
         Empty dict (no todo capability) when there is no session context,
@@ -4093,10 +4106,13 @@ class ConsoleChatController:
         if session is None:
             return {}
 
-        def _on_todo_change(todos: list) -> None:
-            bridge.append_todo_marker(session_id, todos)
+        def _on_todo_change(tasks: list[dict[str, object]]) -> None:
+            bridge.append_todo_marker(session_id, tasks)
 
-        return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
+        return {
+            "todo_store": session.todo_store,
+            "on_todo_change": _on_todo_change,
+        }
 
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext
@@ -4274,9 +4290,7 @@ class ConsoleChatController:
             if session_id is not None:
                 self.discard_pending_round(session_id, round_id)
             try:
-                self._clear_pending_approval_if_round_is_current(
-                    round_id, session_id
-                )
+                self._clear_pending_approval_if_round_is_current(round_id, session_id)
             except Exception:  # noqa: BLE001 -- a UI clear must never
                 # break the cancellation path that called us.
                 logger.opt(exception=True).debug(
@@ -4296,8 +4310,7 @@ class ConsoleChatController:
         total = len(revoked) + len(script_revoked)
         if total:
             logger.info(
-                f"revoked {total} pending approval round(s) for "
-                f"cancelled run {run_id}"
+                f"revoked {total} pending approval round(s) for cancelled run {run_id}"
             )
         return total
 
@@ -6038,9 +6051,7 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
-            turn_selection
-        )
+        resolution = await self.provider_gateway.resolve_for_send(turn_selection)
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
@@ -6601,7 +6612,9 @@ class ConsoleChatController:
             base_url=(
                 settings.base_url
                 if settings.base_url is not None
-                else self.base_url if same_provider else None
+                else self.base_url
+                if same_provider
+                else None
             ),
             explicit_model=settings.model,
             configured_model=(
@@ -6652,9 +6665,7 @@ class ConsoleChatController:
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(
-                    selection.provider, model
-                ),
+                "max_history_images": max_history_images(selection.provider, model),
             },
             rag_defaults={
                 "auto_retrieve_on_send": coerce_bool_setting(
@@ -8477,8 +8488,7 @@ class ConsoleChatController:
                 or turn_context.provider_selection.provider
             )
             baseline_model = (
-                getattr(resolution, "model", None)
-                or turn_context.effective_model
+                getattr(resolution, "model", None) or turn_context.effective_model
             )
             self._payload_fingerprint_baselines[owner_id] = fingerprint_payload(
                 baseline_provider, baseline_model, baseline_messages
@@ -10459,7 +10469,9 @@ class ConsoleChatController:
         budget = (
             int(turn_context.capabilities.get("max_history_images", 0) or 0)
             if turn_context is not None and vision
-            else max_history_images(selection.provider, model) if vision else 0
+            else max_history_images(selection.provider, model)
+            if vision
+            else 0
         )
         allowed_counts: dict[str, int] = {}
         for message in reversed(session_messages):

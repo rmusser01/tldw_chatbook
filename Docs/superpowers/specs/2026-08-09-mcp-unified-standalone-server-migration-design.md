@@ -119,8 +119,10 @@ conversations and five most recent notes.
 
 The current `fs_*`, `fs_patch`, `git_*`, `web_fetch`, `web_search`,
 `web_crawl`, and conditionally registered `web_deep_search` catalog remains
-behind `[mcp].expose_local_tools`. `todo_write` remains absent because it is
-Console-session state.
+behind `[mcp].expose_local_tools`. The standalone composition supplies no
+Console `SessionTodoStore`, so `todo_create`, `todo_update`, `todo_get`, and
+`todo_list` are unregistered externally. `todo_write` is retired by
+TASK-13216 and is also absent.
 
 ### 3.2 Explicitly unchanged in-process Library surface
 

@@ -630,9 +630,7 @@ def test_resume_tolerates_null_and_garbage_usage_json():
 
         store, session = _resume_into_store(db, conversation_id)
 
-        assert all(
-            m.usage is None for m in store.messages_for_session(session.id)
-        )
+        assert all(m.usage is None for m in store.messages_for_session(session.id))
     finally:
         db.close_connection()
 
@@ -836,9 +834,7 @@ def test_resume_tolerates_null_and_garbage_metadata_json():
 
         store, session = _resume_into_store(db, conversation_id)
 
-        assert all(
-            m.metadata is None for m in store.messages_for_session(session.id)
-        )
+        assert all(m.metadata is None for m in store.messages_for_session(session.id))
     finally:
         db.close_connection()
 
@@ -918,6 +914,129 @@ def test_character_screen_state_round_trips_roleplay_identity_fields_exactly():
     assert restored.user_display_name_override == "Captain Rowan"
     assert restored.character_system_template == "Speak with {{user}}."
     assert restored.identity_revision == original.identity_revision
+
+
+def test_console_task_state_round_trip_preserves_holes_and_id_high_water():
+    """Navigation restores task records without reusing a deleted task ID."""
+    original = ConsoleChatSession(title="Task state")
+    original.todo_store.create(content="One")
+    original.todo_store.create(content="Two")
+    original.todo_store.create(content="Three")
+    original.todo_store.update(task_id="2", expected_version=1, status="deleted")
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+
+    assert restored.todo_store.export_snapshot() == {
+        "next_id": 4,
+        "tasks": [
+            {"id": "1", "version": 1, "content": "One", "status": "pending"},
+            {
+                "id": "3",
+                "version": 1,
+                "content": "Three",
+                "status": "pending",
+            },
+        ],
+    }
+    assert restored.todo_store.create(content="Four")["id"] == "4"
+
+
+def test_console_task_state_uses_one_named_projection_key(monkeypatch):
+    """Serialization and restoration share the same screen-state key."""
+    from tldw_chatbook.UI.Console_Modules import session as session_module
+
+    monkeypatch.setattr(
+        session_module,
+        "_CONSOLE_TODO_STATE_KEY",
+        "task_state_contract_probe",
+        raising=False,
+    )
+    original = ConsoleChatSession(title="Task key")
+    original.todo_store.create(content="One")
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+
+    assert "task_state_contract_probe" in payload
+    assert "todo_state" not in payload
+    assert restored.todo_store.list_after(None) == [
+        {"id": "1", "version": 1, "content": "One", "status": "pending"}
+    ]
+
+
+def test_console_task_state_missing_legacy_key_starts_empty_without_warning():
+    """Pre-task screen state is a normal legacy payload, not corruption."""
+    from loguru import logger as loguru_logger
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = controller._console_session_to_state(ConsoleChatSession())
+    payload.pop("todo_state", None)
+    warnings: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        restored = controller._console_session_from_state(payload)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="First")["id"] == "1"
+    assert warnings == []
+
+
+def test_console_task_state_malformed_key_starts_empty_with_fixed_warning():
+    """Corrupt state emits one structured, payload-free Loguru warning."""
+    from loguru import logger as loguru_logger
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    payload = controller._console_session_to_state(ConsoleChatSession())
+    private_values = (
+        "private-task-payload",
+        "/Users/private/workspace/tasks.json",
+        "private-api-key",
+    )
+    payload["todo_state"] = {
+        "sentinel": private_values[0],
+        "private_path": private_values[1],
+        "api_key": private_values[2],
+    }
+    records: list[dict[str, object]] = []
+    formatted: list[str] = []
+
+    def capture(message) -> None:
+        records.append(message.record)
+        formatted.append(str(message))
+
+    sink_id = loguru_logger.add(
+        capture,
+        level="WARNING",
+        format="{name}:{function}:{message}",
+    )
+    try:
+        restored = controller._console_session_from_state(payload)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert restored.todo_store.list_after(None) == []
+    assert restored.todo_store.create(content="First")["id"] == "1"
+    assert len(records) == 1
+    record = records[0]
+    assert record["message"] == "Console task state invalid; starting empty."
+    assert record["exception"] is None
+    assert record["extra"] == {"module": "ChatScreen"}
+    assert record["name"] == "tldw_chatbook.UI.Console_Modules.session"
+    assert record["module"] == "session"
+    assert record["function"] == "_console_session_from_state"
+    assert formatted == [
+        "tldw_chatbook.UI.Console_Modules.session:_console_session_from_state:"
+        "Console task state invalid; starting empty.\n"
+    ]
+    for private_value in private_values:
+        assert private_value not in formatted[0]
 
 
 @pytest.mark.parametrize(

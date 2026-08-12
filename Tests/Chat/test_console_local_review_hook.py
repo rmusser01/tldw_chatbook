@@ -56,9 +56,16 @@ def test_hook_clears_stamps_before_gating(tmp_path):
 def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     p = provider(ASK, tmp_path)
     seen = []
-    hook = build_local_review_hook(p, lambda pending: seen.append(pending) or {"fs_list": "approve_once"})
-    verdicts = hook([ToolCall(name="fs_list", args={"path": "."}),
-                     ToolCall(name="fs_list", args={"path": "sub"})], RUN)
+    hook = build_local_review_hook(
+        p, lambda pending: seen.append(pending) or {"fs_list": "approve_once"}
+    )
+    verdicts = hook(
+        [
+            ToolCall(name="fs_list", args={"path": "."}),
+            ToolCall(name="fs_list", args={"path": "sub"}),
+        ],
+        RUN,
+    )
     assert len(seen) == 1 and len(seen[0]) == 2  # ONE round trip for the batch
     assert verdicts == {"fs_list": "proceed"}
     assert p._stamps == {(RUN, "fs_list"): "approve_once"}
@@ -66,16 +73,20 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
 
 def test_hook_skips_non_ask_calls(tmp_path):
     p = provider(ALLOW, tmp_path)
-    hook = build_local_review_hook(p, lambda pending: (_ for _ in ()).throw(AssertionError("must not ask")))
+    hook = build_local_review_hook(
+        p, lambda pending: (_ for _ in ()).throw(AssertionError("must not ask"))
+    )
     assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
 def test_combined_hook_merges_verdicts(tmp_path):
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
-    hook = build_combined_review_hook([
-        build_local_review_hook(p1, lambda pending: {"fs_list": "approve_once"}),
-        build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
-    ])
+    hook = build_combined_review_hook(
+        [
+            build_local_review_hook(p1, lambda pending: {"fs_list": "approve_once"}),
+            build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
+        ]
+    )
     # each provider only gates what it owns; both see the batch
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert out == {"fs_list": "proceed"}
@@ -96,10 +107,12 @@ def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path)
     def raising_approvals(pending):
         raise RuntimeError("mid-shutdown")
 
-    hook = build_combined_review_hook([
-        build_local_review_hook(p1, raising_approvals),
-        build_local_review_hook(p2, raising_approvals),
-    ])
+    hook = build_combined_review_hook(
+        [
+            build_local_review_hook(p1, raising_approvals),
+            build_local_review_hook(p2, raising_approvals),
+        ]
+    )
     with pytest.raises(RuntimeError):
         hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     # the exception propagates to run_agent_loop's fail-open handling, but
@@ -116,10 +129,12 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     def raising_approvals(pending):
         raise RuntimeError("mid-shutdown")
 
-    hook = build_combined_review_hook([
-        build_local_review_hook(p1, raising_approvals),
-        build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
-    ])
+    hook = build_combined_review_hook(
+        [
+            build_local_review_hook(p1, raising_approvals),
+            build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
+        ]
+    )
     with pytest.raises(RuntimeError):
         hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert p1._stamps == {}  # cleared at entry, round trip raised
@@ -157,7 +172,9 @@ class _FakeService:
     def record_tool_decision(
         self, server_key, tool_name, *, decision, initiator="agent", error=None
     ):
-        self.recorded_decisions.append((server_key, tool_name, decision, initiator, error))
+        self.recorded_decisions.append(
+            (server_key, tool_name, decision, initiator, error)
+        )
 
 
 def _bare_controller(app):
@@ -198,9 +215,7 @@ def test_compose_local_provider_missing_master_key_defaults_enabled(
         return values.get((section, key), default)
 
     monkeypatch.setattr(controller_mod, "get_cli_setting", missing_master_setting)
-    controller = _bare_controller(
-        SimpleNamespace(unified_mcp_service=_FakeService())
-    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
     local_provider, hook = controller._compose_local_provider()
 
@@ -233,9 +248,7 @@ def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_
         "get_cli_setting",
         _console_settings(enabled="true", workspace_root=str(tmp_path)),
     )
-    controller = _bare_controller(
-        SimpleNamespace(unified_mcp_service=_FakeService())
-    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
     local_provider, hook = controller._compose_local_provider()
     assert isinstance(local_provider, LocalToolProvider)
     assert callable(hook)
@@ -263,7 +276,9 @@ def test_compose_local_provider_kill_switch_read_failure_fails_closed(
         def get_kill_switch(self):
             raise RuntimeError("store unavailable")
 
-    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_RaisingService()))
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_RaisingService())
+    )
     assert controller._compose_local_provider() == (None, None)
 
 
@@ -292,9 +307,7 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     assert gate is not None and gate.server_key == "local:__local__"
 
 
-def test_compose_local_provider_empty_workspace_root_uses_cwd(
-    monkeypatch, tmp_path
-):
+def test_compose_local_provider_empty_workspace_root_uses_cwd(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     monkeypatch.chdir(tmp_path)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
@@ -349,9 +362,7 @@ def test_compose_local_provider_persists_session_and_always_allow(
     assert service.persisted_states == [("local:__local__", "fs_list", "allow")]
 
 
-def test_compose_local_provider_session_approval_skips_reprompt(
-    monkeypatch, tmp_path
-):
+def test_compose_local_provider_session_approval_skips_reprompt(monkeypatch, tmp_path):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
@@ -436,14 +447,29 @@ def test_compose_local_provider_recording_failure_does_not_break_invoke(
     assert not r.ok  # refusal still returned; the raise was swallowed
 
 
+# -- stable task session wiring (TASK-13216 Task 5) -----------------------------
 
-# -- todo_write session wiring (phase-3a Task 4) --------------------------------
+
+_TASK_TOOL_NAMES = {
+    "todo_create",
+    "todo_update",
+    "todo_get",
+    "todo_list",
+}
+
+
+def _registered_task_tools(provider: LocalToolProvider) -> set[str]:
+    return {
+        entry.name
+        for entry in provider.list_catalog()
+        if entry.name in _TASK_TOOL_NAMES
+    }
 
 
 def test_compose_local_provider_without_session_registers_no_todo_spec(
     monkeypatch, tmp_path
 ):
-    """No session context -> provider stays context-free: no todo_write."""
+    """No session context keeps all four stable task tools absent."""
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
@@ -453,16 +479,14 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
 
     local_provider, _hook = controller._compose_local_provider()
 
-    r = local_provider.invoke("local:todo_write", {"todos": []})
-    assert not r.ok
-    assert r.error == "Unknown local tool: todo_write"
+    assert _registered_task_tools(local_provider) == set()
+    assert "todo_write" not in {entry.name for entry in local_provider.list_catalog()}
 
 
-def test_compose_local_provider_wires_the_sessions_own_todo_list(
+def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     monkeypatch, tmp_path
 ):
-    """The composed provider mutates the session's live ``todos`` list in
-    place and surfaces the change through the bridge's todo marker seam."""
+    """An inactive target, not the active session, owns provider task state."""
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
     monkeypatch.setattr(
@@ -473,7 +497,9 @@ def test_compose_local_provider_wires_the_sessions_own_todo_list(
     service = _FakeService(state=ALLOW)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
     controller.store = ConsoleChatStore()
-    session = controller.store.create_session(workspace_id="ws")
+    target = controller.store.create_session(title="Target", workspace_id="ws")
+    active = controller.store.create_session(title="Active", workspace_id="ws")
+    assert controller.store.active_session_id == active.id
     markers = []
     controller._agent_bridge = SimpleNamespace(
         append_todo_marker=lambda session_id, todos: markers.append(
@@ -481,18 +507,14 @@ def test_compose_local_provider_wires_the_sessions_own_todo_list(
         )
     )
 
-    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+    local_provider, _hook = controller._compose_local_provider(session_id=target.id)
 
-    todos = [
-        {"content": "ship it", "status": "in_progress", "activeForm": "shipping"},
-        {"content": "celebrate", "status": "pending"},
-    ]
-    r = local_provider.invoke("local:todo_write", {"todos": todos})
+    created = local_provider.invoke("local:todo_create", {"content": "Ship it"})
 
-    assert r.ok
-    assert r.content == "2 todos (1 in progress)"
-    assert session.todos == todos  # the session's own list, mutated in place
-    assert markers == [(session.id, todos)]
+    assert created.ok
+    assert target.todo_store.get("1")["content"] == "Ship it"
+    assert active.todo_store.list_after(None) == []
+    assert markers == [(target.id, target.todo_store.list_after(None))]
 
 
 def test_compose_local_provider_unknown_session_registers_no_todo_spec(
@@ -512,6 +534,25 @@ def test_compose_local_provider_unknown_session_registers_no_todo_spec(
 
     local_provider, _hook = controller._compose_local_provider(session_id="ghost")
 
-    r = local_provider.invoke("local:todo_write", {"todos": []})
-    assert not r.ok
-    assert r.error == "Unknown local tool: todo_write"
+    assert _registered_task_tools(local_provider) == set()
+
+
+def test_compose_local_provider_without_bridge_registers_no_todo_spec(
+    monkeypatch, tmp_path
+):
+    """A live session without a transcript bridge exposes no task capability."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    controller.store = ConsoleChatStore()
+    session = controller.store.create_session(workspace_id="ws")
+    controller._agent_bridge = None
+
+    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+
+    assert _registered_task_tools(local_provider) == set()

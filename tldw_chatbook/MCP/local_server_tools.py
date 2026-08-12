@@ -17,8 +17,9 @@ composition differs from the Console's ``_compose_local_provider``
 - ``kill_switch`` reads the store's kill switch guarded: a raising read is
   treated as engaged (fail closed), mirroring the controller's compose-time
   discipline.
-- NO ``todo_store`` (Console-session-scoped state; ``todo_write`` is simply
-  absent from the composed catalog), NO session-approval seam, NO
+- NO Console ``SessionTodoStore`` (so ``todo_create``, ``todo_update``,
+  ``todo_get``, and ``todo_list`` are unregistered; the retired
+  ``todo_write`` is also absent), NO session-approval seam, NO
   ``persist_approval`` (there is no approval to persist).
 
 Deferred: ``record_decision`` is deliberately NOT wired. The server's audit
@@ -59,7 +60,7 @@ def build_server_local_provider(
     take effect immediately); approval_callback is None (fail closed);
     no_callback_refusal is EXTERNAL_NO_CALLBACK_REFUSAL; kill_switch from
     the store. Follows _compose_local_provider's discipline minus the
-    Console-only seams (session approvals, persist, todo store).
+    Console-only seams (session approvals, persist, SessionTodoStore).
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
@@ -68,8 +69,9 @@ def build_server_local_provider(
             must provide ``load() -> dict`` and ``get_kill_switch() -> bool``.
 
     Returns:
-        A ``LocalToolProvider`` whose catalog excludes ``todo_write`` and
-        whose ask-state calls fail closed with
+        A ``LocalToolProvider`` whose catalog excludes ``todo_create``,
+        ``todo_update``, ``todo_get``, ``todo_list``, and the retired
+        ``todo_write``, and whose ask-state calls fail closed with
         ``EXTERNAL_NO_CALLBACK_REFUSAL``.
     """
 
@@ -125,8 +127,9 @@ def _local_agent_tool_registrations(
 ) -> list[LocalToolRegistration]:
     """Build the binding-ready registration list for a provider's catalog.
 
-    One registration per catalog entry (``todo_write`` is already absent
-    from the server composition's catalog). Each handler returns the exact
+    One registration per catalog entry. The server composition supplies no
+    Console ``SessionTodoStore``, so all four task tools and the retired
+    ``todo_write`` are already absent. Each handler returns the exact
     ``ToolResult`` from ``provider.invoke`` for the gateway to classify.
     """
     registrations: list[LocalToolRegistration] = []

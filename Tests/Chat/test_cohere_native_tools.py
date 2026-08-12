@@ -17,9 +17,14 @@ sent (or the normalized response/stream returned).
 """
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import _cohere_tools_payload
 
 COHERE_V2_URL = "https://api.cohere.com/v2/chat"
 
@@ -93,6 +98,64 @@ def _call_cohere_stream(mock_post, sse_lines, messages, **extra):
         **extra,
     )
     return list(result)
+
+
+def _todo_tool(name):
+    provider = LocalToolProvider(
+        workspace_root=Path("."), todo_store=SessionTodoStore()
+    )
+    schema = provider.load_schema(f"local:{name}")
+    return {
+        "type": "function",
+        "function": {
+            "name": schema.name,
+            "description": schema.description,
+            "parameters": schema.parameters,
+        },
+    }
+
+
+def _schema_keywords(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from _schema_keywords(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _schema_keywords(child)
+
+
+UNSUPPORTED_COHERE_SCHEMA_KEYWORDS = {
+    "allOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "contains",
+    "minContains",
+    "maxContains",
+    "minProperties",
+    "maxProperties",
+    "propertyNames",
+    "patternProperties",
+    "dependentRequired",
+    "dependentSchemas",
+    "dependencies",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+}
 
 
 def _decode_sse_chunks(sse_lines):
@@ -330,8 +393,7 @@ OPENAI_TOOLS = [
 
 @patch("requests.Session.post")
 def test_openai_tools_passthrough_into_v2_payload(mock_post):
-    """v2 IS OpenAI-shaped end-to-end -- tools pass through, normalized
-    onto the canonical {"type":"function","function":{...}} shape."""
+    """v2 keeps the OpenAI envelope while projecting a fresh schema copy."""
     sent = _call_cohere(
         mock_post,
         [{"role": "user", "content": "2+2?"}],
@@ -347,6 +409,258 @@ def test_openai_tools_passthrough_into_v2_payload(mock_post):
             },
         }
     ]
+
+
+def test_strict_todo_schemas_project_supported_subset_without_aliasing():
+    tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
+    original = deepcopy(tools)
+
+    converted = _cohere_tools_payload(tools)
+    create = converted[0]["function"]["parameters"]
+    update = converted[1]["function"]["parameters"]
+
+    assert tools == original
+    assert create is not tools[0]["function"]["parameters"]
+    assert update is not tools[1]["function"]["parameters"]
+    assert not (
+        UNSUPPORTED_COHERE_SCHEMA_KEYWORDS & set(_schema_keywords([create, update]))
+    )
+
+    assert create["type"] == "object"
+    assert create["required"] == ["content"]
+    assert create["additionalProperties"] is False
+    assert set(create["properties"]) == {"content", "activeForm"}
+
+    assert update["type"] == "object"
+    assert update["required"] == ["id", "expected_version"]
+    assert update["additionalProperties"] is False
+    assert set(update["properties"]) == {
+        "id",
+        "expected_version",
+        "content",
+        "status",
+        "activeForm",
+    }
+    assert update["properties"]["status"]["enum"] == [
+        "pending",
+        "in_progress",
+        "completed",
+        "deleted",
+    ]
+    assert update["properties"]["activeForm"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}]
+    }
+    assert update["anyOf"] == [
+        {"required": ["content"]},
+        {"required": ["status"]},
+        {"required": ["activeForm"]},
+    ]
+
+    update["properties"]["status"]["enum"].append("changed")
+    assert tools == original
+
+
+def test_schema_projection_removes_each_unsupported_family_recursively():
+    schema = {
+        "type": "object",
+        "title": "Strict task patch",
+        "description": "A transport disclosure.",
+        "properties": {
+            "choice": {
+                "type": ["string", "null"],
+                "description": "Nullable choice.",
+                "enum": ["a", None],
+                "minLength": 1,
+                "maxLength": 5,
+                "pattern": r"^a$",
+            },
+            "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "exclusiveMinimum": 0,
+                "exclusiveMaximum": 6,
+                "multipleOf": 1,
+            },
+            "values": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "x"},
+                "minItems": 1,
+                "maxItems": 5,
+                "uniqueItems": True,
+                "contains": {"type": "string"},
+                "minContains": 1,
+                "maxContains": 2,
+            },
+        },
+        "required": ["choice"],
+        "additionalProperties": False,
+        "anyOf": [{"required": ["choice"]}],
+        "allOf": [{"type": "object"}],
+        "oneOf": [{"type": "object"}],
+        "not": {"type": "null"},
+        "if": {"required": ["choice"]},
+        "then": {"required": ["count"]},
+        "else": {"required": ["values"]},
+        "minProperties": 1,
+        "maxProperties": 3,
+        "propertyNames": {"pattern": "x"},
+        "patternProperties": {"x": {"type": "string"}},
+        "dependentRequired": {"choice": ["count"]},
+        "dependentSchemas": {"choice": {"required": ["count"]}},
+        "dependencies": {"choice": ["count"]},
+        "unevaluatedProperties": False,
+        "unevaluatedItems": False,
+    }
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "strict",
+            "description": "Strict input.",
+            "parameters": schema,
+        },
+    }
+    original = deepcopy(tool)
+
+    projected = _cohere_tools_payload([tool])[0]["function"]["parameters"]
+
+    assert not (UNSUPPORTED_COHERE_SCHEMA_KEYWORDS & set(_schema_keywords(projected)))
+    assert "title" not in projected
+    assert projected["description"] == "A transport disclosure."
+    assert projected["required"] == ["choice"]
+    assert projected["properties"]["choice"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "description": "Nullable choice.",
+        "enum": ["a", None],
+    }
+    assert projected["properties"]["values"]["items"] == {"type": "string"}
+    assert projected["anyOf"] == [{"required": ["choice"]}]
+    assert tool == original
+
+
+def test_schema_projection_intersects_type_union_and_any_of_order_independently():
+    branches = [
+        {"enum": ["ready"], "description": "Named state."},
+        {
+            "anyOf": [{"enum": ["queued"]}, {"enum": [None]}],
+            "description": "Nested alternatives.",
+        },
+    ]
+    schemas = [
+        {
+            "type": ["string", "null"],
+            "anyOf": deepcopy(branches),
+            "description": "Combined constraints.",
+        },
+        {
+            "anyOf": deepcopy(branches),
+            "description": "Combined constraints.",
+            "type": ["string", "null"],
+        },
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "combined",
+                "parameters": schema,
+            },
+        }
+        for schema in schemas
+    ]
+    original = deepcopy(tools)
+
+    projected = [
+        _cohere_tools_payload([tool])[0]["function"]["parameters"] for tool in tools
+    ]
+
+    expected = {
+        "description": "Combined constraints.",
+        "anyOf": [
+            {
+                "type": type_name,
+                "anyOf": [deepcopy(branch)],
+            }
+            for branch in branches
+            for type_name in ("string", "null")
+        ],
+    }
+    assert projected == [expected, expected]
+    assert not (UNSUPPORTED_COHERE_SCHEMA_KEYWORDS & set(_schema_keywords(projected)))
+    assert tools == original
+
+    projected[0]["anyOf"][0]["anyOf"][0]["enum"].append("changed")
+    assert tools == original
+
+
+def test_schema_projection_omits_arbitrary_unknown_keywords_recursively():
+    private_sentinel = "api_key=private-secret /Users/private/credentials.toml"
+    schema = {
+        "type": "object",
+        "description": "Supported root description.",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Supported task description.",
+                "enum": ["ready"],
+                "futureTaskConstraint": {"private": private_sentinel},
+            },
+            "details": {
+                "type": "object",
+                "properties": {
+                    "child": {
+                        "type": "string",
+                        "futureChildSecret": private_sentinel,
+                    }
+                },
+                "required": ["child"],
+                "additionalProperties": False,
+                "futureObjectKeyword": [private_sentinel],
+            },
+        },
+        "required": ["task"],
+        "additionalProperties": False,
+        "anyOf": [
+            {
+                "required": ["task"],
+                "futureBranchKeyword": private_sentinel,
+            }
+        ],
+        "futureRootKeyword": {"private": private_sentinel},
+    }
+    tool = {
+        "type": "function",
+        "function": {"name": "future_schema", "parameters": schema},
+    }
+    original = deepcopy(tool)
+
+    projected = _cohere_tools_payload([tool])[0]["function"]["parameters"]
+
+    assert projected == {
+        "type": "object",
+        "description": "Supported root description.",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Supported task description.",
+                "enum": ["ready"],
+            },
+            "details": {
+                "type": "object",
+                "properties": {"child": {"type": "string"}},
+                "required": ["child"],
+                "additionalProperties": False,
+            },
+        },
+        "required": ["task"],
+        "additionalProperties": False,
+        "anyOf": [{"required": ["task"]}],
+    }
+    assert private_sentinel not in json.dumps(projected)
+    assert tool == original
+
+    projected["properties"]["task"]["enum"].append("changed")
+    assert tool == original
 
 
 @patch("requests.Session.post")

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
@@ -160,9 +161,7 @@ class ConsoleRoleplayProjectionPersistenceResult:
     system_prompt_attempted: bool
     system_prompt: str | None
     system_prompt_persisted: bool
-    message_outcomes: tuple[
-        _RoleplayMessageProjectionPersistenceOutcome, ...
-    ] = ()
+    message_outcomes: tuple[_RoleplayMessageProjectionPersistenceOutcome, ...] = ()
 
 
 class ConsoleChatPersistence(Protocol):
@@ -508,11 +507,9 @@ class ConsoleChatSession:
         except ProfileValidationError:
             return None
 
-    #: Session-lifetime todo list for the local ``todo_write`` agent tool
-    #: (items: ``{content, status, activeForm}``, status in
-    #: ``pending|in_progress|completed``). Never persisted -- a resumed
-    #: session starts with an empty list.
-    todos: list[dict] = field(default_factory=list)
+    #: Session-lifetime stable task store for the local task tools. Durable
+    #: conversation resume deliberately starts with a fresh empty store.
+    todo_store: SessionTodoStore = field(default_factory=SessionTodoStore)
 
 
 class ConsoleChatStore:
@@ -607,9 +604,7 @@ class ConsoleChatStore:
         self._roleplay_system_projection_candidates: dict[
             str, tuple[str | None, ...]
         ] = {}
-        self._roleplay_message_projection_candidates: dict[
-            str, tuple[str, ...]
-        ] = {}
+        self._roleplay_message_projection_candidates: dict[str, tuple[str, ...]] = {}
         self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
         # Messages whose CURRENT content was RESTORED from a pre-regenerate
         # base by a stopped/failed terminal mark. Their content belongs to
@@ -1025,9 +1020,7 @@ class ConsoleChatStore:
         self._bump_payload_revision(session_id)
         if session.persisted_conversation_id is None or self.persistence is None:
             return session, True
-        writer = getattr(
-            self.persistence, "update_conversation_context_policy", None
-        )
+        writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
             return session, False
         try:
@@ -2267,9 +2260,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         return self._snapshot(message)
 
     def presentation_context(
@@ -2365,7 +2356,9 @@ class ConsoleChatStore:
         """Seed trusted character system/greeting sources into a fresh session."""
         session = self._session_or_raise(session_id)
         source = (
-            system_template if isinstance(system_template, str) and system_template.strip() else None
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
         )
         source_changed = session.character_system_template != source
         session.character_system_template = source
@@ -2515,9 +2508,7 @@ class ConsoleChatStore:
         session.identity_revision += 1
         self._bump_payload_revision(session_id)
 
-    def _clear_character_greeting_provenance(
-        self, message: ConsoleChatMessage
-    ) -> bool:
+    def _clear_character_greeting_provenance(self, message: ConsoleChatMessage) -> bool:
         """Revoke trusted greeting provenance after a generated replacement wins."""
         if (
             message.metadata is None
@@ -2608,7 +2599,9 @@ class ConsoleChatStore:
             )
             if session.settings.system_prompt != projected_system:
                 prior_system_prompt = session.settings.system_prompt
-                session.settings = replace(session.settings, system_prompt=projected_system)
+                session.settings = replace(
+                    session.settings, system_prompt=projected_system
+                )
                 system_prompt_write = self._snapshot_roleplay_system_prompt_write(
                     session,
                     projected_system,
@@ -2766,9 +2759,7 @@ class ConsoleChatStore:
             image_mime_type=message.image_mime_type,
             feedback=message.feedback,
             metadata_json=metadata_json,
-            accepts_attachments=self._persistence_accepts_kwarg(
-                writer, "attachments"
-            ),
+            accepts_attachments=self._persistence_accepts_kwarg(writer, "attachments"),
             accepts_metadata_json=self._persistence_accepts_kwarg(
                 writer, "metadata_json"
             ),
@@ -2933,9 +2924,7 @@ class ConsoleChatStore:
                     message_write.expected_message_contents
                 )
             if message_write.accepts_source_owned_repair:
-                kwargs["allow_source_owned_repair"] = (
-                    message_write.source_owned_repair
-                )
+                kwargs["allow_source_owned_repair"] = message_write.source_owned_repair
             if message_write.accepts_roleplay_version_guard:
                 kwargs["expected_roleplay_version"] = (
                     message_write.expected_roleplay_version
@@ -2988,9 +2977,9 @@ class ConsoleChatStore:
         for outcome in result.message_outcomes:
             if not outcome.persisted:
                 continue
-            self._roleplay_message_projection_candidates[
-                outcome.native_message_id
-            ] = (outcome.content,)
+            self._roleplay_message_projection_candidates[outcome.native_message_id] = (
+                outcome.content,
+            )
             self._enqueue_accepted_roleplay_sync(outcome)
         return True
 
@@ -3661,9 +3650,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -3739,9 +3726,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         return self._snapshot(message)
 
     def select_variant(
@@ -3791,10 +3776,10 @@ class ConsoleChatStore:
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
-        if (
-            type(session.runtime_backend) is not str
-            or session.runtime_backend not in {"local", "server"}
-        ):
+        if type(session.runtime_backend) is not str or session.runtime_backend not in {
+            "local",
+            "server",
+        }:
             logger.bind(
                 session_id=session_id,
                 runtime_backend=_invalid_runtime_backend_diagnostic(
@@ -3926,9 +3911,7 @@ class ConsoleChatStore:
             or self.persistence is None
         ):
             return
-        writer = getattr(
-            self.persistence, "update_conversation_context_policy", None
-        )
+        writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
             logger.bind(
                 session_id=session.id,

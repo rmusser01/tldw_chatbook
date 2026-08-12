@@ -122,6 +122,7 @@ import uuid
 from loguru import logger
 from textual.widgets import Select
 
+from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
@@ -200,6 +201,7 @@ _MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
 _MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
 _CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
 _SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(r"server-user-v1:[0-9a-f]{64}")
+_CONSOLE_TODO_STATE_KEY = "todo_state"
 
 
 def _canonical_character_id_text(value: Any) -> str | None:
@@ -835,6 +837,7 @@ class ConsoleSessionController:
             session_id: The session behind the pressed ``×``, parsed by the
                 screen from the button id.
         """
+
         async def _complete_close() -> None:
             store = self._ensure_console_chat_store()
             try:
@@ -1151,9 +1154,7 @@ class ConsoleSessionController:
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(
-                    selection.provider, model
-                ),
+                "max_history_images": max_history_images(selection.provider, model),
             },
             rag_defaults={
                 "auto_retrieve_on_send": coerce_bool_setting(
@@ -2006,9 +2007,7 @@ class ConsoleSessionController:
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
         return replace(
             state,
-            conversation_rows=tuple(
-                self._merge_workspace_rows(native_rows, rows)
-            ),
+            conversation_rows=tuple(self._merge_workspace_rows(native_rows, rows)),
         )
 
     # -- Screen-state (de)serialization for one session ----------------------
@@ -2045,6 +2044,7 @@ class ConsoleSessionController:
             # comes back as a persisting one after any screen navigation,
             # and the next send writes it to the DB.
             "ephemeral": session.ephemeral,
+            _CONSOLE_TODO_STATE_KEY: session.todo_store.export_snapshot(),
         }
 
     def _console_session_from_state(
@@ -2084,6 +2084,15 @@ class ConsoleSessionController:
             settings=self._restore_console_settings(raw_session.get("settings")),
             draft=str(raw_session.get("draft") or ""),
         )
+        todo_store = SessionTodoStore()
+        if _CONSOLE_TODO_STATE_KEY in raw_session:
+            try:
+                todo_store = SessionTodoStore.from_snapshot(
+                    raw_session[_CONSOLE_TODO_STATE_KEY]
+                )
+            except TodoStoreError:
+                logger.warning("Console task state invalid; starting empty.")
+        session_kwargs["todo_store"] = todo_store
         try:
             session_kwargs["context_policy_overrides"] = (
                 ConsoleContextPolicyOverrides.from_mapping(
@@ -2091,9 +2100,7 @@ class ConsoleSessionController:
                 )
             )
         except ContextPolicyError:
-            session_kwargs["context_policy_overrides"] = (
-                ConsoleContextPolicyOverrides()
-            )
+            session_kwargs["context_policy_overrides"] = ConsoleContextPolicyOverrides()
             session_kwargs["context_policy_error"] = "invalid_screen_context_policy"
         # Legacy payloads saved before `updated_at` was serialized omit the
         # key entirely; keep the ConsoleChatSession factory default (now)
@@ -2147,21 +2154,15 @@ class ConsoleSessionController:
         raw_character_name = raw_session.get("character_name")
         if raw_character_name is not None:
             session_kwargs["character_name"] = str(raw_character_name)
-        raw_user_display_name_override = raw_session.get(
-            "user_display_name_override"
-        )
+        raw_user_display_name_override = raw_session.get("user_display_name_override")
         try:
-            session_kwargs["user_display_name_override"] = (
-                normalize_chat_display_name(
-                    raw_user_display_name_override,
-                    blank_means_none=True,
-                )
+            session_kwargs["user_display_name_override"] = normalize_chat_display_name(
+                raw_user_display_name_override,
+                blank_means_none=True,
             )
         except ChatDisplayNameError:
             session_kwargs["user_display_name_override"] = None
-        raw_character_system_template = raw_session.get(
-            "character_system_template"
-        )
+        raw_character_system_template = raw_session.get("character_system_template")
         session_kwargs["character_system_template"] = (
             raw_character_system_template
             if isinstance(raw_character_system_template, str)

@@ -20,12 +20,46 @@ approvals, the kill switch, and rug-pull `definition_hash` checking all apply
 unchanged. Write tools carry `mutates` risk tags so the approval card presents
 them correctly.
 
+The `__local__` profile segment is reserved exclusively for that synthetic
+workspace-tool principal. User-controlled external MCP profiles must never be
+saved, imported, loaded, or projected as `__local__` / `local:__local__`.
+Pre-existing reserved profile, discovery-snapshot, and runtime-state records
+are ignored rather than renamed, so external tool metadata cannot alias a
+workspace tool's catalog or permission key. Save-time rejection is backed by
+load-time filtering and a catalog-projection guard because persisted JSON and
+raw projection records can bypass the normal profile editor.
+
 Approval is fail-closed under the three-mechanism discipline: the approval
 callback is cleared first on any refusal path, `invoke()` returns a refusal
 without stamping approval when no callback is wired, and `stamp_scope` wraps
 sub-agent runs so nested invocations re-check permissions. Refusal strings are
 pinned constants from spec §3.3: `LOCAL_DENY_REFUSAL`, `LOCAL_TIMEOUT_REFUSAL`,
 and `LOCAL_KILL_SWITCH_REFUSAL`.
+
+**Addendum (TASK-13216, 2026-08-11): session tasks use item-oriented CAS.**
+The Console-local `todo_write` full-list replacement is retired. A supplied
+Console session store registers `todo_create`, `todo_update`, `todo_get`, and
+`todo_list`; create/update remain permission-gated mutations, get/list are
+read-only, and no task tool is registered without Console session state. Stable
+session-local IDs, exact expected-version checks, and atomic mutation preserve
+concurrent parent/fleet changes. State remains process-memory-only; the Console
+screen snapshot carries pure task records and the next-ID high-water mark solely
+across in-process navigation. Public task-ID numeric values and versions remain
+in the portable JSON exact-integer domain `1..2**53-1`; attempting an ID or
+version increment beyond that domain fails atomically with a fixed bounded
+exhaustion error.
+
+**Addendum (TASK-13216 quality review, 2026-08-11): the synthetic local
+principal is reserved.** The external-profile identifier was previously
+validated only for delimiters and whitespace. As a result, a profile named
+`__local__` survived persistence and its discovered tools projected to the
+same `local:__local__::<tool>` identity used by the Console's real workspace
+tools. The boundary now rejects that exact reserved profile before
+persistence, filters a hand-written reserved profile and its associated
+catalog state during load, and drops any raw reserved record during Hub
+projection. Other currently valid profile IDs, including case variants, keep
+their existing semantics; the reserved token is exact and is never silently
+rewritten.
 
 **Addendum (TASK-14807, 2026-08-10): catalog availability defaults on.** The
 Console registers the standard local provider (workspace file, read-only Git,
@@ -124,6 +158,9 @@ root confinement with hidden components explicitly allowed under it.
 
 - The permission store gains a synthetic server key that is not a real MCP
   server; UI that enumerates servers must special-case or filter it.
+- External MCP profiles cannot use the exact id `__local__`; a hand-written
+  persisted record with that id and its associated catalog/runtime state are
+  deliberately inert rather than migrated or renamed.
 - Tool schemas are visible to Console models by default, so prompts may propose
   calls before the user has configured a workspace root; the first call still
   requires the resolved permission verdict and remains confined to the current

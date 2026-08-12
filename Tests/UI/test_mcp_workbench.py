@@ -8676,6 +8676,7 @@ async def test_stale_server_key_action_under_local_source_is_harmless():
 
 # -- task-2838: local agent tool catalog in the Hub -----------------------------
 
+TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
 _LOCAL_AGENT_TOOL_NAMES = {
     "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
     "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
@@ -8725,8 +8726,9 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         ]
         names = {t.name for t in local}
         assert _LOCAL_AGENT_TOOL_NAMES <= names
-        # Console-session-scoped: no todo_store at the catalog layer.
+        # No Console SessionTodoStore exists at the Hub catalog layer.
         assert "todo_write" not in names
+        assert TASK_TOOL_NAMES.isdisjoint(names)
         # One coherent group, honestly non-executable until Hub-side
         # execution is wired (inspector renders "not_executable" from this).
         assert all(t.server_label == "Local workspace" for t in local)
