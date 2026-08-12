@@ -93,6 +93,25 @@ def test_delete_collection_hides_record_from_list_and_get(tmp_path: Path) -> Non
     assert service.get_collection(collection.collection_id) is None
 
 
+def test_restore_collection_revives_record_with_membership(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    collection = service.create_collection("Research")
+    service.add_item_to_collection(
+        collection.collection_id,
+        source_type="note",
+        source_id="note-1",
+        title="Evidence",
+    )
+    assert service.delete_collection(collection.collection_id) is True
+
+    restored = service.restore_collection(collection.collection_id)
+
+    assert restored.collection_id == collection.collection_id
+    assert restored.name == "Research"
+    assert restored.item_count == 1
+    assert service.list_collections() == (restored,)
+
+
 def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None:
     db = LibraryCollectionsDB(tmp_path / "library_collections.db")
 

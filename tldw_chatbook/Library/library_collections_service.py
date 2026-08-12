@@ -99,6 +99,20 @@ class LibraryCollectionsService(Protocol):
     def delete_collection(self, collection_id: str) -> bool:
         """Soft-delete a local Library Collection."""
 
+    def restore_collection(self, collection_id: str) -> LibraryCollectionRecord:
+        """Restore one soft-deleted local Library Collection.
+
+        Args:
+            collection_id: Stable identifier of the deleted Collection.
+
+        Returns:
+            The restored Collection with its retained membership count.
+
+        Raises:
+            LibraryCollectionNotFound: If no deleted Collection matches the id.
+            LibraryCollectionsServiceError: If local persistence fails.
+        """
+
     def list_library_collections(
         self, *, limit: int = 20, offset: int = 0
     ) -> dict:
@@ -306,6 +320,58 @@ class LocalLibraryCollectionsService:
         except sqlite3.Error as exc:
             raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return cursor.rowcount > 0
+
+    def restore_collection(self, collection_id: str) -> LibraryCollectionRecord:
+        """Restore one soft-deleted Collection without changing membership.
+
+        Args:
+            collection_id: Stable identifier of the deleted Collection.
+
+        Returns:
+            The restored Collection with its retained membership count.
+
+        Raises:
+            LibraryCollectionNotFound: If no deleted Collection matches the id.
+            LibraryCollectionsServiceError: If local persistence fails.
+        """
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE library_collections
+                    SET deleted_at = NULL,
+                        updated_at = ?
+                    WHERE collection_id = ?
+                        AND deleted_at IS NOT NULL
+                    """,
+                    (now, collection_id),
+                )
+                if cursor.rowcount < 1:
+                    raise LibraryCollectionNotFound(collection_id)
+                row = conn.execute(
+                    """
+                    SELECT
+                        collection.collection_id,
+                        collection.name,
+                        collection.description,
+                        collection.created_at,
+                        collection.updated_at,
+                        COUNT(item.membership_id) AS item_count
+                    FROM library_collections AS collection
+                    LEFT JOIN library_collection_items AS item
+                        ON item.collection_id = collection.collection_id
+                    WHERE collection.deleted_at IS NULL
+                        AND collection.collection_id = ?
+                    GROUP BY collection.collection_id
+                    """,
+                    (collection_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            raise LibraryCollectionNotFound(collection_id)
+        return _record_from_row(row)
 
     def add_item_to_collection(
         self,

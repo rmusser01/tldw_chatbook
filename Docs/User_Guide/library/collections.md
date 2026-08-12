@@ -25,6 +25,10 @@ The canvas is titled **"Collections (N)"** (task-2859: dropped the
 redundant "Library " prefix and matches the sibling "Name (n)" pattern
 Media/Notes/Prompts/Skills already use). Top to bottom:
 
+- **Delete receipt** (after a confirmed deletion): a persistent
+  `✓ deleted · Collection · name` toolbar with **Undo** and **Dismiss**.
+  It remains visible even when the deleted Collection was the last row.
+
 - **Empty state** (before your first Collection) — "No Collections yet.",
   "Create a local Collection record to start reviewing saved content.",
   "No stored collection items are available locally yet. Collections are
@@ -56,7 +60,9 @@ Media/Notes/Prompts/Skills already use). Top to bottom:
 | Create Collection | Adds a Collection record. Enabled once a valid, unused name is typed. |
 | Rename Collection | Renames the selected Collection to the typed name. |
 | Delete Collection | First press of the two-press delete: it arms deletion and reveals "Confirm delete". |
-| "Confirm delete" | Second press: actually deletes the selected Collection (tooltip: "Delete the selected local Collection. Its items stay in the Library; the deletion cannot be undone from Library."). |
+| "Confirm delete" | Second press: deletes the selected Collection. Its items stay in the Library, and the tooltip promises the Undo that appears in this panel. |
+| Undo | Restores the deleted Collection and its existing membership, then selects it again. |
+| Dismiss | Removes the recovery receipt without restoring the Collection. |
 | Collection rows | Click to select; the detail pane fills in. Row tooltip shows the sync status label. |
 
 Disabled buttons always carry their reason as a tooltip — for example
@@ -87,7 +93,9 @@ writes will be queued:
    the new name into "Collection name", then press Rename Collection.
 3. **Delete a Collection** — Click its row, press Delete Collection, then
    press the "Confirm delete" button that appears beside it. Deleting is
-   deliberately two presses; nothing is removed on the first press.
+   deliberately two presses; nothing is removed on the first press. After
+   deletion, choose **Undo** to restore the Collection and its membership,
+   or **Dismiss** to leave it deleted and remove the receipt.
 
 ## Keyboard & commands
 
@@ -141,3 +149,7 @@ footer advertises "esc focus rail".)*
 (task-14901 / ADR-055: the "Confirm delete" tooltip now states the
 consequence — member items survive, the Collection itself cannot be
 restored from Library.)*
+*Verified against codex/collection-delete-undo-receipt — 2026-08-12
+(TASK-15102 / ADR-055: deleting a Collection now leaves a named receipt
+with Undo and Dismiss actions; Undo restores the Collection and its
+membership, while member items always remain in the Library.)*
