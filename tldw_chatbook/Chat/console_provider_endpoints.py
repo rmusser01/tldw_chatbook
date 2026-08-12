@@ -228,7 +228,20 @@ def safe_endpoint_display(url: str | None) -> str:
     resolution = resolve_provider_endpoint("custom", url)
     if resolution.persisted_endpoint is not None:
         return resolution.normalized_input
-    return _format_endpoint(parsed_endpoint, drop_default_port=False)
+    legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
+    has_scheme = parsed_endpoint[0]
+    legacy_resolution = resolve_provider_endpoint("custom", legacy_display)
+    if legacy_resolution.persisted_endpoint is not None:
+        return legacy_resolution.normalized_input if has_scheme else legacy_display
+
+    if not has_scheme:
+        explicit_legacy_resolution = resolve_provider_endpoint(
+            "custom",
+            f"http://{legacy_display}",
+        )
+        if explicit_legacy_resolution.persisted_endpoint is not None:
+            return legacy_display
+    return _INVALID_ENDPOINT_DISPLAY
 
 
 def normalize_generic_endpoint_for_compare(url: str | None) -> str:

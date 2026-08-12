@@ -39,6 +39,21 @@ def test_safe_endpoint_display_does_not_return_malformed_secret_input() -> None:
     assert "unit-test-token" not in display
 
 
+def test_safe_endpoint_display_never_echoes_contract_invalid_paths() -> None:
+    rejected_values = (
+        ("https://example.test/%ZZ-secret", "%ZZ-secret"),
+        ("https://example.test/proxy//secret", "proxy//secret"),
+        ("https://example.test/path\u202esecret", "\u202e"),
+        ("https://example.test/path\ud800secret", "\ud800"),
+    )
+
+    for entered, rejected_text in rejected_values:
+        display = safe_endpoint_display(entered)
+
+        assert display == "invalid endpoint"
+        assert rejected_text not in display
+
+
 def test_normalize_generic_endpoint_for_compare_handles_schemeless_credentials() -> (
     None
 ):
