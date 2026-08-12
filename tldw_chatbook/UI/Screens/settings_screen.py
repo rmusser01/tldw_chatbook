@@ -18617,7 +18617,7 @@ class SettingsScreen(BaseAppScreen):
                     except Exception as exc:
                         logger.warning(
                             "Console identity refresh hook failed after settings save "
-                            "(screen_type={}, generation={}, error_type={}).",
+                            "(screen_type=%s, generation=%s, error_type=%s).",
                             type(screen).__name__,
                             generation,
                             type(exc).__name__,

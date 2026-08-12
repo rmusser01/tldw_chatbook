@@ -44,12 +44,46 @@ Measured on `origin/dev` at `d85e6cff1`:
   between. Worth bisecting that range first -- a search silently widening its
   scope is user-visible.
 
-The three save-related failures are the interesting cluster: two independent tests observe that a
-Settings save produced no persisted rows, and a third observes that a save toast
-never arrives. That is consistent with the Settings save path not completing,
-which would be user-visible, so triage should establish whether these are stale
-test contracts or a broken save before any of them is adjusted to match current
-behaviour.
+## Triage outcome (2026-08-11)
+
+The save cluster was two defects stacked, and the top one hid the bottom one.
+
+**Correction to this task's original framing.** It said the save cluster was
+"consistent with the Settings save path not completing, which would be
+user-visible". The first half is right; the severity was wrong. The crash below
+is fatal only under pytest -- in production stdlib logging swallows it -- so no
+user ever lost a save to it.
+
+**1. A malformed log call crashed the save worker (fixed here).**
+`settings_screen.py:18095` wrote a stdlib-logging call in loguru's style --
+`logger.warning("...(screen_type={}, ...)", a, b, c)`. stdlib formats with `%`,
+so the three arguments are never consumed and `record.getMessage()` raises
+`TypeError: not all arguments converted during string formatting`. Production
+swallows this (prints "--- Logging error ---", carries on, message lost), but
+`_pytest.logging.LogCaptureHandler.handleError` deliberately re-raises so bad
+log calls fail tests -- which killed the Textual worker mid-save and made three
+tests report a timeout instead of their real assertion. 19 such calls existed
+across `app.py` and `settings_screen.py`; all are converted to `%s` and
+`Tests/test_stdlib_logging_format_style.py` guards the class.
+
+That alone fixes `test_settings_console_behavior_saves_display_name_exactly`.
+
+**2. Underneath it, a real product bug — filed as task-15610 (high).**
+With the crash gone, two tests fail on their actual assertion: the save persists
+nothing. Measured cause: pressing Save adds `credential_env_var`, `endpoint` and
+`model_context_window` to the draft's `dirty_keys` as empty edits, for fields the
+user never touched (`['model','provider']` before the click, five keys after).
+The empty `model_context_window` then trips its positive-integer guard and
+`return`s before anything is written. Same shape as task-15510 -- the app's own
+repopulation is indistinguishable from a user edit.
+
+So those two are **not** stale contracts; they assert the save persists and it
+genuinely does not. They stay red until task-15610 is fixed.
+
+Still to triage: `test_settings_ownership_records_cover_categories_and_runtime_boundaries`
+(one extra ownership record, `model_capabilities.models.<model>.context_window`),
+`test_console_registers_footer_workbench_shortcuts` (footer hint gained
+`/ queue`), and the search-scope one below.
 
 ## Acceptance Criteria
 
