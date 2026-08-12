@@ -523,11 +523,11 @@ def test_retrieval_exception_sends_without_evidence(): ...
 
 **Files:**
 - Modify: `Docs/User_Guide/library/search-and-rag.md`, `Docs/User_Guide/console/context-and-rag.md`, `Docs/User_Guide/settings/rag.md` (content + "Verified against" stamps — house rule: UI-changing PRs update the matching guide page)
-- Create: follow-up backlog task (MCP/agent divergence)
+- Create: follow-up backlog task (filed then as combined MCP/agent divergence; current scope is MCP-only because `LibraryRagToolProvider` owns fallback agent RAG retrieval when direct Library tools are off and `LibraryToolProvider` owns direct `library_search_notes` when they are on)
 - Modify: the P0 backlog task + task-406 (Done, ticked ACs, Implementation Notes)
 
 - [ ] **Step 1: Update the three guide pages**: rag mode is profile-driven (hybrid default; what each profile mode means; the plain-profile routing); match-band meanings incl. "keyword match" and "reranked"; the Console auto-retrieve toggle (default OFF, staged-evidence visibility, timeout behavior); reranking profiles spend provider calls per search (cost disclosure).
-- [ ] **Step 2: File the follow-up task** (fresh cross-worktree ID scan): "Align MCP perform_rag_search + agent RAGSearchTool with profile-driven retrieval" — description states the P0 non-goal: Library and MCP disagreed about what a rag search was at ship time; reference TASK-694/TASK-1077. **Current disposition:** the agent side is now profile-driven through `LibraryRagToolProvider.search_library_rag`; TASK-3500 is narrowed to MCP `perform_rag_search` only, which is not yet aligned.
+- [ ] **Step 2: File the follow-up task** (fresh cross-worktree ID scan): "Align MCP perform_rag_search + agent RAGSearchTool with profile-driven retrieval" — description states the P0 non-goal: Library and MCP disagreed about what a rag search was at ship time; reference TASK-694/TASK-1077. **Current disposition:** when direct Library tools are off, `LibraryRagToolProvider.search_library_rag` owns fallback agent RAG retrieval; when direct Library tools are on, `LibraryToolProvider` owns direct `library_search_notes`. TASK-3500 is narrowed to MCP `perform_rag_search` only, which is not yet aligned.
 - [ ] **Step 3: Close the backlog tasks**: tick every AC that the merged work satisfies, add Implementation Notes (approach, decisions — notably the never-worked reranker finding and plain-profile routing — and modified files), `backlog task edit <id> -s Done`.
 - [ ] **Step 4: Commit and push** (`docs(guide): profile-driven rag mode, score bands, console auto-retrieve; backlog closure`).
 

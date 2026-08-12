@@ -172,14 +172,14 @@ await record_file_operation(
 
 ## Reference Configuration (Does Not Activate Hooks)
 
-The historical implementation used the following configuration. It is retained for reference; these settings do not wire the subsystem into the Console runtime:
+`[tools].code_audit_enabled` was the historical System A registration flag; its install caller was deleted with System A. The `[audit]` block below was only proposed/example configuration in this guide, and the retained code consumes none of its keys. Instead, it hardcodes `max_records = 10000`, `model = "claude-3-haiku-20240307"`, `temp = 0.1`, and `max_tokens = 500`; it implements neither `analysis_timeout` nor the `enable_*` toggles. None of these reference settings wire the subsystem into the Console runtime.
 
 ```toml
 [tools]
 # Historical System A flag; does not enable current Console auditing
 code_audit_enabled = true
 
-# Audit system settings
+# Proposed/reference settings; retained code does not read this section
 [audit]
 # Maximum audit records to keep in memory
 max_records = 10000
@@ -286,7 +286,7 @@ A: In an explicit integration, prompt context would need to be set before file o
 A: Historical troubleshooting included verifying API keys, model availability, and network connectivity.
 
 **Q: High memory usage**
-A: Historical mitigations included reducing `max_records` or clearing audit records more frequently.
+A: The retained code hardcodes an in-memory limit of 10,000 records and exposes no supported runtime configuration for it. Manual clearing exists only in the reference API shown below, not as a supported Console operation. If TASK-743 retains the subsystem, it must define a bounded owner, lifecycle, and configuration contract.
 
 ### Historical Debug Commands
 

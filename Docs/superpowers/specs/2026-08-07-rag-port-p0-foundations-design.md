@@ -170,8 +170,10 @@ injection. Design:
   did **not** honor profiles — Library and MCP briefly disagreed about what a
   "rag search" meant. A combined follow-up task was filed at ship time
   (adjacent to open TASK-694 / TASK-1077) rather than diverging silently.
-  **Current disposition:** the agent side is now profile-driven through
-  `LibraryRagToolProvider.search_library_rag`; TASK-3500 is narrowed to MCP
+  **Current disposition:** when direct Library tools are off,
+  `LibraryRagToolProvider.search_library_rag` owns fallback agent RAG
+  retrieval; when direct Library tools are on, `LibraryToolProvider` owns
+  direct `library_search_notes`. TASK-3500 is narrowed to MCP
   `perform_rag_search` only, which is not yet aligned.
 - No retrieval-quality tuning (alpha, rrf_k, thresholds, rerank models) — that
   is P1+P2 work, done against measured baselines.
