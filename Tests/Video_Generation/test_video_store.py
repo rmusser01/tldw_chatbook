@@ -1,6 +1,7 @@
 """VideoStore: markers, slugs, capacity transactions, and retention."""
 
 import io
+import inspect
 import multiprocessing
 import os
 import subprocess
@@ -321,6 +322,10 @@ def test_save_and_resolve_round_trip(store, extension):
 
 @pytest.mark.parametrize("method", ["save", "adopt_oversized", "resolve"])
 def test_video_store_public_methods_require_explicit_extension(store, method):
+    parameter = inspect.signature(getattr(VideoStore, method)).parameters["extension"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
     with pytest.raises(TypeError) as caught:
         if method == "save":
             store.save("message", "clip", b"video")
@@ -334,9 +339,113 @@ def test_video_store_public_methods_require_explicit_extension(store, method):
         else:
             store.resolve("message", "clip")
 
-    assert str(caught.value) == (
-        f"VideoStore.{method}() missing 1 required keyword-only argument: 'extension'"
-    )
+    assert "extension" in str(caught.value)
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt_oversized"])
+def test_stale_slug_allocation_cannot_publish_a_second_canonical_extension(
+    tmp_path, operation
+):
+    root = tmp_path / "generated-videos"
+    first_store = VideoStore(root=root, config=_config(retention="ttl"))
+    second_store = VideoStore(root=root, config=_config(retention="ttl"))
+    allocated = threading.Barrier(2)
+    first_published = threading.Event()
+    slugs = {}
+    paths = []
+    errors = []
+    second_stream = io.BytesIO(b"second-webm")
+    second_stream.seek(4)
+
+    def publish_first():
+        try:
+            slug = first_store.allocate_slug("message", "shared clip")
+            slugs["first"] = slug
+            allocated.wait(5)
+            paths.append(
+                first_store.save(
+                    "message", slug, b"first-mp4", extension="mp4"
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            first_published.set()
+
+    def publish_second():
+        try:
+            slug = second_store.allocate_slug("message", "shared clip")
+            slugs["second"] = slug
+            allocated.wait(5)
+            assert first_published.wait(5)
+            if operation == "save":
+                second_store.save(
+                    "message", slug, b"second-webm", extension="webm"
+                )
+            else:
+                second_store.adopt_oversized(
+                    "message",
+                    slug,
+                    second_stream,
+                    size_bytes=len(second_stream.getvalue()),
+                    extension="webm",
+                )
+        except BaseException as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=publish_first, daemon=True)
+    second = threading.Thread(target=publish_second, daemon=True)
+    first.start()
+    second.start()
+    first.join(10)
+    second.join(10)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert slugs == {"first": "shared-clip", "second": "shared-clip"}
+    assert len(paths) == 1
+    assert paths[0].read_bytes() == b"first-mp4"
+    assert len(errors) == 1
+    assert isinstance(errors[0], video_store_module.VideoStoreSaveError)
+    assert str(errors[0]) == "managed video target already exists"
+    assert [video.path for video in first_store.iter_stored()] == [paths[0]]
+    assert second_store.resolve(
+        "message", "shared-clip", extension="webm"
+    ) is None
+    assert not list(root.rglob(".video-stage-*"))
+    if operation == "adopt_oversized":
+        assert second_stream.tell() == 0
+        assert not second_stream.closed
+
+
+@pytest.mark.parametrize("operation", ["save", "adopt_oversized"])
+def test_existing_same_extension_target_still_fails_without_replacement(
+    store, operation
+):
+    first = store.save("message", "clip", b"first-mp4", extension="mp4")
+    stream = io.BytesIO(b"replacement-mp4")
+    stream.seek(4)
+
+    with pytest.raises(
+        video_store_module.VideoStoreSaveError,
+        match="^managed video target already exists$",
+    ):
+        if operation == "save":
+            store.save("message", "clip", b"replacement-mp4", extension="mp4")
+        else:
+            store.adopt_oversized(
+                "message",
+                "clip",
+                stream,
+                size_bytes=len(stream.getvalue()),
+                extension="mp4",
+            )
+
+    assert first.read_bytes() == b"first-mp4"
+    assert [video.path for video in store.iter_stored()] == [first]
+    assert not list(store.root.rglob(".video-stage-*"))
+    if operation == "adopt_oversized":
+        assert stream.tell() == 0
+        assert not stream.closed
 
 
 @pytest.mark.parametrize("extension", ["", ".mp4", "mov", "MP4", "mp4.exe"])

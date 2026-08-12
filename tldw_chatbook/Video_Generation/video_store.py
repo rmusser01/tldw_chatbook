@@ -297,6 +297,13 @@ class VideoStore:
             raise VideoStoreSaveError("managed video target validation failed") from exc
         raise VideoStoreSaveError("managed video target already exists")
 
+    def _ensure_slug_absent(self, message_id: str, slug: str) -> None:
+        """Require that no canonical container already owns this message slug."""
+        for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS:
+            self._ensure_target_absent(
+                self._video_path(message_id, slug, extension)
+            )
+
     # -- write/resolve ----------------------------------------------------
 
     def allocate_slug(self, message_id: str, prompt: str) -> str:
@@ -343,7 +350,7 @@ class VideoStore:
             with self._root_lease():
                 self._ensure_safe_root(create=True)
                 self._cleanup_orphan_stages_unlocked()
-                self._ensure_target_absent(path)
+                self._ensure_slug_absent(message_id, slug)
                 try:
                     self._atomic_publish(
                         content,
@@ -402,7 +409,7 @@ class VideoStore:
                 with self._root_lease():
                     self._ensure_safe_root(create=True)
                     self._cleanup_orphan_stages_unlocked()
-                    self._ensure_target_absent(path)
+                    self._ensure_slug_absent(message_id, slug)
                     try:
                         self._atomic_publish(
                             stream,
