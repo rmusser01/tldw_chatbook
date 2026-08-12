@@ -26,12 +26,6 @@ EXPECTED_PLATFORMS = {
     "macos-x86_64": ("Darwin", "x86_64"),
 }
 
-EXPECTED_MATRIX = (
-    ("linux-x86_64", "ubuntu-24.04"),
-    ("windows-x86_64", "windows-2022"),
-    ("macos-x86_64", "macos-15-intel"),
-)
-
 EXPECTED_STEP_NAMES = (
     "Check out the exact tested commit",
     "Set up Python",
@@ -251,16 +245,6 @@ def test_workflow_uses_only_the_exact_bounded_three_os_matrix() -> None:
         "          - evidence_name: macos-x86_64",
         "            os: macos-15-intel",
     ]
-    assert (
-        tuple(
-            re.findall(
-                r"^\s+- evidence_name: ([-\w.]+)\n\s+os: ([-\w.]+)$",
-                strategy,
-                re.MULTILINE,
-            )
-        )
-        == EXPECTED_MATRIX
-    )
     jobs = _yaml_block(workflow, "jobs:")
     assert _yaml_scalar(jobs, 4, "runs-on") == "${{ matrix.os }}"
     assert _yaml_scalar(jobs, 4, "timeout-minutes") == "20"
