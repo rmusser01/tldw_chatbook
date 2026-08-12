@@ -78,13 +78,15 @@ silent filesystem access, writes, or network egress.
 `web_fetch` alone enforces public-target egress.** `web_search` and `web_fetch`
 are ordinary `local:<name>` tools, not privileged built-ins. Fresh and missing
 permission state therefore remains `ask` for both tools; catalog availability
-never implies network authorization. `web_search` sends queries through the
-operator-configured search backend. That backend may be a local Searx endpoint,
-and `web_search` does not validate it as public-only. `web_fetch` accepts only
-HTTP(S) targets whose complete DNS answer is public and repeats that check for
-every redirect hop. Private, loopback, link-local, reserved, multicast,
-unspecified, cloud-metadata, and unresolvable fetch targets fail before
-transport. There is no per-domain approval bypass in the local-tool contract.
+never implies network authorization. For each `web_search` invocation, the
+caller/model chooses one allowlisted `search_engine`. The operator controls
+that engine's backend-specific endpoints and credentials; a configured Searx
+endpoint may be local. `web_search` does not public-target validate the selected
+backend. `web_fetch` accepts only HTTP(S) targets whose complete DNS answer is
+public and repeats that check for every redirect hop. Private, loopback,
+link-local, reserved, multicast, unspecified, cloud-metadata, and unresolvable
+fetch targets fail before transport. There is no per-domain approval bypass in
+the local-tool contract.
 This intentionally supersedes TASK-1354's earlier draft proposal for a
 default-Allow search tool and configurable localhost/LAN fetching. Optional
 external exposure is governed separately by ADR-053: `[mcp]

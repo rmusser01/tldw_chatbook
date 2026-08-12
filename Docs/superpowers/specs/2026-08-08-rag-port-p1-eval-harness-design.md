@@ -138,7 +138,7 @@ the harness tests only.
 
 - Answer-layer scoring (abstention correctness, citation faithfulness,
   groundedness) — P3, where the graders land.
-- MCP/agent-tool seam evaluation — TASK-3500's parity work first.
+- MCP `perform_rag_search` seam evaluation — TASK-3500's MCP-only parity work first; the agent Library provider already follows the profile-driven path.
 - Any retrieval behavior change. P1 measures; it does not tune. If the
   harness reveals a P0 defect, it is filed (or fixed as its own reviewed
   commit), not silently absorbed.

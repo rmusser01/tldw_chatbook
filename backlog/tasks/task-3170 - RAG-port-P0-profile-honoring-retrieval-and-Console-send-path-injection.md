@@ -4,7 +4,7 @@ title: RAG-port P0 profile-honoring retrieval and Console send-path injection
 status: Done
 assignee: []
 created_date: '2026-08-07 14:19'
-updated_date: '2026-08-07 21:37'
+updated_date: '2026-08-12'
 labels:
   - rag
   - console
@@ -127,9 +127,11 @@ disclosure; task 5 stale-profile-cache + zero-row-disclosure-dropped; task 7
 draft-discard coupling + UI-thread write; task 8 unpinned placeholder
 staging) -- all documented in their own task reports, not repeated here.
 
-Follow-ups filed by this task (all reference TASK-3170): TASK-3500 (MCP
-perform_rag_search + agent RAGSearchTool profile-driven-retrieval parity,
-the declared P0 non-goal), TASK-3501 (pipeline_builder_simple.py's hybrid
+Follow-ups filed by this task (all reference TASK-3170): TASK-3500 (filed for
+combined MCP perform_rag_search + agent RAGSearchTool profile-driven-retrieval
+parity, the declared P0 non-goal; current disposition: `LibraryRagToolProvider`
+satisfies the agent side and TASK-3500 is MCP-only), TASK-3501
+(pipeline_builder_simple.py's hybrid
 merge has the same leg-score aliasing bug task 2 fixed in rag_service.py),
 TASK-3502 (reranker provider/model selection + cost surface, plus two
 re-review residuals), TASK-3503 (config.load_settings cache-miss race can
