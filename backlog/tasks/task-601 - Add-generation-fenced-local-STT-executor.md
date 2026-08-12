@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-12 06:03'
+updated_date: '2026-08-12 07:57'
 labels:
   - stt
   - processes
@@ -72,4 +72,6 @@ After rebasing onto current `dev`, the TASK-601-focused STT, Library, ingestion,
 PR review remediation centralized explicit Parakeet directory validation, hardened managed GGUF paths against Windows/UNC and symlink escapes, completed the public snapshot docstrings and import grouping, added callback context to marshal failures, and coordinated parse-pool plus STT-executor shutdown through one background thread. The final focused gate passed 951 tests. A recycle test that intermittently failed during that gate exposed concurrent attempts by the reader and controller to reap one spawned process; generation ownership now decides the sole reaper before `join()`. The deterministic ownership regression and crash paths passed together, followed by 20 consecutive bounded-lifetime recycle passes.
 
 ADR required: no. ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md` and `backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md`. Those accepted decisions already govern the runtime boundary, lease ownership, retry policy, and direct-local GGUF behavior.
+
+Native platform evidence attempt 1 remained red and did not close acceptance criterion 6. Workflow run https://github.com/rmusser01/tldw_chatbook/actions/runs/31575959082 tested executable commit 48c4ccadb9ef93f64ddfffd9954aede9526ea48e: Linux x86_64 and macOS x86_64 passed; Windows x86_64 produced bounded test_execution failure evidence. All three required evidence nodes passed on Windows, but selected unit Tests/STT/test_executor_process_tree.py::test_unproven_tree_death_quarantines_containment failed before its assertion because the test monkeypatch required os.killpg to pre-exist. Windows does not expose os.killpg. This is a native test-portability defect, not a containment production failure. No aggregate was created. Remediation is limited to a RED-backed portable monkeypatch and requires a fresh full three-platform run on a new executable commit.
 <!-- SECTION:NOTES:END -->
