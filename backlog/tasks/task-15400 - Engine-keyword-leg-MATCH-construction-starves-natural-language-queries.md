@@ -1,9 +1,10 @@
 ---
-id: task-15400
+id: TASK-15400
 title: Engine keyword-leg MATCH construction starves natural-language queries
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-11'
+updated_date: '2026-08-12 00:07'
 labels:
   - rag
   - retrieval
@@ -13,6 +14,7 @@ priority: high
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 The RAG engine's keyword (FTS5) leg builds its MATCH expression as an
 implicit **AND over every query token** (`RAGService._escape_fts5_query`,
 chosen in TASK-3995 over whole-query phrase-quoting). A document must
@@ -82,33 +84,47 @@ already fails the first:
    test_fts5_query_escaping.py` (10 tests) reds if that property breaks.
    Any new construction must keep quoting each token; only the JOIN between
    them is in play.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] #1 The engine keyword leg's MATCH construction is decided on measured
+<!-- AC:BEGIN -->
+- [ ] #1 #1 The engine keyword leg's MATCH construction is decided on measured
       evidence, with the alternatives (AND-of-all-tokens, stopword-trimmed
       AND, OR-with-rank, `build_fts_match_query` reuse, and any hybrid of
       them) compared on the RAG_Eval golden set in all three modes — the
       table in this description is the starting point, not the answer
-- [ ] #2 The chosen construction is applied at one seam shared by every FTS
+- [ ] #2 #2 The chosen construction is applied at one seam shared by every FTS
       sub-leg (media, notes, conversations, prompts), not per sub-leg
-- [ ] #3 The number of golden queries for which the keyword leg returns
+- [ ] #3 #3 The number of golden queries for which the keyword leg returns
       zero rows is reported before and after, per category, alongside the
       number for which it returns the TARGET (the two are far apart: OR
       rescues 34/40 to non-empty but only 10/40 to a hit)
-- [ ] #4 `kw-plant-maintenance-record` keeps its plain and hybrid cells, or
+- [ ] #4 #4 `kw-plant-maintenance-record` keeps its plain and hybrid cells, or
       the fixture is deliberately re-authored with the reason recorded in
       both golden.toml and corpus.toml
-- [ ] #5 `Tests/RAG_Search/test_fts5_query_escaping.py` stays green — each
+- [ ] #5 #5 `Tests/RAG_Search/test_fts5_query_escaping.py` stays green — each
       token remains individually quoted
-- [ ] #6 Any movement in the committed baselines is a deliberate, disclosed
+- [ ] #6 #6 Any movement in the committed baselines is a deliberate, disclosed
       re-stamp naming this task, produced by a full gated matrix re-run
-- [ ] #7 The `prompt` category's cells are re-read afterwards: whether the
+- [ ] #7 #7 The `prompt` category's cells are re-read afterwards: whether the
       shipped prompt queries become answerable is the decision point for
       whether those fixtures also need re-authoring
-- [ ] #8 The two keyword paths (this engine leg vs the Library's four-seam
+- [ ] #8 #8 The two keyword paths (this engine leg vs the Library's four-seam
       path) either share a construction or the divergence is documented
       with its reason. **TASK-3997 is the four-seam half of the same
       question** (it found `build_fts_match_query`'s AND-join zeroing
       results on the P1 set) — the two should be decided together or one
       should explicitly defer to the other
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Arc plan: Docs/superpowers/plans/2026-08-11-rag-keyword-leg-match-construction.md (5 tasks). Spec (authority): Docs/superpowers/specs/2026-08-11-rag-keyword-leg-match-construction-design.md.
+
+1. Construction seam (engine): SearchConfig.fts_match_construction (and | and_stopword_trim | or | and_then_or, default 'and', NOT TOML-wired), RAGService._fts5_match_expressions -> (primary, fallback|None), _FTS5_STOPWORDS, per-sub-leg zero-row fallback loop + metadata['fts_match'] provenance, construction in the hybrid/keyword cache key ('and' byte-identical to pre-arc keys).
+2. Sweep construction axis: fusion_sweep Strategy gains the construction field, CONSTRUCTION_STRATEGIES (4 rows at shipped fusion params), leg-level census + negative-composition counters, control-row self-check (census must reproduce the shipped 20).
+3. THE SWEEP RUN: gated four-row sweep + NEAR/prefix probes; apply the spec's pre-registered mechanical rule in writing; winner computed, never chosen. Null result ships the table.
+4. Ship the winner: default flips to the sweep's winner; disclosed oracle updates; docstring's under-review block resolved from the TABLE.
+5. Re-stamp + closure: one deliberate baseline re-stamp, README census/headroom prose, live TUI check (natural-language prompt query through Library RAG Answer), 15400 Done with the sweep table verbatim.
+<!-- SECTION:PLAN:END -->

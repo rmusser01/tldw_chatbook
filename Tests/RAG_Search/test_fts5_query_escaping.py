@@ -379,3 +379,134 @@ def test_keyword_row_matching_only_on_title_is_never_citation_empty(tmp_path):
     )
     fallback = result.citations[0]
     assert 0 <= fallback.start_char <= fallback.end_char <= len(result.document)
+
+
+# --- The same safety property, through every MATCH construction ------------
+#
+# TASK-15400 puts three more MATCH constructions behind
+# `SearchConfig.fts_match_construction`, and one of them (`and_then_or`)
+# issues a SECOND query the tests above never reach. The injection property
+# is a property of the EXPRESSION BUILDER, not of the AND join, so every
+# case above is re-run through the OR form and through the fallback path:
+# an operator-shaped token, a column-filter attempt, a hyphenated numeric,
+# and an embedded quote must all stay inert literals no matter which
+# construction produced the expression. Mutation check: dropping the
+# per-token quoting from the OR join (joining bare tokens with " OR ")
+# reds `test_hostile_tokens_stay_inert_in_the_or_form` with
+# `OperationalError`.
+
+
+HOSTILE_QUERIES = [
+    # The documented incident: unquoted, FTS5 reads `3` as a column name.
+    "Obsidian-3 lathe",
+    # A column-filter attempt.
+    "content:wombat lathe",
+    # FTS5 operators typed as ordinary words.
+    "lathe AND OR NOT spindle",
+    "lathe NEAR spindle",
+    # A prefix-operator attempt and a bare wildcard.
+    "lathe* spindle",
+    # An embedded quote, and a stray closing parenthesis.
+    'confirmed" runout',
+    "lathe) OR (spindle",
+    # A column filter with braces, FTS5's multi-column syntax.
+    "{title content}:lathe spindle",
+]
+
+
+@pytest.mark.parametrize("construction", ["or", "and_then_or", "and_stopword_trim"])
+@pytest.mark.parametrize("query", HOSTILE_QUERIES)
+def test_hostile_tokens_stay_inert_in_the_or_form(tmp_path, construction, query):
+    """Every expression a construction can emit must execute cleanly.
+
+    Executed against a real FTS5 table -- the parse is the thing under
+    test. Both halves of the pair are checked, so the `and_then_or`
+    FALLBACK expression (the one no pre-arc test ever built) is covered.
+    """
+    conn = _fts5_conn()
+    _insert(
+        conn,
+        "Lathe Maintenance Log",
+        "The Obsidian-3 lathe shows spindle runout under load.",
+    )
+
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = construction
+    primary, fallback = service._fts5_match_expressions(query)
+
+    for expression in (primary, fallback):
+        if not expression:
+            continue
+        # Must not raise: the safety property. (Whether it matches is a
+        # relevance question, not a safety one.)
+        _match(conn, expression)
+    conn.close()
+
+
+def test_user_typed_operator_words_never_become_operators(tmp_path):
+    """`OR` typed by the user is a search term, not a disjunction.
+
+    Unquoted, `lathe OR NOT spindle` is an FTS5 expression whose meaning is
+    the user's words rearranged into boolean logic. The only operators in
+    an emitted expression are the ones the BUILDER put there: under `and`
+    the user's words stay quoted literals, and under the OR form they are
+    trimmed as the function words they are.
+    """
+    conn = _fts5_conn()
+    _insert(conn, "Operator Words", "The word OR appears here, and NOT much else.")
+    _insert(conn, "Lathe Log", "The lathe spindle was replaced.")
+
+    service = _make_service(tmp_path)
+    query = "lathe OR NOT spindle"
+
+    # Sanity check: unquoted, FTS5 parses the user's own words as boolean
+    # syntax -- here, all the way to a syntax error.
+    with pytest.raises(sqlite3.OperationalError):
+        _match(conn, query)
+
+    # Quoted, they are four ordinary search terms (matching nothing here,
+    # which is a relevance answer rather than a parse failure).
+    assert service._fts5_match_expressions(query)[0] == (
+        '"lathe" "OR" "NOT" "spindle"'
+    )
+    assert _match(conn, '"lathe" "OR" "NOT" "spindle"') == []
+
+    service.config.search.fts_match_construction = "or"
+    primary, _fallback = service._fts5_match_expressions(query)
+    assert primary == '"lathe" OR "spindle"'
+    assert _match(conn, primary) == [(2,)]
+    conn.close()
+
+
+def test_the_fallback_path_runs_a_hostile_query_without_raising(tmp_path):
+    """End to end through the sub-leg: a hostile query whose AND finds
+    nothing must reach the fallback and still degrade gracefully."""
+    service = _make_service(tmp_path)
+    service.config.search.fts_match_construction = "and_then_or"
+
+    # No document contains "quokka", so the AND is empty and the OR form
+    # runs -- carrying the column-filter attempt and the embedded quote.
+    results = asyncio.run(
+        service._keyword_search('quokka content:wombat confirmed" lathe', top_k=5)
+    )
+    assert isinstance(results, list)
+
+
+def test_an_all_stopword_query_never_emits_an_empty_match_expression(tmp_path):
+    """An empty MATCH string is an FTS5 syntax error, not "no results"."""
+    conn = _fts5_conn()
+    _insert(conn, "Anything", "Any content at all.")
+    service = _make_service(tmp_path)
+
+    for construction in ("and", "and_stopword_trim", "and_then_or"):
+        service.config.search.fts_match_construction = construction
+        primary, fallback = service._fts5_match_expressions("what about the")
+        assert primary, f"{construction} emitted an empty primary expression"
+        _match(conn, primary)
+        assert fallback is None, construction
+
+    # `or` is the one construction whose answer is honestly "no rows" --
+    # and "" is the existing skip contract, never a query.
+    service.config.search.fts_match_construction = "or"
+    assert service._fts5_match_expressions("what about the") == ("", None)
+    conn.close()

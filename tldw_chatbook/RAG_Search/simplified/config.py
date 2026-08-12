@@ -437,6 +437,34 @@ class SearchConfig:
     # `PromptsDatabase` (whose constructor runs schema work); only set this to
     # point the keyword leg at a specific file (e.g. tests).
     prompts_db_path: Optional[Path] = None
+    # How the keyword (FTS5) leg joins a query's tokens into its MATCH
+    # expression (TASK-15400). One of the four candidates the arc's spec
+    # pre-registers, resolved at USE time by
+    # `rag_service.RAGService._fts5_match_expressions`:
+    #
+    #   "and"                -- the shipped construction: implicit AND over
+    #                           EVERY token (a document must contain every
+    #                           word the user typed).
+    #   "and_stopword_trim"  -- AND over the content tokens only, falling
+    #                           back to the full AND when trimming empties
+    #                           the query.
+    #   "or"                 -- OR over the content tokens.
+    #   "and_then_or"        -- AND first; on a ZERO-row sub-leg result,
+    #                           that sub-leg re-runs as the content-token
+    #                           OR (a non-empty AND is never widened).
+    #
+    # Deliberately NOT wired to TOML/user config: this arc measures the four
+    # candidates against the golden set and ships the winner as the default,
+    # rather than handing users an unmeasured knob (spec: "the construction
+    # choice is NOT a config knob in this arc"). It is a field rather than a
+    # constant only so the sweep can vary it on a live SearchConfig -- which
+    # is exactly why it also joins the cache key (`simple_cache._make_key`);
+    # a runtime-variable retrieval parameter outside the key is how TASK-4110's
+    # sweep would have reported "the parameter doesn't matter".
+    #
+    # An unrecognized value warns once and behaves as "and" (fail-safe to the
+    # shipped behaviour), matching how `hybrid_alpha`/`rrf_k` degrade.
+    fts_match_construction: str = "and"
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False
