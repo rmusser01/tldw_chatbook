@@ -796,3 +796,36 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         assert session_b.id in console._console_cost_fp_revisions
         assert session_a.id != session_b.id
         assert console._console_cost_fp_revisions[session_a.id] == revision_a
+
+
+@pytest.mark.asyncio
+async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
+    """PR3a-1 Task 6b (audit F3): the money a child billed AFTER its turn's
+    usage was attached reaches the chip.
+
+    It is not on the message row and will not be until PR 3a-2's
+    last-child-done re-attach, so the chip's existing unpriced sub-agent
+    line is where it is named instead of vanishing. Overrides the
+    controller seam directly, exactly as the sibling fleet-token test does,
+    so this pins the ONE new thing: that `_build_console_cost_state` reads
+    and forwards it.
+    """
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        baseline = console._build_console_cost_state()
+        assert baseline is not None
+        assert "Sub-agents:" not in baseline.tooltip
+
+        controller = console._ensure_console_chat_controller()
+        assert controller is not None
+        controller.unattributed_fleet_tokens = lambda session_id: 1300
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip

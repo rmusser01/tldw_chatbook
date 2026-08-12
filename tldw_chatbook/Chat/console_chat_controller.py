@@ -1401,6 +1401,15 @@ class ConsoleChatController:
         #: most controller-only tests, matching every other UI bridge slot
         #: here.
         self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
+        #: PR3a-1 Task 6b (audit F3): per session, the turn's provider
+        #: signals object plus HOW MANY of its usage payloads were attached
+        #: to the assistant message. A fleet child keeps streaming into the
+        #: SAME signals object after `run_reply` returns, and the agent path
+        #: attaches usage exactly ONCE (`_finalize_agent_reply`), so every
+        #: payload closed out after that instant is real money billed to the
+        #: user and read by nobody. This slot is what makes the difference
+        #: readable (`unattributed_fleet_tokens`) instead of silent.
+        self._post_turn_usage_watch: dict[str, tuple[Any, Any, int]] = {}
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
         #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
@@ -8619,6 +8628,99 @@ class ConsoleChatController:
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
 
+    @staticmethod
+    def _usage_payloads(stream_signals: Any) -> list[Any]:
+        """Every provider-call usage payload this turn has closed out so far.
+
+        Extracted so ``_attach_stream_usage`` and ``unattributed_fleet_
+        tokens`` read the accumulator through ONE seam -- the second is
+        defined entirely as "what the first has not billed yet", and a
+        second copy of this tolerance would let the two drift.
+        """
+        payloads_getter = getattr(stream_signals, "usage_payloads", None)
+        if callable(payloads_getter):
+            return list(payloads_getter())
+        # Tolerate narrow stand-ins that only expose the single-call
+        # attribute (the pre-accumulation shape), same defensive posture as
+        # the getattr-based resolution reads in `_attach_stream_usage`.
+        single = getattr(stream_signals, "usage_payload", None)
+        return [single] if single else []
+
+    def _watch_post_turn_usage(
+        self,
+        session_id: str,
+        stream_signals: ConsoleProviderStreamSignals | None,
+        resolution: Any,
+    ) -> None:
+        """Remember where this turn's billing stopped (PR3a-1 Task 6b, F3).
+
+        Called immediately after the turn's ONE usage attach. Everything
+        appended to ``stream_signals`` from here on is a surviving fleet
+        child's spend: real money, on a message nobody attaches to again.
+
+        NOT the full fix, deliberately. Re-attaching when the last child of
+        a turn finishes needs a "last child done" signal the bridge does not
+        emit, and PR 3a-2 builds exactly that signal for auto-wake; building
+        it twice is waste. **The re-attach itself is already safe**:
+        ``_attach_stream_usage`` recomputes the TOTAL from all payloads and
+        ``ConsoleChatStore.set_message_usage`` REPLACES rather than adds
+        (and persists immediately for an already-terminal message), so
+        calling it a second time with the same signals object is idempotent
+        -- 3a-2 inherits a safe path and does not need to re-derive that.
+        Until then the spend is at least VISIBLE, via
+        ``unattributed_fleet_tokens`` -> the cost chip's "Sub-agents: N tok
+        (not priced)" line.
+        """
+        if stream_signals is None:
+            self._post_turn_usage_watch.pop(session_id, None)
+            return
+        self._post_turn_usage_watch[session_id] = (
+            stream_signals,
+            resolution,
+            len(self._usage_payloads(stream_signals)),
+        )
+
+    def unattributed_fleet_tokens(self, session_id: str) -> int:
+        """Tokens this session billed AFTER its turn's usage was attached.
+
+        A fleet child outlives the turn that spawned it and keeps streaming
+        into the same ``ConsoleProviderStreamSignals``; the agent path
+        attaches usage once, the instant ``run_reply`` returns. This is the
+        difference -- spend the user was charged for that the message row
+        and its cost figure do not include.
+
+        Read by ``ChatScreen._build_console_cost_state`` and folded into the
+        chip's unpriced sub-agent token line, so the money is named rather
+        than silently gone. Cheap: a list slice and a normalize per payload,
+        over the handful of calls one turn's survivors make.
+
+        Args:
+            session_id: The session to report.
+
+        Returns:
+            The unattributed token total, or 0 when the session has no
+            watched turn, nothing new since the attach, or nothing that
+            normalizes to usage.
+        """
+        watch = self._post_turn_usage_watch.get(session_id)
+        if watch is None:
+            return 0
+        stream_signals, resolution, attached_count = watch
+        payloads = self._usage_payloads(stream_signals)[attached_count:]
+        if not payloads:
+            return 0
+        provider = str(getattr(resolution, "provider", "") or "")
+        model = str(getattr(resolution, "model", "") or "")
+        total: ProviderUsage | None = None
+        for payload in payloads:
+            usage = ProviderUsage.from_provider_payload(
+                payload, provider=provider, model=model, partial=True
+            )
+            if usage is None:
+                continue
+            total = usage if total is None else total.plus(usage)
+        return total.total_tokens if total is not None else 0
+
     def _attach_stream_usage(
         self,
         assistant_message_id: str,
@@ -8638,15 +8740,7 @@ class ConsoleChatController:
         """
         if stream_signals is None:
             return
-        payloads_getter = getattr(stream_signals, "usage_payloads", None)
-        if callable(payloads_getter):
-            payloads = list(payloads_getter())
-        else:
-            # Tolerate narrow stand-ins that only expose the single-call
-            # attribute (the pre-accumulation shape), same defensive posture
-            # as the getattr-based resolution reads below.
-            single = getattr(stream_signals, "usage_payload", None)
-            payloads = [single] if single else []
+        payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
         total: ProviderUsage | None = None
@@ -9507,6 +9601,10 @@ class ConsoleChatController:
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
+                # PR3a-1 Task 6b (audit F3): a Stop ends the TURN, not its
+                # surviving children -- so this branch needs the same
+                # post-turn watch the normal finalizer sets.
+                self._watch_post_turn_usage(session_id, stream_signals, resolution)
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
@@ -9658,6 +9756,10 @@ class ConsoleChatController:
             resolution,
             partial=stopped_now or getattr(outcome, "status", None) != RUN_DONE,
         )
+        # PR3a-1 Task 6b (audit F3): mark where THIS turn's billing stopped,
+        # so a surviving child's later provider calls are readable rather
+        # than silently dropped -- see `_watch_post_turn_usage`.
+        self._watch_post_turn_usage(session_id, stream_signals, resolution)
         if stopped_now:
             # The stopped message was already persisted by
             # `mark_message_stopped` (`_persist_existing_message`), so its
