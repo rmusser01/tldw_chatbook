@@ -25,7 +25,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual import on
+from textual import on, work
 from loguru import logger
 
 # Local imports
@@ -221,6 +221,11 @@ class AudioBookGenerationWidget(Widget):
         self.detected_chapters = []
         self.generated_audiobook_path = None
         self._chapter_detect_debounce_timer: Optional[Timer] = None
+        # Last chapter count a "Detected N chapters" toast was shown for
+        # (task-15478 review): a debounced re-paste can re-run detection
+        # several times as the user keeps typing, and every settle used to
+        # pop its own toast even when the count hadn't moved.
+        self._last_notified_chapter_count: Optional[int] = None
 
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI.
@@ -736,51 +741,103 @@ class AudioBookGenerationWidget(Widget):
             logger.info(f"Voice assigned: {event.character_name} → {event.voice_id}")
 
     def _detect_chapters(self) -> None:
-        """Detect chapters in the content"""
+        """Detect chapters in the content, off the event loop.
+
+        `ChapterDetector.detect_chapters` is O(len(content)) regex scanning
+        over every line -- benchmarked (task-15478 review) at ~19ms for 90k
+        words, ~60ms for 300k, and ~200ms on a 6MB paste. That is well past
+        the repo's 100ms worker budget, for exactly the large pastes an
+        audiobook feature invites, and it used to run synchronously on the
+        event loop from all four call sites (three one-shot imports, plus
+        the debounced paste-box timer). None of the three import paths have
+        a genuinely bounded size either -- a book imported from a file, a
+        note, or a long conversation can all be just as large as a paste --
+        so all four now route through this one threaded path rather than
+        special-casing which callers are "small enough".
+
+        The CPU-bound detection itself runs in `_detect_chapters_worker` (a
+        `@work(thread=True)` method); this method only snapshots
+        `content_text` and dispatches it.
+        """
         if not self.content_text:
             return
+        self._detect_chapters_worker(self.content_text)
 
+    @work(thread=True, exclusive=True, group="audiobook-chapter-detection")
+    def _detect_chapters_worker(self, content: str) -> None:
+        """Thread: run the CPU-bound detector, then marshal the result back.
+
+        `exclusive=True` cancels any prior in-flight detection in this same
+        group -- if content changes again before a run finishes, only the
+        latest result should ever reach `_apply_detected_chapters`.
+        """
         try:
             from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
+
+            chapters = ChapterDetector.detect_chapters(content)
+        except Exception as e:
+            logger.error(f"Failed to detect chapters: {e}")
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Failed to detect chapters: {e}",
+                severity="error",
+            )
+            return
+
+        self.app.call_from_thread(self._apply_detected_chapters, chapters)
+
+    def _apply_detected_chapters(self, chapters: List) -> None:
+        """Main-thread half of chapter detection: apply results to the UI.
+
+        Called via `call_from_thread` from `_detect_chapters_worker`, so it
+        must stay main-thread-only (widget queries/mutation, notify).
+        """
+        self.detected_chapters = chapters
+
+        try:
             from tldw_chatbook.Widgets.TTS.chapter_editor_widget import (
                 ChapterEditorWidget,
             )
-
-            # Detect chapters
-            self.detected_chapters = ChapterDetector.detect_chapters(self.content_text)
 
             # Update the chapter editor widget
             try:
                 chapter_editor = self.query_one(
                     "#chapter-editor-widget", ChapterEditorWidget
                 )
-                chapter_editor.set_chapters(self.detected_chapters)
-                self.app.notify(
-                    f"Detected {len(self.detected_chapters)} chapters",
-                    severity="information",
-                )
+                chapter_editor.set_chapters(chapters)
+                self._notify_chapter_count(len(chapters))
             except Exception as e:
                 logger.warning(f"Could not update chapter editor: {e}")
                 # Fall back to old display method if chapter editor not found
                 chapter_list = self.query_one("#chapter-list", Static)
-                if self.detected_chapters:
+                if chapters:
                     chapter_display = []
-                    for i, chapter in enumerate(self.detected_chapters):
+                    for i, chapter in enumerate(chapters):
                         chapter_display.append(
                             f"{i + 1}. {chapter.title} ({len(chapter.content.split())} words)"
                         )
 
                     chapter_list.update("\n".join(chapter_display))
-                    self.app.notify(
-                        f"Detected {len(self.detected_chapters)} chapters",
-                        severity="information",
-                    )
+                    self._notify_chapter_count(len(chapters))
                 else:
                     chapter_list.update("No chapters detected")
 
         except Exception as e:
             logger.error(f"Failed to detect chapters: {e}")
             self.app.notify(f"Failed to detect chapters: {e}", severity="error")
+
+    def _notify_chapter_count(self, count: int) -> None:
+        """Toast only when the detected chapter count changed since the last
+        toast (task-15478 review Minor).
+
+        A debounced re-paste can re-run detection several times as the user
+        keeps typing; before this, every settle popped its own
+        "Detected N chapters" toast even when N hadn't moved.
+        """
+        if count == self._last_notified_chapter_count:
+            return
+        self._last_notified_chapter_count = count
+        self.app.notify(f"Detected {count} chapters", severity="information")
 
     def _generate_audiobook(self) -> None:
         """Generate the audiobook"""

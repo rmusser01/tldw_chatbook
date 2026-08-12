@@ -102,22 +102,97 @@ UI.
   content (via `git show HEAD:...`, since nothing was committed yet) and
   confirmed all three new tests fail red with the exact reported symptom
   (`NoMatches: No nodes match '#auto-chapters-switch'` raised out of
-  `on_text_area_changed`), including confirming the three import paths were
-  ALSO silently swallowing the same exception through their outer
-  `except Exception` blocks (e.g. `_handle_file_selection` showed a false
-  "Failed to import file: ..." error toast on an import that had actually
-  succeeded). Restored the fix afterward and reconfirmed green.
+  `on_text_area_changed`). Restored the fix afterward and reconfirmed green.
+- **Correction (review round 2):** the original version of this note claimed
+  all three pre-fix import paths "silently swallowed" the same `NoMatches`
+  into a false toast. That is only true for `_handle_file_selection` --
+  verified per-path severity below.
 
-**Tests**: new file `Tests/UI/test_speech_audiobook_chapter_detection.py`
-(3 tests, all born red against the pre-fix code, green after): typing raises
-no exception; a burst of keystrokes inside the debounce window calls
-`_detect_chapters` zero times until the window elapses, then exactly once;
-a one-shot file import still populates `detected_chapters` with no switch.
-Also ran the full STTS/Speech suite (`grep -rl STTS_Window Tests/` plus
-`test_speech_audiobook_layout.py`, which asserts the collapsible-group
-layout is unchanged -- confirming no switch UI was re-added): 339 passed, 0
-failed.
+**Per-path pre-fix failure severity** (corrected; the code fix itself did
+not change based on this -- all four dead queries were removed
+unconditionally either way):
+
+- `_handle_file_selection`: its own `try/except Exception` wraps the entire
+  callback body, so the dead-switch `NoMatches` WAS caught there, producing
+  a false `"Failed to import file: ..."` error toast on an import that had
+  actually already succeeded. Confirmed live in the mutation-test run above
+  (captured log: `ERROR ... Failed to import file: No nodes match
+  '#auto-chapters-switch' ...`).
+- `_import_from_notes`'s `handle_note_selection` and
+  `_import_from_conversation`'s `handle_conversation_selection`: **not** a
+  toast. Both are passed as the `callback` to `self.app.push_screen(dialog,
+  callback)`. Textual delivers a screen-dismiss callback via
+  `ResultCallback.__call__` -> `self.requester.call_next(self.callback,
+  result)` (`textual/screen.py`), i.e. as a `Callback` message processed on
+  a LATER message-pump cycle of the widget -- by which point the `try`
+  block that lexically surrounds the `push_screen()` call has already
+  returned and is no longer on the stack. Neither nested callback has a
+  `try/except` of its own. Verified with a minimal standalone repro
+  (`push_screen(dialog, callback)` where `callback` raises `NoMatches`,
+  no per-callback try/except, matching this file's exact shape): the outer
+  `try` printed as having "completed normally" (never entered its
+  `except`), and the `NoMatches` instead surfaced through
+  `message_pump._flush_next_callbacks` all the way out as an unhandled
+  exception -- a crash-class error, not a caught-and-converted toast.
+
+## Review follow-up (round 2)
+
+Two Important findings from review, both addressed without changing the
+chosen resolution (keep detection, no switch UI):
+
+1. **Per-fire cost still on the loop.** `_detect_chapters()`'s CPU-bound
+   part (`ChapterDetector.detect_chapters`, O(len(content)) regex scanning)
+   still ran synchronously wherever it was called from -- including the
+   debounce timer's callback, which runs on the event loop. Benchmarked
+   locally: ~30ms/90k words, ~48ms/300k, ~150ms/1,000,000 words (~5MB) --
+   consistent with the reviewer's own ~19/60/200ms figures and well past the
+   repo's 100ms worker budget, for exactly the pastes an audiobook feature
+   invites. Fixed by splitting `_detect_chapters()` into a thin dispatcher
+   plus `_detect_chapters_worker` (a `@work(thread=True, exclusive=True)`
+   method) that runs the detector off the event loop and marshals the
+   result back to `_apply_detected_chapters` via `self.app.call_from_thread`
+   -- for all four call sites, not just the debounced one. The three
+   one-shot import paths do not have genuinely bounded content either (a
+   file/note/conversation import can be just as large as a paste), so they
+   route through the same threaded path rather than being special-cased as
+   "small enough."
+   - Minor also fixed here: `_notify_chapter_count` now only pops the
+     "Detected N chapters" toast when N changed since the last toast, so a
+     debounced re-paste that re-runs detection several times does not spam
+     one toast per settle.
+2. **Notes accuracy** -- see the corrected per-path section above.
+
+## Verification (round 2)
+
+Heartbeat-seam pattern (same idiom as
+`Tests/UI/test_llm_screen_ollama_probe_nonblocking.py`, task-15473): a
+concurrent `asyncio` task ticking every 5ms, bracketed tightly around
+`_detect_chapters()` + `await app.workers.wait_for_complete()` for a
+~3,000,000-word (~15MB) paste. Mutation-tested by temporarily forcing a
+synchronous call (bypassing the worker): heartbeats dropped from ~25-35 to
+**0** over the same window, confirming the test actually discriminates the
+regression -- an earlier draft of this test bracketed the debounce timer's
+own ~1s of unrelated real-time sleep too, which was proven (empirically) to
+swamp the signal: a deliberately-reintroduced synchronous call still
+cleared 173 heartbeats in that wider window, a false pass.
+
+**Tests**: `Tests/UI/test_speech_audiobook_chapter_detection.py` now has 5
+tests (all born red against the applicable pre-fix code, green after):
+typing raises no exception; a burst of keystrokes inside the debounce window
+calls `_detect_chapters` zero times until the window elapses, then exactly
+once; a one-shot file import still populates `detected_chapters` with no
+switch (now also awaits `app.workers.wait_for_complete()` since detection is
+threaded); the event loop stays responsive (heartbeats >= 10, mutation-tested
+per above) during a large-paste detection; a toast fires only when the
+detected chapter count changes (mutation-tested: removing the dedup check
+made the test fail red).
+
+Re-ran: the 5-test file alone (5 passed), plus the full STTS/Speech suite
+(`grep -rl STTS_Window Tests/` plus `test_speech_audiobook_layout.py`, which
+asserts the collapsible-group layout is unchanged -- confirming no switch UI
+was re-added): 341 passed, 0 failed (339 baseline + 2 new tests this round).
+`ruff check` on both changed files: all checks passed.
 
 **Files changed**:
 - `tldw_chatbook/UI/STTS_Window.py`
-- `Tests/UI/test_speech_audiobook_chapter_detection.py` (new)
+- `Tests/UI/test_speech_audiobook_chapter_detection.py` (new; 5 tests)
