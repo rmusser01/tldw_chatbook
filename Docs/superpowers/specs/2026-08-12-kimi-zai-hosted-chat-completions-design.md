@@ -2,8 +2,9 @@
 
 Date: 2026-08-12
 Status: Approved in conversation; pending written-spec review
-Backlog task: [TASK-15675](../../../backlog/tasks/task-15675%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-Chat-Completions-providers.md)
-Architecture decision: [ADR-062](../../../backlog/decisions/062-hosted-chat-completions-provider-boundary.md)
+Backlog task: [TASK-15676](../../../backlog/tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)
+Foundation task: [TASK-15675](../../../backlog/tasks/task-15675%20-%20Add-durable-provider-tool-continuation-checkpoints.md)
+Architecture decision: [ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)
 
 ## Purpose
 
@@ -13,9 +14,9 @@ model-discovery standard as the newest Chatbook providers.
 
 Both services currently expose OpenAI-shaped Chat Completions APIs, not an
 OpenAI Responses API. This design therefore supports Chat Completions only and
-does not introduce `api_mode`. It also establishes a small provider-neutral
-hosted Chat-Completions wire boundary so later compatible providers can migrate
-without another transport redesign. This task migrates only Moonshot and Z.ai;
+does not introduce `api_mode`. It implements the provider-neutral hosted
+Chat-Completions wire boundary retained by ADR-063 and consumes TASK-15675's
+durable continuation contract. This task migrates only Moonshot and Z.ai;
 other provider behavior stays unchanged.
 
 ## Official Source Findings
@@ -119,8 +120,9 @@ large independent functions in `LLM_API_Calls.py`, however:
   states, usage, retries, cancellation, and resource ownership.
 - Support existing Chatbook function tools through the ordinary Console agent
   runtime, including multiple calls and exact assistant/tool continuation.
-- Preserve Kimi and Z.ai `reasoning_content` only as bounded, invisible,
-  call-scoped active-run metadata when a tool continuation requires it.
+- Preserve Kimi and Z.ai `reasoning_content` as bounded, invisible durable
+  checkpoint data only while an active or explicitly restored tool run needs
+  it.
 - Use canonical provider configuration, credential precedence, and endpoint
   normalization consistently in readiness, Console, direct adapters, and
   discovery.
@@ -136,12 +138,13 @@ large independent functions in `LLM_API_Calls.py`, however:
 - No provider-hosted web search, retrieval, code runner, memory, dynamic tool
   loading, or other built-in execution.
 - No new agent loop, tool executor, approval path, transcript store, model
-  registry, or Settings destination.
-- No durable reasoning-content persistence, conversation schema change,
-  provider conversation ID, or server-side session ownership.
+  registry, or Settings destination. TASK-15675 owns the one conversation
+  schema/checkpoint change used here.
+- No provider conversation ID or server-side session ownership.
 - No complete preserved-thinking parity for ordinary Kimi or Z.ai multi-turn
-  chat. Reasoning is echoed only inside an active tool run; tool-free turns and
-  later unrelated chat turns discard it under the privacy boundary.
+  chat. Reasoning is replayed only inside an active or explicitly restored tool
+  run; tool-free turns and later unrelated chat turns omit it from provider
+  requests under the privacy boundary.
 - No automatic Z.ai `tool_stream` opt-in.
 - No complete implementation of Moonshot Flavored JSON Schema and no arbitrary
   vendor schema extensions. The strict common function schema and every
@@ -343,8 +346,8 @@ Builders deep-copy validated inputs and never repair/mutate caller history.
   for documented model families; unknown/unsupported parts fail rather than
   being stringified or silently dropped.
 - Assistant tool turns retain `content`, complete `tool_calls`, and the one
-  allowlisted hidden `reasoning_content` field when the active provider policy
-  allows it.
+  allowlisted hidden `reasoning_content` field in TASK-15675's validated
+  continuation checkpoint when the active provider policy requires it.
 - Tool rows require a nonblank `tool_call_id` and string content.
 - Every completed assistant call ID must be unique and matched by exactly one
   following tool-result row before the next unrelated conversational turn.
@@ -437,9 +440,9 @@ Allowed request keys for the general Chat Completion slice are `model`,
 and the existing generic user identifier mapped to `user_id` when valid.
 
 - General/tool-free chat retains provider-default thinking and
-  `clear_thinking=true`. An active run that exposes Chatbook function tools
-  sends `thinking.clear_thinking=false` and preserves only the bounded
-  reasoning needed for that run's exact tool continuation.
+  `clear_thinking=true`. An active or explicitly restored run that exposes
+  Chatbook function tools sends `thinking.clear_thinking=false` and replays
+  only the bounded reasoning owned by that run's checkpoint.
 - Default `glm-5.2` accepts `reasoning_effort` values `none`, `minimal`, `low`,
   `medium`, `high`, `xhigh`, and `max`. Other model families omit this field
   unless their explicit curated policy documents support.
@@ -564,33 +567,39 @@ budget handoff trusts only strict nonnegative integers.
 - Absent terminal usage after cancellation/failure is “unknown,” never a
   fabricated zero.
 
-## Ephemeral Provider Reasoning Continuation
+## Durable Provider Reasoning Continuation
 
-`reasoning_content` is a fixed allowlisted assistant field for Moonshot/Kimi
-and Z.ai/GLM active tool runs, not an open metadata bag.
+`reasoning_content` is a fixed allowlisted field inside TASK-15675's canonical
+assistant-owned checkpoint, not an open metadata bag and not visible transcript
+content.
 
-- It must be a string and is charged to the shared output/state limits.
+- It must be a string and is charged to the shared output, checkpoint, sync,
+  export, and context-budget limits.
 - Streaming fragments are accumulated invisibly; non-streaming values pass the
   same validator.
-- It is retained only when the same assistant turn contains complete function
-  calls requiring continuation.
-- The resulting `ModelTurn.assistant_message` may carry the exact field into
-  `agent_runtime`'s in-memory message list. The next same-provider request
-  echoes the complete assistant message before paired tool rows.
-- Each run/call owns its own metadata state; overlapping runs cannot see or
+- Before any complete function-call batch executes, the runtime force-persists
+  the stable assistant generation plus its checkpoint and call states.
+- Each call transitions `pending -> executing -> completed|failed` around the
+  existing approval/execution seams. A restored `executing` call is ambiguous
+  and is never automatically re-run.
+- The next request in the same active/restored provider run expands the exact
+  assistant reasoning/calls plus paired results from the checkpoint.
+- Restore is explicit, re-runs current approvals, uses the pinned
+  provider/model/base, and resolves the credential at resume time.
+- Each assistant variant owns its checkpoint; overlapping runs cannot see or
   overwrite one another.
-- Tool-free answers discard reasoning immediately.
-- Run completion, cancellation, error, or object close releases it.
-- It never reaches visible chunks, transcript messages, conversation metadata,
-  run-log content, usage snapshots, error copies, or persistent logs.
+- Tool-free reasoning is never checkpointed. Completed checkpoint data may
+  remain on the assistant row for private JSON export and audit but is omitted
+  from ordinary Kimi/GLM later-turn requests.
+- It never reaches visible chunks, run-log content, usage snapshots, error
+  copies, human-readable exports, or persistent logs.
 
-Moonshot/Kimi uses the field only for the immediate active tool continuation.
-This intentionally does not implement Kimi's broader complete-message replay
-for ordinary later chat turns. Z.ai emits `clear_thinking=false` only while the
-active run exposes tools and returns the exact field through its tool
-continuation; ordinary/tool-free chat uses `clear_thinking=true`. QwenCloud
-behavior remains governed by ADR-045 and does not gain preserved-thinking
-behavior through the shared parser.
+Moonshot/Kimi uses preserved thinking only for the active or restored tool run
+and sends the complete assistant message required by the documented preserved-
+thinking contract. Z.ai sends `clear_thinking=false` only for that active or
+restored run and replays exact ordered `reasoning_content`; ordinary/tool-free
+chat sends `clear_thinking=true`. QwenCloud remains governed by ADR-045 and does
+not gain preserved-thinking behavior through the shared wire parser.
 
 ## Native Continuation And Cancellation
 
@@ -599,11 +608,14 @@ There is no Moonshot- or Z.ai-specific continuation loop:
 1. The normalized assistant tool-call message is returned through the ordinary
    gateway/bridge adapter.
 2. `AgentService` parses complete calls and applies its native-provider rules.
-3. Existing approval/review policy runs before dispatch.
-4. Existing tools execute through the shared registry.
-5. `agent_runtime` appends the assistant call batch and paired `role="tool"`
-   rows by call ID.
-6. The next adapter request receives the canonical history.
+3. The assistant generation and complete call batch are durably checkpointed
+   before execution.
+4. Existing approval/review policy runs before dispatch; the selected call is
+   marked `executing` before the external side effect.
+5. Existing tools execute through the shared registry; the exact result or
+   structured failure is durably marked before continuation.
+6. The next adapter request receives canonical visible history plus the
+   provider-approved private expansion.
 
 Cancellation before response retention, before iteration, during visible text,
 during hidden reasoning, or during an incomplete call closes the underlying
@@ -630,7 +642,8 @@ owner. No API-mode selector is added.
   reasoning controls.
 - Moonshot help describes international/China/custom bases and K3 reasoning.
 - Z.ai help distinguishes the general API from the coding-only endpoint and
-  explains call-scoped reasoning preservation for active function-tool runs.
+  explains durable but private reasoning preservation for active/restored
+  function-tool runs.
 - Built-in provider tools are not shown as available Chatbook tools.
 
 The existing generic reasoning-profile control is used for Kimi K3 and accepts
@@ -721,8 +734,10 @@ They prove:
 - terminal usage reaches Console signals and agent budget accounting;
 - partial-call cancellation after downstream parser observation executes zero
   tools and closes the live response exactly once;
-- Kimi and Z.ai reasoning reaches each provider's immediate continuation
-  byte-for-byte while absent from store/log/error/usage surfaces;
+- Kimi and Z.ai reasoning reaches active and restored continuation byte-for-
+  byte, the first complete call batch is persisted before execution, ambiguous
+  restored `executing` calls never auto-run, and the data stays absent from
+  visible/log/error/usage/human-export surfaces;
 - Z.ai works before and after its final native-provider registry entry.
 
 Local loopback fixtures prove application integration, not vendor availability.
@@ -762,12 +777,14 @@ README, Settings guide, and Console guide document:
 - exact supported parameter/reasoning/tool-choice subsets;
 - streaming/non-streaming usage behavior;
 - existing Chatbook function tools and built-in-tool exclusion;
-- ephemeral active-run Kimi/Z.ai reasoning and ordinary-chat clearing behavior;
+- durable private active/restored Kimi/Z.ai reasoning and ordinary-chat
+  clearing behavior;
 - model discovery/cache and unknown pricing behavior;
 - invalid config/endpoint recovery;
 - optional isolated live gates.
 
-No database migration is required. Configuration remains TOML-backed.
+TASK-15675 lands the database/sync/export foundation first. This task adds no
+second provider-history store or schema. Configuration remains TOML-backed.
 
 Delivery is one PR with review gates after:
 
@@ -786,12 +803,12 @@ flags, the shared extraction is narrowed before later slices proceed.
 ADR required: yes
 
 ADR path:
-[backlog/decisions/062-hosted-chat-completions-provider-boundary.md](../../../backlog/decisions/062-hosted-chat-completions-provider-boundary.md)
+[backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)
 
-Reason: this task creates a reusable hosted-provider transport/service contract
-and a privacy-sensitive ephemeral assistant-metadata interface across provider,
-gateway, and agent-runtime layers. ADR-062 records those durable boundaries and
-links ADR-006, ADR-012, ADR-020, and ADR-045.
+Reason: this task implements a reusable hosted-provider transport/service
+contract and consumes the privacy-sensitive durable assistant checkpoint across
+provider, gateway, persistence, sync, export, and agent-runtime layers. ADR-063
+records those boundaries and supersedes ADR-062.
 
 ## Acceptance Summary
 
@@ -800,5 +817,5 @@ first-class Chatbook providers through one strict hosted Chat-Completions wire
 boundary: current defaults, canonical configuration, safe streaming and usage,
 existing function tools, exact continuation/cancellation, actionable Settings,
 shared discovery, and isolated optional live proof—without a speculative
-Responses mode, vendor built-in tools, durable reasoning storage, or behavior
-changes to unrelated providers.
+Responses mode, vendor built-in tools, a second provider-history store, or
+behavior changes to unrelated providers.

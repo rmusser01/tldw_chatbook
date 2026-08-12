@@ -58,7 +58,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md) | Accepted | Use hierarchical ownership-aware Database Note folders plus device-private, journaled multi-root sync with explicit conflicts, deletion review, process coordination, and opaque server claims. |
 | [ADR-060](060-notes-sync-round-trip-and-interoperability-constraints.md) | Accepted | Amend Notes lasting sync with single-binding ownership, representation-safe file writes, composite journaling, explicit Sync-v2 and backup boundaries, and per-mutation server fencing. |
 | [ADR-061](061-library-ingest-parse-progress-channel.md) | Accepted | Carry local parse progress over a bounded, non-blocking, generation-fenced process channel while lifecycle results remain authoritative. |
-| [ADR-062](062-hosted-chat-completions-provider-boundary.md) | Accepted | Use a strict provider-neutral hosted Chat-Completions wire boundary with provider-owned payload semantics and narrowly scoped ephemeral Kimi reasoning continuation. |
+| [ADR-062](062-hosted-chat-completions-provider-boundary.md) | Superseded by ADR-063 | Original hosted Chat wire decision with ephemeral-only reasoning continuation. |
+| [ADR-063](063-hosted-provider-wire-and-durable-tool-continuation.md) | Accepted | Keep hosted Chat wire mechanics neutral and persist private provider tool-continuation checkpoints with message-owned sync, conflict, and export semantics. |
+| [ADR-064](064-deepseek-dual-api-provider-boundary.md) | Accepted | Treat DeepSeek Chat Completions and Responses as two strict modes of one provider with stateless explicit history and durable reasoning/tool continuation. |
 
 ## Historical Decision Material
 

@@ -1,9 +1,13 @@
 # ADR-062: Use one strict hosted Chat-Completions wire boundary
 
-Status: Accepted
+Status: Superseded by ADR-063
 Date: 2026-08-12
-Related Task: [TASK-15675](../tasks/task-15675%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-Chat-Completions-providers.md)
+Related Task: [TASK-15676](../tasks/task-15676%20-%20Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md)
 Related Spec: [Moonshot/Kimi and Z.ai/GLM Hosted Chat-Completions Design](../../Docs/superpowers/specs/2026-08-12-kimi-zai-hosted-chat-completions-design.md)
+
+Superseded because ADR-063 retains the hosted Chat-Completions transport
+boundary but replaces this ADR's ephemeral-only reasoning decision with a
+durable, synced, branch-owned continuation checkpoint contract.
 
 ## Decision
 
