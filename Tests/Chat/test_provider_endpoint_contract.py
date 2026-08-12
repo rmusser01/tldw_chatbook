@@ -1,9 +1,40 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from typing import get_args
 
 import pytest
 
 from tldw_chatbook.Chat import provider_endpoint_contract as contract
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_key"),
+    [
+        ("Custom", "custom"),
+        ("Custom OpenAI", "custom"),
+        ("Custom OpenAI API", "custom"),
+        ("custom-openai-api", "custom"),
+        ("custom_openai_api", "custom"),
+        ("Custom-2", "custom_2"),
+        ("Custom 2", "custom_2"),
+        ("Custom OpenAI 2", "custom_2"),
+        ("Custom OpenAI API-2", "custom_2"),
+        ("custom-openai-api-2", "custom_2"),
+        ("custom_openai_api_2", "custom_2"),
+        ("vllm", "vllm"),
+        ("OpenRouter", "openrouter"),
+        ("local-llamacpp", "local_llamacpp"),
+    ],
+)
+def test_provider_aliases_resolve_to_canonical_config_keys(
+    provider: str, provider_key: str
+) -> None:
+    result = contract.resolve_provider_endpoint(provider, "http://localhost:9000")
+
+    assert result.provider_key == provider_key
+    assert contract.canonical_connection_identity(provider, "localhost:9000") == (
+        provider_key,
+        result.persisted_endpoint,
+    )
 
 
 @pytest.mark.parametrize(
@@ -92,6 +123,23 @@ def test_local_llamacpp_uses_the_same_endpoint_rules_as_llama_cpp() -> None:
     assert local_llamacpp.form == llama_cpp.form == "models_url"
 
 
+@pytest.mark.parametrize("provider", ["custom", "vllm"])
+def test_completion_is_an_origin_prefix_for_non_llama_providers(
+    provider: str,
+) -> None:
+    result = contract.resolve_provider_endpoint(
+        provider, "https://example.test/completion"
+    )
+
+    assert result.normalized_input == "https://example.test/completion"
+    assert result.persisted_endpoint == (
+        "https://example.test/completion/v1/chat/completions"
+    )
+    assert result.chat_url == "https://example.test/completion/v1/chat/completions"
+    assert result.models_url == "https://example.test/completion/v1/models"
+    assert result.form == "origin"
+
+
 def test_other_provider_uses_generic_full_chat_persistence() -> None:
     result = contract.resolve_provider_endpoint(
         "vllm", "https://inference.example.test/openai/v1"
@@ -132,6 +180,79 @@ def test_explicit_remote_http_is_accepted_with_one_bounded_safe_warning() -> Non
     assert "HTTP" in result.warnings[0]
     assert len(result.warnings[0]) <= 100
     assert "example.test" not in result.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test/v1?",
+        "https://example.test/proxy/v1?",
+        "https://example.test/v1#",
+        "https://example.test/proxy/v1#",
+    ],
+)
+def test_empty_query_and_fragment_markers_are_rejected(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.chat_url is None
+    assert result.models_url is None
+    assert result.form is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test:/v1",
+        "http://localhost:/v1",
+        "https://[::1]:/v1",
+    ],
+)
+def test_explicit_empty_ports_are_rejected(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.chat_url is None
+    assert result.models_url is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    ("value", "chat_url"),
+    [
+        (
+            "https://[::1]/v1",
+            "https://[::1]/v1/chat/completions",
+        ),
+        (
+            "http://[::1]:8080/v1/chat/completions",
+            "http://[::1]:8080/v1/chat/completions",
+        ),
+    ],
+)
+def test_valid_explicit_ipv6_endpoints_are_bracket_safe(
+    value: str, chat_url: str
+) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.chat_url == chat_url
+    assert result.persisted_endpoint == chat_url
+    assert result.errors == ()
+
+
+@pytest.mark.parametrize("control", [chr(code) for code in range(32)] + ["\x7f"])
+def test_c0_controls_and_del_are_rejected_before_normalization(
+    control: str,
+) -> None:
+    result = contract.resolve_provider_endpoint(
+        "custom", f"https://example.test/v1{control}"
+    )
+
+    assert result.persisted_endpoint is None
+    assert result.chat_url is None
+    assert result.models_url is None
+    assert result.errors
 
 
 @pytest.mark.parametrize(
@@ -193,6 +314,26 @@ def test_empty_provider_is_rejected_with_bounded_copy() -> None:
 @pytest.mark.parametrize(
     "value",
     [
+        "192.168.1.10:8000/v1",
+        "10.0.0.1/v1",
+        "127.0.0.2:9000/v1",
+        "[::1]:8080/v1",
+        "example.test/v1",
+        "service.local:8000/v1",
+    ],
+)
+def test_schemeless_remote_ip_and_dns_endpoints_are_rejected(value: str) -> None:
+    result = contract.resolve_provider_endpoint("custom", value)
+
+    assert result.persisted_endpoint is None
+    assert result.chat_url is None
+    assert result.models_url is None
+    assert result.errors
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "http://127.0.0.1:9000",
         "http://127.0.0.1:9000/",
         "http://127.0.0.1:9000/v1",
@@ -238,6 +379,55 @@ def test_proxy_prefixes_remain_distinct_canonical_identities() -> None:
     assert direct != proxied
 
 
+@pytest.mark.parametrize(
+    ("provider", "explicit", "implicit", "expected_identity"),
+    [
+        (
+            "custom",
+            "http://example.test:80/v1",
+            "http://example.test/v1",
+            ("custom", "http://example.test/v1/chat/completions"),
+        ),
+        (
+            "llama_cpp",
+            "https://example.test:443/v1",
+            "https://example.test/v1",
+            ("llama_cpp", "https://example.test"),
+        ),
+        (
+            "custom",
+            "http://[::1]:80/v1",
+            "http://[::1]/v1",
+            ("custom", "http://[::1]/v1/chat/completions"),
+        ),
+        (
+            "custom",
+            "https://[::1]:443/v1",
+            "https://[::1]/v1",
+            ("custom", "https://[::1]/v1/chat/completions"),
+        ),
+    ],
+)
+def test_canonical_identity_drops_explicit_default_ports(
+    provider: str,
+    explicit: str,
+    implicit: str,
+    expected_identity: tuple[str, str],
+) -> None:
+    explicit_result = contract.resolve_provider_endpoint(provider, explicit)
+
+    assert explicit_result.persisted_endpoint is not None
+    assert ":80" in explicit_result.persisted_endpoint or ":443" in (
+        explicit_result.persisted_endpoint
+    )
+    assert contract.canonical_connection_identity(provider, explicit) == (
+        expected_identity
+    )
+    assert contract.canonical_connection_identity(provider, implicit) == (
+        expected_identity
+    )
+
+
 def test_invalid_endpoint_has_no_canonical_identity() -> None:
     assert (
         contract.canonical_connection_identity(
@@ -258,6 +448,19 @@ def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() ->
         "chat_url",
         "models_url",
         "legacy_local",
+    )
+    assert tuple(field.name for field in fields(contract.ProviderEndpointResolution)) == (
+        "provider_key",
+        "normalized_input",
+        "persisted_endpoint",
+        "chat_url",
+        "models_url",
+        "persisted_display",
+        "chat_display",
+        "models_display",
+        "form",
+        "warnings",
+        "errors",
     )
     assert hasattr(contract.ProviderEndpointResolution, "__slots__")
     with pytest.raises(FrozenInstanceError):

@@ -17,6 +17,12 @@ EndpointForm = Literal[
 ]
 
 _LLAMA_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+_CUSTOM_PROVIDER_ALIASES = frozenset(
+    {"custom", "custom_openai", "custom_openai_api"}
+)
+_CUSTOM_2_PROVIDER_ALIASES = frozenset(
+    {"custom_2", "custom_openai_2", "custom_openai_api_2"}
+)
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _ENCODED_DELIMITER = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
@@ -53,15 +59,27 @@ def resolve_provider_endpoint(
     provider_key = _normalize_provider_key(provider)
     if not provider_key:
         return _invalid_resolution("", "Select a valid provider.")
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         return _invalid_resolution(provider_key, "Enter an endpoint URL.")
-
-    raw_value = value.strip()
-    if any(
-        character.isspace() or ord(character) < 32 for character in raw_value
-    ):
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return _invalid_resolution(
             provider_key, "Endpoint URL contains invalid characters."
+        )
+
+    raw_value = value.strip()
+    if not raw_value:
+        return _invalid_resolution(provider_key, "Enter an endpoint URL.")
+    if any(character.isspace() for character in raw_value):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL contains invalid characters."
+        )
+    if "?" in raw_value:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a query."
+        )
+    if "#" in raw_value:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a fragment."
         )
 
     has_explicit_scheme = "://" in raw_value
@@ -83,6 +101,10 @@ def resolve_provider_endpoint(
     ):
         return _invalid_resolution(
             provider_key, "Endpoint URL must not include user information."
+        )
+    if parsed.netloc.endswith(":"):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include an empty port."
         )
     if parsed.query:
         return _invalid_resolution(
@@ -118,7 +140,9 @@ def resolve_provider_endpoint(
     ):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
-    suffix = _terminal_suffix(segments)
+    suffix = _terminal_suffix(
+        segments, allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS
+    )
     if suffix is None:
         return _invalid_resolution(
             provider_key, "Endpoint path has ambiguous API suffixes."
@@ -161,15 +185,22 @@ def canonical_connection_identity(
     resolution = resolve_provider_endpoint(provider, value)
     if resolution.persisted_endpoint is None:
         return None
-    return (resolution.provider_key, resolution.persisted_endpoint)
+    return (
+        resolution.provider_key,
+        _drop_default_port(resolution.persisted_endpoint),
+    )
 
 
 def _normalize_provider_key(provider: object) -> str:
     if not isinstance(provider, str):
         return ""
-    provider_key = provider.strip().lower().replace("-", "_")
+    provider_key = re.sub(r"[\s-]+", "_", provider.strip().lower())
     if not _PROVIDER_KEY.fullmatch(provider_key):
         return ""
+    if provider_key in _CUSTOM_PROVIDER_ALIASES:
+        return "custom"
+    if provider_key in _CUSTOM_2_PROVIDER_ALIASES:
+        return "custom_2"
     return provider_key
 
 
@@ -192,10 +223,14 @@ def _invalid_resolution(
 
 def _terminal_suffix(
     segments: tuple[str, ...],
+    *,
+    allow_legacy_local: bool,
 ) -> tuple[tuple[str, ...], EndpointForm] | None:
     occurrences: list[tuple[int, tuple[str, ...], EndpointForm]] = []
     for index in range(len(segments)):
         for suffix, form in _SUFFIXES:
+            if form == "legacy_local" and not allow_legacy_local:
+                continue
             if segments[index : index + len(suffix)] == suffix:
                 occurrences.append((index, suffix, form))
                 break
@@ -240,6 +275,17 @@ def _normalized_netloc(hostname: str, port: int | None) -> str:
     if ":" in host:
         host = f"[{host}]"
     return f"{host}:{port}" if port is not None else host
+
+
+def _drop_default_port(endpoint: str) -> str:
+    parsed = urlsplit(endpoint)
+    default_port = (parsed.scheme == "http" and parsed.port == 80) or (
+        parsed.scheme == "https" and parsed.port == 443
+    )
+    if not default_port or parsed.hostname is None:
+        return endpoint
+    netloc = _normalized_netloc(parsed.hostname, None)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 def _is_loopback_host(hostname: str) -> bool:
