@@ -169,6 +169,7 @@ def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
         set_timer=Mock(),
         _schedule_footer_status_updates=Mock(),
         _start_deferred_audio_service_initialization=Mock(),
+        _schedule_screen_preimport=Mock(),
         schedule_media_cleanup=Mock(),
         citation_artifact_ownership_coordinator=SimpleNamespace(writes_enabled=enabled),
         _reconcile_citation_artifact_ownership=reconcile,
@@ -204,6 +205,7 @@ def test_legacy_citation_migration_is_deferred_and_policy_gated(
         set_timer=Mock(),
         _schedule_footer_status_updates=Mock(),
         _start_deferred_audio_service_initialization=Mock(),
+        _schedule_screen_preimport=Mock(),
         schedule_media_cleanup=Mock(),
         citation_artifact_ownership_coordinator=None,
         citation_legacy_migration_service=SimpleNamespace(
