@@ -865,7 +865,15 @@ def is_valid_provider_api_key(value: object) -> bool:
 
 
 def normalize_provider_config_key(provider: object) -> str:
-    """Return the canonical lookup form used for provider config tables."""
+    """Return the canonical lookup form used for provider config tables.
+
+    Args:
+        provider: Provider label or key to normalize.
+
+    Returns:
+        A stripped, lowercase provider key with spaces and hyphens replaced by
+        underscores.
+    """
     return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
 
 
@@ -883,6 +891,13 @@ def provider_settings_for_key(
     exact canonical table is also present, alias fields remain fallbacks while
     exact ``api_settings.qwencloud`` fields win regardless of insertion order.
     Other providers retain the existing first-normalized-match behavior.
+
+    Args:
+        api_settings: Loaded ``api_settings`` value.
+        provider_key: Canonical provider key to resolve.
+
+    Returns:
+        The resolved provider settings, or an empty mapping when none exist.
 
     Raises:
         ProviderSettingsError: If QwenCloud's authoritative table is present

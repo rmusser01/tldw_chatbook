@@ -171,7 +171,11 @@ class ConsoleProviderStreamSignals:
             return payloads
 
     def new_usage_call(self) -> "ConsoleProviderCallSignals":
-        """Return an isolated usage recorder for one provider call."""
+        """Create an isolated usage recorder for one provider call.
+
+        Returns:
+            A call-scoped signal view publishing into this aggregate.
+        """
         return ConsoleProviderCallSignals(self)
 
     def _record_scoped_usage_call(
@@ -208,12 +212,19 @@ class ConsoleProviderCallSignals:
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
+        """Return whether the aggregate emitted synthetic fallback usage."""
         return self._aggregate.synthetic_fallback_emitted
 
     def mark_synthetic_fallback(self) -> None:
+        """Mark synthetic fallback usage on the aggregate signal."""
         self._aggregate.mark_synthetic_fallback()
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        """Merge a provider usage payload into this call's snapshot.
+
+        Args:
+            payload: Provider usage fields observed for this call.
+        """
         with self._usage_lock:
             if self._closed:
                 return
@@ -223,6 +234,7 @@ class ConsoleProviderCallSignals:
             self._aggregate._record_scoped_usage_call(self._token, merged)
 
     def close_usage_call(self) -> None:
+        """Publish this call's final usage snapshot exactly once."""
         with self._usage_lock:
             if self._closed:
                 return
@@ -234,6 +246,11 @@ class ConsoleProviderCallSignals:
             self._aggregate._complete_scoped_usage_call(self._token, payload)
 
     def usage_snapshot(self) -> dict[str, Any] | None:
+        """Return a defensive copy of this call's current usage.
+
+        Returns:
+            The merged usage payload, or ``None`` before usage is observed.
+        """
         with self._usage_lock:
             return (
                 dict(self._usage_payload) if self._usage_payload is not None else None
