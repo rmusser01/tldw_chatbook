@@ -159,13 +159,41 @@ def default_api_key_env_var(provider_key: str) -> Optional[str]:
     )
 
 
-def _provider_settings_for_key(
+def provider_settings_for_key(
     api_settings: object,
     provider_key: str,
 ) -> Mapping[str, object]:
-    """Return settings whose configured provider key normalizes to provider_key."""
+    """Return provider settings without mutating the loaded configuration.
+
+    QwenCloud historically accepted normalized alias table names.  When an
+    exact canonical table is also present, alias fields remain fallbacks while
+    exact ``api_settings.qwencloud`` fields win regardless of insertion order.
+    Other providers retain the existing first-normalized-match behavior.
+    """
     if not isinstance(api_settings, Mapping):
         return {}
+
+    if provider_key == "qwencloud":
+        alias_settings: Mapping[str, object] = {}
+        alias_found = False
+        canonical_settings: Mapping[str, object] = {}
+        for configured_provider, configured_value in api_settings.items():
+            configured_key = str(configured_provider)
+            if provider_config_key(configured_key) != provider_key:
+                continue
+            if configured_key == provider_key:
+                if isinstance(configured_value, Mapping):
+                    canonical_settings = configured_value
+                continue
+            if not alias_found:
+                alias_found = True
+                if isinstance(configured_value, Mapping):
+                    alias_settings = configured_value
+        if canonical_settings:
+            merged = dict(alias_settings)
+            merged.update(canonical_settings)
+            return merged
+        return alias_settings
 
     for configured_provider, configured_value in api_settings.items():
         if provider_config_key(str(configured_provider)) != provider_key:
@@ -212,7 +240,7 @@ def get_provider_readiness(
         )
 
     api_settings = app_config.get("api_settings", {})
-    provider_settings = _provider_settings_for_key(api_settings, provider_key)
+    provider_settings = provider_settings_for_key(api_settings, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))

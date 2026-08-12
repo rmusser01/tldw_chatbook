@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
-from textual.widgets import Select, Static
+from textual.widgets import Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -362,7 +364,9 @@ async def test_invalid_persisted_qwencloud_mode_blocks_save_and_send(
         screen = _active_destination_screen(host)
         mode = screen.query_one("#settings-provider-api-mode", Select)
 
+        assert mode.value is Select.NULL
         assert mode.has_class("settings-invalid-input")
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 
@@ -389,7 +393,7 @@ async def test_invalid_persisted_qwencloud_mode_blocks_save_and_send(
 
 
 @pytest.mark.asyncio
-async def test_invalid_qwencloud_mode_can_be_explicitly_corrected_to_responses(
+async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
     monkeypatch,
 ):
     app = _qwencloud_app(api_mode="invalid")
@@ -404,15 +408,31 @@ async def test_invalid_qwencloud_mode_can_be_explicitly_corrected_to_responses(
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         mode = screen.query_one("#settings-provider-api-mode", Select)
+
+        assert mode.value is Select.NULL
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        assert "Open API mode and choose Responses or Chat Completions" in str(
+            screen.query_one("#settings-provider-api-mode-guidance", Static).content
+        )
+
         mode.focus()
         await pilot.pause()
+        await pilot.press("enter")
+        assert mode.expanded is True
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
 
-        screen.handle_provider_api_mode_changed(Select.Changed(mode, "responses"))
-        screen.action_settings_save_category(allow_text_entry_focus=True)
+        assert mode.expanded is False
+        assert mode.value == "responses"
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "responses"
+        assert mode.has_class("settings-invalid-input") is False
+
+        await pilot.click("#settings-save-category")
 
         assert saved == [("api_settings.qwencloud", "api_mode", "responses")]
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
-        assert mode.has_class("settings-invalid-input") is False
 
 
 @pytest.mark.asyncio
@@ -441,3 +461,201 @@ async def test_qwencloud_api_mode_field_guide_describes_mode_contract():
 
         ownership = screen._ownership_record(SettingsCategoryId.PROVIDERS_MODELS)
         assert "api_settings.<provider>.api_mode" in ownership.owns_config_sections
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    alias_fields = {
+        "api_mode": "responses",
+        "api_base_url": "https://proxy.example.com/compatible-mode/v1",
+        "api_key_env_var": "DASHSCOPE_API_KEY",
+        "model": "qwen3.8-max",
+    }
+    other_provider = {"api_base_url": "https://api.openai.com/v1"}
+    app.app_config["api_settings"] = {
+        "QwenCloud": dict(alias_fields),
+        "openai": dict(other_provider),
+    }
+    atomic_mutations: list[tuple[dict, dict | None]] = []
+    noncanonical_writes: list[tuple[str, str, object]] = []
+
+    def save_atomic(section_values, *, delete_keys=None):
+        atomic_mutations.append(
+            (
+                deepcopy(dict(section_values)),
+                deepcopy(dict(delete_keys)) if delete_keys is not None else None,
+            )
+        )
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        save_atomic,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: (
+            noncanonical_writes.append((section, key, value)) or True
+        ),
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+        await pilot.click("#settings-save-category")
+
+    assert noncanonical_writes == []
+    assert atomic_mutations == [
+        (
+            {"api_settings.qwencloud": {"api_mode": "chat_completions"}},
+            {"api_settings.QwenCloud": ("api_mode",)},
+        )
+    ]
+    assert app.app_config["api_settings"]["qwencloud"] == {
+        "api_mode": "chat_completions"
+    }
+    assert app.app_config["api_settings"]["QwenCloud"] == {
+        key: value for key, value in alias_fields.items() if key != "api_mode"
+    }
+    assert app.app_config["api_settings"]["openai"] == other_provider
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={"DASHSCOPE_API_KEY": "TEST-KEY"},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+    assert resolution.ready is True
+    assert resolution.api_mode == "chat_completions"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
+    monkeypatch,
+):
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"] = {
+        "QwenCloud": {
+            "api_mode": "responses",
+            "api_base_url": "https://old.example.test/compatible-mode/v1",
+            "api_key_env_var": "DASHSCOPE_API_KEY",
+            "model": "qwen3.8-max",
+        }
+    }
+    atomic_mutations: list[tuple[dict, dict | None]] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values, *, delete_keys=None: (
+            atomic_mutations.append(
+                (dict(section_values), dict(delete_keys) if delete_keys else None)
+            )
+            or True
+        ),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda _section, _key, _value: False,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "https://new.example.test/compatible-mode/v1"
+        screen._stage_provider_value("endpoint", endpoint.value)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+
+        await pilot.click("#settings-save-category")
+
+        assert atomic_mutations == []
+        assert "qwencloud" not in app.app_config["api_settings"]
+        assert app.app_config["api_settings"]["QwenCloud"]["api_mode"] == "responses"
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
+        assert endpoint.value == "https://new.example.test/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_canonical_mode_wins_over_alias_for_settings_and_readiness():
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"] = {
+        "QwenCloud": {
+            "api_mode": "chat_completions",
+            "api_base_url": "https://proxy.example.com/compatible-mode/v1",
+            "api_key_env_var": "DASHSCOPE_API_KEY",
+            "model": "qwen3.8-max",
+        },
+        "qwencloud": {"api_mode": "responses"},
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+
+        assert mode.value == "responses"
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={"DASHSCOPE_API_KEY": "TEST-KEY"},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+    assert resolution.ready is True
+    assert resolution.api_mode == "responses"
+
+
+@pytest.mark.asyncio
+async def test_qwencloud_alias_config_readiness_overlay_uses_draft_canonical_mode():
+    app = _qwencloud_app(api_mode="responses")
+    app.app_config["api_settings"] = {
+        "QwenCloud": {
+            "api_mode": "responses",
+            "api_key_env_var": "DASHSCOPE_API_KEY",
+            "model": "qwen3.8-max",
+        },
+        "qwencloud": {"api_mode": "responses"},
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        mode.value = "chat_completions"
+        screen.handle_provider_api_mode_changed(
+            Select.Changed(mode, "chat_completions")
+        )
+
+        staged = screen._provider_test_staged_config("QwenCloud")
+
+    assert staged["api_settings"]["qwencloud"]["api_mode"] == "chat_completions"
+    assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: staged,
+        environ={"DASHSCOPE_API_KEY": "TEST-KEY"},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+    assert resolution.ready is True
+    assert resolution.api_mode == "chat_completions"

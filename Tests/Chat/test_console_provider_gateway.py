@@ -905,6 +905,39 @@ async def test_qwencloud_resolution_pins_normalized_mode_and_base(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_first", [False, True])
+async def test_qwencloud_resolution_prefers_canonical_fields_and_alias_fallbacks(
+    canonical_first: bool,
+) -> None:
+    alias = {
+        "api_key": "alias-key",
+        "api_mode": "responses",
+        "api_base_url": "https://alias.example.test/compatible-mode/v1",
+        "model": "qwen-alias-model",
+    }
+    canonical = {"api_mode": "chat_completions"}
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", canonical)]
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": dict(entries)},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="QwenCloud")
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_key == "alias-key"
+    assert resolved.api_mode == "chat_completions"
+    assert resolved.model == "qwen-alias-model"
+    assert resolved.base_url == "https://alias.example.test/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("settings", "setting_copy"),
     [

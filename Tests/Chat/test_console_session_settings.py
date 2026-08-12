@@ -121,6 +121,24 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.max_tokens == 2048
 
 
+def test_qwencloud_default_settings_use_canonical_fields_with_alias_fallbacks() -> None:
+    settings = build_default_console_session_settings(
+        {
+            "api_settings": {
+                "QwenCloud": {
+                    "model": "alias-model",
+                    "api_base_url": ("https://alias.example.test/compatible-mode/v1"),
+                },
+                "qwencloud": {"model": "canonical-model"},
+            }
+        },
+        provider="QwenCloud",
+    )
+
+    assert settings.model == "canonical-model"
+    assert settings.base_url == "https://alias.example.test/compatible-mode/v1"
+
+
 def test_console_session_settings_system_prompt_defaults_to_none() -> None:
     """Native Console session settings carry no system prompt by default."""
     settings = ConsoleSessionSettings(provider="llama_cpp")

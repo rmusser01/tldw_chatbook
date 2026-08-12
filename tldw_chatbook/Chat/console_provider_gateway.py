@@ -47,7 +47,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
-    provider_config_key,
+    provider_settings_for_key,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.qwencloud import (
@@ -2613,10 +2613,7 @@ def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
-    for configured_provider, configured_value in api_settings.items():
-        if provider_config_key(str(configured_provider)) == provider_key:
-            return configured_value if isinstance(configured_value, Mapping) else {}
-    return {}
+    return provider_settings_for_key(api_settings, provider_key)
 
 
 def _first_string(*values: object) -> str | None:

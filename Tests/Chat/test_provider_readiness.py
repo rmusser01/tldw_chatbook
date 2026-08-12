@@ -148,6 +148,88 @@ def test_provider_settings_lookup_uses_normalized_config_key():
     assert readiness.api_key_source == "config:api_settings.custom_2.api_key"
 
 
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_qwencloud_readiness_prefers_canonical_fields_over_normalized_alias(
+    canonical_first,
+):
+    alias = {
+        "api_key": "alias-secret",
+        "api_key_env_var": "QWEN_ALIAS_API_KEY",
+    }
+    canonical = {"api_key": "canonical-secret"}
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", canonical)]
+    )
+
+    readiness = get_provider_readiness(
+        "QwenCloud",
+        {"api_settings": dict(entries)},
+        environ={"QWEN_ALIAS_API_KEY": "environment-secret"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "canonical-secret"
+    assert readiness.api_key_source == "config:api_settings.qwencloud.api_key"
+
+
+@pytest.mark.parametrize("canonical_first", [False, True])
+def test_qwencloud_readiness_uses_alias_fields_missing_from_canonical(
+    canonical_first,
+):
+    alias = {"api_key_env_var": "QWEN_ALIAS_API_KEY"}
+    canonical = {"api_mode": "chat_completions"}
+    entries = (
+        [("qwencloud", canonical), ("QwenCloud", alias)]
+        if canonical_first
+        else [("QwenCloud", alias), ("qwencloud", canonical)]
+    )
+
+    readiness = get_provider_readiness(
+        "QwenCloud",
+        {"api_settings": dict(entries)},
+        environ={"QWEN_ALIAS_API_KEY": "environment-secret"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "environment-secret"
+    assert readiness.api_key_source == "env:QWEN_ALIAS_API_KEY"
+
+
+def test_qwencloud_multiple_aliases_keep_first_match_as_fallback():
+    readiness = get_provider_readiness(
+        "QwenCloud",
+        {
+            "api_settings": {
+                "QwenCloud": {},
+                "QWENCLOUD": {"api_key_env_var": "SECOND_ALIAS_API_KEY"},
+                "qwencloud": {"api_mode": "responses"},
+            }
+        },
+        environ={"SECOND_ALIAS_API_KEY": "must-not-win"},
+    )
+
+    assert readiness.ready is False
+    assert readiness.env_var == "DASHSCOPE_API_KEY"
+
+
+def test_non_qwen_provider_lookup_keeps_first_normalized_match():
+    readiness = get_provider_readiness(
+        "OpenAI",
+        {
+            "api_settings": {
+                "OpenAI": {"api_key": "first-match-key"},
+                "openai": {"api_key": "canonical-key"},
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "first-match-key"
+
+
 def test_keyless_local_provider_is_ready_without_api_key():
     readiness = get_provider_readiness(
         "Ollama",
