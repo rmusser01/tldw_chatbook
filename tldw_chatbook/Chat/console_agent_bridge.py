@@ -3304,6 +3304,14 @@ class ConsoleAgentBridge:
         Never raises: it runs inside a child's teardown and inside a
         turn's ``finally``, neither of which may die of a git failure.
 
+        Known gap, stated rather than hidden: no ``touched_paths`` are
+        passed, so the ``.gitignore`` force-add carve-out does not apply
+        to a survivor's window -- a child writing to an ignored path
+        (`.env`) surfaces inside its own TURN's window but not after it.
+        Closing that needs the survivor's persisted steps, which means
+        tracking which child runs a window covers; deliberately left to a
+        follow-up rather than half-built here.
+
         Args:
             conversation_id: The conversation whose window to close.
         """

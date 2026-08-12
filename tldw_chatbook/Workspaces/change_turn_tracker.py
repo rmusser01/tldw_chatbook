@@ -337,9 +337,10 @@ class ChangeTurnTracker:
                 repo = self.service.repo_for_root(root)
                 provided = (end_shas or {}).get(key)
                 if provided:
+                    # No force-add and no oversize/nested disclosure on
+                    # this path: both describe a snapshot, and this window
+                    # ends at one somebody else took.
                     end = provided
-                    oversize: tuple[str, ...] = ()
-                    nested: tuple[str, ...] = ()
                     handle.end_shas[key] = end
                     if end == baseline:
                         continue
