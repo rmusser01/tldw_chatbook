@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any
 
@@ -64,6 +65,44 @@ class ChatDictionaryScopeService:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    @staticmethod
+    def _is_file_backed_local(service: Any) -> bool:
+        """True only when ``service``'s sqlite DB is POSITIVELY file-backed.
+
+        Threading a backend call is safe only for a file-backed, thread-local
+        sqlite connection: a ``:memory:`` ChaChaNotes DB is visible solely to
+        the thread that created and migrated it, so handing the call to a
+        worker thread would give it a separate, empty, unmigrated database.
+
+        This is deliberately a POSITIVE confirmation -- unlike task-283's
+        `_is_memory_backed`, which threads whatever it cannot identify. The
+        backends behind this seam include test doubles and the server service,
+        none of which expose a `.db`; running an unknown shape on the event
+        loop is at worst slow, while threading an unknown shape can be wrong.
+
+        Args:
+            service: The backend to inspect.
+
+        Returns:
+            True when ``service.db.is_memory_db`` exists and is exactly False.
+        """
+        return getattr(getattr(service, "db", None), "is_memory_db", None) is False
+
+    async def _call_backend(self, backend: Any, method: Any, *args: Any, **kwargs: Any):
+        """Await ``method``, running a threadable local sync call off the loop.
+
+        Every local chat-dictionary method is plain synchronous sqlite work
+        (record loads, entry mutations, attach/detach, the used-by lookup).
+        Called straight from an ``@on`` handler that would block the event
+        loop for the whole query (task-15469; task-283's shape). Server-mode
+        methods are real coroutines and are simply awaited.
+        """
+        if not inspect.iscoroutinefunction(method) and self._is_file_backed_local(
+            backend
+        ):
+            return await asyncio.to_thread(lambda: method(*args, **kwargs))
+        return await self._maybe_await(method(*args, **kwargs))
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -140,7 +179,7 @@ class ChatDictionaryScopeService:
             raise ValueError(
                 f"Chat dictionary backend does not provide {method_name}()."
             )
-        return await self._maybe_await(method(*args, **kwargs))
+        return await self._call_backend(backend, method, *args, **kwargs)
 
     def _raise_local_activity_unsupported(self) -> None:
         raise ValueError(_LOCAL_UNSUPPORTED_CAPABILITIES[0]["user_message"])
@@ -316,7 +355,9 @@ class ChatDictionaryScopeService:
             getattr(backend, "list_activity", None)
         ):
             self._raise_local_activity_unsupported()
-        return await self._maybe_await(backend.list_activity(dictionary_id, **kwargs))
+        return await self._call_backend(
+            backend, backend.list_activity, dictionary_id, **kwargs
+        )
 
     async def list_versions(
         self, dictionary_id: int, mode: str = "local", **kwargs: Any
@@ -328,7 +369,9 @@ class ChatDictionaryScopeService:
             getattr(backend, "list_versions", None)
         ):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(backend.list_versions(dictionary_id, **kwargs))
+        return await self._call_backend(
+            backend, backend.list_versions, dictionary_id, **kwargs
+        )
 
     async def get_version(
         self, dictionary_id: int, revision: int, mode: str = "local"
@@ -340,7 +383,9 @@ class ChatDictionaryScopeService:
             getattr(backend, "get_version", None)
         ):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(backend.get_version(dictionary_id, revision))
+        return await self._call_backend(
+            backend, backend.get_version, dictionary_id, revision
+        )
 
     async def revert_version(
         self, dictionary_id: int, revision: int, mode: str = "local"
@@ -352,7 +397,9 @@ class ChatDictionaryScopeService:
             getattr(backend, "revert_version", None)
         ):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(backend.revert_version(dictionary_id, revision))
+        return await self._call_backend(
+            backend, backend.revert_version, dictionary_id, revision
+        )
 
     async def get_statistics(self, dictionary_id: int, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)

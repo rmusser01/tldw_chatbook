@@ -3097,3 +3097,41 @@ navigation leaves the control outside the viewport, handle descendant focus
 at the narrow owning component and call `scroll_visible(animate=False,
 force=True, immediate=True)` on the exact control. Do not infer reachability
 from focus state or a nonzero layout region alone.
+
+## An "indexed" query can still scan the table the index exists to avoid — and the plan assertion can miss it (TASK-15469, 2026-08-11)
+
+TASK-15469 replaced a `metadata LIKE '%active_dictionaries%'` full scan of
+`conversations` with a lookup over a trigger-maintained index table. The new query
+joined the index table to `conversations`, and the test asserted
+`"SCAN conversations" not in plan`. It passed. It proved nothing:
+
+* The query aliases the table (`conversations AS conversation`), and
+  `EXPLAIN QUERY PLAN` prints the **alias**, so the plan said `SCAN conversation` —
+  which the assertion's literal `"SCAN conversations"` never matches. The test would
+  have passed with a plan made entirely of full scans.
+* And there really was one. SQLite's planner chose `conversations` as the outer loop
+  of the second branch (`SCAN conversation` + a covering-index probe per row): a full
+  scan of the very table the index was built to stop reading. Only the FIRST branch
+  used the new index; nothing in the assertion covered the second.
+
+It surfaced from a **timing** arm, not from the plan test: on a 10,000-conversation
+DB, "used-by for a dictionary attached to nothing" measured 2.07 ms when it should
+have been unmeasurable. `CROSS JOIN` (which pins the left table as the outer loop and
+disables that particular join reordering) took the same arm to 0.00 ms and the whole
+click's DB work from 7.8 ms to 0.54 ms. The plan test now asserts on the alias prefix,
+asserts `conversations` is reached only by `SEARCH ... USING INDEX
+sqlite_autoindex_conversations_1`, and asserts the plan is non-empty.
+
+One more planner subtlety worth knowing: this project never runs `ANALYZE`, so the
+planner works from default row-count estimates and reliably prefers the index. Running
+`ANALYZE` on a small dev database flips it back to `SCAN` on the tiny index table —
+so a plan captured on a hand-seeded 50-row fixture with `ANALYZE` is not the plan
+production runs.
+
+**What to do.** When the claim is "no full-table scan", (1) grep the plan for the
+identifier the query actually uses — the alias, not the table name — and assert
+positively on what SHOULD happen (`SEARCH ... USING INDEX <name>`), not only
+negatively on what should not; (2) assert the plan is non-empty, or an empty result
+satisfies every "not in" assertion; (3) check EVERY branch of a compound query; and
+(4) keep one timing arm whose expected value is ~zero (a lookup with no hits) — a
+scan cannot hide from that, and it is what caught this one.

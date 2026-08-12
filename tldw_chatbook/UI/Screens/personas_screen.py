@@ -36,6 +36,7 @@ from ...Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
     compose_expression_prompt,
 )
+from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
 from ...Character_Chat.persona_list_paging import page_persona_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
@@ -3711,14 +3712,10 @@ class PersonasScreen(BaseAppScreen):
         )
         detail = self.query_one(PersonasDictionaryDetailWidget)
         detail.load_dictionary(record)
-        stats = None
-        try:
-            stats = await service.get_statistics(int(entity_id), mode="local")
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not load dictionary {entity_id} statistics."
-            )
-        detail.load_statistics(stats, list(record.get("entries") or []))
+        detail.load_statistics(
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
+        )
         self._show_center("#personas-dictionary-detail")
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
@@ -3733,8 +3730,26 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_purpose_line()
-        await self._refresh_dictionary_versions()
+        await self._refresh_dictionary_versions(record=record)
         await self._refresh_dictionary_attachments()
+
+    @staticmethod
+    def _dictionary_statistics(record: dict, entity_id: str | int) -> dict | None:
+        """The Stats-tab payload, derived from the record already in hand.
+
+        Selecting a dictionary used to load the same row TWICE -- once for the
+        detail and once inside ``get_statistics`` -- so the second load is
+        derived here instead (task-15469). Never raises: a malformed record
+        degrades to ``None``, which the widget renders as "service stats
+        unavailable", exactly as a failed ``get_statistics`` call did.
+        """
+        try:
+            return statistics_from_record(record, dictionary_id=int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not derive dictionary {entity_id} statistics."
+            )
+            return None
 
     @staticmethod
     def _load_lore_book_and_entries(
@@ -3834,15 +3849,9 @@ class PersonasScreen(BaseAppScreen):
         service = self._dictionary_scope_service()
         if service is None or not entity_id:
             return
-        stats = None
-        try:
-            stats = await service.get_statistics(int(entity_id), mode="local")
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Could not refresh dictionary statistics."
-            )
         self.query_one(PersonasDictionaryDetailWidget).load_statistics(
-            stats, list(record.get("entries") or [])
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
         )
 
     @on(DictionarySettingsEdited)
@@ -4042,21 +4051,23 @@ class PersonasScreen(BaseAppScreen):
             int(raw_version) if raw_version is not None else None
         )
         detail.update_entries(list(record.get("entries") or []))
-        stats = None
-        try:
-            stats = await service.get_statistics(int(entity_id), mode="local")
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not load dictionary {entity_id} statistics."
-            )
-        detail.load_statistics(stats, list(record.get("entries") or []))
+        detail.load_statistics(
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
+        )
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
-        await self._refresh_dictionary_versions()
+        await self._refresh_dictionary_versions(record=record)
         return True
 
-    async def _refresh_dictionary_versions(self) -> None:
-        """Feed the Versions tab for the selected dictionary (best-effort)."""
+    async def _refresh_dictionary_versions(self, *, record: dict | None = None) -> None:
+        """Feed the Versions tab for the selected dictionary (best-effort).
+
+        Args:
+            record: The record the caller just loaded, when it has one. It
+                seeds a missing history baseline so the service does not load
+                the same row again (task-15469).
+        """
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
         if (
@@ -4066,8 +4077,11 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
+        kwargs = {} if record is None else {"record": record}
         try:
-            response = await service.list_versions(int(entity_id), mode="local")
+            response = await service.list_versions(
+                int(entity_id), mode="local", **kwargs
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 f"Could not list dictionary {entity_id} versions."
