@@ -31,6 +31,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
@@ -80,6 +81,21 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+
+
+def _capture_provider_settings_mutations(monkeypatch):
+    calls = []
+
+    def apply_mutation(section_values, *, delete_keys=None):
+        calls.append((section_values, delete_keys or {}))
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_mutation,
+    )
+    return calls
 
 
 class StyledSettingsDestinationHarness(DestinationHarness):
@@ -4927,6 +4943,8 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         "paste_collapse_threshold": 50,
     }
     app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "gpt-4o",
         "streaming": True,
         "temperature": 0.7,
         "top_p": 0.95,
@@ -4981,6 +4999,8 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         }
     ]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
+    assert app.app_config["chat_defaults"]["provider"] == "llama_cpp"
+    assert app.app_config["chat_defaults"]["model"] == "gpt-4o"
     assert app.app_config["chat_defaults"]["streaming"] is False
     assert legacy_calls == [], (
         "Console Behavior must save atomically through the batched adapter; "
@@ -5695,12 +5715,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
     # persisted chat_defaults directly, not an app-instance reactive), so
     # this asserts against app_config instead of the removed attribute.
     assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -5713,10 +5728,9 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("chat_defaults", "provider", "llama_cpp"),
-        ("chat_defaults", "model", "qwen"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {"provider": "llama_cpp", "model": "qwen"}
     assert app.app_config["chat_defaults"] == {
         "provider": "llama_cpp",
         "model": "qwen",
@@ -5746,12 +5760,7 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
             },
         },
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -5764,21 +5773,17 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.openai",
-            "model_defaults",
-            {
-                "gpt-4.1": {
-                    "temperature": 0.2,
-                    "top_p": 0.88,
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["model_defaults"] == {
+        "gpt-4.1": {
+            "temperature": 0.2,
+            "top_p": 0.88,
+            "streaming": False,
+        },
+    }
     assert app.app_config["chat_defaults"] == {
-        "provider": "OpenAI",
+        "provider": "openai",
         "model": "gpt-4.1",
         "streaming": True,
         "temperature": 0.7,
@@ -5795,12 +5800,7 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "o3"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {"o3": {}}}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
@@ -5852,28 +5852,24 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.openai",
-            "model_defaults",
-            {
-                "o3": {
-                    "temperature": 0.3,
-                    "top_p": 0.86,
-                    "min_p": 0.04,
-                    "top_k": 42,
-                    "max_tokens": 2048,
-                    "seed": 123,
-                    "presence_penalty": 0.2,
-                    "frequency_penalty": 0.3,
-                    "reasoning_effort": "high",
-                    "reasoning_summary": "auto",
-                    "verbosity": "medium",
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["model_defaults"] == {
+        "o3": {
+            "temperature": 0.3,
+            "top_p": 0.86,
+            "min_p": 0.04,
+            "top_k": 42,
+            "max_tokens": 2048,
+            "seed": 123,
+            "presence_penalty": 0.2,
+            "frequency_penalty": 0.3,
+            "reasoning_effort": "high",
+            "reasoning_summary": "auto",
+            "verbosity": "medium",
+            "streaming": False,
+        },
+    }
 
 
 def test_settings_enum_select_value_clamps_case_and_unknown_values():
@@ -5958,12 +5954,7 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     app.app_config["api_settings"] = {
         "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
@@ -6012,20 +6003,16 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        (
-            "api_settings.anthropic",
-            "model_defaults",
-            {
-                "claude-opus-4-7": {
-                    "max_tokens": 12000,
-                    "thinking_effort": "xhigh",
-                    "thinking_budget_tokens": 4096,
-                    "streaming": False,
-                },
-            },
-        ),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.anthropic"]["model_defaults"] == {
+        "claude-opus-4-7": {
+            "max_tokens": 12000,
+            "thinking_effort": "xhigh",
+            "thinking_budget_tokens": 4096,
+            "streaming": False,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -6049,11 +6036,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6065,7 +6048,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
 
         assert message in _visible_text(screen)
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["api_settings"]["openai"]["model_defaults"] == {}
 
 
@@ -6220,11 +6203,7 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(
             },
         },
     }
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6236,7 +6215,13 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    }
+    assert "model_defaults" not in sections["api_settings.openai"]
 
 
 @pytest.mark.asyncio
@@ -6247,24 +6232,19 @@ async def test_settings_provider_category_does_not_save_unedited_effective_defau
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = "gpt-4.1"
     app.app_config["chat_defaults"] = {}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await pilot.click("#settings-save-category")
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["chat_defaults"] == {}
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_only_dirty_provider_fields(monkeypatch):
+async def test_settings_provider_category_saves_exact_provider_model_pair(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -6272,12 +6252,7 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
         "streaming": True,
         "temperature": 0.7,
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6287,9 +6262,14 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["chat_defaults"] == {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    }
     assert app.app_config["chat_defaults"] == {
-        "provider": "OpenAI",
+        "provider": "openai",
         "model": "gpt-4.1-mini",
         "streaming": True,
         "temperature": 0.7,
@@ -6308,12 +6288,7 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6331,12 +6306,14 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.llama_cpp", "api_url", "http://127.0.0.1:9099/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.llama_cpp"]["api_url"] == (
+        "http://127.0.0.1:9099"
+    )
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
-        == "http://127.0.0.1:9099/v1"
+        == "http://127.0.0.1:9099"
     )
 
 
@@ -6352,12 +6329,7 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     app.app_config["api_settings"] = {
         "openai": {"api_base_url": "https://api.openai.com/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6370,12 +6342,14 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_base_url"] == (
+        "https://proxy.example.com/v1/chat/completions"
+    )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
-        == "https://proxy.example.com/v1"
+        == "https://proxy.example.com/v1/chat/completions"
     )
 
 
@@ -6393,12 +6367,7 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
     app.app_config["api_settings"] = {
         "openai": {"api_base_url": "https://api.openai.com/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6413,12 +6382,14 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
             Button.Pressed(screen.query_one("#settings-save-category", Button))
         )
 
-    assert saved == [
-        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_base_url"] == (
+        "https://proxy.example.com/v1/chat/completions"
+    )
     assert (
         app.app_config["api_settings"]["openai"]["api_base_url"]
-        == "https://proxy.example.com/v1"
+        == "https://proxy.example.com/v1/chat/completions"
     )
 
 
@@ -6430,12 +6401,7 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6451,9 +6417,11 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.openai", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.openai"]["api_key_env_var"] == (
+        "CHATBOOK_OPENAI_API_KEY"
+    )
     assert app.app_config["api_settings"]["openai"]["api_key_env_var"] == (
         "CHATBOOK_OPENAI_API_KEY"
     )
@@ -6493,12 +6461,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6510,7 +6473,10 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         screen.handle_provider_api_key_changed(Input.Changed(api_key, api_key.value))
         await pilot.click("#settings-save-category")
 
-        assert ("api_settings.openai", "api_key", "sk-test-new-local-key") in saved
+        assert len(mutations) == 1
+        assert mutations[0][0]["api_settings.openai"]["api_key"] == (
+            "sk-test-new-local-key"
+        )
         assert (
             app.app_config["api_settings"]["openai"]["api_key"]
             == "sk-test-new-local-key"
@@ -6526,8 +6492,9 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         assert draft.values["api_key"] == ""
         await pilot.click("#settings-save-category")
 
-    assert ("api_settings.openai", "api_key", "") in saved
-    assert app.app_config["api_settings"]["openai"]["api_key"] == ""
+    assert len(mutations) == 2
+    assert "api_key" in mutations[1][1]["api_settings.openai"]
+    assert "api_key" not in app.app_config["api_settings"]["openai"]
 
 
 def test_settings_provider_api_key_validation_rejects_placeholder_values():
@@ -6548,12 +6515,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
         "model": "gpt-4.1",
     }
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6571,7 +6533,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
 
         assert "Credential env var must use environment variable syntax" in text
 
-    assert saved == []
+    assert mutations == []
     assert (
         app.app_config["api_settings"]["openai"]["api_key_env_var"] == "OPENAI_API_KEY"
     )
@@ -6592,12 +6554,7 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
             "api_key_env_var": "OPENAI_API_KEY",
         }
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6614,13 +6571,18 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
 
         await pilot.click("#settings-save-category")
 
-    assert saved == [
-        ("api_settings.OpenAI", "api_base_url", "https://proxy.example.com/v1"),
-        ("api_settings.OpenAI", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
-    ]
+    assert len(mutations) == 1
+    sections, _deletes = mutations[0]
+    assert sections["api_settings.OpenAI"]["api_base_url"] == (
+        "https://proxy.example.com/v1/chat/completions"
+    )
+    assert sections["api_settings.OpenAI"]["api_key_env_var"] == (
+        "CHATBOOK_OPENAI_API_KEY"
+    )
     assert "openai" not in app.app_config["api_settings"]
     assert app.app_config["api_settings"]["OpenAI"] == {
-        "api_base_url": "https://proxy.example.com/v1",
+        "api_base_url": "https://proxy.example.com/v1/chat/completions",
+        "model": "gpt-4.1",
         "api_key_env_var": "CHATBOOK_OPENAI_API_KEY",
     }
 
@@ -6637,12 +6599,7 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
     app.app_config["api_settings"] = {
         "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6657,7 +6614,7 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
 
         assert "Endpoint must start with http:// or https://" in text
 
-    assert saved == []
+    assert mutations == []
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
         == "http://127.0.0.1:8080/v1"
@@ -6674,12 +6631,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
         "temperature": 0.7,
     }
     app.app_config["api_settings"] = {}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6703,7 +6655,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
 
         assert "Provider is required." in text
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["api_settings"] == {}
 
 
@@ -6718,12 +6670,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
         "streaming": True,
         "temperature": 0.7,
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6744,7 +6691,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
 
         assert "Provider is required." in text
 
-    assert saved == []
+    assert mutations == []
     assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
 
 
@@ -6917,12 +6864,7 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         "openai": {"api_base_url": "https://api.openai.com/v1"},
         "llama_cpp": {},
     }
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -6949,13 +6891,15 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         await pilot.click("#settings-save-category")
         await pilot.click("#settings-save-category")
 
-    assert (
-        "api_settings.llama_cpp",
-        "api_url",
-        "https://api.openai.com/v1",
-    ) not in saved
-    assert saved == [("chat_defaults", "provider", "llama_cpp")]
-    assert app.app_config["api_settings"]["llama_cpp"] == {}
+    assert len(mutations) == 1
+    sections, deletes = mutations[0]
+    assert "api_url" not in sections["api_settings.llama_cpp"]
+    assert "api_url" in deletes["api_settings.llama_cpp"]
+    assert sections["chat_defaults"] == {
+        "provider": "llama_cpp",
+        "model": "gpt-4.1",
+    }
+    assert app.app_config["api_settings"]["llama_cpp"] == {"model": "gpt-4.1"}
 
 
 @pytest.mark.asyncio

@@ -58,6 +58,13 @@ def test_config_template_keeps_cloud_provider_streaming_opt_in():
         assert api_settings[provider]["streaming"] is False, provider
 
 
+def test_config_template_does_not_claim_provider_setup_confirmation():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    confirmed = template.get("provider_setup", {}).get("confirmed", {})
+    assert confirmed == {}
+
+
 def test_console_large_paste_collapse_defaults_enabled():
     assert (
         config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"]

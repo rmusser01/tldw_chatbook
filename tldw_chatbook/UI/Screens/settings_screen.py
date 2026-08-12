@@ -64,6 +64,15 @@ from ...Chat.console_roleplay_identity import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.provider_setup_persistence import (
+    ProviderSetupDraft,
+    build_provider_setup_mutation,
+)
+from ...Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderProbeResult,
+    ProviderTestEvidenceStore,
+)
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
@@ -161,7 +170,7 @@ from .settings_context_memory import (
     resolve_model_context_window,
 )
 from ...model_capabilities import reload_capabilities
-from .settings_endpoint_probe import probe_settings_endpoint
+from .settings_endpoint_probe import SettingsEndpointProbeOutcome, probe_settings_endpoint
 from .settings_config_models import (
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -1763,6 +1772,34 @@ def overlay_provider_draft_config(
     return merged
 
 
+def _apply_sparse_config_mutation_in_memory(
+    app_config: dict,
+    section_values: Mapping[str, Mapping[str, object]],
+    delete_keys: Mapping[str, Sequence[str]],
+) -> None:
+    """Apply an already-persisted sparse mutation to the process-local config."""
+
+    for section, keys in delete_keys.items():
+        current: object = app_config
+        for part in section.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        if isinstance(current, dict):
+            for key in keys:
+                current.pop(key, None)
+    for section, values in section_values.items():
+        current = app_config
+        for part in section.split("."):
+            next_level = current.get(part)
+            if not isinstance(next_level, dict):
+                next_level = {}
+                current[part] = next_level
+            current = next_level
+        current.update(copy.deepcopy(dict(values)))
+
+
 class RagProfileNameModal(ModalScreen[str | None]):
     """Minimal name-prompt modal for the RAG profile-manager Clone/Rename actions.
 
@@ -2062,6 +2099,9 @@ class SettingsScreen(BaseAppScreen):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
+        self._provider_test_evidence_store = ProviderTestEvidenceStore()
+        self._provider_draft_generation = 0
+        self._provider_credential_revision = 0
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -2074,6 +2114,7 @@ class SettingsScreen(BaseAppScreen):
         # returns, so a synchronous boolean cannot suppress that deferred
         # message. Consume exact expected values once instead.
         self._provider_api_key_suppress_queue: list[str] = []
+        self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         self._syncing_provider_model_value = False
@@ -8535,8 +8576,99 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
-        # TASK-366: any edit to a provider field outdates the last Test result.
-        self._mark_provider_test_result_stale()
+        self._update_provider_evidence_for_edit(key, value)
+
+    def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
+        store = getattr(self, "_provider_test_evidence_store", None)
+        if not isinstance(store, ProviderTestEvidenceStore):
+            store = ProviderTestEvidenceStore()
+            self._provider_test_evidence_store = store
+        return store
+
+    def _update_provider_evidence_for_edit(self, key: str, value: object) -> None:
+        semantic_keys = {"provider", "endpoint", "credential_env_var", "api_key"}
+        if key in semantic_keys:
+            self._provider_draft_generation = (
+                getattr(self, "_provider_draft_generation", 0) + 1
+            )
+            if key in {"credential_env_var", "api_key"}:
+                self._provider_credential_revision = (
+                    getattr(self, "_provider_credential_revision", 0) + 1
+                )
+            self._provider_evidence_store().invalidate()
+            self._mark_provider_test_result_stale()
+            return
+        if key != "model":
+            return
+        identity = self._provider_current_draft_identity()
+        evidence = (
+            self._provider_evidence_store().evidence_for(identity)
+            if identity is not None
+            else None
+        )
+        selected_model = str(value or "").strip()
+        if evidence is None or selected_model not in evidence.model_ids:
+            self._mark_provider_test_result_stale()
+
+    def _provider_current_credential_source(self, provider: str) -> str:
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if "api_key" in dirty:
+            try:
+                if self.query_one("#settings-provider-api-key", Input).value.strip():
+                    return "draft"
+            except QueryError:
+                if str(draft.values.get("api_key") or "").strip():
+                    return "draft"
+        try:
+            env_var = self.query_one(
+                "#settings-provider-credential-env-var", Input
+            ).value.strip()
+        except QueryError:
+            env_var = str(
+                self._provider_setting_values_mapping().get("credential_env_var") or ""
+            ).strip()
+        if "credential_env_var" in dirty and env_var:
+            return "environment"
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_test_staged_config(provider),
+        )
+        source = readiness.api_key_source or ""
+        if source.startswith("env:"):
+            return "environment"
+        if source.startswith("config:"):
+            return "stored"
+        return "none"
+
+    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+        try:
+            values = self._provider_form_values_from_widgets()
+        except (QueryError, ValueError, AttributeError):
+            values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        endpoint = str(values.get("endpoint") or "").strip()
+        if not provider or not endpoint:
+            return None
+        try:
+            setup = build_provider_setup_mutation(
+                ProviderSetupDraft(
+                    provider=provider,
+                    model=str(values.get("model") or "").strip(),
+                    endpoint=endpoint,
+                    credential_source=self._provider_current_credential_source(
+                        provider
+                    ),
+                    credential_revision=getattr(
+                        self, "_provider_credential_revision", 0
+                    ),
+                    draft_generation=getattr(self, "_provider_draft_generation", 0),
+                ),
+                self._app_config_mapping(),
+            )
+        except (ProviderSettingsError, ValueError):
+            return None
+        return setup.semantic_identity
 
     def _provider_config_entry(
         self, provider: str
@@ -9159,6 +9291,17 @@ class SettingsScreen(BaseAppScreen):
             ).disabled = not state.has_configured_override
         except QueryError:
             pass
+
+    def _set_provider_context_window_input_value(
+        self,
+        context_window_input: Input,
+        value: str,
+    ) -> None:
+        """Assign a context value and queue its deferred change once."""
+        if context_window_input.value == value:
+            return
+        self._provider_context_window_suppress_queue.append(value)
+        context_window_input.value = value
 
     def _refresh_generation_support_summary(self, provider: str) -> None:
         """Update the one-line gated-controls summary and its visibility."""
@@ -10042,15 +10185,38 @@ class SettingsScreen(BaseAppScreen):
         provider: str,
         detail: str,
         summary: str,
+        identity: ProviderDraftIdentity | None = None,
+        token: object | None = None,
     ) -> None:
         outcome = await probe_settings_endpoint(base_url, provider=provider)
-        self._apply_provider_endpoint_probe_outcome(detail, summary, outcome)
+        self._apply_provider_endpoint_probe_outcome(
+            detail,
+            summary,
+            outcome,
+            identity=identity,
+            token=token,
+        )
+
+    @staticmethod
+    def _provider_probe_result_from_outcome(
+        outcome: SettingsEndpointProbeOutcome,
+    ) -> ProviderProbeResult:
+        if type(outcome) is not SettingsEndpointProbeOutcome:
+            raise ValueError("Provider probe outcome is invalid.")
+        return ProviderProbeResult(
+            endpoint=outcome.state,
+            model_ids=outcome.model_ids,
+            category=outcome.category,
+        )
 
     def _apply_provider_endpoint_probe_outcome(
         self,
         detail: str,
         summary: str,
         outcome,
+        *,
+        identity: ProviderDraftIdentity | None = None,
+        token: object | None = None,
     ) -> None:
         """Fold a live endpoint probe outcome into the Test result and toast.
 
@@ -10059,6 +10225,14 @@ class SettingsScreen(BaseAppScreen):
             summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
         """
+        if identity is not None and token is not None:
+            try:
+                probe_result = self._provider_probe_result_from_outcome(outcome)
+            except ValueError:
+                self._provider_evidence_store().settle(token, object())
+                return
+            if not self._provider_evidence_store().settle(token, probe_result):
+                return
         self._provider_test_result = redact_secret_text(
             f"{detail} | endpoint {outcome.summary}"
         )
@@ -17599,6 +17773,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-context-window")
     def handle_model_context_window_changed(self, event: Input.Changed) -> None:
+        queue = self._provider_context_window_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
         if self._syncing_provider_context_window:
             return
         try:
@@ -18352,60 +18530,19 @@ class SettingsScreen(BaseAppScreen):
                 )
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
-            saved = True
-            if dirty_values:
-                saved = SettingsConfigAdapter().save_values(
-                    "chat_defaults", dirty_values
-                )
-            endpoint_key = self._provider_endpoint_setting_key(provider)
-            provider_settings_values = {}
-            if endpoint_dirty:
-                provider_settings_values[endpoint_key] = endpoint
-            if api_key_dirty:
-                provider_settings_values["api_key"] = api_key
-            if credential_dirty:
-                provider_settings_values["api_key_env_var"] = credential_env_var
-            if api_mode_dirty and normalized_api_mode is not None:
-                provider_settings_values["api_mode"] = normalized_api_mode
             alias_mode_sections = self._qwencloud_alias_mode_sections()
             qwencloud_mode_requires_canonical_save = bool(
                 api_mode_dirty
                 and normalized_api_mode is not None
                 and (provider_section_key != "qwencloud" or alias_mode_sections)
             )
-            if qwencloud_mode_requires_canonical_save:
-                provider_settings_values.pop("api_mode", None)
-            if provider_settings_values and provider_key:
-                provider_save_key = provider_section_key or provider_key
-                provider_section = f"api_settings.{provider_save_key}"
-                adapter = SettingsConfigAdapter()
-                if (
-                    provider_save_key == "qwencloud"
-                    and "api_mode" in provider_settings_values
-                    and len(provider_settings_values) > 1
-                ):
-                    provider_settings_saved = adapter.save_sections(
-                        {provider_section: provider_settings_values}
-                    )
-                else:
-                    provider_settings_saved = adapter.save_values(
-                        provider_section,
-                        provider_settings_values,
-                    )
-                saved = saved and provider_settings_saved
             next_model_defaults = None
             if model_profile_dirty and provider_key and model:
-                provider_save_key = provider_section_key or provider_key
                 next_model_defaults = self._updated_model_defaults_for_values(
                     provider,
                     model,
                     values,
                 )
-                profile_saved = SettingsConfigAdapter().save_values(
-                    f"api_settings.{provider_save_key}",
-                    {"model_defaults": next_model_defaults},
-                )
-                saved = saved and profile_saved
             next_model_capabilities = None
             delete_model_capabilities_entry = False
             if context_window_dirty and model:
@@ -18414,15 +18551,7 @@ class SettingsScreen(BaseAppScreen):
                         self._app_config_mapping(), model
                     )
                     if next_model_capabilities is None:
-                        capability_saved = SettingsConfigAdapter().delete_values(
-                            "model_capabilities.models", [model]
-                        )
                         delete_model_capabilities_entry = True
-                    else:
-                        capability_saved = SettingsConfigAdapter().save_values(
-                            "model_capabilities.models",
-                            {model: next_model_capabilities},
-                        )
                 else:
                     try:
                         next_model_capabilities = model_context_window_save_entry(
@@ -18439,84 +18568,132 @@ class SettingsScreen(BaseAppScreen):
                         )
                         self.app.notify(self._provider_save_result, severity="error")
                         return
-                    capability_saved = SettingsConfigAdapter().save_values(
-                        "model_capabilities.models",
-                        {model: next_model_capabilities},
-                    )
-                saved = saved and capability_saved
-            if qwencloud_mode_requires_canonical_save and saved:
-                delete_keys = {
-                    f"api_settings.{section_key}": ("api_mode",)
-                    for section_key in alias_mode_sections
-                }
-                canonical_mode_saved = save_settings_to_cli_config(
-                    {
-                        "api_settings.qwencloud": {
-                            "api_mode": normalized_api_mode,
-                        }
-                    },
-                    delete_keys=delete_keys or None,
+
+            tested_identity = self._provider_current_draft_identity()
+            saved_credential_source = self._provider_current_credential_source(
+                provider
+            )
+            if api_key_dirty:
+                if api_key:
+                    saved_credential_source = "stored"
+                elif credential_env_var:
+                    saved_credential_source = "environment"
+                else:
+                    saved_credential_source = "none"
+            if credential_dirty:
+                if credential_env_var:
+                    saved_credential_source = "environment"
+                elif api_key or (
+                    not api_key_dirty and self._provider_api_key_value(provider)
+                ):
+                    saved_credential_source = "stored"
+                else:
+                    saved_credential_source = "none"
+            try:
+                setup_mutation = build_provider_setup_mutation(
+                    ProviderSetupDraft(
+                        provider=provider,
+                        model=model,
+                        endpoint=endpoint,
+                        credential_source=saved_credential_source,
+                        credential_revision=getattr(
+                            self, "_provider_credential_revision", 0
+                        ),
+                        draft_generation=getattr(
+                            self, "_provider_draft_generation", 0
+                        ),
+                        credential_value=api_key if api_key_dirty else None,
+                        credential_env_var=(
+                            credential_env_var if credential_dirty else None
+                        ),
+                    ),
+                    self._app_config_mapping(),
                 )
-                saved = saved and canonical_mode_saved
-            if saved:
-                defaults = self._chat_defaults()
-                defaults.update(dirty_values)
-                if (
-                    endpoint_dirty
-                    or credential_dirty
-                    or api_key_dirty
-                    or api_mode_dirty
-                    or next_model_defaults is not None
-                ) and provider_key:
-                    app_config = getattr(self.app_instance, "app_config", None)
-                    if not isinstance(app_config, dict):
-                        self.app_instance.app_config = {}
-                        app_config = self.app_instance.app_config
-                    api_settings = app_config.setdefault("api_settings", {})
-                    if not isinstance(api_settings, dict):
-                        api_settings = {}
-                        app_config["api_settings"] = api_settings
-                    provider_save_key = provider_section_key or provider_key
-                    provider_settings = api_settings.setdefault(provider_save_key, {})
-                    if not isinstance(provider_settings, dict):
-                        provider_settings = {}
-                        api_settings[provider_save_key] = provider_settings
-                    provider_settings.update(provider_settings_values)
-                    if (
-                        api_mode_dirty
-                        and normalized_api_mode is not None
-                        and qwencloud_mode_requires_canonical_save
-                    ):
-                        canonical_settings = api_settings.setdefault("qwencloud", {})
-                        if not isinstance(canonical_settings, dict):
-                            canonical_settings = {}
-                            api_settings["qwencloud"] = canonical_settings
-                        canonical_settings["api_mode"] = normalized_api_mode
-                        for alias_section in alias_mode_sections:
-                            alias_settings = api_settings.get(alias_section)
-                            if isinstance(alias_settings, dict):
-                                alias_settings.pop("api_mode", None)
-                    if next_model_defaults is not None:
-                        provider_settings["model_defaults"] = next_model_defaults
+            except ValueError:
+                self._provider_save_result = (
+                    "Provider settings are invalid; review the endpoint and model."
+                )
+                self._set_static_text(
+                    "#settings-provider-save-result", self._provider_save_result
+                )
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+
+            section_values = {
+                section: dict(section_data)
+                for section, section_data in setup_mutation.section_values.items()
+            }
+            delete_keys: dict[str, list[str]] = {
+                section: list(keys)
+                for section, keys in setup_mutation.delete_keys.items()
+            }
+            provider_sections = [
+                section
+                for section in section_values
+                if section.startswith("api_settings.")
+            ]
+            provider_section = provider_sections[0]
+            if api_mode_dirty and normalized_api_mode is not None:
+                mode_section = (
+                    "api_settings.qwencloud"
+                    if qwencloud_mode_requires_canonical_save
+                    else provider_section
+                )
+                section_values.setdefault(mode_section, {})[
+                    "api_mode"
+                ] = normalized_api_mode
+                if qwencloud_mode_requires_canonical_save:
+                    for alias_section in alias_mode_sections:
+                        delete_keys.setdefault(
+                            f"api_settings.{alias_section}", []
+                        ).append("api_mode")
+            if next_model_defaults is not None:
+                section_values[provider_section][
+                    "model_defaults"
+                ] = next_model_defaults
+            if next_model_capabilities is not None:
+                section_values.setdefault("model_capabilities.models", {})[
+                    model
+                ] = next_model_capabilities
+            elif delete_model_capabilities_entry:
+                delete_keys.setdefault("model_capabilities.models", []).append(
+                    model
+                )
+
+            normalized_delete_keys = {
+                section: tuple(dict.fromkeys(keys))
+                for section, keys in delete_keys.items()
+                if keys
+            }
+            evidence_store = self._provider_evidence_store()
+            save_lease = (
+                evidence_store.begin_save(tested_identity)
+                if tested_identity is not None
+                else None
+            )
+            mutation_result = apply_settings_mutation_to_cli_config(
+                section_values,
+                delete_keys=normalized_delete_keys,
+            )
+            evidence_preserved = False
+            if save_lease is not None and tested_identity is not None:
+                evidence_preserved = evidence_store.rebase_after_save(
+                    tested_identity,
+                    setup_mutation.semantic_identity,
+                    mutation_result,
+                    lease=save_lease,
+                )
+
+            if mutation_result.fully_applied:
+                _apply_sparse_config_mutation_in_memory(
+                    self._app_config_update_target(),
+                    section_values,
+                    normalized_delete_keys,
+                )
                 if (
                     next_model_capabilities is not None
                     or delete_model_capabilities_entry
                 ):
-                    app_config = self._app_config_update_target()
-                    capabilities_section = app_config.setdefault(
-                        "model_capabilities", {}
-                    )
-                    if not isinstance(capabilities_section, dict):
-                        capabilities_section = {}
-                        app_config["model_capabilities"] = capabilities_section
-                    model_entries = capabilities_section.setdefault("models", {})
-                    if not isinstance(model_entries, dict):
-                        model_entries = {}
-                        capabilities_section["models"] = model_entries
-                    if delete_model_capabilities_entry:
-                        model_entries.pop(model, None)
-                    elif next_model_capabilities is not None:
-                        model_entries[model] = dict(next_model_capabilities)
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
                 self._restore_provider_api_mode_draft_snapshot(
@@ -18526,9 +18703,8 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
-                # TASK-366: the last Test verdict described the pre-save draft;
-                # don't let a stale ready/blocked line persist after saving.
-                self._mark_provider_test_result_stale()
+                if not evidence_preserved:
+                    self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
@@ -18537,14 +18713,22 @@ class SettingsScreen(BaseAppScreen):
                     "Provider and model settings saved.", severity="information"
                 )
             else:
-                self._provider_save_result = (
-                    "Failed to save provider and model settings."
-                )
+                if mutation_result.file_replaced:
+                    self._provider_save_result = (
+                        "Provider settings not fully applied: the file was written, "
+                        "but the app could not reload it. Draft retained; restart "
+                        "before retrying."
+                    )
+                else:
+                    self._provider_save_result = (
+                        "Provider settings not fully applied: the file was not "
+                        "written. Draft retained; check config access and retry."
+                    )
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
                 self.app.notify(
-                    "Failed to save provider and model settings.", severity="error"
+                    self._provider_save_result, severity="error"
                 )
             return
 
@@ -19038,11 +19222,20 @@ class SettingsScreen(BaseAppScreen):
                 # short live probe in a worker and fold it into the toast.
                 self._provider_test_result = f"{detail} | endpoint probe: checking"
                 self._update_provider_test_result()
+                identity = self._provider_current_draft_identity()
+                token = None
+                if identity is not None:
+                    try:
+                        token = self._provider_evidence_store().begin(identity)
+                    except ValueError:
+                        identity = None
                 self._provider_endpoint_probe_worker(
                     probe_base_url,
                     provider_config_key(self._provider_widget_value()),
                     detail,
                     summary,
+                    identity,
+                    token,
                 )
                 return
             self._provider_test_result = detail

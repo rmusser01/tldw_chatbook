@@ -19,10 +19,14 @@ from Tests.UI.test_settings_configuration_hub import (
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
+    ProviderProbeResult,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
 )
 from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+)
 from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
     overlay_provider_draft_config,
@@ -772,6 +776,22 @@ def test_mark_provider_test_result_stale_invalidates_prior_verdict():
     screen._provider_test_result = SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
     screen._mark_provider_test_result_stale()
     assert screen._provider_test_result == SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+
+
+def test_settings_converts_probe_outcome_to_exact_evidence_dto():
+    outcome = SettingsEndpointProbeOutcome(
+        state="reachable",
+        summary="reachable (2 models)",
+        model_ids=("model-a", "model-b"),
+    )
+
+    converted = SettingsScreen._provider_probe_result_from_outcome(outcome)
+
+    assert type(converted) is ProviderProbeResult
+    assert converted == ProviderProbeResult(
+        endpoint="reachable",
+        model_ids=("model-a", "model-b"),
+    )
 
 
 def test_discovery_status_distinguishes_malformed_from_unsupported():
