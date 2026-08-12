@@ -21,7 +21,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.compose import compose as _drain_compose_result
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
@@ -123,6 +123,64 @@ class SetupRadioButton(RadioButton):
         # instead of silently regressing to color-only state.
         self.BUTTON_INNER = "●" if self.value else "○"
         return super()._button
+
+
+class SetupWizardProgress(WizardProgress):
+    """Progress indicator rendered from the resolved first-run track."""
+
+    def __init__(
+        self,
+        items: tuple[wizard_state.SetupProgressItem, ...],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.items = items
+        self._sync_compatibility_state()
+
+    def _sync_compatibility_state(self) -> None:
+        self.total_steps = len(self.items)
+        self.current_step = next(
+            (
+                index + 1
+                for index, item in enumerate(self.items)
+                if item.state == "active"
+            ),
+            1,
+        )
+        self.step_titles = [item.title for item in self.items]
+
+    def set_items(
+        self, items: tuple[wizard_state.SetupProgressItem, ...]
+    ) -> None:
+        if items == self.items:
+            return
+        self.items = items
+        self._sync_compatibility_state()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def compose(self) -> ComposeResult:
+        for index, item in enumerate(self.items):
+            state_class = f"-{item.state}"
+            with Container(
+                id=f"setup-progress-{item.step_id}",
+                classes=f"step-indicator-container setup-progress-item {state_class}",
+            ):
+                number_classes = f"step-number {item.state}"
+                yield Static(
+                    "✓" if item.state == "complete" else str(index + 1),
+                    classes=number_classes,
+                )
+                yield Label(
+                    item.title,
+                    classes=f"step-title {item.state}",
+                )
+                if index < len(self.items) - 1:
+                    connector_classes = "step-connector"
+                    if item.state == "complete":
+                        connector_classes += " complete"
+                    yield Static("", classes=connector_classes)
 
 
 _SETUP_STEP_FAILURE_REASONS = frozenset({"compose_failed", "render_failed"})
@@ -4064,24 +4122,29 @@ class SetupWizardContainer(WizardContainer):
                 for step_id, step_values in resume_draft.values.items()
             }
 
+    def compose(self) -> ComposeResult:
+        """Compose with progress derived from the resolved setup track."""
+
+        yield Label(self.title, classes="wizard-title")
+        yield SetupWizardProgress(
+            wizard_state.build_setup_progress(self.active_ids, 0),
+            classes="wizard-progress",
+        )
+        with Container(classes="wizard-steps-container"):
+            yield from self.steps
+        yield WizardNavigation(classes="wizard-navigation")
+
     def _post_mount_hook(self) -> None:
-        """TASK-1499: base on_mount renders the progress row from the FULL
-        step list; rebuild it immediately so the initial render honors the
-        quick-track default (4 dots, "Step 1 of 4") instead of front-loading
-        all nine steps before the user has chosen anything.
+        """Refresh the initial active track after all steps have composed.
 
         Failure-policy follow-up: ``self.active_ids`` is first computed in
         ``__init__``, before any step has actually composed -- a step's
         ``compose_failed`` flag can only be known once its own compose()
         has actually run, which Textual does while mounting this
         container's children, i.e. by the time ``WizardContainer.on_mount``
-        (which calls ``show_step(0)`` and therefore forces the children
-        through their mount/compose pipeline) calls this hook. Calling
-        ``_refresh_active_ids()`` -- rather than ``_rebuild_progress()``
-        directly -- re-derives ``active_ids`` against the now-accurate
-        ``compose_failed`` flags before the very first progress/nav render,
-        so optional failures are removed before the first progress render while
-        required failures remain represented.
+        calls this hook. ``_refresh_active_ids()`` re-derives the projection
+        against the now-accurate ``compose_failed`` flags, so optional failures
+        leave progress/navigation while required failures remain represented.
 
         TASK-2710: overrides ``WizardContainer._post_mount_hook`` instead of
         defining its own ``on_mount()`` that calls ``super().on_mount()`` --
@@ -4304,17 +4367,27 @@ class SetupWizardContainer(WizardContainer):
                 can_skip=not required,
             )
 
+        titles = wizard_state.STEP_TITLES
         configs = (
-            cfg(wizard_state.STEP_WELCOME, "Welcome", 1),
-            cfg(wizard_state.STEP_PROVIDER, "Provider", 2),
-            cfg(wizard_state.STEP_MODEL, "Model", 3),
-            cfg(wizard_state.STEP_RAG, "RAG", 4, required=False),
-            cfg(wizard_state.STEP_SPEECH, "Speech", 5),
-            cfg(wizard_state.STEP_TOOLS, "Tools", 6),
-            cfg(wizard_state.STEP_NOTES, "Notes", 7),
-            cfg(wizard_state.STEP_APPEARANCE, "Style", 8),
-            cfg(wizard_state.STEP_PROTECT, "Protect", 9),
-            cfg(wizard_state.STEP_SUMMARY, "Summary", 10),
+            cfg(wizard_state.STEP_WELCOME, titles[wizard_state.STEP_WELCOME], 1),
+            cfg(wizard_state.STEP_PROVIDER, titles[wizard_state.STEP_PROVIDER], 2),
+            cfg(wizard_state.STEP_MODEL, titles[wizard_state.STEP_MODEL], 3),
+            cfg(
+                wizard_state.STEP_RAG,
+                titles[wizard_state.STEP_RAG],
+                4,
+                required=False,
+            ),
+            cfg(wizard_state.STEP_SPEECH, titles[wizard_state.STEP_SPEECH], 5),
+            cfg(wizard_state.STEP_TOOLS, titles[wizard_state.STEP_TOOLS], 6),
+            cfg(wizard_state.STEP_NOTES, titles[wizard_state.STEP_NOTES], 7),
+            cfg(
+                wizard_state.STEP_APPEARANCE,
+                titles[wizard_state.STEP_APPEARANCE],
+                8,
+            ),
+            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 9),
+            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 10),
         )
         return [self._build_step(config) for config in configs]
 
@@ -4542,45 +4615,18 @@ class SetupWizardContainer(WizardContainer):
             nav.current_step = position + 1
             nav.can_go_back = position > 0
             nav.can_go_forward = self.can_proceed
+            self._rebuild_progress()
         except Exception:
             pass
 
     def _rebuild_progress(self) -> None:
-        # WizardProgress has no watchers; replace it wholesale on track change.
-        #
-        # F-C fix: mount() with no before=/after= appends at the PARENT's
-        # END. BaseWizard.compose() yields WizardProgress as the container's
-        # SECOND child (right after the title, before the steps container
-        # and WizardNavigation) -- a plain parent.mount(fresh) re-inserted
-        # the replacement AFTER WizardNavigation instead, rendering the
-        # whole progress bar below the Back/Next buttons on every track
-        # change (live-verified via tmux screenshot). Capture the sibling
-        # that immediately followed the old widget and mount the
-        # replacement in that exact slot instead of just appending.
+        """Refresh the setup-specific tracker from the active-track projection."""
         try:
-            old = self.query_one(".wizard-progress", WizardProgress)
-            parent = old.parent
-            siblings = list(parent.children) if parent is not None else []
-            old_index = siblings.index(old) if old in siblings else None
-            next_sibling = (
-                siblings[old_index + 1]
-                if old_index is not None and old_index + 1 < len(siblings)
-                else None
+            items = wizard_state.build_setup_progress(
+                self.active_ids,
+                self._active_position(self.current_step or 0),
             )
-            old.remove()
-            fresh = WizardProgress(classes="wizard-progress")
-            fresh.total_steps = len(self.active_ids)
-            fresh.current_step = self._active_position(self.current_step or 0) + 1
-            fresh.step_titles = [
-                self.steps[self._step_index_for_id(step_id)].config.title
-                for step_id in self.active_ids
-                if self._step_index_for_id(step_id) is not None
-            ]
-            if parent is not None:
-                if next_sibling is not None:
-                    parent.mount(fresh, before=next_sibling)
-                else:
-                    parent.mount(fresh)
+            self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
             logger.debug("Wizard progress rebuild skipped", exc_info=True)
 

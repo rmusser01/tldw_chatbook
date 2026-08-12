@@ -294,3 +294,26 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 
 def test_visual_audit_destination_body_selectors_cover_top_level_destinations() -> None:
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
+
+
+def test_first_run_css_defines_distinct_semantic_visual_states() -> None:
+    css = _text(Path("tldw_chatbook/css/features/_wizards.tcss"))
+
+    assert ".setup-progress-item.-active" in css
+    assert ".setup-progress-item.-complete" in css
+    assert ".setup-progress-item.-upcoming" in css
+    assert ".setup-choice-list:focus" in css
+    assert ".setup-choice-list SetupRadioButton.-on" in css
+    assert ".setup-step-error" in css and "background: $error 15%" in css
+    assert "border: solid $ds-focus-accent" in css
+
+
+def test_first_run_css_stabilizes_provider_list_and_footer_dimensions() -> None:
+    css = _text(Path("tldw_chatbook/css/features/_wizards.tcss"))
+
+    assert ".setup-choice-list" in css
+    assert "min-height: 5" in css
+    assert "max-height: 7" in css
+    assert "FirstRunSetupWizard SetupWizardContainer .wizard-navigation" in css
+    assert "FirstRunSetupWizard .setup-key-hints" in css
+    assert "FirstRunSetupWizard SetupWizardContainer .wizard-steps-container" in css

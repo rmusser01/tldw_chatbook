@@ -2,9 +2,11 @@
 
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 
 import pytest
 
+from tldw_chatbook.UI.Wizards import first_run_setup_state as setup_state
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     any_provider_configured,
     coerce_wizard_flag,
@@ -20,6 +22,57 @@ def _config(api_settings=None, first_run=None):
     if first_run is not None:
         cfg["first_run"] = first_run
     return cfg
+
+
+class TestSetupProgress:
+    def test_progress_states_derive_from_active_track(self):
+        builder = getattr(setup_state, "build_setup_progress", None)
+        assert callable(builder), "setup progress must expose a pure projection"
+
+        rows = builder(("welcome", "provider", "model", "summary"), 1)
+
+        assert [row.step_id for row in rows] == [
+            "welcome",
+            "provider",
+            "model",
+            "summary",
+        ]
+        assert [row.title for row in rows] == [
+            "Welcome",
+            "Provider",
+            "Model",
+            "Summary",
+        ]
+        assert [row.state for row in rows] == [
+            "complete",
+            "active",
+            "upcoming",
+            "upcoming",
+        ]
+
+    def test_progress_items_are_frozen_and_slotted(self):
+        item_type = getattr(setup_state, "SetupProgressItem", None)
+        assert item_type is not None, "setup progress must expose its row contract"
+        item = item_type(step_id="welcome", title="Welcome", state="active")
+
+        assert item.__slots__ == ("step_id", "title", "state")
+        with pytest.raises(FrozenInstanceError):
+            item.state = "complete"
+
+    def test_progress_projection_rejects_unknown_steps_and_clamps_position(self):
+        builder = getattr(setup_state, "build_setup_progress", None)
+        assert callable(builder), "setup progress must expose a pure projection"
+
+        with pytest.raises(ValueError, match="unknown setup step"):
+            builder(("welcome", "not-a-step"), 0)
+        assert [row.state for row in builder(("welcome", "summary"), -9)] == [
+            "active",
+            "upcoming",
+        ]
+        assert [row.state for row in builder(("welcome", "summary"), 99)] == [
+            "complete",
+            "active",
+        ]
 
 
 class TestCoerceWizardFlag:

@@ -1,5 +1,6 @@
 """Pilot tests for the first-run setup wizard skeleton."""
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -71,6 +72,13 @@ class _HostApp(App):
     def _capture(self, result) -> None:
         self.wizard_result = result
         self.wizard_results.append(result)
+
+
+class _StyledHostApp(_HostApp):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/tldw_cli_modular.tcss"
+    )
 
 
 def _make_wizard(**kwargs) -> FirstRunSetupWizard:
@@ -3245,6 +3253,90 @@ async def test_progress_defaults_to_quick_track_and_titles_fit():
         for step in container.steps:
             title = step.config.title
             assert len(title) <= 8, f"step title too long for progress row: {title!r}"
+
+
+@pytest.mark.asyncio
+async def test_setup_progress_renders_projection_state_classes_and_dynamic_total():
+    """The setup tracker mirrors the resolved active track, including
+    conditional steps, without relying on the generic widget's own count."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+
+        rows = list(wizard.query(".setup-progress-item"))
+        assert len(rows) == len(container.active_ids) == 4
+        assert [row.id for row in rows] == [
+            f"setup-progress-{step_id}" for step_id in container.active_ids
+        ]
+        assert rows[0].has_class("-active")
+        assert all(row.has_class("-upcoming") for row in rows[1:])
+
+        container.show_step(container._step_index_for_id(STEP_PROVIDER))
+        container.update_progress()
+        await pilot.pause(0.1)
+        rows = list(wizard.query(".setup-progress-item"))
+        assert rows[0].has_class("-complete")
+        assert rows[1].has_class("-active")
+
+        container.note_key_entered()
+        await pilot.pause(0.1)
+        rows = list(wizard.query(".setup-progress-item"))
+        assert len(rows) == len(container.active_ids) == 5
+        progress_text = str(wizard.query_one("#wizard-progress", Static).render())
+        assert "Step 2 of 5" in progress_text
+
+
+@pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
+@pytest.mark.parametrize("size", ((80, 24), (120, 40), (177, 45)))
+@pytest.mark.asyncio
+async def test_first_run_provider_layout_stays_ordered_across_sizes_and_themes(
+    theme: str, size: tuple[int, int]
+):
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)
+    app.theme = theme
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        container.update_progress()
+        await pilot.pause(0.1)
+
+        progress = wizard.query_one(".wizard-progress")
+        steps = wizard.query_one(".wizard-steps-container")
+        choices = wizard.query_one("#setup-provider-choice", OptionList)
+        navigation = wizard.query_one(".wizard-navigation")
+        hints = wizard.query_one("#setup-key-hints", Static)
+        nav_buttons = tuple(navigation.query(Button))
+
+        assert progress.region.bottom <= steps.region.y
+        assert steps.region.bottom <= navigation.region.y
+        assert navigation.region.bottom <= hints.region.y
+        fixed_widgets = (progress, navigation, hints, *nav_buttons)
+        for widget in fixed_widgets:
+            assert widget.region.width > 0 and widget.region.height > 0
+            assert widget.region.x >= 0 and widget.region.y >= 0
+            assert widget.region.right <= size[0]
+            assert widget.region.bottom <= size[1]
+            assert widget in app.screen._compositor.visible_widgets, (
+                f"{widget!r} was clipped at {size}/{theme}; region={widget.region}, "
+                f"parent={widget.parent.region if widget.parent else None}, "
+                f"steps={steps.region}"
+            )
+
+        assert 5 <= choices.region.height <= 7
+        assert choices.region.right <= size[0]
+        if size[0] >= 120:
+            assert choices.region.bottom <= size[1]
+            assert choices in app.screen._compositor.visible_widgets
+        else:
+            provider_step = container.steps[provider_index]
+            assert provider_step.styles.overflow_y == "auto"
 
 
 class TestThemePickerShortlist:

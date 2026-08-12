@@ -258,6 +258,28 @@ STEP_APPEARANCE = "appearance"
 STEP_PROTECT = "protect-keys"
 STEP_SUMMARY = "summary"
 
+STEP_TITLES: Mapping[str, str] = {
+    STEP_WELCOME: "Welcome",
+    STEP_PROVIDER: "Provider",
+    STEP_MODEL: "Model",
+    STEP_RAG: "RAG",
+    STEP_SPEECH: "Speech",
+    STEP_TOOLS: "Tools",
+    STEP_NOTES: "Notes",
+    STEP_APPEARANCE: "Style",
+    STEP_PROTECT: "Protect",
+    STEP_SUMMARY: "Summary",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SetupProgressItem:
+    """One row in the progress tracker for the resolved setup path."""
+
+    step_id: str
+    title: str
+    state: Literal["active", "complete", "upcoming"]
+
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
 # (both are optional model-setup steps) -- QUICK_TRACK stays byte-identical
 # on purpose, see AC#1.
@@ -529,6 +551,33 @@ def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     if key_entered:
         return base
     return tuple(step for step in base if step != STEP_PROTECT)
+
+
+def build_setup_progress(
+    active_ids: tuple[str, ...], current_index: int
+) -> tuple[SetupProgressItem, ...]:
+    """Project a resolved setup path into display-ready progress rows."""
+
+    unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
+    if unknown_ids:
+        raise ValueError(f"unknown setup step: {unknown_ids[0]}")
+    if not active_ids:
+        return ()
+    active_index = min(max(current_index, 0), len(active_ids) - 1)
+    return tuple(
+        SetupProgressItem(
+            step_id=step_id,
+            title=STEP_TITLES[step_id],
+            state=(
+                "complete"
+                if index < active_index
+                else "active"
+                if index == active_index
+                else "upcoming"
+            ),
+        )
+        for index, step_id in enumerate(active_ids)
+    )
 
 
 def stored_plaintext_key_present(app_config: Mapping[str, object]) -> bool:
