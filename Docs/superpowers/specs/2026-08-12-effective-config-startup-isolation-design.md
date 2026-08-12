@@ -6,8 +6,9 @@ TASK-15674 was created after a long-running generated-video UAT observed that th
 default user config file changed while the app was launched with
 `TLDW_CONFIG_PATH` pointing at a disposable profile. A controlled reproduction on
 current `dev` used a disposable `HOME`, all relevant XDG directories, an effective
-scratch profile, and a distinct decoy default config. The real Textual startup
-normalized only the effective profile and left the decoy byte-for-byte unchanged.
+scratch profile, and a distinct decoy default config. The real Textual
+startup-to-approved-quit lifecycle persisted only the effective profile and left
+the decoy byte-for-byte unchanged.
 
 The original cross-profile attribution is therefore not reproduced. The useful
 product contract is still worth pinning at the real app boundary, and the merged
@@ -16,9 +17,9 @@ that this app launch caused it.
 
 ## Goal
 
-Close TASK-15674 by adding a regression that proves real app startup honors the
-effective config profile, and by correcting the historical documentation to match
-the controlled evidence.
+Close TASK-15674 by adding a regression that proves the real app's
+startup-to-approved-quit lifecycle honors the effective config profile, and by
+correcting the historical documentation to match the controlled evidence.
 
 ## Non-goals
 
@@ -30,16 +31,21 @@ the controlled evidence.
 ## Required Behavior
 
 1. A subprocess starts the real `TldwCli` Textual lifecycle after establishing a
-   fully disposable environment.
+   fully disposable environment, then completes the approved quit path that owns
+   shutdown config persistence.
 2. `TLDW_CONFIG_PATH` identifies an effective scratch config that is distinct from
    the default path derived from the subprocess's scratch `HOME`.
 3. The default-path file is a decoy with known bytes. Those bytes are identical
    before and after the app lifecycle.
-4. If startup normalization persists defaults, the change occurs only in the
-   effective scratch profile. The regression proves this using file identity and
-   change/count assertions, not by printing config values.
-5. Existing no-override tests remain the control for default-path behavior and are
-   run in the focused verification set.
+4. A test-local wrapper records that `persist_cli_config_for_shutdown()` ran and
+   returned successfully during approved quit. The decoy must always remain
+   byte-identical. If the effective profile bytes change, only that effective path
+   may change; an idempotent/no-op persistence remains valid.
+5. The existing no-override default-path controls
+   `test_default_application_config_directory_is_created_as_0700` and
+   `test_existing_default_config_directory_is_hardened_before_read` remain the
+   focused control for default-path creation and hardening. This work does not claim
+   they are a second real-app lifecycle test.
 6. Test diagnostics expose only booleans, counts, and sanitized phase labels; they
    do not expose config contents, credentials, or real user paths.
 
@@ -51,18 +57,31 @@ receives scratch `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, a
 points `[paths].data_dir` at scratch storage so startup cannot reach the real data
 profile.
 
-The subprocess enters and exits `TldwCli.run_test()` to exercise mounted startup
-and teardown. The parent process retains the before bytes and performs the final
-file comparisons. No real network or user configuration is used.
+The effective scratch config sets `[model_catalog] auto_refresh_enabled = false`
+before application imports, so the unconditional startup worker cannot perform a
+provider refresh. Other configured storage paths remain scratch-only.
+
+The subprocess enters `TldwCli.run_test()` to exercise mounted startup, then drives
+`_confirm_and_quit()` so the production approved-quit flow reaches
+`_run_blocking_quit_persistence()` and exits normally. After importing `app.py`, a
+test-local wrapper replaces `tldw_chatbook.app.persist_cli_config_for_shutdown`
+(the symbol actually called by `_run_blocking_quit_persistence()`), delegates to
+the real `tldw_chatbook.config.persist_cli_config_for_shutdown`, and records only
+whether it ran and whether it returned successfully. The parent process retains the
+before bytes and performs the final file comparisons. No real network or user
+configuration is used.
 
 ## Verification
 
-- Capture RED with a focused named regression before any production change.
-- Keep production unchanged if current `dev` satisfies the contract.
-- Prove the guard is load-bearing by temporarily disabling the effective-profile
-  override in the isolated subprocess path; the named regression must fail because
-  the decoy changes or the effective profile does not receive normalization. Restore
-  the mutation exactly.
+- Keep production unchanged if current `dev` satisfies the contract. The required
+  RED evidence is the temporary production lookup mutation below; unmodified
+  current `dev` is expected to pass the characterization.
+- Prove the guard is load-bearing by temporarily mutating the production
+  `_get_effective_config_path()` / `get_cli_config_path()` lookup so it ignores
+  `TLDW_CONFIG_PATH` before the subprocess imports application modules. The named
+  lifecycle regression must fail because the wrong profile is selected. Restore the
+  source mutation exactly; merely deleting the test's environment variable does not
+  count.
 - Run only tests related to touched files: the new lifecycle regression and existing
   config import/bootstrap controls.
 - Run Ruff on the touched Python test, `py_compile` to a temporary output directory,
@@ -75,8 +94,8 @@ verification lesson to state:
 
 - the original post-run fingerprint drift was real and the precautionary restore
   was appropriate;
-- controlled current-`dev` reproduction did not attribute that drift to isolated
-  app startup;
+- controlled current-`dev` reproduction did not attribute that drift to the
+  isolated startup-to-approved-quit lifecycle;
 - fingerprint drift alone does not identify the writer; use a decoy default profile
   and an isolated effective profile before assigning causality;
 - the regression now locks the verified effective-profile boundary.
