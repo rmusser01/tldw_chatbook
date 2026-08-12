@@ -93,11 +93,13 @@ class ProfileMigrationBoundarySnapshot:
         return "ProfileMigrationBoundarySnapshot()"
 
     def backup_to(self, destination: ProfileMigrationBoundaryDestination) -> None:
-        """Copy the boundary into one caller-owned empty destination.
+        """Consume and durably prepare one opaque boundary destination.
 
         Args:
-            destination: Already-open empty private SQLite destination. The
-                caller retains ownership and must close and durably prepare it.
+            destination: Already-open empty private SQLite destination consumed
+                through checkpoint, close, fsync, immutable validation, and
+                readiness. The caller owns only later artifact publication or
+                cleanup.
 
         Raises:
             ProfileRepositoryError: If authority is expired/used or the
