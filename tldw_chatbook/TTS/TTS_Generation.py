@@ -199,35 +199,68 @@ def _audio_cpp_clone_setup_projection(
     )
 
 
-def _guided_clone_requirement(
+_GuidedCloneObservationState = Literal["absent", "missing", "mismatch", "exact"]
+
+
+@dataclass(frozen=True, slots=True)
+class _GuidedCloneObservation:
+    state: _GuidedCloneObservationState
+    requirement: TTSCloneRecipeRequirement | None = None
+
+
+def _guided_clone_observation(
     settings: AudioCppSettingsConfig,
-    model_id: str,
-) -> TTSCloneRecipeRequirement | None:
-    """Project one installed exact Guided clone requirement from inert config."""
+    requirement: TTSCloneRecipeRequirement,
+) -> _GuidedCloneObservation:
+    """Preserve absence, unknown recipe, drift, and exact Guided evidence."""
 
     if settings.mode != "managed" or settings.managed_setup_source != "guided":
-        return None
-    accepted = next(
+        return _GuidedCloneObservation("absent")
+    model_match = next(
         (
             package
             for package in settings.guided_packages
-            if package.public_model_id == model_id
+            if package.public_model_id == requirement.model_id
         ),
         None,
     )
+    recipe_match = next(
+        (
+            package
+            for package in settings.guided_packages
+            if package.recipe_id == requirement.recipe_id
+        ),
+        None,
+    )
+    accepted = model_match if model_match is not None else recipe_match
     if accepted is None:
-        return None
+        return _GuidedCloneObservation("absent")
+    installed = next(
+        (
+            recipe
+            for recipe in AUDIO_CPP_RECIPE_REGISTRY.recipes
+            if recipe.recipe_id == requirement.recipe_id
+        ),
+        None,
+    )
+    if installed is None:
+        return _GuidedCloneObservation("missing")
+    if accepted.recipe_id != requirement.recipe_id:
+        return _GuidedCloneObservation("mismatch")
     try:
         recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
     except ValueError:
-        return None
+        return _GuidedCloneObservation("mismatch")
     if "clone" not in recipe.capabilities:
-        return None
-    return TTSCloneRecipeRequirement(
+        return _GuidedCloneObservation("mismatch")
+    observed = TTSCloneRecipeRequirement(
         recipe_id=recipe.recipe_id,
         recipe_revision=recipe.recipe_revision,
-        model_id=model_id,
+        model_id=accepted.public_model_id,
     )
+    if observed != requirement:
+        return _GuidedCloneObservation("mismatch")
+    return _GuidedCloneObservation("exact", observed)
 
 
 TTSSettingsProviderStatus = Literal[
@@ -2302,16 +2335,18 @@ class TTSService:
                         saved_config = dict(configuration.staged_config)
                     else:
                         saved_config = dict(configuration.applied_config)
-                saved = _guided_clone_requirement(
+                saved_observation = _guided_clone_observation(
                     AudioCppSettingsConfig.from_mapping(saved_config),
-                    exact_requirement.model_id,
+                    exact_requirement,
                 )
-                applied = _guided_clone_requirement(
+                applied_observation = _guided_clone_observation(
                     AudioCppSettingsConfig.from_mapping(configuration.applied_config),
-                    exact_requirement.model_id,
+                    exact_requirement,
                 )
 
         pending = saved_generation != configuration.applied_generation
+        saved = saved_observation.requirement
+        applied = applied_observation.requirement
         installed = next(
             (
                 recipe
@@ -2324,12 +2359,15 @@ class TTSService:
             state: AudioCppGuidedDependencyState = "missing"
         elif installed.recipe_revision != exact_requirement.recipe_revision:
             state = "mismatch"
+        elif pending:
+            state = "pending"
+        elif (
+            saved_observation.state == "mismatch"
+            or applied_observation.state == "mismatch"
+        ):
+            state = "mismatch"
         elif applied == exact_requirement:
             state = "exact"
-        elif pending and saved == exact_requirement:
-            state = "pending"
-        elif saved is not None or applied is not None:
-            state = "mismatch"
         else:
             state = "missing"
         return AudioCppGuidedDependencySnapshot(

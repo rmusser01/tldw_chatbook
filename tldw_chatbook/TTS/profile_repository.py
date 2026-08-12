@@ -260,6 +260,22 @@ class TTSBundleImportResult:
     profile: TTSGenerationProfile | None
     repository_facts: TTSBundleImportRepositoryFacts | None = None
 
+    def __post_init__(self) -> None:
+        profile_result = (
+            type(self.kind) is str
+            and self.kind in {"created", "reused"}
+            and type(self.profile) is _TTS_GENERATION_PROFILE_TYPE
+            and self.repository_facts is None
+        )
+        stale_result = (
+            type(self.kind) is str
+            and self.kind == "stale_inspection"
+            and self.profile is None
+            and type(self.repository_facts) is TTSBundleImportRepositoryFacts
+        )
+        if not profile_result and not stale_result:
+            raise _repository_error("operation_failed")
+
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
@@ -522,15 +538,22 @@ def _validate_bundle_import_command(value: object) -> TTSBundleImportCommand:
     if command.choice == "copy":
         if copy_profile_id is None or type(copy_display_name) is not str:
             raise _repository_error("operation_failed")
-        copy_draft = TTSProfileDraft(
-            display_name=copy_display_name,
-            provider_id=source_draft.provider_id,
-            model_id=source_draft.model_id,
-            voice_id=source_draft.voice_id,
-            response_format=source_draft.response_format,
-            speed=source_draft.speed,
-            options=source_draft.options,
-        )
+        copy_draft: TTSProfileDraft | None = None
+        copy_validation_failed = False
+        try:
+            copy_draft = TTSProfileDraft(
+                display_name=copy_display_name,
+                provider_id=source_draft.provider_id,
+                model_id=source_draft.model_id,
+                voice_id=source_draft.voice_id,
+                response_format=source_draft.response_format,
+                speed=source_draft.speed,
+                options=source_draft.options,
+            )
+        except Exception:
+            copy_validation_failed = True
+        if copy_validation_failed or copy_draft is None:
+            raise _repository_error("operation_failed")
         copy_display_name = copy_draft.display_name
     elif copy_profile_id is not None or copy_display_name is not None:
         raise _repository_error("operation_failed")

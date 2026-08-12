@@ -2589,6 +2589,100 @@ async def test_guided_dependency_snapshot_classifies_missing_and_mismatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift",
+    ("projection_family", "package_variant", "recipe_revision", "model_id"),
+)
+async def test_guided_dependency_snapshot_preserves_present_config_drift_as_mismatch(
+    drift: str,
+) -> None:
+    config = _guided_clone_config()
+    package = config["guided_packages"][0]
+    if drift == "projection_family":
+        package["projection"]["family"] = "drifted_family"
+    elif drift == "package_variant":
+        package["package_variant"] = "drifted_variant"
+    elif drift == "recipe_revision":
+        package["recipe_revision"] += 1
+    else:
+        package["public_model_id"] = "different-model"
+        config["guided_default_model_id"] = "different-model"
+
+    class _PureRegistry:
+        acquire_calls = 0
+
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self, _provider_id: str
+        ) -> TTSProviderConfigurationSnapshot:
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=2,
+                applied_config=config,
+                staged_generation=None,
+                staged_config=None,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            self.acquire_calls += 1
+            raise AssertionError("dependency inspection acquired an adapter")
+
+    registry = _PureRegistry()
+    service = tts_generation.TTSService(cast(Any, registry))
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(_guided_requirement())
+
+    assert snapshot.state == "mismatch"
+    assert registry.acquire_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_guided_dependency_snapshot_reports_present_unknown_recipe_as_missing() -> (
+    None
+):
+    config = _guided_clone_config()
+    package = config["guided_packages"][0]
+    package["recipe_id"] = "future.valid.recipe"
+    package["recipe_revision"] = 1
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="future.valid.recipe",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
+
+    class _PureRegistry:
+        acquire_calls = 0
+
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self, _provider_id: str
+        ) -> TTSProviderConfigurationSnapshot:
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=2,
+                applied_config=config,
+                staged_generation=None,
+                staged_config=None,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            self.acquire_calls += 1
+            raise AssertionError("dependency inspection acquired an adapter")
+
+    registry = _PureRegistry()
+    service = tts_generation.TTSService(cast(Any, registry))
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(requirement)
+
+    assert snapshot.state == "missing"
+    assert registry.acquire_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_guided_dependency_snapshot_reports_pending_saved_configuration() -> None:
     saved_config = _guided_clone_config()
 
@@ -2622,6 +2716,42 @@ async def test_guided_dependency_snapshot_reports_pending_saved_configuration() 
     assert snapshot.applied_requirement is None
     assert snapshot.pending_configuration is True
     assert service._settings_persisted_provider_configs["audio_cpp"] == before
+
+
+@pytest.mark.asyncio
+async def test_guided_dependency_snapshot_reports_unapplied_generation_as_pending() -> (
+    None
+):
+    config = _guided_clone_config()
+
+    class _PureRegistry:
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self, _provider_id: str
+        ) -> TTSProviderConfigurationSnapshot:
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=1,
+                applied_config=config,
+                staged_generation=2,
+                staged_config=config,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            raise AssertionError("dependency inspection acquired an adapter")
+
+    service = tts_generation.TTSService(cast(Any, _PureRegistry()))
+    service._settings_persisted_provider_generations["audio_cpp"] = 2
+    service._settings_persisted_provider_configs["audio_cpp"] = dict(config)
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(_guided_requirement())
+
+    assert snapshot.state == "pending"
+    assert snapshot.saved_requirement == _guided_requirement()
+    assert snapshot.applied_requirement == _guided_requirement()
+    assert snapshot.pending_configuration is True
 
 
 @pytest.mark.asyncio

@@ -534,6 +534,130 @@ async def test_bundle_import_enforces_exact_inactive_consent_matrix_before_queue
 
 
 @pytest.mark.asyncio
+async def test_bundle_import_normalizes_mutated_copy_name_before_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        queued = False
+
+        async def forbidden_queue(*_args: object, **_kwargs: object) -> object:
+            nonlocal queued
+            queued = True
+            raise AssertionError("repository work was queued")
+
+        monkeypatch.setattr(repository, "_submit_operation", forbidden_queue)
+        command = profile_repository.TTSBundleImportCommand(
+            choice="copy",
+            source_profile_id=PROFILE_A,
+            source_draft=_audio_cpp_draft("Copy source"),
+            recipe_requirement=_requirement(),
+            canonical_reference=_canonical(),
+            expected_generation=repository.generation,
+            reviewed_source_collisions=profile_repository.TTSProfileCollisionSnapshot(
+                None,
+                None,
+            ),
+            copy_profile_id=PROFILE_B,
+            copy_display_name="Valid copy",
+            dependency_state="exact",
+            inactive_consent=False,
+        )
+        private_value = "\n/private/voice/source"
+        object.__setattr__(command, "copy_display_name", private_value)
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.commit_bundle_import(command)
+
+        _assert_error(caught.value, "operation_failed")
+        assert private_value not in str(caught.value)
+        assert private_value not in repr(caught.value)
+        assert queued is False
+
+
+@pytest.mark.asyncio
+async def test_bundle_import_copy_validation_preserves_base_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        command = profile_repository.TTSBundleImportCommand(
+            choice="copy",
+            source_profile_id=PROFILE_A,
+            source_draft=_audio_cpp_draft("Copy source"),
+            recipe_requirement=_requirement(),
+            canonical_reference=_canonical(),
+            expected_generation=repository.generation,
+            reviewed_source_collisions=profile_repository.TTSProfileCollisionSnapshot(
+                None,
+                None,
+            ),
+            copy_profile_id=PROFILE_B,
+            copy_display_name="Valid copy",
+            dependency_state="exact",
+            inactive_consent=False,
+        )
+
+        def interrupt(**_kwargs: object) -> object:
+            raise _ControlFlow()
+
+        monkeypatch.setattr(profile_repository, "_validate_draft", lambda value: value)
+        monkeypatch.setattr(profile_repository, "TTSProfileDraft", interrupt)
+
+        with pytest.raises(_ControlFlow):
+            await repository.commit_bundle_import(command)
+
+
+@pytest.mark.asyncio
+async def test_bundle_import_result_enforces_exact_sum_type(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    async with _opened_repository(path) as repository:
+        created = await repository.create_profile(
+            _audio_cpp_draft("Result profile"),
+            PROFILE_A,
+        )
+        profile = created.value
+        facts = profile_repository.TTSBundleImportRepositoryFacts(
+            source_collisions=profile_repository.TTSProfileCollisionSnapshot(
+                None,
+                None,
+            ),
+            copy_collisions=None,
+        )
+
+        assert profile_repository.TTSBundleImportResult("created", profile).profile
+        assert profile_repository.TTSBundleImportResult("reused", profile).profile
+        assert (
+            profile_repository.TTSBundleImportResult(
+                "stale_inspection",
+                None,
+                facts,
+            ).repository_facts
+            is facts
+        )
+
+        invalid = (
+            ("created", None, None),
+            ("created", profile, facts),
+            ("reused", None, None),
+            ("reused", profile, facts),
+            ("stale_inspection", profile, facts),
+            ("stale_inspection", None, None),
+            ("unknown", profile, None),
+        )
+        for kind, candidate_profile, candidate_facts in invalid:
+            with pytest.raises(ProfileRepositoryError) as caught:
+                profile_repository.TTSBundleImportResult(
+                    cast(Any, kind),
+                    candidate_profile,
+                    candidate_facts,
+                )
+            _assert_error(caught.value, "operation_failed")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("dependency_state", ("exact", "missing"))
 async def test_bundle_import_reuses_only_exact_public_private_profile(
     tmp_path: Path,
