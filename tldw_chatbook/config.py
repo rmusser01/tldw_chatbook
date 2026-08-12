@@ -3256,6 +3256,16 @@ strip_thinking_tags = true
 prune_high_watermark = 20000
 prune_low_watermark = 12000
 
+# Console transcript load window: resuming or switching to a conversation
+# mounts only the newest transcript_window_messages messages (further capped
+# by transcript_window_lines estimated rows), and hydrates
+# transcript_hydrate_messages older messages at a time as you scroll back.
+# The watermarks above still bound the total. Set
+# transcript_window_messages <= 0 to mount the whole history at load.
+transcript_window_messages = 40
+transcript_window_lines = 600
+transcript_hydrate_messages = 20
+
 # Render assistant replies as full markdown (code blocks, tables, lists,
 # links) in the Console transcript. Set false to restore the lightweight
 # span renderer, which keeps roleplay speech/action flavor colors.

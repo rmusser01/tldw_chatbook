@@ -851,3 +851,27 @@ async def test_jump_to_latest_releases_protection_without_a_scroll_change():
             "the jump must release protection so the watermarks can trim "
             f"(height {transcript.virtual_size.height})"
         )
+
+
+@pytest.mark.asyncio
+async def test_pending_swipe_selection_outside_the_window_is_hydrated():
+    """A handoff selection (task-501) must land on a row, not a filtered id."""
+    app = WindowHarness(window_messages=10, hydrate_messages=5)
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        history = _messages(60)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert "m12" in transcript.unhydrated_message_ids()
+
+        transcript.pending_selection_id = "m12"
+        transcript.set_messages(list(history))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        assert transcript.selected_message_id == "m12"
+        assert "m12" in _mounted_message_ids(transcript)
+        assert transcript.query(".console-transcript-action-row"), (
+            "the handed-off selection must show its action row"
+        )

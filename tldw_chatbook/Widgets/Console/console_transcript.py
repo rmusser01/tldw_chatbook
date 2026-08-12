@@ -1959,6 +1959,10 @@ class ConsoleTranscript(VerticalScroll):
             self.pending_selection_id is not None
             and self.pending_selection_id in message_ids
         ):
+            # TASK-15455: a handoff can name a message outside the mount
+            # window (a swipe carried across a session switch); a selection
+            # with no row would show no action row at all.
+            self.ensure_message_hydrated(self.pending_selection_id)
             self.selected_message_id = self.pending_selection_id
             self.pending_selection_id = None
         if self.selected_message_id not in message_ids:
@@ -2193,9 +2197,10 @@ class ConsoleTranscript(VerticalScroll):
         HIGH mark and hand the watermark walk the rows it just mounted.
 
         A second, independent guard lives in ``_compute_prunable_prefix``:
-        hydrated ids are protected from pruning while the reader is detached,
-        so an oversized chunk that overshoots the high watermark is never
-        yanked back out from under them.
+        hydrated ids are protected from pruning while the
+        ``_scrollback_protected`` latch holds (set here for a reader-driven
+        step, dropped when they return to the tail), so an oversized step that
+        overshoots the high watermark is never yanked back out from under them.
         """
         self._hydration_check_scheduled = False
         if not self.is_mounted or self._closing or self._pruning:
