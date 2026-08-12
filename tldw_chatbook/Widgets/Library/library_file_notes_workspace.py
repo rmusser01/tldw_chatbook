@@ -45,6 +45,11 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     RetainedPushOperation,
     coalesce_session_changes,
 )
+from tldw_chatbook.Notes.file_notes_conflict_compare import (
+    ConflictComparison,
+    ConflictSide,
+    build_conflict_comparison,
+)
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitOutcome,
     CommitRecoveryProjection,
@@ -194,6 +199,18 @@ class _ReloadConfirmation:
     opened: OpenedFileNote
     save_state: Literal["conflict", "error"]
     disk_content_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ConflictCompareRequest:
+    """Exact editor identity captured before reading the latest disk side."""
+
+    service: FileNotesService
+    binding: SessionBinding
+    root_generation: int
+    session_key: str
+    opened: OpenedFileNote
+    draft: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,6 +422,129 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
         self.query_one("#file-notes-root-details-text", TextArea).focus()
 
     @on(Button.Pressed, "#file-notes-root-details-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+
+class FileNotesConflictCompareDialog(ModalScreen[None]):
+    """Show one immutable, bounded Base/Draft/Disk comparison."""
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    FileNotesConflictCompareDialog {
+        align: center middle;
+    }
+
+    #file-notes-conflict-dialog {
+        width: 110;
+        max-width: 95%;
+        height: 90%;
+        min-height: 16;
+        max-height: 95%;
+        border: round $warning;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-conflict-title {
+        height: 1;
+        color: $warning;
+        text-style: bold;
+    }
+
+    #file-notes-conflict-path,
+    #file-notes-conflict-help {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    #file-notes-conflict-summary {
+        height: 7;
+        min-height: 4;
+        margin-top: 1;
+    }
+
+    #file-notes-conflict-diff {
+        height: 1fr;
+        min-height: 4;
+        margin-top: 1;
+    }
+
+    #file-notes-conflict-close {
+        width: auto;
+        height: 1;
+        min-height: 1;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        relative_path: str,
+        comparison: ConflictComparison,
+    ) -> None:
+        """Initialize an immutable conflict comparison.
+
+        Args:
+            relative_path: Literal note path owning the conflict.
+            comparison: Precomputed bounded comparison payload.
+        """
+        super().__init__(id="file-notes-conflict-dialog-screen")
+        self._relative_path = relative_path
+        self._comparison = comparison
+
+    def compose(self) -> ComposeResult:
+        """Compose labeled read-only side identities and diffs.
+
+        Returns:
+            The widgets that make up the comparison dialog.
+        """
+        with Vertical(id="file-notes-conflict-dialog"):
+            yield Static(
+                "Compare conflict",
+                id="file-notes-conflict-title",
+                markup=False,
+            )
+            yield Static(
+                self._relative_path,
+                id="file-notes-conflict-path",
+                markup=False,
+            )
+            yield Static(
+                (
+                    "Base is the editor baseline. Draft is the current editor. "
+                    "Disk is the latest captured file state. Comparing does not "
+                    "resolve the conflict."
+                ),
+                id="file-notes-conflict-help",
+                markup=False,
+            )
+            summary = TextArea(
+                self._comparison.summary_text,
+                id="file-notes-conflict-summary",
+                read_only=True,
+                soft_wrap=True,
+            )
+            summary.tooltip = "Base, Draft, and Disk identities"
+            yield summary
+            diff = TextArea(
+                self._comparison.diff_text,
+                id="file-notes-conflict-diff",
+                read_only=True,
+                soft_wrap=False,
+            )
+            diff.tooltip = "Base to Draft and Base to Disk unified comparisons"
+            yield diff
+            yield Button("Close", id="file-notes-conflict-close", compact=True)
+
+    def on_mount(self) -> None:
+        """Focus the comparison output for immediate keyboard reading."""
+        self.query_one("#file-notes-conflict-diff", TextArea).focus()
+
+    @on(Button.Pressed, "#file-notes-conflict-close")
     def _close(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss(None)
@@ -1062,6 +1202,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     yield Button("New", id="file-notes-new", compact=True)
                     yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
+                    yield Button(
+                        "Compare",
+                        id="file-notes-compare",
+                        compact=True,
+                    )
                     yield Button(
                         "Save draft as copy",
                         id="file-notes-save-copy",
@@ -3807,6 +3952,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-move",
                 "file-notes-delete",
                 "file-notes-restore",
+                "file-notes-compare",
                 "file-notes-protect",
                 "file-notes-reload",
                 "file-notes-save-copy",
@@ -3828,6 +3974,11 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
+        )
+        self.query_one("#file-notes-compare", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._save_state == "conflict"
         )
         copy_button = self.query_one("#file-notes-save-copy", Button)
         exact_export = self._opened is not None and self._opened.is_excerpt
@@ -3938,6 +4089,9 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-move": has_document,
             "file-notes-delete": has_document,
             "file-notes-restore": has_deleted,
+            "file-notes-compare": (
+                has_document and self._save_state == "conflict"
+            ),
             "file-notes-protect": has_document,
             "file-notes-reload": has_document,
             "file-notes-save-copy": (
@@ -6162,6 +6316,125 @@ class LibraryFileNotesWorkspace(Vertical):
             ):
                 return
             self._apply_opened_document(reloaded)
+
+    def _conflict_compare_request_is_current(
+        self,
+        request: _ConflictCompareRequest,
+    ) -> bool:
+        """Validate the exact editor identity before publishing comparison."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._service is not request.service
+            or self._root_generation != request.root_generation
+            or self._session_binding != request.binding
+            or self._session_owner.current_binding() != request.binding
+            or self._opened is not request.opened
+            or self._current_path != request.opened.relative_path
+            or self._session_key != request.session_key
+            or self._save_state != "conflict"
+        ):
+            return False
+        return self.query_one("#file-notes-editor", TextArea).text == request.draft
+
+    @staticmethod
+    def _build_conflict_comparison(
+        opened: OpenedFileNote,
+        draft: str,
+        disk: OpenedFileNote | None,
+        disk_error: str = "",
+    ) -> ConflictComparison:
+        """Build the immutable comparison away from the UI loop.
+
+        Args:
+            opened: Exact editor baseline retained by the current session.
+            draft: Exact current editor body.
+            disk: Latest readable disk snapshot, when present.
+            disk_error: Bounded read failure detail when disk is unreadable.
+
+        Returns:
+            A bounded display payload for the comparison modal.
+        """
+        disk_side = (
+            ConflictSide.from_text("Disk", disk.body)
+            if disk is not None
+            else (
+                ConflictSide.unreadable(disk_error)
+                if disk_error
+                else ConflictSide.absent()
+            )
+        )
+        return build_conflict_comparison(
+            ConflictSide.from_text("Base", opened.body),
+            ConflictSide.from_text("Draft", draft),
+            disk_side,
+        )
+
+    @on(Button.Pressed, "#file-notes-compare")
+    async def _compare_conflict(self, event: Button.Pressed) -> None:
+        """Capture and show Base, Draft, and latest Disk without resolving."""
+        event.stop()
+        opened = self._opened
+        service = self._service
+        binding = self._session_binding
+        if (
+            opened is None
+            or service is None
+            or binding is None
+            or self._save_state != "conflict"
+        ):
+            return
+        request = _ConflictCompareRequest(
+            service=service,
+            binding=binding,
+            root_generation=self._root_generation,
+            session_key=self._session_key,
+            opened=opened,
+            draft=self.query_one("#file-notes-editor", TextArea).text,
+        )
+        disk: OpenedFileNote | None = None
+        disk_error = ""
+        try:
+            disk = await asyncio.to_thread(
+                service.open_file,
+                opened.relative_path,
+            )
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as error:
+            disk_error = str(error)
+        if not self._conflict_compare_request_is_current(request):
+            self._set_action_status(
+                "Compare stopped: the active root, file, draft, or editing "
+                "session changed. Draft preserved; open Compare again."
+            )
+            return
+        comparison = await asyncio.to_thread(
+            self._build_conflict_comparison,
+            opened,
+            request.draft,
+            disk,
+            disk_error,
+        )
+        if not self._conflict_compare_request_is_current(request):
+            self._set_action_status(
+                "Compare stopped: the active root, file, draft, or editing "
+                "session changed. Draft preserved; open Compare again."
+            )
+            return
+        opener = event.button
+
+        def restore_opener(_: None = None) -> None:
+            if opener.is_mounted and opener.display and not opener.disabled:
+                opener.focus()
+
+        await self.app.push_screen(
+            FileNotesConflictCompareDialog(
+                opened.relative_path,
+                comparison,
+            ),
+            callback=restore_opener,
+        )
 
     @on(Button.Pressed, "#file-notes-reload-cancel")
     def _cancel_reload(self, event: Button.Pressed) -> None:

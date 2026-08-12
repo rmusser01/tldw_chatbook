@@ -44,6 +44,7 @@ from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
+    FileNotesConflictCompareDialog,
     LibraryFileNotesWorkspace,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
@@ -2442,6 +2443,214 @@ async def test_conflict_reload_save_copy_and_leave_guards_preserve_draft(
         )
         assert workspace.save_state == "error"
         assert editor.text == "surviving error draft"
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+@pytest.mark.parametrize("size", [(40, 20), (120, 40)])
+async def test_conflict_compare_preserves_draft_and_returns_focus(
+    tmp_path: Path,
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compare labels all sides without resolving or mutating the conflict."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("base line\nshared\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    ui_thread = threading.get_ident()
+    comparison_threads: list[int] = []
+    original_builder = workspace_module.build_conflict_comparison
+
+    def observed_builder(*args):
+        comparison_threads.append(threading.get_ident())
+        return original_builder(*args)
+
+    monkeypatch.setattr(
+        workspace_module,
+        "build_conflict_comparison",
+        observed_builder,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        compare = workspace.query_one("#file-notes-compare", Button)
+        assert not compare.display
+
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "draft line\nshared\n")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("disk line\nshared\n", encoding="utf-8")
+        await workspace.refresh_files()
+        assert workspace.save_state == "conflict"
+        assert compare.display and not compare.disabled
+
+        compare.focus()
+        compare.press()
+        await _wait_until(
+            pilot,
+            lambda: isinstance(pilot.app.screen, FileNotesConflictCompareDialog),
+            "conflict comparison did not open",
+        )
+        dialog = pilot.app.screen
+        assert isinstance(dialog, FileNotesConflictCompareDialog)
+        assert comparison_threads
+        assert all(thread_id != ui_thread for thread_id in comparison_threads)
+        assert dialog.query_one("#file-notes-conflict-dialog").region.right <= size[0]
+        assert dialog.query_one("#file-notes-conflict-dialog").region.bottom <= size[1]
+        summary = dialog.query_one("#file-notes-conflict-summary", TextArea).text
+        diff = dialog.query_one("#file-notes-conflict-diff", TextArea).text
+        assert "Base · editor baseline" in summary
+        assert "Draft · current editor" in summary
+        assert "Disk · latest readable snapshot" in summary
+        assert "Base → Draft" in diff
+        assert "+draft line" in diff
+        assert "Base → Disk" in diff
+        assert "+disk line" in diff
+        assert workspace.save_state == "conflict"
+        assert editor.text == "draft line\nshared\n"
+        assert source.read_text(encoding="utf-8") == "disk line\nshared\n"
+
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.screen is pilot.app.screen_stack[0],
+            "conflict comparison did not close",
+        )
+        await _wait_until(
+            pilot,
+            lambda: compare.has_focus,
+            "focus did not return to Compare",
+        )
+        assert workspace.save_state == "conflict"
+        assert editor.text == "draft line\nshared\n"
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_conflict_compare_represents_deleted_disk(
+    tmp_path: Path,
+) -> None:
+    """A deleted disk side remains explicit while the editor draft stays live."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("base", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(80, 24)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.unlink()
+        await workspace.refresh_files()
+        assert workspace.save_state == "conflict"
+
+        workspace.query_one("#file-notes-compare", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: isinstance(pilot.app.screen, FileNotesConflictCompareDialog),
+            "deleted-side comparison did not open",
+        )
+        dialog = pilot.app.screen
+        assert isinstance(dialog, FileNotesConflictCompareDialog)
+        summary = dialog.query_one("#file-notes-conflict-summary", TextArea).text
+        diff = dialog.query_one("#file-notes-conflict-diff", TextArea).text
+        assert "Disk · absent" in summary
+        assert "Disk is absent; no textual diff is available." in diff
+        assert editor.text == "retained draft"
+        assert workspace.save_state == "conflict"
+
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_conflict_compare_rejects_a_late_editor_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disk read finishing for a stale editor cannot publish comparison."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("base", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(80, 24)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "retained draft")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty",
+        )
+        source.write_text("disk", encoding="utf-8")
+        await workspace.refresh_files()
+        assert workspace.save_state == "conflict"
+        service = workspace._service
+        assert service is not None
+        original_open = service.open_file
+        read_started = threading.Event()
+        release_read = threading.Event()
+
+        def delayed_open(relative_path: str):
+            read_started.set()
+            assert release_read.wait(2)
+            return original_open(relative_path)
+
+        monkeypatch.setattr(service, "open_file", delayed_open)
+        compare = workspace.query_one("#file-notes-compare", Button)
+        comparison_task = asyncio.create_task(
+            workspace._compare_conflict(Button.Pressed(compare))
+        )
+        assert await asyncio.to_thread(read_started.wait, 2)
+        workspace._session_key = "replacement-session"
+        release_read.set()
+        await comparison_task
+
+        assert not isinstance(pilot.app.screen, FileNotesConflictCompareDialog)
+        assert workspace.save_state == "conflict"
+        assert editor.text == "retained draft"
+        status = _static_text(workspace, "#file-notes-action-status")
+        assert "editing session changed" in status
+        assert "Draft preserved" in status
+
     replica.close()
 
 
