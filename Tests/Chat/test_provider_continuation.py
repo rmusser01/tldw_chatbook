@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import traceback
+import tracemalloc
 from dataclasses import FrozenInstanceError
 from typing import Any
 
@@ -668,8 +669,16 @@ def test_bounds_reject_excessive_nodes_across_the_whole_payload() -> None:
     ids=["list", "dict"],
 )
 def test_bounds_reject_normal_decoded_immediate_children(decoded: object) -> None:
-    with pytest.raises(continuation_module._InvalidContinuation):
-        continuation_module._json_shape(decoded)
+    tracemalloc.start()
+    try:
+        _, before_peak = tracemalloc.get_traced_memory()
+        with pytest.raises(continuation_module._InvalidContinuation):
+            continuation_module._json_shape(decoded)
+        _, after_peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert after_peak - before_peak < 8_192
 
 
 def test_bounds_reject_payloads_over_eight_mib_before_json_decode() -> None:
