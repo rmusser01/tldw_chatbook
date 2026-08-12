@@ -270,6 +270,11 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
         self.styles.max_width = self.WIDTH
 
     def compose(self) -> ComposeResult:
+        """Render the narrow vertical button used to expand Library navigation.
+
+        Returns:
+            ComposeResult yielding the configured navigation button.
+        """
         for child in super().compose():
             if isinstance(child, Button):
                 child.add_class("console-rail-handle-button-vertical")

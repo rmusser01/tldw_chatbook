@@ -4237,7 +4237,12 @@ async def test_file_notes_delete_is_last_and_spatially_separated_from_new(
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
-    """Delete stays last in keyboard order and away from routine actions."""
+    """Verify Delete stays last in keyboard order and away from routine actions.
+
+    Args:
+        tmp_path: Temporary directory used as the File Notes root.
+        size: Terminal width and height used to exercise the responsive layout.
+    """
     root = tmp_path / "notes"
     root.mkdir()
     (root / "safety.md").write_text("keep me\n", encoding="utf-8")
