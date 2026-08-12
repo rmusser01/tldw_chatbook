@@ -185,6 +185,36 @@ def test_chat_message_omits_empty_continuation_for_legacy_compatibility(
     }
 
 
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        pytest.param(False, id="bool-false"),
+        pytest.param(0, id="integer-zero"),
+        pytest.param({}, id="empty-object"),
+        pytest.param([], id="empty-list"),
+    ],
+)
+def test_chat_message_rejects_present_falsey_invalid_continuation(
+    private_value: object,
+) -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    with pytest.raises(ContinuationValidationError) as caught:
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="visible answer",
+            provider_continuation_json=private_value,  # type: ignore[arg-type]
+        )
+
+    assert str(caught.value) == "Invalid continuation data."
+
+
 def test_chat_message_rejects_invalid_continuation_without_private_error_text() -> None:
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",

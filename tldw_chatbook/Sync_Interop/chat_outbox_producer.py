@@ -97,6 +97,14 @@ class ChatSyncV2OutboxProducer:
         )
         if envelope.payload_hash != source_record.payload_hash:
             return {"status": "skipped", "reason": "source_intent_unavailable"}
+        envelope = envelope.model_copy(
+            update={
+                "client_envelope_id": (
+                    f"{envelope.client_envelope_id}:source-version:"
+                    f"{source_record.message_version}"
+                )
+            }
+        )
         projected = (
             self.state_repository.enqueue_sync_v2_outbox_envelope_with_source_receipt(
                 server_profile_id=server_profile_id,

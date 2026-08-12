@@ -219,7 +219,7 @@ class SyncEnvelopeBuilder:
         if selected_variant_id is not None:
             routing_metadata["selected_variant_id"] = selected_variant_id
         payload = {"content": content, "role": role}
-        if provider_continuation_json:
+        if provider_continuation_json is not None and provider_continuation_json != "":
             if role != "assistant":
                 raise ContinuationValidationError(
                     "Invalid provider continuation data."

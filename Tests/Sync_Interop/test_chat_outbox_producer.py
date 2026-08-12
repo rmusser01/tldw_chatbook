@@ -400,6 +400,97 @@ def test_chat_producer_reconciles_only_from_exact_source_proof(tmp_path) -> None
         db.close_connection()
 
 
+def test_reconcile_same_payload_later_version_gets_distinct_outbox_entry(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "source-version.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Version projection"})
+        message_id = "assistant-version-1"
+        db.create_assistant_with_continuation(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="unchanged visible answer",
+            provider_continuation_json=_provider_continuation_json(),
+        )
+        source_row = db.get_message_by_id(message_id)
+        payload_hash = canonical_payload_hash(
+            {
+                "content": source_row["content"],
+                "provider_continuation_json": source_row["provider_continuation_json"],
+                "role": "assistant",
+            }
+        )
+        dataset_key = generate_dataset_key()
+        repo = _local_first_repo(tmp_path)
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        )
+        scope = {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        }
+
+        first = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=1,
+            payload_hash=payload_hash,
+        )
+        first_id = first["outbox_entry"]["client_envelope_id"]
+        assert repo.mark_sync_v2_outbox_push_results(
+            **scope,
+            dataset_id="dataset-1",
+            accepted=[{"client_envelope_id": first_id}],
+            rejected=[],
+            conflicts=[],
+        ) == {"dispatched": 1, "retained": 0}
+        first_dispatched = repo.list_sync_v2_outbox_entries(
+            **scope, dataset_id="dataset-1"
+        )[0]
+
+        assert db.update_message(message_id, {"ranking": 1}, expected_version=1)
+        second = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=message_id,
+            message_version=2,
+            payload_hash=payload_hash,
+        )
+        entries = repo.list_sync_v2_outbox_entries(**scope, dataset_id="dataset-1")
+
+        assert len(entries) == 2
+        assert second["outbox_entry"]["client_envelope_id"] != first_id
+        assert entries[0] == first_dispatched
+        assert entries[0]["status"] == "dispatched"
+        assert entries[0]["envelope"]["entity_version"] == 1
+        assert entries[1]["status"] == "pending"
+        assert entries[1]["attempt_count"] == 0
+        assert entries[1]["envelope"]["entity_version"] == 2
+        assert _decrypt_payload(
+            entries[0]["envelope"]["payload_ciphertext"], dataset_key
+        ) == _decrypt_payload(entries[1]["envelope"]["payload_ciphertext"], dataset_key)
+        with repo._get_connection() as conn:
+            receipts = conn.execute(
+                """
+                SELECT source_version, client_envelope_id
+                  FROM sync_v2_source_projection_receipts
+                 ORDER BY source_version
+                """
+            ).fetchall()
+        assert [
+            (row["source_version"], row["client_envelope_id"]) for row in receipts
+        ] == [
+            (1, first_id),
+            (2, second["outbox_entry"]["client_envelope_id"]),
+        ]
+    finally:
+        db.close_connection()
+
+
 def test_reconcile_resumes_after_commit_before_producer_return(
     tmp_path, monkeypatch
 ) -> None:

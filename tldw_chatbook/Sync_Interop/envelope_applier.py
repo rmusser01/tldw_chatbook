@@ -124,7 +124,7 @@ class _ContinuationValidatingChatStore:
         payload_hash: str,
     ) -> None:
         private_value = payload.get("provider_continuation_json")
-        if private_value:
+        if "provider_continuation_json" in payload and private_value is not None:
             safe_read = read_provider_continuation_json(private_value)
             if payload.get("role") == "assistant" and safe_read.checkpoint is not None:
                 payload = {

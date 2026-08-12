@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tldw_chatbook.Sync_Interop.crypto import (
     encrypt_sync_payload,
     generate_dataset_key,
@@ -280,6 +282,92 @@ def test_chat_applier_drops_invalid_private_data_but_applies_visible_message() -
         "role": "assistant",
     }
     assert canary not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        pytest.param("", id="empty-string"),
+        pytest.param(False, id="bool-false"),
+        pytest.param(0, id="integer-zero"),
+        pytest.param({}, id="empty-object"),
+        pytest.param([], id="empty-list"),
+    ],
+)
+def test_chat_applier_warns_for_present_falsey_invalid_private_data(
+    private_value: object,
+) -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="visible survives",
+    )
+    invalid_payload = {
+        "content": "visible survives",
+        "role": "assistant",
+        "provider_continuation_json": private_value,
+    }
+    envelope = envelope.model_copy(
+        update={
+            "payload_ciphertext": encrypt_sync_payload(
+                invalid_payload, key=dataset_key
+            ).model_dump_json(),
+            "payload_hash": builder._payload_hash(invalid_payload),
+        }
+    )
+
+    result = applier.apply(envelope)
+
+    assert result == {
+        "status": "applied",
+        "warning": "Exact tool continuation was discarded.",
+    }
+    assert store.chat_messages["conversation-1:message-1"] == {
+        "content": "visible survives",
+        "role": "assistant",
+    }
+
+
+@pytest.mark.parametrize("include_private_key", [False, True], ids=["absent", "none"])
+def test_chat_applier_accepts_legacy_missing_private_data_without_warning(
+    include_private_key: bool,
+) -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="legacy visible",
+    )
+    payload = {"content": "legacy visible", "role": "assistant"}
+    if include_private_key:
+        payload["provider_continuation_json"] = None
+        envelope = envelope.model_copy(
+            update={
+                "payload_ciphertext": encrypt_sync_payload(
+                    payload, key=dataset_key
+                ).model_dump_json(),
+                "payload_hash": builder._payload_hash(payload),
+            }
+        )
+
+    assert applier.apply(envelope) == {"status": "applied"}
+    assert store.chat_messages["conversation-1:message-1"] == {
+        "content": "legacy visible",
+        "role": "assistant",
+    }
 
 
 def test_chat_conflict_never_field_merges_content_and_continuation() -> None:
