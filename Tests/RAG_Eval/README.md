@@ -14,8 +14,9 @@ every golden query through the real seam across all three profile modes.
 > documents, 60 queries, with three fail-first classes — `scoped`,
 > `negation`, `prompt` — admitted only where today's pipeline was *measured*
 > to fail them. Hybrid overall recall came off the 1.000 ceiling it had sat
-> at since the weighting arc and now reads **0.826**, and the baselines were
-> re-stamped once, deliberately, at the end of that arc. Two candidate
+> at since the weighting arc and now reads **0.848** (0.826 at the end of
+> P2ab; TASK-15400's construction flip took it the rest of the way), and the
+> baselines were re-stamped once, deliberately, at the end of each arc. Two candidate
 > classes (`compositional`, `acronym`) proved **unfailable** on this corpus
 > and model and were not authored — that is recorded evidence against two
 > P2c feature premises, not an omission. Start at the **headroom table**
@@ -114,7 +115,7 @@ RAG_EVAL=1 RAG_EVAL_UPDATE_BASELINES=1 \
 ```
 
 Writes `Tests/RAG_Eval/baselines/{semantic,plain,hybrid}.json` and prints
-every one of the 60 gated metrics old -> new (or `absent -> value` on first
+every one of the 105 gated metrics old -> new (or `absent -> value` on first
 stamp) before you commit — the point is a reviewable diff, never a silent
 overwrite. Read the printed deltas before committing; a re-stamp that moves
 every hybrid number by the same amount is a defect fix or a config change,
@@ -185,13 +186,13 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | 0.000 | **0.000** | **bounded by TASK-15400**, not by prompts retrieval — see below |
+| `prompt` | 5 | 0.000 | 0.000 | **0.200** | 1 of 5, taken by TASK-15400's construction flip; the residual 4 are bounded by absent CONTENT words and by the MERGE — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
-| **overall** | **46** | **0.804** | **0.293** | **0.826** | hybrid is **0.174** off the ceiling |
+| **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
 
-**The two 0.000 rows are P2c's admission targets.** `negation` and `prompt`
-are the only cells with room to rise, and they are not the same kind of
-problem:
+**The remaining 0.000 rows are P2c's admission targets.** `negation` (all
+three modes) and `prompt` (still 0.000 in `semantic` and `plain`) are the
+cells with room to rise, and they are not the same kind of problem:
 
 - **`negation` 0.000 in all three modes is a genuine open capability gap.**
   Three fixtures, each describing the exception *without ever naming the
@@ -199,20 +200,30 @@ problem:
   norm-asserting documents: the keyword paths cannot reach the target and
   the vector leg is pulled onto the norm. Nothing in the pipeline addresses
   this today. This is the cell to move.
-- **`prompt` 0.000 is an HONEST BOUND, not a B2 failure.** B2 shipped the
-  prompts keyword sub-leg and it is **proven reachable end-to-end** — the
-  same runtime answers "shift log summary supervisor" with the right prompt
-  at hybrid rank 9, FTS-only, provenance read off `metadata`. The category
-  still reads 0.000 because the engine's MATCH construction ANDs every
-  query token (TASK-15400 owns that, and the measurement is under "Reading
-  the summary table": the keyword leg returns zero rows for 40 of the 60
-  queries). Prompts have no vector leg to hide it, so prompts are where it
-  shows. **Do not read this cell as evidence that B2 did not land** — B2's
-  reachability is pinned separately, and fixing 15400 is what will move it.
+- **`prompt` hybrid 0.200 is one query, and the other four are an HONEST
+  BOUND rather than a B2 failure.** B2 shipped the prompts keyword sub-leg
+  and it is **proven reachable end-to-end** — the same runtime answers
+  "shift log summary supervisor" with the right prompt at hybrid rank 9,
+  FTS-only, provenance read off `metadata`. The category read 0.000 in all
+  three modes until TASK-15400 measured four MATCH constructions and shipped
+  `and_stopword_trim`, which drops function words from the AND: that rescued
+  exactly one golden query (`pm-vendor-chaser`, blocked solely by "about")
+  and moved the hybrid cell to 0.200. **The other four still miss in every
+  mode, and not for a reason a stopword list can fix** — they miss on absent
+  CONTENT words (`template`, `building`, `rough`, `turns`, `pulls`,
+  `builds`) and on the absence of plural/singular widening. The
+  constructions that DO answer all five (`or`, `and_then_or`: prompt census
+  5/5) were measured and DISQUALIFIED, on the MERGE rather than on the match
+  form — see the TASK-15400 re-stamp section below. Prompts have no vector
+  leg to hide any of this, so prompts are where it shows. **Do not read this
+  cell as evidence that B2 did not land** — B2's reachability is pinned
+  separately.
 
-**Hybrid's 0.174 of overall headroom is real but is mostly those two
+**Hybrid's 0.152 of overall headroom is real but is mostly those two
 classes.** Do not expect a fusion knob to reach it: `negation` needs a
-capability the pipeline does not have, and `prompt` needs 15400. If a
+capability the pipeline does not have, and the residual `prompt` misses need
+the keyword leg's cross-sub-leg merge fixed (TASK-15700) *plus* a widening
+the merge can then survive. If a
 future weighting change needs evidence that it *adds* something to the
 classes already covered, it still needs a **new** vector-blind fixture
 authored the way the existing one was (see the "VECTOR-BLIND KEYWORD
@@ -222,7 +233,8 @@ TARGET" sections in both fixture files).
 arc.** It was a 49-document corpus in which every scored query except one
 was already answered at rank 1, so there was very little left to damage —
 **that half is what P2ab's fail-first authoring retired**: the corpus is now
-172 documents and hybrid recall is 0.826, so there is something left to
+172 documents and hybrid recall is 0.848 (0.826 as P2ab left it, before
+TASK-15400's construction flip), so there is something left to
 damage and something left to gain (see the headroom table above). The other
 half stood on `k`: this harness measures at `k = 10`, while
 the Library Search/RAG surface, at the time this was written, defaulted to a
@@ -289,6 +301,122 @@ Nothing was reworded because nothing needed it."* Concretely: 45 of 135
 before/after cells had identical top-10 lists and they are exactly the 45
 `plain` cells; relevant-document ranks were unchanged on 44 of 45 queries in
 every mode; `plain` still returns nothing for all 7 negatives.
+
+### The fourth real re-stamp: TASK-15400 (2026-08-12)
+
+The engine keyword leg's MATCH construction became configurable
+(`SearchConfig.fts_match_construction`) and four candidates were swept
+against this corpus at the shipped fusion parameters, under a decision rule
+registered **before** the run: maximum leg-level census subject to three
+hard constraints — (a) the vector-blind fixture keeps its hybrid rescue,
+(b) no gated cell regresses more than 0.020 in any mode, (c)
+`test_fts5_query_escaping.py` stays green with per-token quoting intact.
+
+```
+row              construction  census  resc  zero     P@k     R@k     MRR    NDCG  rescue  rank
+and                       and      20     0    40   0.087   0.826   0.807   0.811     yes     9
+and_trim    and_stopword_trim      21     1    39   0.089   0.848   0.809   0.817     yes     9
+or                         or      28     9    11   0.089   0.848   0.751   0.774      NO     -
+and_or            and_then_or      29     9    11   0.089   0.848   0.751   0.774      NO     -
+```
+
+**The winner was computed, not chosen: `and_stopword_trim`, census 21.**
+The two high-census rows are disqualified, and — this is the arc's finding —
+**for two different reasons, only one of which is about the match form**:
+
+- under **`or`** the JOIN itself loses the vector-blind fixture: ten OR rows,
+  target absent from the leg's top-10 and at leg rank 11 in the k=20 fusion
+  window. No merge behaviour is implicated.
+- under **`and_then_or`** the fixture's own sub-leg is *untouched* — its row
+  is still an AND row, exactly as the design argued "by construction" — and
+  the **MERGE** loses it anyway. `_keyword_search` merges its four sub-legs
+  with `interleave_rankings`, a **round-robin**, so the media and
+  conversations sub-legs falling back to OR injects rows that demote the
+  untouched notes row from leg rank 1 to 2. Fusion consumes *leg* rank:
+  `0.3/6 = 0.0500` (which strictly beats the vector rank-9 row's
+  `0.049999999999999996`, by 6.94e-18) becomes `0.3/7 = 0.0429`, below the
+  vector rank-11 row's `0.04375`, and the rescue is gone. The same
+  displacement decomposes the scoped collapse **exactly**: the 4
+  note-targeted scoped queries fall behind a media fallback row while the 3
+  media-targeted ones keep rank 1 — 3/7 = 0.429, the measured cell to the
+  digit.
+
+So constraint (a) is a property of the **merge**, not of the construction.
+That is now **TASK-15700**, and its counterfactual margin is recorded there:
+re-fusing the `and_then_or` pass with the fixture restored to leg rank 1 and
+nothing else changed puts it back at **slot 10 of 10** — a merge fix rescues
+it with zero headroom, so fixing the interleave is necessary and *not
+sufficient* for a widening construction to ship.
+
+**What the re-stamp absorbed: exactly ten of the 105 gated metrics, all up,
+all hybrid.**
+
+```
+hybrid   category.prompt.f1          0.000 ->   0.036  (+0.036)
+hybrid   category.prompt.mrr         0.000 ->   0.022  (+0.022)
+hybrid   category.prompt.ndcg        0.000 ->   0.060  (+0.060)
+hybrid   category.prompt.precision   0.000 ->   0.020  (+0.020)
+hybrid   category.prompt.recall      0.000 ->   0.200  (+0.200)
+hybrid   overall.f1                  0.157 ->   0.161  (+0.004)
+hybrid   overall.mrr                 0.807 ->   0.809  (+0.002)
+hybrid   overall.ndcg                0.811 ->   0.817  (+0.007)
+hybrid   overall.precision           0.087 ->   0.089  (+0.002)
+hybrid   overall.recall              0.826 ->   0.848  (+0.022)
+```
+
+The other 95 are `(+0.000)` — every `plain` and `semantic` cell, and every
+hybrid category except `prompt`. Nothing regressed anywhere, and the
+zero-movement of the two non-hybrid modes was **measured, not argued**: a
+full three-mode run per construction produced byte-identical `plain` and
+`semantic` cell dicts across all four rows.
+
+**Which environment stamped this, and why it matters.** A baseline stamp
+bakes the fingerprint, so the choice was made explicitly rather than by
+running whatever was to hand. Two interpreters on the verification machine
+disagree: the branch's own worktree venv carries `transformers 5.15.0 /
+torch 2.13.0 / chromadb 1.5.9`, while the committed baselines were stamped
+under `5.6.2 / 2.11.0 / 1.5.8`. **The stamp was run in the interpreter whose
+fingerprint MATCHES the committed one**, with `PYTHONPATH` forced to this
+worktree and the import provenance asserted inside the run, so the *code*
+measured was the branch's and the *environment* recorded did not move. The
+consequence is deliberate: this re-stamp changes metric values only — the
+`environment` block is untouched, and the gate stays live for everyone on
+the stack the baselines have always described. The newer stack is not
+hidden: a gated run there still prints `ENVIRONMENT_CHANGED` (chromadb,
+torch, transformers) and gates nothing. It also reproduced **all 105 cells
+at (+0.000)** against these baselines, in both directions across the version
+gap, which is the evidence that the gap is numerically inert here and that
+the stamp is not concealing an environment shift inside a code change. If
+you build a fresh worktree venv today (`uv pip install`) you will get the
+newer stack and an informational gate; to get a *real* gate, use an
+interpreter matching the fingerprint above — and assert
+`tldw_chatbook.__file__` inside the run, because an editable install can
+resolve to a different checkout entirely.
+
+**The negative-composition trade-off was NOT observed, and it could not have
+been.** The sweep counted OR-form rows arriving on the 7 negative queries,
+expecting widening to buy recall by admitting junk. Every row of the matrix
+reports zero — but a direct probe of the denominator shows all seven
+negatives return **zero keyword-leg rows under every construction, OR forms
+included**: their vocabulary is absent from the corpus outright. The zero is
+a property of this golden set's negatives, not evidence that OR widening is
+quiet. **Never quote it as a clean bill of health for widening**; the
+instrument is not vacuous in general (the same counter found an OR-form row
+at hybrid slot 10 for a non-negative query), it is vacuous *here*.
+
+**One fixture changed role rather than content.** `pm-vendor-chaser` was
+admitted 2026-08-10 as a fail-first prompt query and is now answered at
+hybrid rank 9 — so the admission protocol below would **reject it as a new
+candidate today**. It is deliberately kept as a *retained positive*: it is
+the only golden query whose cell measures the shipped construction, and
+re-authoring it fail-first would delete the arc's own evidence while
+returning the cell to 0.000. Its dated `# admitted:` receipt is left intact
+(it is true of the day it was written) and a `# retained:` line beside it
+records the conversion. That comment is the only fixture edit in this arc —
+and because `corpus_sha256` hashes the fixture files' **bytes**, a comment
+is a fingerprint change: the digest moved, the 105 metrics did not (verified
+by diffing the two stamps), and the committed baselines match the committed
+fixtures.
 
 ## Fail-first authoring: the admission protocol
 
@@ -452,11 +580,14 @@ absent from the tuple entirely rather than sitting in it empty:
 - **`prompt`** — the target is a saved prompt (`source_type = "prompt"`).
   Prompts are **keyword-only by construction**: B2 (TASK-15020) gave them a
   read-only FTS sub-leg and deliberately no vector index, so `semantic`
-  reads 0.000 structurally. The category reads **0.000 in all three modes**,
-  which is a bound on the engine's MATCH construction (TASK-15400), not on
-  prompts retrieval — the sub-leg is proven reachable on the same runtime.
-  See the headroom table and the `docs`/FTS bullet under "Reading the
-  summary table" for the measurement and the caution.
+  reads 0.000 structurally. The category read **0.000 in all three modes**
+  until TASK-15400 (2026-08-12); it now reads **0.200 in `hybrid`** — one of
+  the five queries, rescued by shipping `and_stopword_trim` — and 0.000 in
+  the other two modes. The residual is still a bound on the engine's MATCH
+  construction and on its cross-sub-leg merge (TASK-15700), not on prompts
+  retrieval: the sub-leg is proven reachable on the same runtime. See the
+  headroom table and the `docs`/FTS bullet under "Reading the summary table"
+  for the measurement and the caution.
 - **`negative`** — no relevant document exists for the query. Excluded from
   every averaged precision/recall/MRR/NDCG/F1 (recall over an empty
   relevant set is 0.0 by convention and would drag every average toward
@@ -541,7 +672,7 @@ absent from the tuple entirely rather than sitting in it empty:
 mode           P@k     R@k     MRR    NDCG      F1   docs    n   mean ms   p95 ms  errors  backend
 semantic     0.089   0.804   0.804   0.804   0.160    9.7   46      ...
 plain        0.304   0.293   0.304   0.296   0.297    0.3   46      ...
-hybrid       0.087   0.826   0.807   0.811   0.157   10.0   46      ...
+hybrid       0.089   0.848   0.809   0.817   0.161   10.0   46      ...
 ```
 
 Two columns need context before you read the P/R/MRR/NDCG numbers as
@@ -553,26 +684,37 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   anything it was almost always right," not "it ranked ten results well."
   Compare `docs` before comparing precision across modes.
 - **The keyword (FTS) leg is silent for most of this golden set, and the
-  `prompt` category is where that shows — TASK-15400.**
-  `_escape_fts5_query` builds the engine leg's MATCH as an implicit AND
-  over EVERY query token (TASK-3995 chose that over phrase-quoting), with
-  no plural/singular widening — so a natural-language query almost never
-  matches. Measured over this golden set at TASK-15020/B2 (2026-08-11): the
-  keyword leg returns **zero rows for 40 of the 60 queries**, firing only
-  where the queries are keyword-shaped (`keyword` 13/16 targets found by
-  the FTS leg alone, `scoped` 7/7; `paraphrase` 0/13,
-  `vocabulary_mismatch` 0/9, `negation` 0/3, `prompt` 0/5). The dominant
-  cause is AND-strictness over **content** words, which is what TASK-15400
-  has to fix: a stopword-trimmed AND rescues 1 of those 40, reusing the
-  four-seam path's `build_fts_match_query` also rescues 1, and OR-of-tokens
-  rescues 34 — at the cost of `kw-plant-maintenance-record`, the one
-  fixture whose design rests on AND-of-terms uniqueness. For media, notes
-  and conversations the semantic leg covers all of this completely. Prompts
-  have no semantic leg — B2 gave them an FTS sub-leg and deliberately no
-  vector index — so the `prompt` category reads 0.000 in all three modes
-  even though the sub-leg works: the same runtime answers the
-  keyword-shaped "shift log summary supervisor" with the right prompt at
-  hybrid rank 9, as an FTS-only row. Do not read a `prompt` 0.000 as a
+  `prompt` category is where that shows — TASK-15400, now measured and
+  shipped.** `_escape_fts5_query` built the engine leg's MATCH as an
+  implicit AND over EVERY query token (TASK-3995 chose that over
+  phrase-quoting), with no plural/singular widening — so a natural-language
+  query almost never matched. Measured over this golden set at
+  TASK-15020/B2 (2026-08-11): the keyword leg returned **zero rows for 40 of
+  the 60 queries**, and its **census was 20 of the 53 non-negative queries**
+  — "census" being the queries whose TARGET enters the leg's own top-10,
+  which is the number that can turn into a hybrid rescue. It fired only
+  where the queries are keyword-shaped (`keyword` 13/16, `scoped` 7/7;
+  `paraphrase` 0/13, `vocabulary_mismatch` 0/9, `negation` 0/3,
+  `prompt` 0/5).
+
+  **TASK-15400 swept four constructions against that number and shipped the
+  winner (2026-08-12): `and_stopword_trim`. Census 20 → 21 of 53, zero-row
+  40 → 39 of 60, `prompt` census 0/5 → 1/5.** The whole movement is one
+  query (`pm-vendor-chaser`, blocked solely by the function word "about"),
+  and it is deliberately a small number: the dominant cause is
+  AND-strictness over **content** words, which no stopword list touches. The
+  full four-row table, the disqualifications and the mechanism are in the
+  re-stamp section below; the alternatives measured beside it were
+  `build_fts_match_query` (the Library four-seam path's construction —
+  rescues 1), `NEAR` proximity (rescues 0, and can only ever narrow), and
+  prefix matching (rescues 3, held back by the pre-registered promotion bar
+  and carrying the same displacement risk, unmeasured at leg level).
+
+  For media, notes and conversations the semantic leg covers all of this
+  completely. Prompts have no semantic leg — B2 gave them an FTS sub-leg and
+  deliberately no vector index — so the `prompt` category still reads 0.000
+  in `semantic` and `plain`, and reads 0.200 in `hybrid` on the strength of
+  that single rescued query. Do not read a `prompt` 0.000 as a
   prompts-retrieval defect, and do not read the other categories' hybrid
   numbers as evidence that the keyword leg is contributing to them.
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
@@ -592,18 +734,20 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   part of the fingerprint or the gate. Do not add a latency threshold to
   this harness without first re-measuring that variance — it will fail on
   noise, not on a real slowdown.
-- **45 of the 105 gated cells sit at exactly 0.000**, and you should know
+- **40 of the 105 gated cells sit at exactly 0.000**, and you should know
   which before quoting the gate's coverage. A metric already at its floor
   cannot register a regression — there is nowhere lower for it to go — so
   those cells are structurally inert to the gate today. They are: `plain`
   20 (paraphrase, vocabulary_mismatch, negation, prompt), `semantic` 15
-  (negation, prompt, scoped), `hybrid` 10 (negation, prompt) — all five
-  gated metrics each. **This is up from 10 of 60 before P2ab, and the
-  increase is the deliberate cost of fail-first authoring**: a cell at
-  0.000 is exactly what a category with headroom looks like before the
-  headroom is taken. The live (non-floor) count still rose, 50 → 60, so the
-  gate watches more than it did; it just also carries more declared-empty
-  cells that P2c is meant to fill.
+  (negation, prompt, scoped), `hybrid` **5** (negation) — all five gated
+  metrics each. **This was 45 after P2ab and is 40 after TASK-15400**: the
+  construction flip took hybrid's five `prompt` cells off the floor, which
+  is what taking headroom looks like in this table. It is still up from 10
+  of 60 before P2ab, and that increase is the deliberate cost of fail-first
+  authoring: a cell at 0.000 is exactly what a category with headroom looks
+  like before the headroom is taken. The live (non-floor) count has risen
+  50 → 60 → **65**, so the gate watches more than it did; it just also
+  carries more declared-empty cells that P2c is meant to fill.
   If plain-mode keyword expansion (P2) ever gives those cells a nonzero
   value, the baseline must be re-stamped before the *next* change can be
   gated against them; until then, treat "plain paraphrase precision is
@@ -684,6 +828,20 @@ attempting anything here:
   AND-joins every query term group, so one term with no match anywhere in
   the corpus zeroes the whole query's result set. An
   investigation/product-judgment task, not a defect with an obvious fix.
+  **The two keyword paths now diverge deliberately, and this is the record
+  of it (TASK-15400 AC#8).** The ENGINE leg builds its MATCH through
+  `RAGService._fts5_match_expressions` and ships `and_stopword_trim`; the
+  Library FOUR-SEAM path still builds its own through
+  `build_fts_match_query` and still AND-joins every group. They were not
+  unified, for a measured reason rather than a scheduling one: the sweep
+  that chose the engine's construction is a *hybrid-fusion* measurement —
+  every constraint that decided it (the vector-blind rescue, the scoped
+  collapse) is about rows competing inside a fused top-k, and the four-seam
+  path has no fusion, no ranking and no leg to be displaced in. Its
+  construction therefore has to be decided on its own evidence, which is
+  what TASK-3997 is for; `build_fts_match_query` was measured alongside the
+  four swept rows (it rescues 1 of the 40 zero-row queries, the same order
+  as the winner) so that decision starts from a number.
 - **TASK-4110 — FIXED, found by this harness closing the cluster.** An
   FTS-only row could not enter hybrid's fused top-k. The fused score is
   `(1-alpha)/(rrf_k+fts_rank) + alpha/(rrf_k+vector_rank)`; at the old
@@ -706,6 +864,17 @@ attempting anything here:
   semantic absent, engine FTS leg rank 1, hybrid **absent → rank 8**.
   Alpha (0.7) and the pool multiplier (2) were measured alongside and
   deliberately left alone.
+- **TASK-15400 — FIXED, and the fix is smaller than the defect.** The engine
+  keyword leg AND-ed every query token, so it returned nothing for 40 of the
+  60 golden queries. Four constructions were swept under a pre-registered
+  rule and `and_stopword_trim` shipped: census 20 → 21 of 53, zero-row
+  40 → **39** of 60, hybrid `prompt` recall 0.000 → 0.200, no cell down in
+  any mode, zero extra FTS queries. Read that as what it is — the arc moved
+  one query. **The candidates that move the census properly (28-29, prompt
+  5/5) are exactly the ones the constraints reject, and they are rejected by
+  the MERGE rather than by the match form** — see the re-stamp section
+  above, and TASK-15700, which owns the round-robin `interleave_rankings`
+  displacement that disqualified them.
 
 Do not "fix" any of these by editing the harness or the fixtures — the
 harness's job is to keep measuring the real seam accurately; the numbers it

@@ -1,6 +1,6 @@
 {
   "baseline_id": "hybrid",
-  "created_at": "2026-08-11T19:39:50.868115+00:00",
+  "created_at": "2026-08-12T23:01:15.693189+00:00",
   "pipeline_config": {
     "mode": "hybrid",
     "k": 10,
@@ -13,11 +13,11 @@
     ]
   },
   "metrics": {
-    "overall.precision": 0.08695652173913043,
-    "overall.recall": 0.8260869565217391,
-    "overall.mrr": 0.8067632850241546,
-    "overall.ndcg": 0.8108919564274778,
-    "overall.f1": 0.1567852437417655,
+    "overall.precision": 0.08913043478260871,
+    "overall.recall": 0.8478260869565217,
+    "overall.mrr": 0.8091787439613526,
+    "overall.ndcg": 0.8174360867679992,
+    "overall.f1": 0.16073781291172598,
     "category.keyword.precision": 0.1125,
     "category.keyword.recall": 1.0,
     "category.keyword.mrr": 0.9444444444444444,
@@ -33,11 +33,11 @@
     "category.paraphrase.mrr": 1.0,
     "category.paraphrase.ndcg": 1.0,
     "category.paraphrase.f1": 0.18181818181818182,
-    "category.prompt.precision": 0.0,
-    "category.prompt.recall": 0.0,
-    "category.prompt.mrr": 0.0,
-    "category.prompt.ndcg": 0.0,
-    "category.prompt.f1": 0.0,
+    "category.prompt.precision": 0.02,
+    "category.prompt.recall": 0.2,
+    "category.prompt.mrr": 0.02222222222222222,
+    "category.prompt.ndcg": 0.06020599913279624,
+    "category.prompt.f1": 0.03636363636363636,
     "category.scoped.precision": 0.1,
     "category.scoped.recall": 1.0,
     "category.scoped.mrr": 0.1626984126984127,
@@ -55,7 +55,7 @@
       "transformers": "5.6.2",
       "torch": "2.11.0",
       "chromadb": "1.5.8",
-      "corpus_sha256": "7234f5823be703dd3de2e2b70ee78da1fbec76fc3d967520932a849830edca04",
+      "corpus_sha256": "6346786bcc45ffd96903147b2e178dbfe4d084e5519abb9601b2e3e09d24730e",
       "platform": "darwin"
     },
     "environment_info": {
@@ -64,9 +64,9 @@
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 9.8,
-        "p95_ms": 15.5,
-        "max_ms": 16.1,
+        "mean_ms": 9.9,
+        "p95_ms": 16.0,
+        "max_ms": 17.1,
         "total_s": 0.6
       },
       "mean_docs_at_k": 10.0,

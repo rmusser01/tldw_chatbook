@@ -343,17 +343,26 @@ ALPHA_COMBO_STRATEGIES: tuple[Strategy, ...] = (
 # TASK-15400: the MATCH-construction axis
 # ---------------------------------------------------------------------------
 
-#: The construction sweep's control row — the SHIPPED construction, named
-#: after it rather than "control" so the table reads as what it is.
+#: The construction sweep's control row — the arc's BEFORE state, named
+#: after the construction rather than "control" so the table reads as what
+#: it is. This was the SHIPPED construction when the sweep ran; since
+#: TASK-15400 landed (2026-08-12) the shipped default is
+#: `and_stopword_trim` and this row is the pre-arc baseline every other row
+#: is read against. It must NOT be re-pointed at the new default: doing so
+#: would delete the baseline the matrix is compared to and silently collapse
+#: rows 1 and 2 into one measurement.
 CONSTRUCTION_CONTROL_NAME = "and"
 
-#: What the shipped construction scores on the leg-level census: the golden
-#: queries whose target enters the KEYWORD LEG's own top-10. Measured in
-#: TASK-15020/B2's authoring pass and recorded in the spec (`keyword` 13/16
-#: + `scoped` 7/7 = 20; every other category 0, and the 7 negatives have no
-#: target to find). The control row must reproduce it or the sweep is
-#: measuring something other than the construction — see
-#: `_check_control_census`.
+#: What the CONTROL construction (`and`, the pre-arc default) scores on the
+#: leg-level census: the golden queries whose target enters the KEYWORD
+#: LEG's own top-10. Measured in TASK-15020/B2's authoring pass and recorded
+#: in the spec (`keyword` 13/16 + `scoped` 7/7 = 20; every other category 0,
+#: and the 7 negatives have no target to find), then reproduced exactly by
+#: the control row when the sweep ran. **The value stays 20 even though the
+#: shipped default moved** — it describes the control row, not the shipped
+#: construction (which measures 21: the same 20 plus `pm-vendor-chaser`).
+#: The control row must reproduce it or the sweep is measuring something
+#: other than the construction — see `_check_control_census`.
 SHIPPED_CONTROL_CENSUS = 20
 
 #: `metadata["fts_match"]`'s OR-form value, mirrored from the engine's

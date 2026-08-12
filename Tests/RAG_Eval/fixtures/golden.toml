@@ -834,16 +834,29 @@ relevant_slugs = ["note-tarn-foot-mast"]
 #     ANDs every token of the query (`_escape_fts5_query`, TASK-3995), with
 #     no plural/singular widening. These five are natural-language sentences,
 #     so each misses by one to five absent tokens and the leg returns
-#     NOTHING. Measured over this whole golden set: the keyword leg returns
-#     zero rows for 40 of 60 queries, firing only where the queries are
-#     keyword-shaped (keyword 13/16, scoped 7/7). The dominant cause is
-#     AND-strictness over CONTENT words ("template", "building", "rough",
-#     "turns", "pulls", "builds"), not function words: a stopword-trimmed
-#     AND rescues 1 of the 40, and so does the Library four-seam path's
-#     `build_fts_match_query`; OR-of-tokens rescues 34 but loses
-#     kw-plant-maintenance-record below. The semantic leg hides all of this
-#     for every other source type. Prompts have no semantic leg, so this is
+#     NOTHING. Measured over this whole golden set at authoring time
+#     (2026-08-11): the keyword leg returned zero rows for 40 of 60
+#     queries, firing only where the queries are keyword-shaped
+#     (keyword 13/16, scoped 7/7). The dominant cause is AND-strictness
+#     over CONTENT words ("template", "building", "rough", "turns",
+#     "pulls", "builds"), not function words: a stopword-trimmed AND
+#     rescues 1 of the 40, and so does the Library four-seam path's
+#     `build_fts_match_query`. The semantic leg hides all of this for
+#     every other source type. Prompts have no semantic leg, so this is
 #     where it shows.
+#
+#     RESOLVED 2026-08-12 (TASK-15400 — these numbers are the sweep's own,
+#     not this note's): `and_stopword_trim` shipped. Zero-row 40 -> 39 of
+#     60, leg census 20 -> 21 of 53, and THIS category's hybrid cell
+#     0.000 -> 0.200, on pm-vendor-chaser alone. The two constructions that
+#     answer all five prompt queries (leg census 28 and 29, prompt 5/5)
+#     were measured and DISQUALIFIED, each for its own reason: `or` loses
+#     kw-plant-maintenance-record below in the JOIN, while `and_then_or`
+#     keeps that fixture's AND row and loses it in the keyword leg's
+#     round-robin MERGE — and both drop scoped recall 1.000 -> 0.429 by the
+#     same displacement. The merge is TASK-15700; it is what the remaining
+#     four of these five are now blocked behind, together with their absent
+#     CONTENT words.
 #
 # The sub-leg itself works, measured through the production seam on the same
 # runtime: the keyword-shaped "shift log summary supervisor" returns
@@ -857,8 +870,14 @@ relevant_slugs = ["note-tarn-foot-mast"]
 # fixture rewritten after seeing the result measures the rewrite. Which side
 # should change is a decision with its own measurement — TASK-15400, whose
 # AC #7 is exactly "re-read these cells afterwards".
-# `test_fixture_authoring_probe.test_prompt_fixtures_are_reachable_but_
-# their_golden_queries_are_not` holds both halves down.
+#
+# ANSWERED 2026-08-12: the cells were re-read after the construction flip and
+# NO query was re-worded on either side. Four of the five still miss in all
+# three modes; the fifth, pm-vendor-chaser, is now answered at hybrid rank 9
+# and is deliberately KEPT (a retained positive, not a re-authored fail-first
+# fixture) — its own `# retained:` receipt below carries the reasoning.
+# `test_fixture_authoring_probe.test_prompt_fixtures_are_reachable_but_four_
+# of_five_golden_queries_are_not` holds both halves down.
 
 # admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
 [[query]]
@@ -875,6 +894,19 @@ category = "prompt"
 relevant_slugs = ["prompt-incident-timeline"]
 
 # admitted: 2026-08-10 hybrid=miss semantic=miss plain=miss
+# retained: 2026-08-12 hybrid=9 (TASK-15400). The admitted line above is a DATED
+#   receipt and still true of the day it was written; this one records that the
+#   fixture changed role. Shipping `and_stopword_trim` (the construction sweep's
+#   winner) made "about" droppable, so hybrid now answers this query at rank 9 —
+#   the admission rule would REJECT it as a NEW candidate today ("found the target
+#   at rank 9"). It is kept deliberately, as a retained POSITIVE: it is the only
+#   golden query whose cell measures the shipped construction, and re-authoring it
+#   fail-first would delete the arc's own evidence. What pins it now is executable,
+#   not this comment — the baselined hybrid prompt recall 0.200 and
+#   test_fixture_authoring_probe's exact split `hybrid_hits == {pm-vendor-chaser}`,
+#   which reds on a SECOND rescue as well as on a lost one. The category stays
+#   fail-first in substance: the other four prompt queries still miss in every mode,
+#   on absent CONTENT words that no stopword list removes.
 [[query]]
 id = "pm-vendor-chaser"
 query = "saved prompt for chasing a supplier about a late order"
