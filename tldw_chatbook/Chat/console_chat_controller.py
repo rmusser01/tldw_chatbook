@@ -2170,7 +2170,11 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 
         bridge = self._agent_bridge
-        snapshot = getattr(bridge, "fleet_snapshot", None) if bridge else None
+        # `is not None`, not truthiness: a bridge double defining `__len__`
+        # would otherwise read as absent.
+        snapshot = (
+            getattr(bridge, "fleet_snapshot", None) if bridge is not None else None
+        )
         if snapshot is None:
             return set()
         busy: set[str] = set()
