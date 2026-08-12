@@ -48,7 +48,8 @@ def _result_payload(stdout: str) -> dict[str, bool]:
         for line in stdout.splitlines()
         if line.startswith(RESULT_PREFIX)
     ]
-    assert len(records) == 1, "isolated lifecycle emitted no unique result record"
+    unique_result = len(records) == 1
+    assert unique_result, "isolated lifecycle result record was not unique"
     return json.loads(records[0])
 
 
@@ -160,18 +161,33 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
         timeout=120,
     )
 
-    captured = result.stdout + result.stderr
-    assert EFFECTIVE_SENTINEL not in captured
-    assert DECOY_SENTINEL not in captured
-    assert result.returncode == 0, (
-        f"isolated lifecycle exited with status {result.returncode}"
+    marker_exposed = any(
+        marker in stream
+        for marker in (EFFECTIVE_SENTINEL, DECOY_SENTINEL)
+        for stream in (result.stdout, result.stderr)
     )
-    assert _result_payload(result.stdout) == {
+    child_succeeded = result.returncode == 0
+    lifecycle_evidence_complete = child_succeeded and _result_payload(
+        result.stdout
+    ) == {
         "effective_path_selected": True,
         "mounted": True,
         "persistence_called": True,
         "persistence_succeeded": True,
     }
-    assert decoy_default.read_bytes() == decoy_before
-    assert effective_config.is_file()
-    assert effective_config.read_bytes()
+    try:
+        decoy_unchanged = decoy_default.read_bytes() == decoy_before
+    except OSError:
+        decoy_unchanged = False
+    try:
+        effective_present = (
+            effective_config.is_file() and effective_config.stat().st_size > 0
+        )
+    except OSError:
+        effective_present = False
+
+    assert not marker_exposed, "isolated lifecycle exposed a config marker"
+    assert child_succeeded, "isolated lifecycle child failed"
+    assert lifecycle_evidence_complete, "isolated lifecycle evidence was incomplete"
+    assert decoy_unchanged, "isolated lifecycle changed the decoy config"
+    assert effective_present, "isolated lifecycle effective config was unavailable"
