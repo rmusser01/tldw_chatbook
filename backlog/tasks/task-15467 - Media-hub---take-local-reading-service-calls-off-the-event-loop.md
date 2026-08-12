@@ -113,16 +113,26 @@ fast -- not worth the risk for this task's scope.
 
 **Pre-existing bugs found, NOT fixed (out of scope, flagged per the
 task-283 convention):**
-- `LocalMediaReadingService` never implemented `list_reading_highlights` --
-  only `list_highlights` (no `reading_` prefix; the Library screen's own,
-  separate call sites use the correct name and work fine). Every local-mode
-  item click already hit `AttributeError` there before this change, caught
-  by `_load_media_item_detail`'s broad `except Exception` and presented as
-  zero highlights. Confirmed with a real `LocalMediaReadingService` in a
-  probe; `_call_local_leaf`'s `getattr(service, method_name)` raises the
-  identical `AttributeError` at the identical point, so this task changes
-  nothing about that gap -- it was already broken, still is, unrelated to
-  the event loop.
+- `LocalMediaReadingService` never implemented the `reading_`-prefixed
+  highlight CRUD the scope service calls in local mode -- all **four**
+  methods are affected, not just the one first spotted: `list_reading_
+  highlights`, `create_reading_highlight`, `update_reading_highlight`, and
+  `delete_reading_highlight` all `AttributeError` against a real local
+  service, because `LocalMediaReadingService` only implements the
+  unprefixed `list_highlights`/`create_highlight`/`update_highlight`/
+  `delete_highlight` (the Library screen's own, separate call sites use
+  those correct, unprefixed names and work fine). Every local-mode item
+  click already hit `AttributeError` loading highlights before this change
+  (caught by `_load_media_item_detail`'s broad `except Exception`,
+  presented as zero highlights), and every local-mode highlight
+  create/update/delete action already hit the identical `AttributeError`
+  too. Confirmed all four directly against a real `LocalMediaReadingService`
+  instance (`getattr(service, "create_reading_highlight")` etc. all raise).
+  `_call_local_leaf`'s `getattr(service, method_name)` raises the identical
+  `AttributeError` at the identical point, before any threading decision is
+  made, so this task changes nothing about the surface, thread, or timing of
+  that failure for any of the four -- it was already broken, still is,
+  unrelated to the event loop.
 - `MediaWindow_v2.py:1685` (`handle_analysis_request`'s `perform_analysis`,
   dispatched via `run_worker(coroutine)`) has its own, separate direct
   `self.app_instance.media_db.get_media_by_id(...)` call, bypassing the
@@ -151,10 +161,22 @@ thread-affinity test and the trace-callback test failed with the exact
 statements/thread-identity evidence in the assertion message, then restored
 and re-confirmed green.
 
-**AC#2 (existing tests green, unmodified first).** `Tests/Media/test_media_
-reading_scope_service.py` (73), `Tests/Media/test_local_media_reading_
-service.py` (100), `Tests/UI/test_media_window_v2_parity.py` (78) all green
-before any code change and still green after -- these tests mostly use
+**AC#2 (existing tests green, unmodified first).** CORRECTION (review round,
+2026-08-11): the counts originally recorded here were wrong -- each file was
+run individually with `pytest <file> -q` and its own "N passed" line read
+directly, replacing an earlier accounting error where two files run together
+in one command had their combined count misattributed to a single file.
+Verified individually: `Tests/Media/test_media_reading_scope_service.py`
+(**73**), `Tests/Media/test_local_media_reading_service.py` (**69**, not
+100), `Tests/UI/test_media_window_v2_parity.py` (**31**, not 78) --
+**173 pre-existing tests**, all green before any code change and still green
+after. Adding the new `Tests/Media/test_media_reading_scope_service_off_
+loop.py` (**40**, new -- not a pre-existing-regression check) brings the
+combined targeted total to **213** when all four files are run together
+(`pytest Tests/Media/test_media_reading_scope_service.py Tests/Media/test_
+local_media_reading_service.py Tests/UI/test_media_window_v2_parity.py
+Tests/Media/test_media_reading_scope_service_off_loop.py -q`), not the 291
+previously claimed. These tests mostly use
 `Mock`/`AsyncMock` scope services with `runtime_backend="server"` (never
 threaded) or `FakeLocalMediaService` doubles with no `media_db` attribute
 (now threaded, but the tests only assert on the returned value / recorded
