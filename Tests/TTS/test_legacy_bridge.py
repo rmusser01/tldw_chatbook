@@ -776,6 +776,70 @@ def test_openai_projection_uses_raw_api_then_normalized_fallback(
     )
 
 
+def test_openai_projection_passes_endpoint_and_explicit_none_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_lookup(*_args, **_kwargs):
+        raise AssertionError("credential lookup is forbidden in none mode")
+
+    monkeypatch.setattr("tldw_chatbook.TTS.legacy_bridge.os.getenv", reject_lookup)
+    projected = legacy_provider_config(
+        "openai",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1",
+                    "OPENAI_AUTH_MODE": "none",
+                    "OPENAI_API_KEY_fallback": "fallback-secret",
+                },
+                "api_settings": {"openai": {"api_key": "stored-secret"}},
+            },
+            "APP_TTS_CONFIG": {
+                "OPENAI_BASE_URL": "http://stale.example.test/v1",
+                "OPENAI_AUTH_MODE": "api_key",
+            },
+        },
+    )["app_config"]
+
+    assert projected["app_tts"] == {
+        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+        "OPENAI_AUTH_MODE": "none",
+    }
+    assert "openai_api" not in projected
+    assert "OPENAI_API_KEY_fallback" not in projected["app_tts"]
+
+
+@pytest.mark.asyncio
+async def test_default_openai_manager_does_not_resolve_credentials_in_none_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_lookup(*_args, **_kwargs):
+        raise AssertionError("credential lookup is forbidden in none mode")
+
+    specs = legacy_provider_specs(
+        {
+            "app_tts": {
+                "OPENAI_BASE_URL": "http://127.0.0.1:8765",
+                "OPENAI_AUTH_MODE": "none",
+            },
+            "api_settings.openai": {"api_key": "stored-secret"},
+        }
+    )
+    spec = next(spec for spec in specs if spec.descriptor.provider_id == "openai")
+    adapter = spec.factory(spec.initial_config)
+    manager = await adapter.host._get_manager()
+    monkeypatch.setattr("os.getenv", reject_lookup)
+
+    try:
+        prepared = manager._prepare_backend_config("openai_official_pocket-tts")
+    finally:
+        await adapter.close()
+
+    assert prepared["OPENAI_AUTH_MODE"] == "none"
+    assert prepared["OPENAI_BASE_URL"] == "http://127.0.0.1:8765/v1/audio/speech"
+    assert "OPENAI_API_KEY" not in prepared
+
+
 @pytest.mark.parametrize(
     ("raw_config", "expected_key"),
     (

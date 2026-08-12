@@ -103,10 +103,13 @@ def build_default_tts_service(
             collect_provider_credential_environment_names(app_config)
         )
     )
+    # The bridge snapshots and normalizes OpenAI-compatible endpoint/auth fields
+    # before any lazy legacy adapter is materialized.
+    legacy_specs = legacy_provider_specs(app_config)
     registry = TTSAdapterRegistry(
         specs=(
             audio_cpp_provider_spec(app_config, supervisor=supervisor),
-            *legacy_provider_specs(app_config),
+            *legacy_specs,
         ),
         aliases={},
     )

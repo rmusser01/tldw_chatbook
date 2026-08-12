@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from dataclasses import dataclass
+from enum import StrEnum
+from urllib.parse import SplitResult, urlsplit, urlunsplit
+
+
+class OpenAIAuthenticationMode(StrEnum):
+    API_KEY = "api_key"
+    NONE = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleEndpoint:
+    speech_url: str
+    origin: str
+    catalog_url: str | None
+    official: bool
+
+
+_KNOWN_PATHS = {
+    "": ("/v1/audio/speech", "/v1/models"),
+    "/": ("/v1/audio/speech", "/v1/models"),
+    "/v1": ("/v1/audio/speech", "/v1/models"),
+    "/v1/models": ("/v1/audio/speech", "/v1/models"),
+    "/v1/chat/completions": ("/v1/audio/speech", "/v1/models"),
+    "/chat/completions": ("/audio/speech", "/models"),
+    "/v1/audio/speech": ("/v1/audio/speech", "/v1/models"),
+}
+_SCHEME_PATTERN = re.compile(r"(?i)https?://")
+
+
+def _invalid_endpoint() -> ValueError:
+    return ValueError(
+        "OpenAI-compatible endpoint must be one unambiguous absolute HTTP(S) URL"
+    )
+
+
+def _normalized_authority(parsed: SplitResult) -> tuple[str, str, int | None]:
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise _invalid_endpoint() from error
+    if not hostname or port == 0:
+        raise _invalid_endpoint()
+
+    default_port = 80 if scheme == "http" else 443
+    normalized_port = None if port in (None, default_port) else port
+    rendered_host = f"[{hostname}]" if ":" in hostname else hostname
+    authority = (
+        rendered_host
+        if normalized_port is None
+        else f"{rendered_host}:{normalized_port}"
+    )
+    return authority, hostname, normalized_port
+
+
+def normalize_openai_compatible_endpoint(raw: str) -> OpenAICompatibleEndpoint:
+    if not isinstance(raw, str) or not raw:
+        raise _invalid_endpoint()
+    if raw != raw.strip() or any(
+        character.isspace() or unicodedata.category(character) == "Cc"
+        for character in raw
+    ):
+        raise _invalid_endpoint()
+    if "?" in raw or "#" in raw:
+        raise _invalid_endpoint()
+    scheme_matches = list(_SCHEME_PATTERN.finditer(raw))
+    if len(scheme_matches) != 1 or scheme_matches[0].start() != 0:
+        raise _invalid_endpoint()
+
+    try:
+        parsed = urlsplit(raw)
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise _invalid_endpoint()
+        authority, hostname, port = _normalized_authority(parsed)
+    except ValueError as error:
+        if str(error).startswith("OpenAI-compatible endpoint"):
+            raise
+        raise _invalid_endpoint() from error
+
+    scheme = parsed.scheme.lower()
+    origin = urlunsplit((scheme, authority, "", "", ""))
+    path_key = (
+        parsed.path[:-1]
+        if parsed.path != "/" and parsed.path.endswith("/")
+        else parsed.path
+    ).lower()
+    mapped = _KNOWN_PATHS.get(path_key)
+    if mapped is None:
+        speech_path = parsed.path
+        catalog_url = None
+    else:
+        speech_path, catalog_path = mapped
+        catalog_url = urlunsplit((scheme, authority, catalog_path, "", ""))
+
+    official = scheme == "https" and hostname == "api.openai.com" and port is None
+    return OpenAICompatibleEndpoint(
+        speech_url=urlunsplit((scheme, authority, speech_path, "", "")),
+        origin=origin,
+        catalog_url=catalog_url,
+        official=official,
+    )
+
+
+def normalize_openai_authentication_mode(
+    raw: object,
+    *,
+    endpoint: OpenAICompatibleEndpoint,
+) -> OpenAIAuthenticationMode:
+    mode = (
+        OpenAIAuthenticationMode.NONE
+        if raw == OpenAIAuthenticationMode.NONE.value
+        else OpenAIAuthenticationMode.API_KEY
+    )
+    if endpoint.official and mode is OpenAIAuthenticationMode.NONE:
+        raise ValueError("Official OpenAI requires an API key")
+    return mode
+
+
+def openai_destination_fingerprint(
+    provider_id: object,
+    endpoint: OpenAICompatibleEndpoint,
+) -> str:
+    provider = str(provider_id).strip().lower()
+    payload = f"{provider}\0{endpoint.origin}".encode()
+    return hashlib.sha256(payload).hexdigest()

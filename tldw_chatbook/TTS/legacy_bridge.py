@@ -26,6 +26,11 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     ELEVENLABS_MODELS,
     legacy_catalog,
 )
+from tldw_chatbook.TTS.openai_compatible_config import (
+    OpenAIAuthenticationMode,
+    normalize_openai_authentication_mode,
+    normalize_openai_compatible_endpoint,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
@@ -207,21 +212,38 @@ def legacy_provider_config(
     )
 
     if provider_id == "openai":
+        endpoint = normalize_openai_compatible_endpoint(
+            effective_tts.get(
+                "OPENAI_BASE_URL",
+                "https://api.openai.com/v1/audio/speech",
+            )
+        )
+        authentication_mode = normalize_openai_authentication_mode(
+            effective_tts.get("OPENAI_AUTH_MODE"),
+            endpoint=endpoint,
+        )
+        projected["app_tts"]["OPENAI_BASE_URL"] = endpoint.speech_url
+        projected["app_tts"]["OPENAI_AUTH_MODE"] = authentication_mode.value
         openai_key_locations = (
             ("api_settings.openai", "api_key"),
             ("openai_api", "api_key"),
             ("API", "openai_api_key"),
         )
-        api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
-            raw,
-            openai_key_locations,
-        )
-        api_key = api_key or _first_mapping_value(
-            app_config,
-            openai_key_locations,
-        )
-        if api_key:
-            projected["openai_api"] = {"api_key": api_key}
+        if authentication_mode is OpenAIAuthenticationMode.API_KEY:
+            api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
+                raw,
+                openai_key_locations,
+            )
+            api_key = api_key or _first_mapping_value(
+                app_config,
+                openai_key_locations,
+            )
+            if api_key:
+                projected["openai_api"] = {"api_key": api_key}
+        else:
+            for key in tuple(projected["app_tts"]):
+                if str(key).upper().startswith("OPENAI_API_KEY"):
+                    projected["app_tts"].pop(key, None)
     elif provider_id == "elevenlabs":
         elevenlabs_key_locations = (
             ("api_settings.elevenlabs", "api_key"),
@@ -756,6 +778,29 @@ def legacy_provider_specs(
     ) -> TTSBackendManager:
         from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
 
+        app_tts = config.get("app_tts")
+        if (
+            _provider_id == "openai"
+            and isinstance(app_tts, Mapping)
+            and app_tts.get("OPENAI_AUTH_MODE") == OpenAIAuthenticationMode.NONE
+        ):
+
+            class ExplicitOpenAIAuthManager(TTSBackendManager):
+                def _prepare_backend_config(self, backend_id: str) -> dict[str, Any]:
+                    if not backend_id.startswith("openai_official"):
+                        return super()._prepare_backend_config(backend_id)
+                    prepared: dict[str, Any] = {}
+                    global_settings = self.app_config.get("global_tts_settings")
+                    if isinstance(global_settings, Mapping):
+                        prepared.update(deepcopy(dict(global_settings)))
+                    current_app_tts = self.app_config.get("app_tts")
+                    if isinstance(current_app_tts, Mapping):
+                        prepared.update(deepcopy(dict(current_app_tts)))
+                    prepared.pop("OPENAI_API_KEY", None)
+                    prepared.pop("OPENAI_API_KEY_fallback", None)
+                    return prepared
+
+            return ExplicitOpenAIAuthManager(app_config=config)
         return TTSBackendManager(app_config=config)
 
     create_manager = manager_factory or default_manager_factory

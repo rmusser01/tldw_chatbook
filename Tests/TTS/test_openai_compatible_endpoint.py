@@ -4,6 +4,7 @@
 # the default OpenAI endpoint must not change.
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -12,6 +13,12 @@ import pytest
 
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
+from tldw_chatbook.TTS.openai_compatible_config import (
+    OpenAIAuthenticationMode,
+    normalize_openai_authentication_mode,
+    normalize_openai_compatible_endpoint,
+    openai_destination_fingerprint,
+)
 
 # Network opt-in (task-15111): this module talks to an in-process HTTP
 # server on an ephemeral loopback port.
@@ -20,6 +27,145 @@ from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 pytestmark = pytest.mark.allow_network
 
 CUSTOM_URL = "http://127.0.0.1:8123/v1/audio/speech"
+
+
+@pytest.mark.parametrize(
+    ("raw", "speech", "origin", "catalog", "official"),
+    (
+        (
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/models",
+            False,
+        ),
+        (
+            "http://127.0.0.1:8765/v1/",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/models",
+            False,
+        ),
+        (
+            "http://127.0.0.1:8765/v1/models",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/models",
+            False,
+        ),
+        (
+            "http://127.0.0.1:8765/v1/chat/completions",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/models",
+            False,
+        ),
+        (
+            "http://127.0.0.1:8765/chat/completions",
+            "http://127.0.0.1:8765/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/models",
+            False,
+        ),
+        (
+            "http://127.0.0.1:8765/v1/audio/speech/",
+            "http://127.0.0.1:8765/v1/audio/speech",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:8765/v1/models",
+            False,
+        ),
+        (
+            "https://API.OpenAI.com:443/V1/AUDIO/SPEECH/",
+            "https://api.openai.com/v1/audio/speech",
+            "https://api.openai.com",
+            "https://api.openai.com/v1/models",
+            True,
+        ),
+        (
+            "https://EXAMPLE.test/Custom/Speech/",
+            "https://example.test/Custom/Speech/",
+            "https://example.test",
+            None,
+            False,
+        ),
+    ),
+)
+def test_endpoint_plan(raw, speech, origin, catalog, official) -> None:
+    endpoint = normalize_openai_compatible_endpoint(raw)
+
+    assert endpoint.speech_url == speech
+    assert endpoint.origin == origin
+    assert endpoint.catalog_url == catalog
+    assert endpoint.official is official
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "",
+        "relative/speech",
+        "ftp://example.test/speech",
+        "https://user:secret@example.test/speech",
+        "https://example.test/speech?token=secret",
+        "https://example.test/speech?",
+        "https://example.test/speech#fragment",
+        "https://example.test/speech#",
+        "https://example.test/speech\nInjected: value",
+        " https://example.test/speech",
+        "https://example.test/speech ",
+        "https://example.test/speech path",
+        "http://127.0.0.1:8765/v1/audio/speechshttp://127.0.0.1:8765/v1/audio/speech",
+        "https://example.test:0/speech",
+        "https://example.test:65536/speech",
+        "https://example.test:not-a-port/speech",
+    ),
+)
+def test_endpoint_rejects_ambiguous_or_unsafe_values(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
+
+
+def test_authentication_mode_is_explicit_and_official_fails_closed() -> None:
+    custom = normalize_openai_compatible_endpoint(CUSTOM_URL)
+    official = normalize_openai_compatible_endpoint("https://api.openai.com")
+
+    assert (
+        normalize_openai_authentication_mode("none", endpoint=custom)
+        is OpenAIAuthenticationMode.NONE
+    )
+    assert (
+        normalize_openai_authentication_mode("api_key", endpoint=custom)
+        is OpenAIAuthenticationMode.API_KEY
+    )
+    assert (
+        normalize_openai_authentication_mode(None, endpoint=custom)
+        is OpenAIAuthenticationMode.API_KEY
+    )
+    assert (
+        normalize_openai_authentication_mode("NONE", endpoint=custom)
+        is OpenAIAuthenticationMode.API_KEY
+    )
+    with pytest.raises(ValueError, match="API key"):
+        normalize_openai_authentication_mode("none", endpoint=official)
+
+
+def test_destination_fingerprint_uses_provider_and_normalized_origin_only() -> None:
+    first = normalize_openai_compatible_endpoint("HTTP://EXAMPLE.test:80/one/speech")
+    second = normalize_openai_compatible_endpoint("http://example.test/two/speech")
+    same_destination = openai_destination_fingerprint("openai", first)
+
+    assert same_destination == openai_destination_fingerprint("openai", second)
+    assert same_destination != openai_destination_fingerprint("another", second)
+    assert re.fullmatch(r"[0-9a-f]{64}", same_destination)
+    assert first.origin not in same_destination
+    assert "speech" not in same_destination
+
+
+def test_repeated_trailing_slashes_remain_an_exact_unknown_speech_path() -> None:
+    endpoint = normalize_openai_compatible_endpoint("https://example.test/v1//")
+
+    assert endpoint.speech_url == "https://example.test/v1//"
+    assert endpoint.catalog_url is None
 
 
 def _capture_transport(requests: list[httpx.Request]) -> httpx.MockTransport:
@@ -35,7 +181,7 @@ async def _generate(backend: OpenAITTSBackend, **request_overrides) -> list[byte
         model=request_overrides.pop("model", "tts-1"),
         input="hello",
         voice=request_overrides.pop("voice", "alloy"),
-        response_format="wav",
+        response_format=request_overrides.pop("response_format", "wav"),
         **request_overrides,
     )
     try:
@@ -70,7 +216,12 @@ async def test_custom_endpoint_passes_model_and_voice_through(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport(
-        {"OPENAI_API_KEY": "test-key", "OPENAI_BASE_URL": CUSTOM_URL}, requests
+        {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_BASE_URL": CUSTOM_URL,
+            "OPENAI_AUTH_MODE": "api_key",
+        },
+        requests,
     )
     await _close_replaced_client(backend)
 
@@ -89,11 +240,10 @@ async def test_custom_endpoint_without_api_key_sends_no_authorization(
     """Keyless local servers work; no Authorization header is fabricated."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
-    backend = _backend_with_transport({"OPENAI_BASE_URL": CUSTOM_URL}, requests)
+    backend = _backend_with_transport(
+        {"OPENAI_BASE_URL": CUSTOM_URL, "OPENAI_AUTH_MODE": "none"}, requests
+    )
     await _close_replaced_client(backend)
-    # Config-file fallbacks may resolve a key in some environments; this test is about
-    # the keyless path, so force the resolved key empty.
-    backend.api_key = None
 
     chunks = await _generate(backend)
 
@@ -109,7 +259,12 @@ async def test_custom_endpoint_with_key_still_sends_bearer(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport(
-        {"OPENAI_API_KEY": "test-key", "OPENAI_BASE_URL": CUSTOM_URL}, requests
+        {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_BASE_URL": CUSTOM_URL,
+            "OPENAI_AUTH_MODE": "api_key",
+        },
+        requests,
     )
     await _close_replaced_client(backend)
 
@@ -117,6 +272,48 @@ async def test_custom_endpoint_with_key_still_sends_bearer(
 
     assert chunks == [b"audio"]
     assert requests[0].headers["Authorization"] == "Bearer test-key"
+
+
+@pytest.mark.asyncio
+async def test_none_auth_does_not_read_or_send_any_credentials(monkeypatch) -> None:
+    def reject_lookup(*_args, **_kwargs):
+        raise AssertionError("credential lookup is forbidden in none mode")
+
+    monkeypatch.setattr("tldw_chatbook.TTS.backends.openai.os.getenv", reject_lookup)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.backends.openai.get_cli_setting", reject_lookup
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_cli_config_and_ensure_existence", reject_lookup
+    )
+    requests: list[httpx.Request] = []
+    backend = _backend_with_transport(
+        {
+            "OPENAI_BASE_URL": "http://127.0.0.1:8765",
+            "OPENAI_AUTH_MODE": "none",
+            "OPENAI_API_KEY": "must-not-be-read-either",
+        },
+        requests,
+    )
+    await _close_replaced_client(backend)
+
+    chunks = await _generate(
+        backend,
+        model="pocket-tts",
+        voice="alba",
+        response_format="flac",
+    )
+
+    assert chunks == [b"audio"]
+    assert str(requests[0].url) == "http://127.0.0.1:8765/v1/audio/speech"
+    assert "authorization" not in requests[0].headers
+    assert json.loads(requests[0].content) == {
+        "model": "pocket-tts",
+        "input": "hello",
+        "voice": "alba",
+        "response_format": "flac",
+        "speed": 1.0,
+    }
 
 
 @pytest.mark.asyncio
@@ -258,10 +455,10 @@ async def test_keyless_openai_compatible_server_over_real_socket(
     try:
         backend = OpenAITTSBackend(
             {
-                "OPENAI_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1/audio/speech"
+                "OPENAI_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1/audio/speech",
+                "OPENAI_AUTH_MODE": "none",
             }
         )
-        backend.api_key = None
 
         chunks = await _generate(backend, model="pocket-tts", voice="marius")
     finally:
@@ -273,4 +470,5 @@ async def test_keyless_openai_compatible_server_over_real_socket(
     assert received["path"] == "/v1/audio/speech"
     assert received["payload"]["model"] == "pocket-tts"
     assert received["payload"]["voice"] == "marius"
+    assert received["payload"]["response_format"] == "wav"
     assert received["authorization"] is None
