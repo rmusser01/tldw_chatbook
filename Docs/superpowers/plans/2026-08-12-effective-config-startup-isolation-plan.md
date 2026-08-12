@@ -222,7 +222,7 @@ and sparse decoy make the production path mutation in Step 3 observable.
 Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest \
+python -B -m pytest \
   Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config \
   -q
 ```
@@ -254,7 +254,7 @@ Re-run the named test. Expected: PASS. Do not stage or commit the mutation.
 Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest \
+python -B -m pytest \
   Tests/ProductionApp/test_config_profile_isolation.py \
   Tests/test_config_private_bootstrap.py::test_default_application_config_directory_is_created_as_0700 \
   Tests/test_config_private_bootstrap.py::test_existing_default_config_directory_is_hardened_before_read \
@@ -329,7 +329,7 @@ Keep status In Progress until Task 3 verification passes.
 Run the exact focused pytest command from Task 1, then:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
+python -m ruff check \
   Tests/ProductionApp/test_config_profile_isolation.py
 ```
 

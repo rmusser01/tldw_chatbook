@@ -4,7 +4,7 @@ title: Honor TLDW_CONFIG_PATH when persisting startup defaults
 status: Done
 assignee: []
 created_date: '2026-08-12 06:35'
-updated_date: '2026-08-12 16:51'
+updated_date: '2026-08-12 16:57'
 labels:
   - config
   - privacy
@@ -53,4 +53,6 @@ Reason: regression-only characterization of the existing effective-config bounda
 - Added/modified paths: `Tests/ProductionApp/test_config_profile_isolation.py`; the effective-config design and plan; the ComfyUI H3 UAT; `backlog/docs/lessons-live-verification.md`; TASK-3401.14; and TASK-15674.
 - ADR required: no. ADR path: N/A. Reason: regression-only characterization of an existing effective-config boundary; no storage, security, runtime, or cross-module decision changed.
 - Deviation: the mutation-only collection boundary noted above. Per user instruction, no broad or full suite was run. The existing incident lesson was updated; no new unresolved lesson emerged.
+
+- Post-review privacy correction: the execution plan replaced three developer-local absolute interpreter paths with portable `python` commands. This documentation-only correction resolves the path finding and does not change production or test behavior. Pytest was not rerun; the immediately preceding focused evidence remains 4 passed in 5.28s with no warnings. The final branch privacy and scope audits were repeated after this correction.
 <!-- SECTION:NOTES:END -->
