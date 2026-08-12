@@ -90,7 +90,9 @@ container is an explicit contract change with tests.
 `VideoGenResult` gains a required canonical `container` value. An adapter must
 populate it from output evidence it actually controls:
 
-- MiniMax returns `mp4` only after its existing MP4 response checks.
+- MiniMax returns `mp4` only after the download reports exact normalized
+  `video/mp4`. Its current fallback from generic/non-video MIME to MP4 is
+  removed, and another `video/*` MIME is rejected rather than relabeled.
 - ComfyUI derives it from the selected output descriptor suffix and independently
   observes the normalized download MIME.
 
@@ -99,8 +101,9 @@ continue to require MP4. A generic ComfyUI workflow may request and return WebM.
 
 ### 4.2 Worker choke point
 
-After adapter dispatch and before returning to Console, `worker.run_generation`
-validates all three facts:
+Before adapter dispatch, `worker.run_generation` rejects a request format that
+is not one of the two canonical containers. After adapter dispatch and before
+returning to Console, it validates all three facts:
 
 ```text
 request.format == result.container == mapping[result.content_type].container
@@ -120,7 +123,27 @@ The worker also continues to return the original immutable result; storage
 derives the extension through the shared mapping rather than trusting a raw
 extension string from an adapter.
 
-### 4.3 Persisted metadata
+### 4.3 Request format plumbing
+
+`run_video_generation` gains an explicit canonical `video_format` argument and
+passes it to `build_request`. The public helper defaults to MP4 for compatibility,
+but callers that select WebM must pass `video_format="webm"`; there is no MIME or
+adapter-based guessing before dispatch.
+
+The current `/generate-video` grammar and Settings surface remain MP4-only in
+this task. Initial WebM selection is therefore the explicit programmatic
+`run_video_generation(video_format="webm")` seam used by focused tests and by a
+future provider/UI task. Generic ComfyUI supports WebM through that seam when a
+custom workflow's output control, descriptor suffix, response MIME, and request
+format all agree. This task does not add a new Console token or setting merely to
+expose a format that the shipped workflows do not produce.
+
+Regeneration is not allowed to use the helper default: it passes the persisted
+`VideoGenerationMetadata.container` explicitly. A WebM message therefore asks
+for WebM again, while a historical metadata payload whose missing container has
+already normalized to MP4 asks for MP4.
+
+### 4.4 Persisted metadata
 
 `VideoGenerationMetadata` gains canonical `container`, serialized inside the
 existing `video_generation` JSON namespace.
@@ -142,17 +165,26 @@ resume path.
 
 ### 5.1 VideoStore
 
-`VideoStore` remains provider-neutral. Its extension parameter is validated
-against the shared canonical extension set before any directory creation,
-temporary-file creation, capacity eviction, or publication. The current
-sanitize-and-fallback behavior is removed: unsupported, dotted, mixed-content,
-or empty extensions fail closed instead of becoming MP4 or an altered suffix.
+`VideoStore` remains provider-neutral. `save`, `adopt_oversized`, and `resolve`
+require an explicit extension; their MP4 defaults are removed. The extension is
+validated against the shared canonical extension set before any directory
+creation, temporary-file creation, capacity eviction, or publication. The
+current sanitize-and-fallback behavior is removed: unsupported, dotted,
+mixed-content, or empty extensions fail closed instead of becoming MP4 or an
+altered suffix. Durable read paths must first apply the metadata missing-field
+compatibility rule and then pass the resulting explicit extension.
 
 The store continues to identify a video by stable message id plus slug. The
 extension is an additional exact lookup fact, not part of the transcript marker.
 Snapshots, retention, oldest-first eviction, rollback, tombstones, and stage
 cleanup treat MP4 and WebM identically. Unsupported files under the managed root
 are not adopted as generated videos.
+
+`allocate_slug` remains independent of the eventual result but checks candidate
+slugs across every supported canonical extension. A stale `clip.mp4` therefore
+reserves `clip` even when the next requested result is WebM, and vice versa. This
+preserves the existing human-readable name collision rule and avoids two live
+files sharing one marker slug under a message directory.
 
 ### 5.2 Generation and pending-capacity flow
 
@@ -167,6 +199,14 @@ container exactly once and uses it for:
 Pending artifacts keep the existing exact extension string because they are
 in-memory products of the already validated result. No new provider field is
 introduced at this layer.
+
+The explicit external-save picker enforces the pending artifact's canonical
+suffix. A target with no suffix receives `.<artifact.extension>`; a target with
+that exact lowercase suffix is accepted; any other suffix, including another
+supported video suffix, is rejected with bounded generic guidance and returns to
+the picker. The operation never writes WebM bytes under an MP4 name or vice
+versa. Existing target identity/reconfirmation and no-clobber behavior applies
+to the normalized final target.
 
 ### 5.3 Durable message resolution and actions
 
@@ -204,18 +244,27 @@ work-stream instruction.
 Focused coverage will include:
 
 1. exact MP4/WebM mapping and rejection of unknown/alias/dotted values;
-2. worker rejection of MIME/container/request mismatches before a storage spy is
-   reached;
-3. adapter result construction for MiniMax MP4 and generic ComfyUI MP4/WebM,
-   while shipped H3 remains MP4-only;
+2. worker rejection of MIME/container/request mismatches, plus an outer-path
+   regression entering `Chat.console_generate_video.run_video_generation`
+   through the real worker and a fake adapter; the test asserts `VideoStore.save`,
+   `_stage_pending_video`/`TemporaryFile`, and the managed root are untouched for
+   unknown and contradictory results;
+3. adapter result construction for exact-MIME MiniMax MP4 and generic ComfyUI
+   MP4/WebM, while generic/non-video and contradictory MiniMax MIME fail and
+   shipped H3 remains MP4-only;
 4. metadata MP4/WebM round trips, missing-field MP4 compatibility, and explicit
    invalid-container degradation;
 5. VideoStore MP4/WebM save, resolve, snapshot, retention, eviction, rollback,
    tombstone, and unsupported-extension no-mutation behavior;
-6. Console managed and pending flows using `.webm`, including retry, oversized
-   adoption, playback resolution, picker default, and collision-safe save copy;
-7. mutations that restore MP4 hard-coding or permissive extension sanitization
-   must fail named tests.
+6. Console managed and pending flows using `.webm`, including explicit initial
+   `video_format="webm"`, regeneration format preservation, retry, oversized
+   adoption, playback resolution, picker missing/matching/contradictory suffix
+   behavior, and collision-safe save copy;
+7. a real persistence/reload path with a WebM metadata row and `.webm` file that
+   resolves on a fresh Console, plus a separate historical metadata JSON payload
+   with no container key whose `.mp4` file resolves after the same outer reload;
+8. mutations that remove post-adapter validation, restore MP4 hard-coding, or
+   restore permissive extension sanitization must fail named tests.
 
 Static verification is limited to changed Python files, relevant Ruff rules,
 temporary-output `py_compile`, `git diff --check`, metadata/privacy searches, and
