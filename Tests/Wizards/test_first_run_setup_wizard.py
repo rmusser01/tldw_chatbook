@@ -70,6 +70,12 @@ def _make_wizard(**kwargs) -> FirstRunSetupWizard:
     return wizard
 
 
+def _raising_compose_step(self):
+    """Generator-shaped compose helper that fails before yielding widgets."""
+    raise RuntimeError("sensitive compose detail")
+    yield  # pragma: no cover
+
+
 @pytest.mark.asyncio
 async def test_welcome_track_choice_activates_quick_steps():
     wizard = _make_wizard()
@@ -2995,53 +3001,69 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
 
 
 class TestComposeCrashPolicy:
-    """TASK-1266 (spec §5): a step whose compose fails is auto-skipped with a
-    notice and a reasoned summary row — never a crashed screen."""
+    """Required compose failures recover in place; optional failures skip."""
+
+    def test_failure_contract_is_bounded_and_skip_state_exists_before_mount(self):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            SetupStepFailure,
+            SetupWizardContainer,
+        )
+
+        app_instance = MagicMock()
+        app_instance.app_config = {}
+        container = SetupWizardContainer(app_instance)
+        assert container.skipped_step_reasons == {}
+        with pytest.raises(ValueError):
+            SetupStepFailure(
+                step_id=STEP_PROVIDER,
+                required=True,
+                reason_code="sensitive raw exception",
+            )
 
     @pytest.mark.asyncio
-    async def test_failing_step_is_skipped_and_wizard_survives(self):
-        """The wizard mounts, drops the broken step from navigation, and
-        renders a notice in its place."""
+    async def test_required_provider_compose_failure_stays_active_and_blocks_next(
+        self, monkeypatch
+    ):
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-            RagStep,
+            ProviderStep,
             SetupWizardContainer,
         )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            STEP_RAG,
-            TRACK_FULL,
+            STEP_PROVIDER,
         )
 
-        original = RagStep.compose_step
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            failed_step = next(
+                step
+                for step in container.steps
+                if step.config and step.config.id == STEP_PROVIDER
+            )
+            assert failed_step.required is True
+            assert failed_step.compose_failure.required is True
+            assert failed_step.compose_failure.reason_code == "compose_failed"
+            assert STEP_PROVIDER in container.active_ids
 
-        def _boom(self):
-            raise RuntimeError("boom")
-            yield  # pragma: no cover
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            assert container.steps[container.current_step] is failed_step
+            assert len(failed_step.query("#setup-step-retry")) == 1
+            assert len(failed_step.query("#setup-step-manual")) == 1
+            assert len(failed_step.query("#setup-step-later")) == 1
 
-        RagStep.compose_step = _boom
-        try:
-            wizard = _make_wizard()
-            app = _HostApp(wizard)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause(0.2)
-                container = wizard.query_one(SetupWizardContainer)
-                container.select_track(TRACK_FULL)
-                await pilot.pause(0.1)
-                assert STEP_RAG not in container.active_ids
-                failed_step = next(
-                    s for s in container.steps
-                    if s.config and s.config.id == STEP_RAG
-                )
-                assert failed_step.compose_failed is True
-                notice = str(
-                    failed_step.query_one(".setup-step-error", Static).render()
-                )
-                assert "skipped" in notice.lower()
-        finally:
-            RagStep.compose_step = original
+            wizard.query_one("#wizard-next", Button).press()
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            assert container.steps[container.current_step] is failed_step
 
     @pytest.mark.asyncio
-    async def test_summary_reports_the_skipped_step(self):
-        """The read-back Summary carries a reasoned row for the broken step."""
+    async def test_optional_step_failure_is_removed_and_reported_in_summary(
+        self, monkeypatch
+    ):
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
             RagStep,
             SetupWizardContainer,
@@ -3049,49 +3071,238 @@ class TestComposeCrashPolicy:
         )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_FULL
 
-        original = RagStep.compose_step
+        monkeypatch.setattr(RagStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            container.select_track(TRACK_FULL)
+            await pilot.pause(0.1)
+            failed_step = next(
+                step
+                for step in container.steps
+                if step.config and step.config.id == STEP_RAG
+            )
+            assert failed_step.required is False
+            assert STEP_RAG not in container.active_ids
+            assert container.skipped_step_reasons == {STEP_RAG: "compose_failed"}
 
-        def _boom(self):
-            raise RuntimeError("boom")
-            yield  # pragma: no cover
-
-        RagStep.compose_step = _boom
-        try:
-            wizard = _make_wizard()
-            app = _HostApp(wizard)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause(0.2)
-                container = wizard.query_one(SetupWizardContainer)
-                container.select_track(TRACK_FULL)
-                await pilot.pause(0.1)
-                summary = next(
-                    s for s in container.steps if isinstance(s, SummaryStep)
-                )
-                container.show_step(container.steps.index(summary))
-                await pilot.pause(0.4)
-                rendered = str(
-                    summary.query_one("#setup-summary-rows", Static).render()
-                )
-                assert "couldn't be shown" in rendered
-                assert "RAG" in rendered
-        finally:
-            RagStep.compose_step = original
+            summary = next(
+                step for step in container.steps if isinstance(step, SummaryStep)
+            )
+            container.show_step(container.steps.index(summary))
+            await pilot.pause(0.4)
+            rendered = str(
+                summary.query_one("#setup-summary-rows", Static).render()
+            )
+            assert "RAG" in rendered
+            assert "couldn't be shown" in rendered
 
     @pytest.mark.asyncio
-    async def test_failed_step_excluded_from_initial_progress_and_nav(self):
-        """A step whose compose_step() raises must be excluded from the
-        VERY FIRST progress/nav render -- before anything (select_track(),
-        a Next press, note_key_entered()) ever calls _refresh_active_ids().
+    async def test_retry_reconstructs_only_failed_step_and_restores_focus(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
 
-        SetupWizardContainer.__init__ computes self.active_ids up front,
-        before any step has actually composed -- compose_failed can only be
-        known once a step's compose() has actually run, which happens
-        later, when Textual mounts the step's children. Without a refresh
-        keyed off composition actually having happened, the failed step is
-        still counted in the initial progress/nav ("Step 1 of 4" becomes
-        wrong) and still reachable by index until something else happens to
-        trigger a refresh.
-        """
+        original_compose = ProviderStep.compose_step
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.2)
+            failed_step = container.steps[container.current_step]
+            unchanged_steps = {
+                step.config.id: step
+                for step in container.steps
+                if step.config and step is not failed_step
+            }
+
+            monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
+            failed_step.query_one("#setup-step-retry", Button).press()
+            await pilot.pause(0.6)
+
+            replacement = container.steps[container.current_step]
+            assert replacement is not failed_step
+            assert failed_step.parent is None
+            assert failed_step not in list(container.walk_children(Widget))
+            assert replacement.config.id == STEP_PROVIDER
+            assert replacement.compose_failure is None
+            assert len(container.query(ProviderStep)) == 1
+            assert all(
+                next(step for step in container.steps if step.config.id == step_id)
+                is original
+                for step_id, original in unchanged_steps.items()
+            )
+            assert app.focused is replacement.query_one(
+                "#setup-provider-choice", OptionList
+            )
+
+    @pytest.mark.asyncio
+    async def test_repeated_retry_failure_has_one_recovery_surface(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
+
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.3)
+
+            retired = []
+            for _ in range(3):
+                failed_step = container.steps[container.current_step]
+                retired.append(failed_step)
+                failed_step.query_one("#setup-step-retry", Button).press()
+                await pilot.pause(0.3)
+                assert len(container.query(ProviderStep)) == 1
+                assert len(container.query("#setup-step-retry")) == 1
+                assert len(container.query("#setup-step-manual")) == 1
+                assert len(container.query("#setup-step-later")) == 1
+
+            assert all(step.parent is None for step in retired)
+            assert container._failure_action_running is False
+
+    @pytest.mark.asyncio
+    async def test_manual_setup_preserves_checkpoint_and_routes_to_provider_settings(
+        self, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
+
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        wizard.app_instance.app_config = {
+            "first_run": {"setup_completed": False}
+        }
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.3)
+            saved_data = dict(container.wizard_data)
+            persist = AsyncMock(return_value=True)
+            container.persist_current_checkpoint = persist
+
+            wizard.query_one("#setup-step-manual", Button).press()
+            await pilot.pause(0.3)
+
+            persist.assert_awaited_once()
+            assert app.wizard_result == {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": {"category": "providers-models"},
+            }
+            assert container.wizard_data == saved_data
+            assert (
+                wizard.app_instance.app_config["first_run"]["setup_completed"]
+                is False
+            )
+
+    @pytest.mark.asyncio
+    async def test_finish_later_persists_checkpoint_and_dismisses(
+        self, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
+
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.3)
+            persist = AsyncMock(return_value=True)
+            container.persist_current_checkpoint = persist
+
+            wizard.query_one("#setup-step-later", Button).press()
+            await pilot.pause(0.3)
+
+            persist.assert_awaited_once()
+            assert app.wizard_result is None
+
+    @pytest.mark.asyncio
+    async def test_finish_later_write_failure_keeps_recovery_visible(
+        self, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
+
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.3)
+            container.persist_current_checkpoint = AsyncMock(return_value=False)
+
+            wizard.query_one("#setup-step-later", Button).press()
+            await pilot.pause(0.3)
+
+            assert app.wizard_result == "UNSET"
+            assert len(wizard.query("#setup-step-retry")) == 1
+            assert len(wizard.query("#setup-step-manual")) == 1
+            assert len(wizard.query("#setup-step-later")) == 1
+
+    @pytest.mark.asyncio
+    async def test_required_failure_rapid_navigation_mashing_cannot_bypass(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            ProviderStep,
+            SetupWizardContainer,
+        )
+
+        monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+        wizard = _make_wizard()
+        app = _HostApp(wizard)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await pilot.pause(0.3)
+
+            for _ in range(5):
+                wizard.query_one("#wizard-next", Button).press()
+                await pilot.press("ctrl+n")
+            await pilot.pause(0.4)
+
+            assert container.steps[container.current_step].config.id == STEP_PROVIDER
+            assert len(wizard.query("#setup-step-retry")) == 1
+
+    @pytest.mark.asyncio
+    async def test_required_failure_remains_in_initial_progress_and_nav(self):
+        """Required failures are representable before any track interaction."""
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
             ModelStep,
             SetupWizardContainer,
@@ -3099,12 +3310,7 @@ class TestComposeCrashPolicy:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_MODEL
 
         original = ModelStep.compose_step
-
-        def _boom(self):
-            raise RuntimeError("boom")
-            yield  # pragma: no cover
-
-        ModelStep.compose_step = _boom
+        ModelStep.compose_step = _raising_compose_step
         try:
             wizard = _make_wizard()
             app = _HostApp(wizard)
@@ -3118,7 +3324,8 @@ class TestComposeCrashPolicy:
                     if s.config and s.config.id == STEP_MODEL
                 )
                 assert failed_step.compose_failed is True
-                assert STEP_MODEL not in container.active_ids
+                assert failed_step.required is True
+                assert STEP_MODEL in container.active_ids
                 nav = wizard.query_one(WizardNavigation)
                 assert nav.total_steps == len(container.active_ids)
         finally:
@@ -3175,15 +3382,8 @@ class TestComposeCrashPolicy:
             RagStep.compose_step = original
 
     @pytest.mark.asyncio
-    async def test_failed_welcome_step_is_not_shown_as_first_page(self):
-        """FINDING B (P2): active-id filtering already excludes a failed step
-        from navigation/progress, but nothing stopped the container from
-        still SHOWING it as the current page. WelcomeStep sits at absolute
-        index 0 and BaseWizard.on_mount (never modified) unconditionally
-        calls show_step(0) on first mount -- if Welcome's own compose_step()
-        raises, the container must resolve to the first non-failed ACTIVE
-        step (Provider) instead of rendering Welcome's skip notice as page
-        one."""
+    async def test_required_welcome_failure_stays_on_first_page(self):
+        """A required first-step failure cannot vanish during initial mount."""
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
             SetupWizardContainer,
             WelcomeStep,
@@ -3192,11 +3392,7 @@ class TestComposeCrashPolicy:
 
         original = WelcomeStep.compose_step
 
-        def _boom(self):
-            raise RuntimeError("boom")
-            yield  # pragma: no cover
-
-        WelcomeStep.compose_step = _boom
+        WelcomeStep.compose_step = _raising_compose_step
         try:
             wizard = _make_wizard()
             app = _HostApp(wizard)
@@ -3212,13 +3408,14 @@ class TestComposeCrashPolicy:
                     if s.config and s.config.id == STEP_PROVIDER
                 )
                 assert welcome_step.compose_failed is True
-                assert STEP_WELCOME not in container.active_ids
-                assert not welcome_step.has_class("active")
-                assert provider_step.has_class("active")
+                assert STEP_WELCOME in container.active_ids
+                assert welcome_step.has_class("active")
+                assert not provider_step.has_class("active")
+                assert len(welcome_step.query("#setup-step-retry")) == 1
                 nav = wizard.query_one(WizardNavigation)
                 assert nav.total_steps == len(container.active_ids)
                 assert nav.current_step == 1
-                assert container.active_ids[0] == STEP_PROVIDER
+                assert container.active_ids[0] == STEP_WELCOME
         finally:
             WelcomeStep.compose_step = original
 

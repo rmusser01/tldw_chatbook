@@ -56,6 +56,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ModelStep,
+    ProviderStep,
     SpeechSetupStep,
     SetupWizardContainer,
     _SettlingGuardedConfirmationDialog,
@@ -99,6 +100,12 @@ def _press(screen, selector: str) -> None:
     real click, without depending on the widget's cached screen region.
     """
     screen.query_one(selector, Button).press()
+
+
+def _raising_compose_step(self):
+    """Generator-shaped compose helper that fails before yielding widgets."""
+    raise RuntimeError("sensitive compose detail")
+    yield  # pragma: no cover
 
 
 def _select_radio(screen, selector: str) -> None:
@@ -1237,6 +1244,49 @@ async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
                 "FirstRunSetupWizard",
                 "SetupRecoveryDialog",
             }
+
+
+@pytest.mark.asyncio
+async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            await pilot.press("ctrl+n")
+            await _wait_until(
+                pilot,
+                lambda: container.steps[container.current_step].config.id
+                == STEP_PROVIDER,
+            )
+
+            _press(app.screen, "#setup-step-manual")
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "SettingsScreen"
+                and app.current_tab == "settings",
+            )
+            await _wait_until(
+                pilot,
+                lambda: getattr(app.screen, "active_category", None)
+                == "providers-models",
+            )
+
+            first_run = app.app_config[WIZARD_STATE_SECTION]
+            assert first_run.get(SETUP_COMPLETED_KEY) is not True
+            draft = read_setup_draft(app.app_config)
+            assert draft is not None
+            assert draft.active_step_id == STEP_PROVIDER
+            assert draft.values[STEP_WELCOME] == {"track": TRACK_QUICK}
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -122,6 +123,23 @@ class SetupRadioButton(RadioButton):
         self.BUTTON_INNER = "●" if self.value else "○"
         return super()._button
 
+
+_SETUP_STEP_FAILURE_REASONS = frozenset({"compose_failed", "render_failed"})
+
+
+@dataclass(frozen=True, slots=True)
+class SetupStepFailure:
+    """Secret-free failure state shared by a step and its container."""
+
+    step_id: str
+    required: bool
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        if self.reason_code not in _SETUP_STEP_FAILURE_REASONS:
+            raise ValueError("unsupported setup step failure reason")
+
+
 class SetupStep(WizardStep):
     """Base step: adds an awaitable commit hook and an inline error line.
 
@@ -141,9 +159,17 @@ class SetupStep(WizardStep):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.add_class("setup-step")
+        self.compose_failed = False
+        self.compose_failure: SetupStepFailure | None = None
 
-    #: TASK-1266: set when compose_step() raised — the container drops the
-    #: step from navigation and the Summary reports it.
+    @property
+    def required(self) -> bool:
+        """Whether this step may be omitted, derived from its real config."""
+
+        return self.config is None or not self.config.can_skip
+
+    #: Compatibility flag set when compose_step() raises. Failure policy is
+    #: carried by compose_failure, which distinguishes required from optional.
     compose_failed: bool = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -183,10 +209,10 @@ class SetupStep(WizardStep):
     def compose(self) -> ComposeResult:
         """Final wrapper: render compose_step(), degrading on failure.
 
-        TASK-1266 (spec §5): a step whose composition raises must never
-        crash the wizard screen. The step renders a one-line notice in its
-        place, flags itself, and the container auto-skips it; the Summary
-        adds a reasoned row. Subclasses implement ``compose_step``.
+        A step whose composition raises must never crash the wizard screen.
+        Required steps render recovery actions in place; optional steps render
+        a bounded skip notice and are reported by Summary. Subclasses implement
+        ``compose_step``.
 
         Finding A fix: ``compose_step()`` is fully drained into a list
         BEFORE anything is yielded to Textual. The original ``yield from
@@ -200,9 +226,8 @@ class SetupStep(WizardStep):
 
         Returns:
             Yields ``compose_step()``'s widgets on success. On a raised
-            exception, yields a single ``Static`` notice explaining the
-            step was skipped instead (and sets ``compose_failed = True``
-            so the container drops the step and the Summary reports it).
+            exception, yields the bounded required-recovery or optional-skip
+            surface and records a ``SetupStepFailure``.
         """
         try:
             # Finding A: drain compose_step() through Textual's OWN
@@ -217,19 +242,43 @@ class SetupStep(WizardStep):
             # list(). textual.compose.compose() reproduces that per-item
             # attach step itself, so it is safe to fully exhaust up front.
             buffered = _drain_compose_result(self, self.compose_step())
-        except Exception:
-            logger.exception(
-                "Wizard step %s failed to compose; auto-skipping",
-                self.config.id if self.config else type(self).__name__,
+        except Exception as exc:
+            logger.error(
+                "Wizard step composition failed (category=compose, error_type={})",
+                type(exc).__name__,
             )
             self.compose_failed = True
-            yield Static(
-                "This step couldn't be shown and was skipped — its settings "
-                "are still available in Settings.",
-                classes="setup-step-error",
+            self.compose_failure = SetupStepFailure(
+                step_id=self.config.id if self.config else "unknown",
+                required=self.required,
+                reason_code="compose_failed",
             )
+            yield from self._failure_widgets(self.compose_failure)
             return
         yield from buffered
+
+    def _failure_widgets(self, failure: SetupStepFailure) -> list[Widget]:
+        if not failure.required:
+            return [
+                Static(
+                    "This optional step couldn't be shown and was skipped; "
+                    "its settings remain available in Settings.",
+                    classes="setup-step-error",
+                )
+            ]
+        return [
+            Static(
+                "This required step couldn't be shown. Retry here, continue "
+                "in Settings, or finish setup later.",
+                classes="setup-step-error",
+            ),
+            Horizontal(
+                Button("Retry", id="setup-step-retry", variant="primary"),
+                Button("Use manual setup", id="setup-step-manual"),
+                Button("Finish later", id="setup-step-later"),
+                classes="setup-step-recovery-actions",
+            ),
+        ]
 
     def compose_step(self) -> ComposeResult:
         """Step content; override in subclasses (default: framework empty).
@@ -3632,7 +3681,9 @@ class SetupWizardContainer(WizardContainer):
         self.active_ids: tuple[str, ...] = wizard_state.active_step_ids(
             self.track, key_entered=self._effective_key_entered()
         )
+        self.skipped_step_reasons: dict[str, str] = {}
         self._advancing = False
+        self._failure_action_running = False
         # F3 hardening: guards _dismiss_screen/_finalize against ever
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
@@ -3648,7 +3699,7 @@ class SetupWizardContainer(WizardContainer):
         quick-track default (4 dots, "Step 1 of 4") instead of front-loading
         all nine steps before the user has chosen anything.
 
-        TASK-1266 follow-up: ``self.active_ids`` is first computed in
+        Failure-policy follow-up: ``self.active_ids`` is first computed in
         ``__init__``, before any step has actually composed -- a step's
         ``compose_failed`` flag can only be known once its own compose()
         has actually run, which Textual does while mounting this
@@ -3658,9 +3709,8 @@ class SetupWizardContainer(WizardContainer):
         ``_refresh_active_ids()`` -- rather than ``_rebuild_progress()``
         directly -- re-derives ``active_ids`` against the now-accurate
         ``compose_failed`` flags before the very first progress/nav render,
-        instead of leaving a step that failed to compose counted and shown
-        until some later event (track selection, a key being entered)
-        happens to trigger a refresh.
+        so optional failures are removed before the first progress render while
+        required failures remain represented.
 
         TASK-2710: overrides ``WizardContainer._post_mount_hook`` instead of
         defining its own ``on_mount()`` that calls ``super().on_mount()`` --
@@ -3846,34 +3896,56 @@ class SetupWizardContainer(WizardContainer):
         radio_set._selected = buttons.index(selected) if selected is not None else None
 
     # -- step construction -------------------------------------------------
+    def _build_step(self, config: WizardStepConfig) -> SetupStep:
+        """Construct one setup step from the canonical config-backed factory."""
+
+        step_types: dict[str, type[SetupStep]] = {
+            wizard_state.STEP_WELCOME: WelcomeStep,
+            wizard_state.STEP_PROVIDER: ProviderStep,
+            wizard_state.STEP_MODEL: ModelStep,
+            wizard_state.STEP_RAG: RagStep,
+            wizard_state.STEP_SPEECH: SpeechSetupStep,
+            wizard_state.STEP_TOOLS: ToolsStep,
+            wizard_state.STEP_NOTES: NotesSyncStep,
+            wizard_state.STEP_APPEARANCE: AppearanceStep,
+            wizard_state.STEP_PROTECT: ProtectKeysStep,
+            wizard_state.STEP_SUMMARY: SummaryStep,
+        }
+        step_type = step_types[config.id]
+        if step_type is ProviderStep:
+            return ProviderStep(wizard=self, config=config, environ=os.environ)
+        return step_type(wizard=self, config=config)
+
     def _create_steps(self) -> List[WizardStep]:
         # Later tasks append real steps here; the skeleton ships Welcome +
         # placeholder SetupSteps so navigation is testable end to end.
-        def cfg(step_id: str, title: str, number: int) -> WizardStepConfig:
-            return WizardStepConfig(id=step_id, title=title, step_number=number)
+        def cfg(
+            step_id: str,
+            title: str,
+            number: int,
+            *,
+            required: bool = True,
+        ) -> WizardStepConfig:
+            return WizardStepConfig(
+                id=step_id,
+                title=title,
+                step_number=number,
+                can_skip=not required,
+            )
 
-        return [
-            WelcomeStep(wizard=self, config=cfg(wizard_state.STEP_WELCOME, "Welcome", 1)),
-            ProviderStep(
-                wizard=self,
-                config=cfg(wizard_state.STEP_PROVIDER, "Provider", 2),
-                environ=os.environ,
-            ),
-            ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
-            RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
-            SpeechSetupStep(
-                wizard=self, config=cfg(wizard_state.STEP_SPEECH, "Speech", 5)
-            ),
-            ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 6)),
-            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes", 7)),
-            AppearanceStep(
-                wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Style", 8)
-            ),
-            ProtectKeysStep(
-                wizard=self, config=cfg(wizard_state.STEP_PROTECT, "Protect", 9)
-            ),
-            SummaryStep(wizard=self, config=cfg(wizard_state.STEP_SUMMARY, "Summary", 10)),
-        ]
+        configs = (
+            cfg(wizard_state.STEP_WELCOME, "Welcome", 1),
+            cfg(wizard_state.STEP_PROVIDER, "Provider", 2),
+            cfg(wizard_state.STEP_MODEL, "Model", 3),
+            cfg(wizard_state.STEP_RAG, "RAG", 4, required=False),
+            cfg(wizard_state.STEP_SPEECH, "Speech", 5),
+            cfg(wizard_state.STEP_TOOLS, "Tools", 6),
+            cfg(wizard_state.STEP_NOTES, "Notes", 7),
+            cfg(wizard_state.STEP_APPEARANCE, "Style", 8),
+            cfg(wizard_state.STEP_PROTECT, "Protect", 9),
+            cfg(wizard_state.STEP_SUMMARY, "Summary", 10),
+        )
+        return [self._build_step(config) for config in configs]
 
     # -- active-step navigation --------------------------------------------
     def select_track(self, track: str) -> None:
@@ -3902,15 +3974,18 @@ class SetupWizardContainer(WizardContainer):
         ids = wizard_state.active_step_ids(
             self.track, key_entered=self._effective_key_entered()
         )
-        # TASK-1266: steps whose compose failed are auto-skipped — they have
-        # no usable surface, and the Summary reports them (see
-        # compose_failed_steps / SummaryStep._render_rows).
-        failed = {
-            step.config.id
+        optional_failures = {
+            step.config.id: step.compose_failure.reason_code
             for step in self.steps
-            if step.config and getattr(step, "compose_failed", False)
+            if (
+                isinstance(step, SetupStep)
+                and step.config
+                and step.compose_failure is not None
+                and not step.compose_failure.required
+            )
         }
-        self.active_ids = tuple(sid for sid in ids if sid not in failed)
+        self.skipped_step_reasons = optional_failures
+        self.active_ids = tuple(sid for sid in ids if sid not in optional_failures)
         self._rebuild_progress()
         # TASK-2154.9 (FR-02): keep the "Step X of Y" text in sync with the
         # rebuilt dots -- note_key_entered() reaches here while the user is
@@ -3921,18 +3996,20 @@ class SetupWizardContainer(WizardContainer):
         # own compose() has actually run -- which may land after this
         # container already displayed it (WelcomeStep is index 0 and
         # BaseWizard.on_mount unconditionally shows it first). If the page
-        # currently on screen has since turned out to be a casualty, advance
-        # to the next viable active step instead of leaving its "couldn't be
-        # shown" notice as the visible page.
-        if 0 <= self.current_step < len(self.steps) and getattr(
-            self.steps[self.current_step], "compose_failed", False
+        # Redirect only optional failures. Required failures intentionally stay
+        # visible on their own recovery surface.
+        if (
+            0 <= self.current_step < len(self.steps)
+            and isinstance(self.steps[self.current_step], SetupStep)
+            and self.steps[self.current_step].compose_failure is not None
+            and not self.steps[self.current_step].compose_failure.required
         ):
             resolved = self._resolve_visible_index(self.current_step)
             if resolved != self.current_step:
                 self.show_step(resolved)
 
     def compose_failed_steps(self) -> list[str]:
-        """Titles of steps dropped by the TASK-1266 compose-crash policy.
+        """Titles of optional steps dropped by the compose-crash policy.
 
         Returns:
             Display titles of steps whose composition failed this session.
@@ -3940,7 +4017,7 @@ class SetupWizardContainer(WizardContainer):
         return [
             step.config.title
             for step in self.steps
-            if step.config and getattr(step, "compose_failed", False)
+            if step.config and step.config.id in self.skipped_step_reasons
         ]
 
     def _step_index_for_id(self, step_id: str) -> Optional[int]:
@@ -3967,7 +4044,7 @@ class SetupWizardContainer(WizardContainer):
         return self._step_index_for_id(self.active_ids[position - 1])
 
     def _resolve_visible_index(self, step_index: int) -> int:
-        """Finding B: never show a step whose own compose_step() raised.
+        """Redirect optional failed steps while retaining required failures.
 
         ``_refresh_active_ids()`` already drops a compose-failed step from
         navigation/progress, but nothing stopped the container from still
@@ -3987,14 +4064,15 @@ class SetupWizardContainer(WizardContainer):
             step_index: The absolute step index the caller wants to show.
 
         Returns:
-            ``step_index`` unchanged if that step's compose_step() did not
-            fail; otherwise the absolute index of the first active step
-            (in active-id order) whose compose_step() succeeded, or
-            ``step_index`` itself if every active step has failed.
+            ``step_index`` for successful or required-failed steps; otherwise
+            the first active index that can be shown.
         """
         if not (0 <= step_index < len(self.steps)):
             return step_index
-        if not getattr(self.steps[step_index], "compose_failed", False):
+        failed_step = self.steps[step_index]
+        if not getattr(failed_step, "compose_failed", False):
+            return step_index
+        if isinstance(failed_step, SetupStep) and failed_step.required:
             return step_index
         ids = wizard_state.active_step_ids(
             self.track, key_entered=self._effective_key_entered()
@@ -4003,7 +4081,10 @@ class SetupWizardContainer(WizardContainer):
             index = self._step_index_for_id(step_id)
             if index is None:
                 continue
-            if not getattr(self.steps[index], "compose_failed", False):
+            candidate = self.steps[index]
+            if not getattr(candidate, "compose_failed", False) or (
+                isinstance(candidate, SetupStep) and candidate.required
+            ):
                 return index
         return step_index
 
@@ -4130,6 +4211,160 @@ class SetupWizardContainer(WizardContainer):
         except Exception:
             logger.debug("Wizard progress rebuild skipped", exc_info=True)
 
+    # -- required-step failure recovery -----------------------------------
+    @on(Button.Pressed, "#setup-step-retry")
+    def handle_step_retry(self) -> None:
+        if self._failure_action_running:
+            return
+        self._failure_action_running = True
+        self.run_worker(
+            self._retry_failed_step(),
+            exclusive=True,
+            group="setup-step-recovery",
+        )
+
+    @on(Button.Pressed, "#setup-step-manual")
+    def handle_step_manual(self) -> None:
+        if self._failure_action_running:
+            return
+        self._failure_action_running = True
+        self.run_worker(
+            self._use_manual_setup(),
+            exclusive=True,
+            group="setup-step-recovery",
+        )
+
+    @on(Button.Pressed, "#setup-step-later")
+    def handle_step_later(self) -> None:
+        if self._failure_action_running:
+            return
+        self._failure_action_running = True
+        self.run_worker(
+            self._finish_later_from_failure(),
+            exclusive=True,
+            group="setup-step-recovery",
+        )
+
+    def _active_required_failure(self) -> SetupStep | None:
+        try:
+            step = self.steps[self.current_step]
+        except IndexError:
+            return None
+        if (
+            isinstance(step, SetupStep)
+            and step.compose_failure is not None
+            and step.required
+        ):
+            return step
+        return None
+
+    async def _checkpoint_required_failure(self) -> bool:
+        step = self._active_required_failure()
+        if step is None:
+            return False
+        try:
+            saved = await self.persist_current_checkpoint()
+        except Exception as exc:
+            logger.error(
+                "Wizard failure checkpoint failed "
+                "(category=persistence, error_type={})",
+                type(exc).__name__,
+            )
+            saved = False
+        if not saved:
+            step.show_step_error(
+                "Setup progress could not be saved. Retry this action."
+            )
+        return saved
+
+    @staticmethod
+    def _manual_settings_context(step_id: str) -> dict[str, str]:
+        categories = {
+            wizard_state.STEP_PROVIDER: "providers-models",
+            wizard_state.STEP_MODEL: "providers-models",
+            wizard_state.STEP_RAG: "library-rag",
+            wizard_state.STEP_SPEECH: "speech-tts",
+            wizard_state.STEP_APPEARANCE: "appearance",
+            wizard_state.STEP_PROTECT: "privacy-security",
+            wizard_state.STEP_SUMMARY: "diagnostics",
+        }
+        return {"category": categories.get(step_id, "overview")}
+
+    async def _use_manual_setup(self) -> None:
+        try:
+            step = self._active_required_failure()
+            if step is None or step.config is None:
+                return
+            if not await self._checkpoint_required_failure():
+                return
+            context = self._manual_settings_context(step.config.id)
+            result = {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": context,
+            }
+            screen = self.screen
+            self._dismiss_screen(result)
+            if isinstance(screen, FirstRunSetupWizard):
+                from tldw_chatbook.UI.Navigation.main_navigation import (
+                    NavigateToScreen,
+                )
+
+                screen.app.post_message(NavigateToScreen("settings", context))
+        finally:
+            self._failure_action_running = False
+
+    async def _finish_later_from_failure(self) -> None:
+        try:
+            if not await self._checkpoint_required_failure():
+                return
+            self._dismiss_screen(None)
+        finally:
+            self._failure_action_running = False
+
+    async def _retry_failed_step(self) -> None:
+        """Replace only the active failed step with a clean factory instance."""
+
+        try:
+            index = self.current_step
+            failed_step = self.steps[index]
+            if (
+                not isinstance(failed_step, SetupStep)
+                or failed_step.compose_failure is None
+                or not failed_step.required
+                or failed_step.config is None
+            ):
+                return
+            parent = failed_step.parent
+            if parent is None:
+                return
+            siblings = list(parent.children)
+            sibling_index = siblings.index(failed_step)
+            next_sibling = (
+                siblings[sibling_index + 1]
+                if sibling_index + 1 < len(siblings)
+                else None
+            )
+            replacement = self._build_step(failed_step.config)
+            replacement.step_number = failed_step.step_number
+            replacement.add_class("hidden")
+
+            await failed_step.remove()
+            self.steps[index] = replacement
+            if next_sibling is None:
+                await parent.mount(replacement)
+            else:
+                await parent.mount(replacement, before=next_sibling)
+            self._refresh_active_ids()
+            self.show_step(index)
+        except Exception as exc:
+            logger.error(
+                "Wizard step retry failed (category=recovery, error_type={})",
+                type(exc).__name__,
+            )
+        finally:
+            self._failure_action_running = False
+
     # -- commit-on-Next ----------------------------------------------------
     @on(Button.Pressed, "#wizard-next")
     def handle_next(self, event: Button.Pressed) -> None:
@@ -4182,6 +4417,8 @@ class SetupWizardContainer(WizardContainer):
         try:
             step = self.steps[self.current_step]
             if isinstance(step, SetupStep):
+                if step.compose_failure is not None and step.required:
+                    return
                 ok, error = await step.commit()
                 if not ok:
                     step.show_step_error(f"{error}  (Retry, or Skip this step.)")
