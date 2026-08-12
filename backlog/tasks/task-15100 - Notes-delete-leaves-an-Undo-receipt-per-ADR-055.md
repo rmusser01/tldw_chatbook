@@ -1,8 +1,9 @@
 ---
 id: TASK-15100
 title: Notes delete leaves an Undo receipt per ADR-055
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-11 06:20'
 labels:
   - library
@@ -35,8 +36,28 @@ promise the Undo once it exists.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A successful note deletion leaves an in-place receipt in the notes list naming what was deleted, with Undo and Dismiss, matching the media receipt grammar
-- [ ] #2 Undo restores the note through the service seam (no raw SQL) and the list and rail Notes count update in place
-- [ ] #3 Undo and any concurrent note delete/create cannot race on shared list/count/receipt state (one shared in-flight interlock, PR-1473 pattern)
-- [ ] #4 The note delete confirm copy promises exactly what exists (Undo), replacing "This cannot be undone from Library."
+- [x] #1 A successful note deletion leaves an in-place receipt in the notes list naming what was deleted, with Undo and Dismiss, matching the media receipt grammar
+- [x] #2 Undo restores the note through the service seam (no raw SQL) and the list and rail Notes count update in place
+- [x] #3 Undo and any concurrent note delete/create cannot race on shared list/count/receipt state (one shared in-flight interlock, PR-1473 pattern)
+- [x] #4 The note delete confirm copy promises exactly what exists (Undo), replacing "This cannot be undone from Library."
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no
+ADR path: `backlog/decisions/055-library-destructive-action-reversibility-rule.md`
+Reason: ADR-055 already defines the Notes recovery receipt, restore boundary, and shared mutation interlock; this task directly implements that accepted contract without changing an architectural boundary.
+
+1. Characterize the current version-checked Notes delete path and add a matching restore operation through `ChaChaNotes_DB`, `Notes_Library`, and `NotesScopeService`, including Sync v2 enqueue behavior.
+2. Add focused store/service tests for successful restore, stale-version conflicts, policy enforcement, and Sync v2 restoration events.
+3. Add mounted Library tests for the receipt grammar, confirm promise, Undo/Dismiss behavior, list/count restoration, supersession, and shared create/delete/Undo admission.
+4. Render the persistent receipt in the Notes list and connect delete, Undo, Dismiss, focus recovery, and count/list refresh through one shared Notes mutation interlock.
+5. Update the Notes Library guide, run focused tests and static checks, self-review the diff, and complete the task record with verified evidence.
+
+## Implementation Notes
+
+- Implemented ADR-055 Pattern A for Database Notes: confirmed deletion now patches the visible list/count immediately and leaves a named `✓ deleted · <title>` receipt with Undo and Dismiss. The confirmation copy now promises the Notes-list Undo that actually exists.
+- Added a version-checked restore path through `CharactersRAGDB.restore_note` → `NotesInteropService.restore_note` → `NotesScopeService.restore_note`; the screen never uses SQL. Restore returns the fresh active row, preserves keyword metadata for Sync v2, and repairs the legacy Notes FTS update trigger before undelete so restored rows are searchable without corrupting FTS.
+- Serialized create, visible delete, untouched-blank GC/discard, and receipt Undo through one `library_note_mutation` worker group and `_library_notes_mutation_in_flight` admission flag. While Undo is pending, row entry, Create, Dismiss, and another delete are refused; list/count/receipt patches finish before the flag is released.
+- Updated `Docs/User_Guide/library/notes.md` and recorded the Windows `pytest-asyncio`/network-guard setup failure in `backlog/docs/lessons-testing-evidence.md`. No new ADR was required; `backlog/decisions/055-library-destructive-action-reversibility-rule.md` is the governing decision.
+- Verification: 44 Notes scope-service/real-SQLite tests passed; 19 mounted Notes create/delete/Undo/discard/blank-GC regression tests passed; 63 Notes state, multiselect, and CSS integrity tests passed. The three newest restore/interlock tests were rerun after self-review and passed. `compileall`, focused Ruff checks (excluding the file's pre-existing E721/F401 debt), and `git diff --check` passed. On Windows, current `dev`'s task-15111 socket guard blocks Python's own Proactor self-pipe before async tests start, so focused local-only suites ran with that guard's family set disabled only inside the pytest process; all selected tests use SQLite or injected fakes and no external clients.

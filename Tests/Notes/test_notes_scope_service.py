@@ -9,6 +9,8 @@ class FakeLocalNotes:
         self.add_calls = []
         self.update_calls = []
         self.delete_calls = []
+        self.restore_calls = []
+        self.restored_versions = {}
         self.search_calls = []
         self.link_calls = []
         self.unlink_calls = []
@@ -65,6 +67,17 @@ class FakeLocalNotes:
         )
         return True
 
+    def restore_note(self, user_id, note_id, expected_version):
+        self.restore_calls.append(
+            {
+                "user_id": user_id,
+                "note_id": note_id,
+                "expected_version": expected_version,
+            }
+        )
+        self.restored_versions[str(note_id)] = expected_version + 1
+        return True
+
     def search_notes(self, user_id, search_term, limit=10):
         self.search_calls.append(
             {
@@ -77,7 +90,12 @@ class FakeLocalNotes:
 
     def get_note_by_id(self, user_id, note_id):
         if note_id == "local-1":
-            return {"id": "local-1", "title": "Local", "content": "Body", "version": 1}
+            return {
+                "id": "local-1",
+                "title": "Local",
+                "content": "Body",
+                "version": self.restored_versions.get("local-1", 1),
+            }
         if note_id == "local-2":
             return {
                 "id": "local-2",
@@ -815,6 +833,55 @@ async def test_scope_service_local_delete_survives_sync_v2_enqueue_failure():
     )
 
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_scope_service_restores_local_note_as_update_and_enqueues_active_upsert():
+    local = FakeLocalNotes()
+    producer = FakeNotesSyncV2Producer()
+    policy = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=local,
+        server_service=FakeServerNotes(),
+        policy_enforcer=policy,
+        sync_v2_notes_producer=producer,
+    )
+
+    result = await scope_service.restore_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        version=4,
+        sync_v2_profile={
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
+    )
+
+    assert result["version"] == 5
+    assert local.restore_calls == [
+        {
+            "user_id": "user-1",
+            "note_id": "local-1",
+            "expected_version": 4,
+        }
+    ]
+    assert policy.calls == ["notes.update.local"]
+    assert producer.upserts == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+            "note_id": "local-1",
+            "title": "Local",
+            "content": "Body",
+            "status": "active",
+            "tag_ids": ["existing", "stale"],
+            "base_version": 4,
+            "entity_version": 5,
+        }
+    ]
 
 
 @pytest.mark.asyncio

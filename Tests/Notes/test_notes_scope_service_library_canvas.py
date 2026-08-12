@@ -249,6 +249,64 @@ async def test_delete_with_correct_version_removes_the_note(notes_scope_service)
 
 
 @pytest.mark.asyncio
+async def test_delete_then_restore_round_trip_bumps_version_and_restores_count(
+    notes_scope_service,
+):
+    """Undo uses the same optimistic service boundary as delete.
+
+    Deleting v1 writes a v2 tombstone; restoring that exact tombstone returns
+    the active v3 row, makes it readable again, and restores the exact count.
+    A stale second restore must conflict instead of mutating the active row.
+    """
+    created = await notes_scope_service.save_note(
+        scope="local_note",
+        title="Recoverable",
+        content="body",
+        user_id=USER_ID,
+        keywords=["keep"],
+    )
+    note_id = str(created["id"])
+
+    assert await notes_scope_service.delete_note(
+        scope="local_note",
+        note_id=note_id,
+        version=1,
+        user_id=USER_ID,
+    )
+    assert await notes_scope_service.count_notes(
+        scope="local_note", user_id=USER_ID
+    ) == 0
+
+    with pytest.raises(ConflictError):
+        await notes_scope_service.restore_note(
+            scope="local_note",
+            note_id=note_id,
+            version=1,
+            user_id=USER_ID,
+        )
+
+    restored = await notes_scope_service.restore_note(
+        scope="local_note",
+        note_id=note_id,
+        version=2,
+        user_id=USER_ID,
+    )
+
+    assert restored["id"] == note_id
+    assert restored["title"] == "Recoverable"
+    assert restored["content"] == "body"
+    assert restored["version"] == 3
+    assert [row["keyword"] for row in restored["keywords"]] == ["keep"]
+    assert await notes_scope_service.count_notes(
+        scope="local_note", user_id=USER_ID
+    ) == 1
+    matches = notes_scope_service.local_notes_service.search_notes(
+        USER_ID, "Recoverable", limit=10
+    )
+    assert [row["id"] for row in matches] == [note_id]
+
+
+@pytest.mark.asyncio
 async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     notes_scope_service,
 ):

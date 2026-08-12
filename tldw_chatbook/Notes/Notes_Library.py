@@ -482,6 +482,41 @@ class NotesInteropService:
             )
             raise
 
+    def restore_note(
+        self, user_id: str, note_id: str, expected_version: int
+    ) -> bool:
+        """Restore a soft-deleted note through the per-user database seam."""
+        start_time = time.time()
+        log_counter("notes_library_restore_note_attempt")
+
+        try:
+            db = self._get_db(user_id)
+            result = db.restore_note(
+                note_id=note_id, expected_version=expected_version
+            )
+            duration = time.time() - start_time
+            log_histogram(
+                "notes_library_restore_note_duration",
+                duration,
+                labels={"status": "success" if result else "conflict"},
+            )
+            log_counter(
+                "notes_library_restore_note_result", labels={"success": str(result)}
+            )
+            return bool(result)
+        except Exception as e:
+            duration = time.time() - start_time
+            log_histogram(
+                "notes_library_restore_note_duration",
+                duration,
+                labels={"status": "error"},
+            )
+            log_counter(
+                "notes_library_restore_note_error",
+                labels={"error_type": type(e).__name__},
+            )
+            raise
+
     def search_notes(
         self,
         user_id: str,

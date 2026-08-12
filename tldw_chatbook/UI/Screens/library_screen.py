@@ -128,6 +128,7 @@ from ...Library.library_notes_state import (
     DatabaseNoteDraft,
     DatabaseNoteSavePayload,
     LibraryNoteCreateOutcome,
+    LibraryNoteDeleteReceipt,
     LibraryNoteEditorState,
     LibraryNotesFocusIdentity,
     LibraryNotesListState,
@@ -2723,6 +2724,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_create_token: str | None = None
         self._library_note_create_running: bool = False
         self._library_note_create_status: str = ""
+        # TASK-15100 / ADR-055: create, delete, and Undo all mutate the same
+        # cached Notes rows/count/receipt. One admission flag keeps those
+        # writes serialized instead of letting separate workers race.
+        self._library_notes_mutation_in_flight: bool = False
+        self._library_note_delete_receipt: LibraryNoteDeleteReceipt | None = None
         self._library_notes_operation_counter: int = 0
         self._library_notes_operation: LibraryNotesOperationState | None = None
         self._library_prompts_debounce_timer: Timer | None = None
@@ -8507,11 +8513,45 @@ class LibraryScreen(BaseAppScreen):
                 if operation is not None
                 else self._library_notes_notice
             ),
-            operation_running=bool(operation and operation.running),
+            operation_running=(
+                bool(operation and operation.running)
+                or self._library_notes_mutation_in_flight
+            ),
+            delete_receipt=self._library_note_delete_receipt,
         )
         if self._library_notes_select_mode:
             self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
         return state
+
+    def _remove_library_note_source_record(self, note_id: str) -> None:
+        """Patch one successful delete into the cached Notes rows and count."""
+        target_id = str(note_id)
+        records = self._local_source_records.get("notes", ())
+        self._local_source_records["notes"] = tuple(
+            record
+            for record in records
+            if self._source_record_id(record) != target_id
+        )
+        self._local_source_counts["notes"] = max(
+            self._local_source_counts.get("notes", 0) - 1,
+            0,
+        )
+
+    def _append_library_note_source_record(
+        self, record: Mapping[str, Any]
+    ) -> bool:
+        """Append one newly active note and increment the exact rail count."""
+        note_id = self._source_record_id(record)
+        if not note_id:
+            return False
+        records = self._local_source_records.get("notes", ())
+        if any(self._source_record_id(item) == note_id for item in records):
+            return False
+        self._local_source_records["notes"] = records + (dict(record),)
+        self._local_source_counts["notes"] = (
+            self._local_source_counts.get("notes", 0) + 1
+        )
+        return True
 
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
@@ -11153,15 +11193,9 @@ class LibraryScreen(BaseAppScreen):
         conflict from a still-possible concurrent EXTERNAL change) is
         swallowed -- GC must never block the exit it runs inside, and the
         worst case on failure is the pre-existing behavior (the row
-        survives), not a new regression. On success, kicks the same full
-        local-source snapshot reload the create/delete flows already use,
-        so the notes list/rail
-        count drop the now-gone row on the next recompose instead of a
-        stale one lingering in the cached snapshot -- exclusive within its
-        own worker group (``library_source_snapshot``), so a caller that
-        also queues its own refresh right after this returns (e.g.
-        ``_exit_library_note_editor_guarded``) simply supersedes this one
-        rather than running both.
+        survives), not a new regression. On success, patches the same cached
+        Notes rows/count used by visible Delete, Undo, and Create while their
+        one shared mutation interlock is held.
 
         Also clears ``_library_note_dirty`` unconditionally (review round
         1 fix): the caller, ``_flush_library_note_save``, is reached via
@@ -11183,11 +11217,13 @@ class LibraryScreen(BaseAppScreen):
         current_version = self._library_note_version or 1
         self._library_note_session_blank_id = None
         self._library_note_pending_blank_gc_id = None
-        if not note_id:
+        if not note_id or self._library_notes_mutation_in_flight:
             return
+        self._library_notes_mutation_in_flight = True
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
+            self._library_notes_mutation_in_flight = False
             return
         try:
             deleted = await self._run_library_service_call(
@@ -11198,13 +11234,15 @@ class LibraryScreen(BaseAppScreen):
                 user_id=self._library_notes_user_id(),
                 isolate_in_worker=True,
             )
+            if deleted:
+                self._remove_library_note_source_record(note_id)
         except Exception:
             logger.opt(exception=True).debug(
                 f"Could not GC untouched blank note {note_id!r}; leaving it in place."
             )
             return
-        if deleted:
-            self._refresh_local_source_snapshot()
+        finally:
+            self._library_notes_mutation_in_flight = False
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a conflict through the coordinator's token-gated action.
@@ -22629,6 +22667,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a note row button.
         """
         event.stop()
+        if self._library_notes_mutation_in_flight:
+            return
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
@@ -22809,6 +22849,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
+        if self._library_notes_mutation_in_flight:
+            return
         initiating_snapshot = self._library_note_session.snapshot
         if (
             initiating_snapshot is None
@@ -22941,8 +22983,9 @@ class LibraryScreen(BaseAppScreen):
 
         Reads the coordinator-issued admission synchronously and defers its
         final revalidation plus the actual service call to
-        ``_delete_library_note``. Duplicate workers may be scheduled, but
-        only one can mark that admission running and reach the service.
+        ``_delete_library_note``. The shared Notes mutation flag is claimed
+        synchronously before scheduling, so duplicate confirmation, Create,
+        and Undo cannot race this service call.
 
         Args:
             event: Button press event emitted by the confirm affordance's
@@ -22953,12 +22996,34 @@ class LibraryScreen(BaseAppScreen):
         if admission is None or admission.kind is not DestructiveKind.DELETE:
             self._restore_library_note_delete_origin()
             return
+        if self._library_notes_mutation_in_flight:
+            return
+        # A newer admitted delete supersedes an older receipt, matching the
+        # media receipt lifecycle in ADR-055.
+        self._library_note_delete_receipt = None
+        self._library_notes_mutation_in_flight = True
         self.run_worker(
             self._delete_library_note(admission),
-            group="library_note_delete",
+            exclusive=True,
+            group="library_note_mutation",
         )
 
     async def _delete_library_note(self, admission: DestructiveAdmission) -> None:
+        """Run one preclaimed Notes delete and always release its interlock."""
+        try:
+            await self._delete_library_note_claimed(admission)
+        finally:
+            self._library_notes_mutation_in_flight = False
+            if (
+                self.is_mounted
+                and self._library_notes_view == "list"
+                and self._library_note_delete_receipt is not None
+            ):
+                self.refresh(recompose=True)
+
+    async def _delete_library_note_claimed(
+        self, admission: DestructiveAdmission
+    ) -> None:
         """Delete the selected Library note, then return to the list view.
 
         Calls ``delete_note`` through the offloaded service seam. The real
@@ -22973,12 +23038,10 @@ class LibraryScreen(BaseAppScreen):
         ``_delete_library_media_item`` guards a missing
         ``delete_media_item``.
 
-        On success, drops the note from the cached local-source snapshot by
-        re-running the full snapshot reload (the same seam Task 6's create
-        flow uses -- notes have no existing "patch the cached snapshot"
-        mutation path the way media deletes do) so the list view and the
-        rail's Notes count both reflect the deletion, resets the editor
-        state, and returns to the list view.
+        On success, removes the note from the cached local-source rows,
+        decrements the rail count, installs the named recovery receipt, resets
+        the editor state, and returns to the list. Those mutations happen
+        while the same interlock used by Create and Undo remains held.
 
         A stale result -- the user has since switched to a different note
         while this delete was in flight -- is discarded before mutating any
@@ -22988,6 +23051,12 @@ class LibraryScreen(BaseAppScreen):
         Args:
             admission: Coordinator-issued authority for this exact session.
         """
+        snapshot = self._library_note_session.snapshot
+        deleted_title = (
+            snapshot.title
+            if snapshot is not None and snapshot.note_id == admission.note_id
+            else "Untitled"
+        )
         if not self._library_note_session.mark_destructive_running(admission):
             cancelled = self._library_note_session.cancel_destructive(admission)
             if (
@@ -23025,10 +23094,20 @@ class LibraryScreen(BaseAppScreen):
                 )
                 failure_message = "Could not delete this note."
 
+        if deleted:
+            self._remove_library_note_source_record(admission.note_id)
+            self._library_note_delete_receipt = LibraryNoteDeleteReceipt(
+                note_id=admission.note_id,
+                title=deleted_title or "Untitled",
+                expected_version=admission.expected_version + 1,
+            )
+
         finished = self._library_note_session.finish_destructive(
             admission, success=deleted
         )
         if not finished:
+            if deleted and self.is_mounted:
+                self.refresh(recompose=True)
             return
 
         # Discard a stale result: the user has since switched to a different
@@ -23055,10 +23134,6 @@ class LibraryScreen(BaseAppScreen):
         # rendering as a ghost row until the filter box is resubmitted.
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        # Reuses the same full local-source reload Task 6's create flow
-        # uses (already its own exclusive worker via @work) so the list
-        # view and the rail's Notes count both drop the deleted note.
-        self._refresh_local_source_snapshot()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -23071,6 +23146,103 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-notes-delete-undo")
+    def handle_library_note_delete_undo(self, event: Button.Pressed) -> None:
+        """Restore the exact note named by the current delete receipt."""
+        event.stop()
+        if self._library_notes_mutation_in_flight:
+            return
+        receipt = self._library_note_delete_receipt
+        if receipt is None:
+            return
+        self._library_notes_mutation_in_flight = True
+        if self.is_mounted:
+            self.refresh(recompose=True)
+        self.run_worker(
+            self._undo_library_note_delete(receipt),
+            exclusive=True,
+            group="library_note_mutation",
+        )
+
+    @on(Button.Pressed, "#library-notes-delete-receipt-dismiss")
+    def handle_library_note_delete_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Dismiss the recovery receipt without changing persisted data."""
+        event.stop()
+        if self._library_notes_mutation_in_flight:
+            return
+        self._library_note_delete_receipt = None
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self._arm_library_list_entry_focus()
+
+    async def _undo_library_note_delete(
+        self, receipt: LibraryNoteDeleteReceipt
+    ) -> None:
+        """Undo one delete through ``NotesScopeService.restore_note``."""
+        restored_record: Mapping[str, Any] | None = None
+        failure_message = ""
+        try:
+            service = getattr(self.app_instance, "notes_scope_service", None)
+            restore_note = getattr(service, "restore_note", None)
+            if not callable(restore_note):
+                failure_message = "Note restore is unavailable."
+            else:
+                try:
+                    result = await self._run_library_service_call(
+                        restore_note,
+                        scope="local_note",
+                        note_id=receipt.note_id,
+                        version=receipt.expected_version,
+                        user_id=self._library_notes_user_id(),
+                        isolate_in_worker=True,
+                    )
+                    if (
+                        isinstance(result, Mapping)
+                        and self._source_record_id(result) == receipt.note_id
+                    ):
+                        restored_record = result
+                    else:
+                        failure_message = "The note could not be restored."
+                except ConflictError:
+                    failure_message = (
+                        "This deleted note changed elsewhere — refresh and try again."
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to restore Library note {receipt.note_id!r}."
+                    )
+                    failure_message = "Could not restore this note."
+
+            if restored_record is not None:
+                self._append_library_note_source_record(restored_record)
+                if self._library_note_delete_receipt == receipt:
+                    self._library_note_delete_receipt = None
+            else:
+                self._notify_library_note_delete_warning(
+                    failure_message or "Could not restore this note."
+                )
+        finally:
+            self._library_notes_mutation_in_flight = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                if restored_record is not None:
+                    identity = LibraryNotesFocusIdentity(
+                        stage="notes",
+                        region="navigator",
+                        note_id=receipt.note_id,
+                        semantic_role=f"note-row:{receipt.note_id}",
+                    )
+                    self.call_after_refresh(
+                        self._restore_library_notes_focus_identity, identity
+                    )
+                else:
+                    self.call_after_refresh(
+                        self._focus_library_note_control,
+                        "#library-notes-delete-undo",
+                    )
 
     def _notify_library_note_missing_warning(self) -> None:
         """Surface a quiet warning when an opened note is no longer available.
@@ -23101,7 +23273,8 @@ class LibraryScreen(BaseAppScreen):
                 create_token=create_token,
                 blank=True,
             ),
-            group="library_note_create",
+            exclusive=True,
+            group="library_note_mutation",
         )
 
     @on(Button.Pressed, ".library-notes-template-row")
@@ -23133,7 +23306,8 @@ class LibraryScreen(BaseAppScreen):
                 keywords=keywords,
                 create_token=create_token,
             ),
-            group="library_note_create",
+            exclusive=True,
+            group="library_note_mutation",
         )
 
     @on(Button.Pressed, "#library-notes-create-back")
@@ -23147,13 +23321,17 @@ class LibraryScreen(BaseAppScreen):
 
     def _begin_library_note_create(self) -> str | None:
         """Claim one monotonic Create token before a worker can be scheduled."""
-        if self._library_note_create_running:
+        if (
+            self._library_note_create_running
+            or self._library_notes_mutation_in_flight
+        ):
             return None
         self._library_notes_notice = ""
         self._library_note_create_counter += 1
         token = f"create-{self._library_note_create_counter}"
         self._library_note_create_token = token
         self._library_note_create_running = True
+        self._library_notes_mutation_in_flight = True
         self._library_note_create_status = "Create…"
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -23166,6 +23344,7 @@ class LibraryScreen(BaseAppScreen):
         if create_token != self._library_note_create_token:
             return False
         self._library_note_create_running = False
+        self._library_notes_mutation_in_flight = False
         self._library_note_create_status = status
         return True
 
@@ -23333,10 +23512,23 @@ class LibraryScreen(BaseAppScreen):
                 self.refresh(recompose=True)
             return LibraryNoteCreateOutcome("failed")
 
-        # The returned identity is the irreversible commit point. Refresh the
-        # source immediately; every later load/route failure must preserve the
-        # created note and must never expose a create-retry path.
-        self._refresh_local_source_snapshot()
+        # The returned identity is the commit point. Patch the exact shared
+        # list/count state while the one mutation interlock is still held;
+        # a detached snapshot worker could otherwise land after an Undo and
+        # overwrite its restoration with stale pre-Undo data.
+        created_version = (
+            int(result.get("version") or 1) if isinstance(result, Mapping) else 1
+        )
+        self._append_library_note_source_record(
+            {
+                "id": created_id,
+                "title": payload.title,
+                "content": payload.body,
+                "version": created_version,
+                "keywords": list(payload.keywords),
+                "last_modified": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         route_is_current = (
             self._library_selected_row_id == origin_row
             and self._library_notes_view == origin_view
@@ -23403,14 +23595,23 @@ class LibraryScreen(BaseAppScreen):
         """Discard only the coordinator-certified untouched new note."""
         event.stop()
         create_token = self._library_note_session.untouched_create_token
-        if create_token is None:
+        if create_token is None or self._library_notes_mutation_in_flight:
             return
+        self._library_notes_mutation_in_flight = True
         self.run_worker(
             self._discard_new_library_note(create_token),
-            group="library_note_delete",
+            exclusive=True,
+            group="library_note_mutation",
         )
 
     async def _discard_new_library_note(self, create_token: str) -> None:
+        """Run one preclaimed untouched-create discard and release its lock."""
+        try:
+            await self._discard_new_library_note_claimed(create_token)
+        finally:
+            self._library_notes_mutation_in_flight = False
+
+    async def _discard_new_library_note_claimed(self, create_token: str) -> None:
         """Delete one untouched create through typed destructive admission."""
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
@@ -23472,7 +23673,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._refresh_local_source_snapshot()
+        self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
             self.refresh(recompose=True)
 

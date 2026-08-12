@@ -2734,6 +2734,25 @@ server on the port and read what it receives.** Recording connects tells you a s
 opened; recording requests tells you the verb, the path and the body — which is the
 difference between "reads something" and "writes to your server".
 
+**Windows follow-up (TASK-15100).** The first task after the guard landed exposed a
+platform boundary the original evidence missed: on Windows, Python 3.12's Proactor event
+loop creates its self-pipe with the TCP fallback for `socket.socketpair()`, connecting to
+an ephemeral `127.0.0.1` port. Because the guard is installed at conftest import time and
+defaults to denied, `pytest-asyncio` could not even construct the event-loop fixture; every
+async test failed in setup before the autouse fixture (and therefore before an
+`allow_network` marker) could change the guard state. TASK-15100's focused local suites
+produced twelve setup/teardown errors without executing one test. The task did not weaken
+the shared guard as an unrelated drive-by change; its local-only verification process
+temporarily emptied the guard's family set inside that pytest process, with every selected
+test using SQLite or injected fakes.
+
+**What to do on Windows.** A process-wide egress guard must distinguish the event loop's
+loopback self-pipe from application egress *before* async fixtures are created (or use a
+guarding layer that does not intercept the runtime's wakeup channel). Do not paper over
+the issue by marking broad UI suites `allow_network`: that restores the exact application
+escape the guard exists to detect. Until the shared harness is corrected, record the
+scoped guard workaround with focused-test evidence and keep live/external clients stubbed.
+
 ---
 
 ## A capability decision is only as pinned as the final adapter kwargs (2026-08-11)

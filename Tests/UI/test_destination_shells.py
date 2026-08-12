@@ -140,6 +140,8 @@ class StaticLibraryNotesScopeService:
         self.detail_calls = []
         self.save_calls = []
         self.delete_calls = []
+        self.restore_calls = []
+        self.deleted_notes = {}
         self._next_note_id = len(self.notes) + 1
 
     async def list_notes(self, **kwargs):
@@ -282,10 +284,33 @@ class StaticLibraryNotesScopeService:
                 continue
             if version != note.get("version"):
                 return False
+            deleted = dict(note)
+            deleted["version"] = int(version) + 1
+            self.deleted_notes[target_id] = deleted
             del notes[index]
             self.notes = tuple(notes)
             return True
         return False
+
+    async def restore_note(self, *, scope, note_id, version, user_id=None, **kwargs):
+        self.restore_calls.append(
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                **kwargs,
+            }
+        )
+        target_id = str(note_id)
+        deleted = self.deleted_notes.get(target_id)
+        if deleted is None or version != deleted.get("version"):
+            return False
+        restored = dict(deleted)
+        restored["version"] = int(version) + 1
+        self.notes = self.notes + (restored,)
+        del self.deleted_notes[target_id]
+        return restored
 
 
 class StaticLibraryNotesListScopeService:

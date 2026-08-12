@@ -8736,6 +8736,7 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
         save_gates: tuple[threading.Event | None, ...] = (),
         create_gates: tuple[threading.Event | None, ...] = (),
         delete_gates: tuple[threading.Event | None, ...] = (),
+        restore_gates: tuple[threading.Event | None, ...] = (),
         force_delete_result: bool | None = None,
     ) -> None:
         super().__init__(notes)
@@ -8743,6 +8744,7 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
         self._save_gates = list(save_gates)
         self._create_gates = list(create_gates)
         self._delete_gates = list(delete_gates)
+        self._restore_gates = list(restore_gates)
         self._gate_lock = threading.Lock()
         self._active_save_calls = 0
         self.max_concurrent_save_calls = 0
@@ -8751,6 +8753,7 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
         self.save_attempts: list[dict] = []
         self.create_attempts: list[dict] = []
         self.delete_attempts: list[dict] = []
+        self.restore_attempts: list[dict] = []
 
     def _claim_gate(
         self, gates: list[threading.Event | None]
@@ -8802,6 +8805,12 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
             self.delete_calls.append(dict(kwargs))
             return False
         return await super().delete_note(**kwargs)
+
+    async def restore_note(self, **kwargs):
+        self.restore_attempts.append(dict(kwargs))
+        gate = self._claim_gate(self._restore_gates)
+        await self._wait_for_gate(gate, "restore")
+        return await super().restore_note(**kwargs)
 
 
 async def _open_note_editor(screen, pilot, note_id_suffix: str = "n-1"):
@@ -10116,6 +10125,11 @@ async def test_library_shell_note_delete_shows_inline_confirm_without_deleting(
         assert screen._library_note_confirming_delete is True
         assert screen.query_one("#library-note-delete-confirm")
         assert screen.query_one("#library-note-delete-cancel")
+        confirm_copy = str(
+            screen.query_one("#library-note-delete-confirm-copy", Static).renderable
+        )
+        assert "Undo" in confirm_copy
+        assert "cannot be undone" not in confirm_copy.lower()
         assert screen.query_one("#library-note-primary-actions").display is False
         assert screen.query_one("#library-note-wide-utilities").display is False
         assert getattr(screen.focused, "id", None) == "library-note-delete-cancel"
@@ -10179,6 +10193,135 @@ async def test_library_shell_note_delete_confirm_removes_note_and_returns_to_lis
             "Q3 retro" in str(getattr(button, "label", ""))
             for button in screen.query(".library-notes-row")
         )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_delete_receipt_undo_restores_row_and_rail_count():
+    """Delete leaves a persistent, named receipt whose Undo restores the row."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+        screen.query_one("#library-note-delete-confirm").press()
+
+        receipt = await _wait_for_selector(
+            screen, pilot, "#library-notes-delete-receipt-copy"
+        )
+        assert "✓ deleted · Q3 retro" in str(receipt.renderable)
+        assert "(1)" in str(screen.query_one("#library-row-browse-notes").label)
+        assert not any(
+            "Q3 retro" in str(getattr(button, "label", ""))
+            for button in screen.query(".library-notes-row")
+        )
+
+        screen.query_one("#library-notes-delete-undo").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen.query("#library-notes-delete-receipt-copy")
+                and any(
+                    "Q3 retro" in str(getattr(button, "label", ""))
+                    for button in screen.query(".library-notes-row")
+                )
+            ),
+            message=lambda: f"Undo did not restore the note: {_visible_text(screen)}",
+        )
+
+        service = app.notes_scope_service
+        assert service.restore_calls == [
+            {
+                "scope": "local_note",
+                "note_id": "n-1",
+                "version": 3,
+                "user_id": "default_user",
+            }
+        ]
+        assert "(2)" in str(screen.query_one("#library-row-browse-notes").label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_delete_receipt_dismiss_keeps_note_deleted():
+    """Dismiss removes only the receipt and does not invoke restoration."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
+        screen.query_one("#library-note-delete-confirm").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-delete-receipt-dismiss")
+
+        screen.query_one("#library-notes-delete-receipt-dismiss").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-notes-delete-receipt-copy"),
+            message="Dismiss did not clear the Notes delete receipt.",
+        )
+
+        assert app.notes_scope_service.restore_calls == []
+        assert "(1)" in str(screen.query_one("#library-row-browse-notes").label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
+    """Undo owns the one Notes list/count/receipt mutation interlock."""
+    restore_release = threading.Event()
+    service = _GatedInteractionLibraryNotesScopeService(
+        _two_notes(), restore_gates=(restore_release,)
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_note_editor(screen, pilot)
+            screen.query_one("#library-note-delete").press()
+            await _wait_for_display(
+                screen, pilot, "#library-note-delete-confirmation"
+            )
+            screen.query_one("#library-note-delete-confirm").press()
+            await _wait_for_selector(screen, pilot, "#library-notes-delete-undo")
+
+            screen.query_one("#library-notes-delete-undo").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(service.restore_attempts) == 1,
+                message="Undo never reached its restore gate.",
+            )
+            assert screen._library_notes_mutation_in_flight is True
+            assert screen._begin_library_note_create() is None
+
+            # Opening another note is itself refused while Undo owns the list,
+            # so no second delete/save session can begin against stale rows.
+            remaining_row = screen.query_one(".library-notes-row", Button)
+            remaining_row.press()
+            await pilot.pause()
+            assert screen._library_notes_view == "list"
+            assert len(service.delete_attempts) == 1
+
+            restore_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_notes_mutation_in_flight,
+                message="Undo did not release the shared Notes mutation lock.",
+            )
+    finally:
+        restore_release.set()
 
 
 @pytest.mark.asyncio

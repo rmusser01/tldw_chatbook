@@ -74,13 +74,20 @@ here."
 | "Use in Console" | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." |
 | "Export .md" / "Export .txt" | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
 | "Copy" | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
-| "Delete" | Asks inline first: "Delete this note? This cannot be undone from Library." — confirm with "Delete" or back out with "Cancel". |
+| "Delete" | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
+
+After a confirmed delete, the receipt stays in the Notes list until you
+choose **Undo**, choose **Dismiss**, or complete a newer note deletion.
+**Undo** restores that exact database note and immediately returns its row
+and the Notes rail count. **Dismiss** removes only the receipt; the note
+remains deleted. Notes do not currently expose a separate Trash browser, so
+the receipt is the in-Library recovery action.
 
 ### New note view
 
@@ -146,6 +153,12 @@ most recent first.
 1. Open the note and click **Export .md**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
    toast confirms "Note exported successfully to \<name\>".
+
+### Undo a deleted note
+
+1. Confirm **Delete** in the note editor.
+2. In the Notes list, find the "✓ deleted · \<title\>" receipt.
+3. Click **Undo** to restore the note, or **Dismiss** to leave it deleted.
 
 ## Keyboard & commands
 
@@ -238,3 +251,8 @@ re-verified against the live control (its label reads "Sort: Newest",
 not the stale "sort: Newest ▸"), and the sync panel's Direction/Conflicts
 rows were corrected to describe the always-visible ✓ choice groups the
 panel actually shows.)*
+
+*Verified on codex/notes-delete-undo-receipt — 2026-08-11 (TASK-15100:
+confirmed Database Note deletion now leaves a named inline Undo/Dismiss
+receipt; Undo restores the exact soft-deleted row and Notes rail count through
+the version-checked service seam.)*
