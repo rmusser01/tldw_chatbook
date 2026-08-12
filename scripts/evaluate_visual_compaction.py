@@ -24,6 +24,8 @@ DEFAULT_CORPUS = (
     / "corpus-v1.json"
 )
 DEFAULT_OUTPUT = DEFAULT_CORPUS.with_name("support-matrix.json")
+# Keep parser choices as inert literals so --help/refusal cannot import app modules.
+RENDERER_PROFILE_CHOICES = ("production_1024", "native_512_candidate")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +36,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-output-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--renderer-profile",
+        choices=RENDERER_PROFILE_CHOICES,
+        default="production_1024",
+        help=(
+            "Select the versioned deterministic renderer. The native 512x512 "
+            "candidate is evaluation-only until measured ADR-056 gates pass."
+        ),
+    )
     parser.add_argument(
         "--confirm-billable",
         action="store_true",
@@ -102,10 +113,16 @@ async def run_live(args: argparse.Namespace) -> int:
         load_visual_support_matrix,
         resolve_visual_evaluation_model,
     )
+    from tldw_chatbook.Chat.console_visual_transcript import (
+        resolve_evaluation_renderer_profile,
+    )
     from tldw_chatbook.config import load_settings
     from tldw_chatbook.model_capabilities import get_model_capabilities
     from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 
+    # The parser choices intentionally remain inert literals. Re-resolve after
+    # the billable/overwrite guard so a stale CLI allowlist cannot reach a call.
+    resolve_evaluation_renderer_profile(args.renderer_profile)
     corpus = load_visual_evaluation_corpus(args.corpus)
     config = load_settings(force_reload=True)
     gateway = ConsoleProviderGateway(config_provider=lambda: config)
@@ -136,6 +153,7 @@ async def run_live(args: argparse.Namespace) -> int:
                 else 0
             ),
             max_output_tokens=args.max_output_tokens,
+            renderer_profile_id=args.renderer_profile,
         )
     finally:
         await gateway.aclose()

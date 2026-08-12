@@ -708,3 +708,22 @@ application import that can initialize config behind the validated boundary.
 Prove both `--help` and the unconfirmed refusal path in a subprocess whose
 `TLDW_CONFIG_PATH` points to a nonexistent file, then assert that file was not
 created. A guard is only real if importing the command cannot bypass it.
+
+## PNG compression is not image-token compression (TASK-15482 / TASK-15505, 2026-08-11)
+
+**Incident.** The first valid raw-context visual-compaction run sent two
+deterministic PNG pages to GPT-5.6 Terra and used 2,909 input tokens versus
+1,060 for the text control. The PNGs were compact on disk, but the provider
+charged 174.4% more input. TASK-15505 then traced the geometry: the renderer
+drew each page on a 512x512 logical canvas and mechanically enlarged it to
+1024x1024 before dispatch. Current OpenAI image-input documentation says
+GPT-5.6 omitted/auto detail preserves original dimensions and meters 32x32
+patches, so the enlargement changed each page from 256 raw patches to 1,024
+without adding transcript content.
+
+**What to do.** For image-context optimizations, record the exact dispatched
+dimensions, detail setting, model family, and provider-reported usage. Treat
+local byte size and raw patch geometry as diagnostics only, never as measured
+token savings. Remove redundant geometry in an evaluation-only renderer first,
+then run the same downstream quality gate before changing production; smaller
+text can reduce recall even when its patch count is lower.
