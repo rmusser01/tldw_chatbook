@@ -87,6 +87,13 @@ from tldw_chatbook.TTS.TTS_Generation import (
     get_tts_service,
     reset_tts_service_binding,
 )
+from tldw_chatbook.TTS.voice_bundle_codec import (
+    TTSCloneVoiceBundle,
+    TTSVoiceBundleError,
+    TTSVoiceBundleSinks,
+    encode_clone_voice_bundle,
+    inspect_clone_voice_bundle,
+)
 
 __all__ = [
     "AssignedTTSProfileSnapshot",
@@ -135,6 +142,7 @@ __all__ = [
     "TTSCloneReference",
     "TTSCloneRecipeRequirement",
     "TTSCloneReferenceSummary",
+    "TTSCloneVoiceBundle",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",
     "TTSOperationCode",
@@ -156,10 +164,14 @@ __all__ = [
     "TTSService",
     "TTSStructuredVoiceAdapter",
     "TTSVoiceDiscoveryResult",
+    "TTSVoiceBundleError",
+    "TTSVoiceBundleSinks",
     "VoiceDiscoveryState",
     "bind_tts_service",
     "canonical_json_options",
     "close_tts_resources",
     "get_tts_service",
+    "encode_clone_voice_bundle",
+    "inspect_clone_voice_bundle",
     "reset_tts_service_binding",
 ]
