@@ -145,11 +145,6 @@ EXPECTED_PARENT_CREATORS = {
         "self.base_db_directory.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/DB/Sync_Client",
-        "<module>",
-        "os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/runtime_policy/server_parity_state",
         "build_server_parity_state_repositories",
         "resolved_data_dir.mkdir(parents=True, exist_ok=True)",
@@ -1161,7 +1156,6 @@ def test_task_three_parent_creators_are_recorded_as_migrated() -> None:
             "P23",
             "P25",
             "P26",
-            "P27",
             "P28",
         )
     } == {
@@ -1171,7 +1165,6 @@ def test_task_three_parent_creators_are_recorded_as_migrated() -> None:
         "P23": "migrated",
         "P25": "migrated",
         "P26": "migrated",
-        "P27": "migrated",
         "P28": "migrated",
     }
 
@@ -1247,7 +1240,6 @@ def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:
     assert parent_rows["P02"]["disposition"] == "remove_obsolete_creation"
     assert parent_rows["P03"]["disposition"] == "remove_obsolete_creation"
     assert parent_rows["P05"]["disposition"] == "remove_obsolete_creation"
-    assert parent_rows["P27"]["disposition"] == "secure_default"
     assert parent_rows["P28"]["disposition"] == "secure_default"
     assert SQLITE_OWNER_REGISTRY[
         "runtime.server_parity_parent"

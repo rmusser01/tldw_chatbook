@@ -143,7 +143,6 @@ a checked `P` row when it is introduced.
 | P23 | tldw_chatbook/Evals/eval_orchestrator | EvaluationOrchestrator._initialize_database | Path(db_path).parent.mkdir(parents=True, exist_ok=True) | migrated | eval.orchestrator_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
 | P25 | tldw_chatbook/app | TldwCli._init_prompts_service | prompts_db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | app.prompts_parent | remove_custom_creation | Startup delegates parent policy to the configured default/custom path boundary. |
 | P26 | tldw_chatbook/Notes/Notes_Library | NotesInteropService.__init__ | self.base_db_directory.mkdir(parents=True, exist_ok=True) | migrated | notes.library_parent | secure_default | Secure the application-owned per-user database root without changing a custom namespace. |
-| P27 | tldw_chatbook/DB/Sync_Client | <module> | os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True) | migrated | db.sync_client_example | secure_default | The executable-adjacent default is secured and fails closed instead of teaching unsafe parent creation. |
 | P28 | tldw_chatbook/runtime_policy/server_parity_state | build_server_parity_state_repositories | resolved_data_dir.mkdir(parents=True, exist_ok=True) | migrated | runtime.server_parity_parent | secure_default | Preserve the lexical file-backed repository directory; secure the default and require a trusted custom namespace. |
 
 ## Explicit exclusions

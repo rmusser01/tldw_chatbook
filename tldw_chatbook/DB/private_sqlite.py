@@ -191,11 +191,6 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "RAG indexing supports private files and exact in-memory targets.",
     ),
-    "db.sync_client_example": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/Sync_Client",
-        _PRIVATE_FILE,
-        "The executable sync example must not teach unsafe parent creation.",
-    ),
     "eval.orchestrator_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/Evals/eval_orchestrator",
         _PRIVATE_FILE,
