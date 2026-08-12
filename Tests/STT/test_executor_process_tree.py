@@ -347,6 +347,7 @@ def test_unproven_tree_death_quarantines_containment(
     process = _FakeProcess(calls, dies=False)
     admission = _RecordingEvent(calls)
     identity = WorkerContainmentIdentity(pid=process.pid, process_group_id=process.pid)
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
     monkeypatch.setattr(
         os, "killpg", lambda pgid, sig: calls.append((pgid, sig)), raising=False
     )
