@@ -11,10 +11,19 @@ Everything `ItemsPane` taught the hard way carries over, deliberately:
 `displayed_items()` / `select_and_reveal()`, the `_rendered_items`
 rendered-sequence authority, open-item pinning in the filter, the
 `ItemsFilterChanged` mirror, in-place single-row repaints (a recompose
-destroys the live list and drops focus), the search box's
-`select_on_focus=False` + recompose focus restore (TASK-3071), and the
-pane-bound `space` binding. The screen-facing API and message set are
-unchanged on purpose -- the construction-site swap is one line.
+destroys the live list and drops focus), and the pane-bound `space`
+binding. The screen-facing API and message set are unchanged on purpose --
+the construction-site swap is one line.
+
+task-15460 finished the job the single-row repaints started: this pane no
+longer recomposes AT ALL. Rows are built once per data arrival
+(`watch_items` -> `_rebuild_rows`, which touches only the ListView's own
+children), and filtering -- the search box and the Unread/All Select -- is a
+display toggle over those already-mounted rows (`_apply_row_visibility`).
+The toolbar, and with it the search `Input`, is therefore never destroyed,
+so the TASK-3071 focus-restore override could go: focus and caret survive
+typing because nothing takes them away, not because something puts them
+back.
 
 Remote text is APPENDED to a `Text`, never parsed (the
 `content_pane.render_article` rule): a markup-shaped title renders as those
@@ -118,20 +127,54 @@ class _DayHeader(ListItem):
 
 
 class _ArticleRow(ListItem):
-    """One displayed item. `item_id_key` is the row's stable identity for
-    selection and in-place repaints (the pane's `update_item_*_cell` API).
+    """One item of the loaded page. `item_id_key` is the row's stable
+    identity for selection, filtering and in-place repaints (the pane's
+    `update_item_*_cell` API).
 
     `display_overrides` accumulates the transient writes of every repaint so
     far: a status repaint followed by a queued repaint must show BOTH, the
     way ItemsPane's independent cells did, without either one writing back
-    to the shared item dict (see `_repaint_row`). Recomposes rebuild rows
-    from the dicts, which is precisely when the reload has made them fresh.
+    to the shared item dict (see `_repaint_row`). Row rebuilds re-render from
+    the dicts, which is precisely when the reload has made them fresh.
+
+    task-15460: a row exists for every item on the loaded page, whether the
+    current filter shows it or not, and `visible` decides which. `disabled`
+    tracks `display` deliberately -- ListView's cursor movement skips
+    disabled children and knows nothing about `display`, so a hidden row
+    that stayed enabled would silently take the cursor (and `j`/`k`) while
+    being invisible.
     """
 
-    def __init__(self, item: dict[str, Any]) -> None:
+    def __init__(self, item: dict[str, Any], *, visible: bool = True) -> None:
         self.item_id_key = str(item.get("id") or "")
         self.display_overrides: dict[str, Any] = {}
         super().__init__(Static(_render_row(item), classes="article-row"))
+        self.set_row_visible(visible)
+
+    def set_row_visible(self, visible: bool) -> None:
+        """Show or hide this row (see the class docstring on `disabled`).
+
+        No-ops when the row is already in the requested state. That guard is
+        what makes a keystroke that changes nothing (typing further into a
+        term every row still matches) cost nothing: a bare `display` write
+        is a styles mutation and a refresh even when the value is identical,
+        and this runs once per row of the loaded page per character typed.
+        """
+        if self.display is visible and self.disabled is not visible:
+            return
+        self.display = visible
+        self.disabled = not visible
+
+
+def _set_header_visible(header: "_DayHeader | None", visible: bool) -> None:
+    """Show a day header only while it still has a row under it.
+
+    Same no-op guard as `_ArticleRow.set_row_visible`, and skipped entirely
+    for the `None` that stands for "no header opened yet".
+    """
+    if header is None or header.display is visible:
+        return
+    header.display = visible
 
 
 class _ArticleListView(ListView):
@@ -190,11 +233,23 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     ]
     _READER_STATUSES = frozenset({"new", "reviewed", "ingested"})
 
-    items = reactive[list[dict[str, Any]]]([], recompose=True)
+    #: task-15460: every one of these is a PLAIN reactive. `search_query`
+    #: and `status_filter` were `recompose=True`, so a keystroke in the
+    #: search box tore down and rebuilt the whole pane -- ~220 widgets for
+    #: one character, measured at ~310 ms per keystroke on a 100-article
+    #: page (Docs/Design/2026-08-11-input-latency-audit.md). They now toggle
+    #: the visibility of rows that are already mounted
+    #: (`_apply_row_visibility`). `items` is the data-arrival path and
+    #: rebuilds the ListView's children in place (`_rebuild_rows`) rather
+    #: than recomposing the toolbar along with them -- that is what keeps
+    #: the debounced reload from destroying the search box the user is
+    #: still typing into 0.3 s later. `runtime_backend` is read by nothing
+    #: in `compose()` at all; it was rebuilding the pane for free.
+    items = reactive[list[dict[str, Any]]]([])
     selected_item = reactive[dict[str, Any] | None](None)
-    status_filter = reactive("all", recompose=True)
-    search_query = reactive("", recompose=True)
-    runtime_backend = reactive("local", recompose=True)
+    status_filter = reactive("all")
+    search_query = reactive("")
+    runtime_backend = reactive("local")
     #: The pill's text ("" hides it). Screen-pushed after a refresh-all --
     #: the pane holds no counts of its own. Plain reactive, NOT
     #: `recompose=True`: flipping it must update one Static in place, never
@@ -241,12 +296,19 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self._rendered_items: list[dict[str, Any]] = []
 
     def compose(self):
-        """Build the toolbar and the grouped rows, once per recompose.
+        """Build the toolbar and the grouped rows, once per pane instance.
 
         Rows are sorted by effective date descending IN PYTHON over the
-        displayed set (the SQL COALESCE picks the page; mixed stored tz
+        loaded page (the SQL COALESCE picks the page; mixed stored tz
         shapes make it only approximate -- see `get_new_items`), with a
         `_DayHeader` inserted wherever the bucket changes.
+
+        task-15460: this now runs ONCE -- the pane has no `recompose=True`
+        reactive left. `_build_rows` seeds the same visibility
+        `_apply_row_visibility` maintains afterwards, so a pane built with a
+        filter already seeded (the screen's `_build_detail_pane` does
+        exactly that on every workbench rebuild) paints filtered on its
+        first frame rather than flashing the unfiltered page.
         """
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
             yield Button(
@@ -259,11 +321,12 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 placeholder="Search items...",
                 id="items-search-input",
                 value=self.search_query,
-                # `select_on_focus=False` is load-bearing (TASK-3071): this
-                # pane recomposes on every keystroke and recompose restores
-                # focus to the fresh input; with Textual's default the
-                # refocus would select-all and the next keystroke would
-                # REPLACE the query. See `ItemsPane.compose`'s full note.
+                # TASK-3071 introduced this because a recompose re-focused a
+                # freshly built input and Textual's default would select-all,
+                # so the next keystroke REPLACED the query. task-15460 removed
+                # that teardown entirely, but the property stays on its own
+                # merits: clicking back into a half-typed search must put the
+                # caret where you clicked, not arm the whole term for deletion.
                 select_on_focus=False,
                 compact=True,
             )
@@ -288,29 +351,128 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             pill.display = bool(self.new_items_note)
             yield pill
 
-        filtered = self._filtered_items()
-        self._rendered_items = filtered
-        if not filtered:
-            yield Static(self._empty_text(), id="items-empty-state")
-        else:
-            rows: list[ListItem] = []
-            last_bucket: str | None = None
-            for item in filtered:
-                bucket = day_bucket(effective_date(item))
-                if bucket != last_bucket:
-                    rows.append(_DayHeader(bucket))
-                    last_bucket = bucket
-                rows.append(_ArticleRow(item))
-            # `initial_index=None`: no opening row-0 highlight announcement
-            # for a rebuilt list to fire -- the rebuilt-table highlight is
-            # exactly what `ItemsPane`'s focus gate existed to filter.
-            yield _ArticleListView(*rows, id="items-table", initial_index=None)
+        rows = self._build_rows()
+        # Both the empty state and the list are always mounted, their
+        # `display` decided by whether anything survived the filter: the
+        # empty state used to be composed INSTEAD of the ListView, which
+        # made "nothing matches this search" a full teardown of the list --
+        # and then another one on the next keypress that matched again.
+        empty_state = Static(self._empty_text(), id="items-empty-state")
+        empty_state.display = not self._rendered_items
+        yield empty_state
+        # `initial_index=None`: no opening row-0 highlight announcement for
+        # a rebuilt list to fire -- the rebuilt-table highlight is exactly
+        # what `ItemsPane`'s focus gate existed to filter.
+        yield _ArticleListView(*rows, id="items-table", initial_index=None)
         yield Static(
             f"{self._UNREAD_DOT} unread · {self._STAR_GLYPH} starred · "
             f"{self._QUEUED_GLYPH} queued for briefing",
             id="items-queued-legend",
             classes="watchlists-hint-line",
         )
+
+    def _build_rows(self) -> list[ListItem]:
+        """Rows and day headers for the whole loaded page, pre-filtered.
+
+        One `_ArticleRow` per item on the page -- not per item the filter
+        currently admits -- because that is what makes filtering a display
+        toggle instead of a rebuild. Headers are computed over the same full
+        sequence, so a bucket's header always precedes every row in it, and
+        a header whose rows are all hidden is hidden with them.
+
+        Sets `_rendered_items` as a side effect (`compose()` and
+        `_rebuild_rows` both need it seeded before the rows are mounted).
+        """
+        filtered = self._filtered_items()
+        self._rendered_items = filtered
+        visible_keys = {str(item.get("id") or "") for item in filtered}
+        rows: list[ListItem] = []
+        last_bucket: str | None = None
+        header: _DayHeader | None = None
+        header_has_visible = False
+        for item in sorted(self.items, key=_sort_key, reverse=True):
+            bucket = day_bucket(effective_date(item))
+            if bucket != last_bucket:
+                _set_header_visible(header, header_has_visible)
+                header = _DayHeader(bucket)
+                header_has_visible = False
+                rows.append(header)
+                last_bucket = bucket
+            visible = str(item.get("id") or "") in visible_keys
+            header_has_visible = header_has_visible or visible
+            rows.append(_ArticleRow(item, visible=visible))
+        _set_header_visible(header, header_has_visible)
+        return rows
+
+    async def _rebuild_rows(self) -> None:
+        """Replace the ListView's children after a data arrival.
+
+        The reload path (`watch_items`). Deliberately scoped to the
+        ListView's own children: the toolbar -- and with it the search
+        `Input` the user may still be typing into, since the screen's reload
+        is debounced 0.3 s behind the last keystroke -- is never touched.
+        """
+        try:
+            list_view = self.query_one("#items-table", _ArticleListView)
+        except NoMatches:
+            # Not mounted yet: the screen seeds `items` on a pane it has
+            # only just constructed, and `compose()` will build these rows.
+            return
+        rows = self._build_rows()
+        await list_view.clear()
+        if not self.is_running or not list_view.is_attached:
+            return
+        if rows:
+            await list_view.extend(rows)
+        self._update_empty_state()
+
+    def _apply_row_visibility(self) -> None:
+        """Re-run the filter over the mounted rows, showing/hiding in place.
+
+        The whole point of task-15460: a keystroke moves `display` on rows
+        that already exist rather than destroying and rebuilding them. The
+        rendered sequence is `_filtered_items()` exactly as before -- rows
+        are built for every item on the page, so every filtered item has
+        one -- and the DOM walk only decides what is on screen, including
+        which day headers still have a row under them.
+        """
+        filtered = self._filtered_items()
+        self._rendered_items = filtered
+        visible_keys = {str(item.get("id") or "") for item in filtered}
+        try:
+            list_view = self.query_one("#items-table", _ArticleListView)
+        except NoMatches:
+            return
+        header: _DayHeader | None = None
+        header_has_visible = False
+        for node in list_view.children:
+            if isinstance(node, _DayHeader):
+                _set_header_visible(header, header_has_visible)
+                header = node
+                header_has_visible = False
+            elif isinstance(node, _ArticleRow):
+                visible = node.item_id_key in visible_keys
+                node.set_row_visible(visible)
+                header_has_visible = header_has_visible or visible
+        _set_header_visible(header, header_has_visible)
+        # The cursor must not be left parked on a row that just went away:
+        # `ListView.index` is a position, and a hidden row still occupies
+        # one. `None` is the same "nothing highlighted" state a fresh list
+        # opens in (`initial_index=None`).
+        index = list_view.index
+        if index is not None and 0 <= index < len(list_view.children):
+            if not list_view.children[index].display:
+                list_view.index = None
+        self._update_empty_state()
+
+    def _update_empty_state(self) -> None:
+        """Show the right emptiness message, or none at all."""
+        try:
+            empty_state = self.query_one("#items-empty-state", Static)
+        except NoMatches:
+            return
+        empty_state.update(self._empty_text())
+        empty_state.display = not self._rendered_items
 
     def _empty_text(self) -> str:
         """What the list says when there is nothing to show."""
@@ -370,38 +532,28 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             self.status_filter = str(event.value or "all")
         event.stop()
 
+    async def watch_items(self, items: list[dict[str, Any]]) -> None:
+        """Repaint the list for a newly loaded page, in place.
+
+        Args:
+            items: The page the screen's (debounced) reload produced.
+        """
+        await self._rebuild_rows()
+
     def watch_status_filter(self, status_filter: str) -> None:
+        self._apply_row_visibility()
         self._post_filter_changed()
 
     def watch_search_query(self, search_query: str) -> None:
+        self._apply_row_visibility()
         self._post_filter_changed()
 
-    async def recompose(self) -> None:
-        """Preserve search-box focus across the recompose typing triggers.
-
-        Verbatim port of `ItemsPane.recompose` (TASK-3071's shape): capture
-        WHO was focused before the teardown, restore it to the fresh input
-        after the `await`, and leave any other focus exactly as Textual
-        leaves it. `self.screen.focused`, never `self.app.focused` -- see
-        the original's `ScreenStackError` note.
-        """
-        try:
-            focused = self.screen.focused if self.is_mounted else None
-        except Exception:
-            focused = None
-        refocus_search = focused is not None and focused.id == "items-search-input"
-        await super().recompose()
-        if refocus_search and self.is_running:
-            self.call_after_refresh(self._restore_search_focus)
-
-    def _restore_search_focus(self) -> None:
-        """Focus the freshly recomposed search input, caret at end of query."""
-        try:
-            search = self.query_one("#items-search-input", Input)
-        except NoMatches:
-            return
-        search.focus()
-        search.cursor_position = len(search.value)
+    # task-15460 deleted the `recompose()`/`_restore_search_focus` pair that
+    # used to live here (TASK-3071's shape, ported from `ItemsPane`): it
+    # existed only to put focus back into a search box the per-keystroke
+    # recompose had just destroyed, caret slammed to the end of the value.
+    # Nothing destroys it now, so there is nothing to restore -- and the
+    # caret stays where the user actually left it, mid-word included.
 
     def _post_filter_changed(self) -> None:
         """Mirror the filter state to the screen so a rebuild can restore it.
@@ -570,7 +722,16 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         except NoMatches:
             return
         for index, node in enumerate(list_view.children):
-            if isinstance(node, _ArticleRow) and node.item_id_key == item_id:
+            # `node.display`: a row the current filter hides is still a
+            # child (task-15460), and moving the cursor onto one would
+            # scroll to a widget the user cannot see. The screen only ever
+            # reveals items from `displayed_items()`, so this is a guard,
+            # not a code path with a caller.
+            if (
+                isinstance(node, _ArticleRow)
+                and node.item_id_key == item_id
+                and node.display
+            ):
                 list_view.index = index
                 break
 

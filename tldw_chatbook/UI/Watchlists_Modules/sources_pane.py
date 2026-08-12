@@ -128,11 +128,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: reason `selected_source` above is not), so `watch_busy_source_ids`
     #: repaints the one button that can show it, surgically.
     busy_source_ids = reactive[frozenset[str]](frozenset())
-    search_query = reactive("", recompose=True)
-    source_type_filter = reactive("all", recompose=True)
-    status_filter = reactive("all", recompose=True)
-    active_filter = reactive("all", recompose=True)
-    tags_filter = reactive("", recompose=True)
+    #: task-15460: the five filters are PLAIN reactives. All five were
+    #: `recompose=True`, so a single character typed into the search box (or
+    #: the tags box) tore down and rebuilt this entire pane -- toolbar, the
+    #: eight-control create form if it happened to be open, and the table --
+    #: and `recompose()` then had to put focus back into the input it had
+    #: just destroyed. A `DataTable`'s rows are data, not widgets, so
+    #: re-populating it (`_refresh_table_rows`) mounts nothing and leaves
+    #: the focused `Input`, its caret and any open form exactly where they
+    #: were. The create-form reactives below stay `recompose=True`: those
+    #: genuinely change WHICH CONTROLS EXIST.
+    search_query = reactive("")
+    source_type_filter = reactive("all")
+    status_filter = reactive("all")
+    active_filter = reactive("all")
+    tags_filter = reactive("")
     show_create_form = reactive(False, recompose=True)
     show_filter_editor = reactive(False, recompose=True)
     # Seed values for the create form's free-text inputs. No `recompose=True`:
@@ -329,7 +339,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     # `select_on_focus=True` makes the programmatic refocus
                     # after a recompose select ALL text, so the user's next
                     # keystroke REPLACES the half-typed query instead of
-                    # appending to it.
+                    # appending to it. Typing no longer causes that
+                    # recompose (task-15460), but opening the create form
+                    # still does, and a click back into the box must land
+                    # the caret rather than arm the term for deletion.
                     select_on_focus=False,
                     compact=True,
                 )
@@ -549,9 +562,6 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     yield Button("Create", id="sources-create-submit", variant="success")
                     yield Button("Cancel", id="sources-create-cancel", variant="default")
 
-        selected_key = (
-            str(self.selected_source.get("id")) if self.selected_source else None
-        )
         table = DataTable(id="sources-table")
         # TASK-2313, AC#2: "checked"/"Check now" is the vocabulary this
         # screen uses everywhere else for the same fetch action (the
@@ -559,19 +569,51 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # checked on its normal schedule."); this column was the one
         # holdout still saying "scraped".
         table.add_columns("Name", "Type", "Status", "Last checked", "Active")
-        filtered = self._filtered_sources()
-        for source in filtered:
+        self._populate_table(table)
+        yield table
+
+    def _populate_table(self, table: DataTable) -> None:
+        """Add one row per filtered source, painting the selected one.
+
+        Shared by `compose()` and `_refresh_table_rows` so the initial paint
+        and a filter change can never draw the same row differently.
+
+        Args:
+            table: The sources table, already carrying its columns and empty
+                of rows.
+        """
+        selected_key = (
+            str(self.selected_source.get("id")) if self.selected_source else None
+        )
+        for source in self._filtered_sources():
             row_key = str(source.get("id") or id(source))
             table.add_row(
                 *self._source_row_cells(source, row_key == selected_key),
                 key=row_key,
             )
-        # `compose()` just painted the highlight fresh from `selected_source`
-        # itself, so this is authoritative going forward -- see
+        # The rows were just painted fresh from `selected_source` itself, so
+        # this is authoritative going forward -- see
         # `_update_selection_highlight`'s docstring for why a later,
-        # non-recomposing selection change needs to know what to revert.
+        # non-rebuilding selection change needs to know what to revert.
         self._highlighted_source_key = selected_key
-        yield table
+
+    def _refresh_table_rows(self) -> None:
+        """Re-populate the table for a filter change, without a recompose.
+
+        task-15460. `DataTable` rows are data rather than widgets, so
+        clearing and re-adding them destroys no widget: the toolbar, an open
+        create form, the focused `Input` and its caret all survive a
+        keystroke that changes what the table shows. `clear()` keeps the
+        columns, which `_update_selection_highlight` reads back.
+        """
+        try:
+            table = self.query_one("#sources-table", DataTable)
+        except NoMatches:
+            # Seeded before mount by `_build_detail_pane`; `compose()` will
+            # apply the filter when it builds the table.
+            return
+        table.clear()
+        self._populate_table(table)
 
     @classmethod
     def _type_takes_ignore_selectors(cls, source_type: Any) -> bool:
@@ -789,6 +831,24 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             results.append(source)
         return results
 
+    # task-15460: one watcher per filter, all doing the same in-place
+    # re-populate. Written out rather than shared through a `watch` alias so
+    # each reactive's name still appears where a reader looks for it.
+    def watch_search_query(self, search_query: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_source_type_filter(self, source_type_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_status_filter(self, status_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_active_filter(self, active_filter: str) -> None:
+        self._refresh_table_rows()
+
+    def watch_tags_filter(self, tags_filter: str) -> None:
+        self._refresh_table_rows()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sources-search-input":
             self.search_query = event.value
@@ -932,13 +992,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
         task-3071 adds a third case ahead of these, checked first: the
         search box (`#sources-search-input`) held focus when the teardown
-        started. `search_query` is `reactive(..., recompose=True)`, so
-        every keystroke in it rebuilds this pane, which used to destroy
+        started. It used to be that `search_query` was `reactive(...,
+        recompose=True)`, so every keystroke rebuilt this pane and destroyed
         the focused input mid-word -- only the first character of a search
         ever landed (the exact bug `ItemsPane.recompose` fixed in
-        task-2513). Search focus is restored to the fresh input and the
-        create-form path below is skipped for that rebuild, so a still-
-        armed `_pending_create_focus` cannot yank the caret out of the box.
+        task-2513). task-15460 removed that trigger (the filters are plain
+        reactives now), but the case remains live for every OTHER rebuild
+        that can land while the search box is focused -- a `sources` reload,
+        a region collapse, the create form opening. Search focus is restored
+        to the fresh input and the create-form path below is skipped for
+        that rebuild, so a still-armed `_pending_create_focus` cannot yank
+        the caret out of the box.
 
         Two create-form cases are handled, and only these two — focus is
         never taken from anywhere outside this pane's own create form or
@@ -979,10 +1043,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         #     `_focused_create_field_id()` is `None` and
         #     `_pending_create_focus` (armed to field 0 by
         #     `watch_show_create_form`) still supplies the target.
-        # task-3071: the search box is this pane's OTHER focusable the
-        # recompose destroys (`search_query` is `reactive(...,
-        # recompose=True)`, so every keystroke rebuilds the pane) --
-        # capture it alongside the create-form cases. `self.screen.focused`,
+        # task-3071: the search box is this pane's OTHER focusable a
+        # recompose destroys -- no longer once per keystroke (task-15460),
+        # but still on every rebuild that can land while the user is typing
+        # -- so capture it alongside the create-form cases.
+        # `self.screen.focused`,
         # NOT `self.app.focused`, for the same ScreenStackError reason
         # `ItemsPane.recompose` documents.
         try:
