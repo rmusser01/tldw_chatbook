@@ -98,6 +98,11 @@ live observations.
   managed-child tests: this execution sandbox denied loopback socket binding
   (`PermissionError`), and the two dependent cases reported no private
   audio.cpp loopback port. No app-ownership fake or UI timing failure remained.
+- The same three exact real-child node IDs were then rerun on the parent host
+  at revision `d3d60abcb`: `3 passed in 2.33s`. Together, the sandbox matrix
+  and host rerun close the planned scoped automated matrix at `2281 passed, 2
+  skipped`. This host result is process/integration evidence only; it did not
+  provision the clone model or perform audible UAT.
 - The focused old-reader, rollback, composite-shutdown, runtime-privacy,
   UI-privacy, and ownership regressions passed.
 - The runtime collaborator regression additionally walked the full linked

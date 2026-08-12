@@ -80,6 +80,10 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
   under a deterministic non-launching missing-dependency observer, no
   assignment was created, and composite shutdown left no portability
   sessions/tasks or staging/output residue.
+- The complete scoped matrix produced 2,278 passes and three sandbox-blocked
+  real-child cases; the parent host reran those exact node IDs on `d3d60abcb`
+  with `3 passed in 2.33s`, closing scoped automated coverage at 2,281 passed
+  and 2 skipped. This does not constitute clone-model or audible UAT.
 - Status remains **In Progress**. No exact pre-provisioned clone model was
   available inside isolated Launch B; audio.cpp was not launched and no human
   playback confirmation was performed. Acceptance criterion 7 and task
