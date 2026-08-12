@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -46,6 +46,22 @@ VAD_REFERENCE = {
 }
 _SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 _BOUNDED_TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,127}\Z")
+_TRANSCRIPTION_FAILURE_CODES = frozenset(
+    {
+        "model_not_installed",
+        "artifact_corrupt",
+        "artifact_incompatible",
+        "provider_unavailable",
+        "provider_removed",
+        "unsupported_language",
+        "unsupported_capability",
+        "insufficient_disk_space",
+        "insufficient_memory",
+        "inference_failed",
+        "engine_crashed",
+        "cancelled",
+    }
+)
 _WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
 _EMBEDDED_POSIX_ABSOLUTE = re.compile(r"(?:^|[\s=:'\"])/(?!/)[^\s'\"<>]+")
 
@@ -138,6 +154,19 @@ def failure_result(
     if failure_type:
         result["failure_type"] = failure_type
     return result
+
+
+def _normalized_failure_code(error: BaseException) -> str:
+    """Return only a stable transcription code, never exception text."""
+
+    if (
+        isinstance(error, RuntimeError)
+        and len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in _TRANSCRIPTION_FAILURE_CODES
+    ):
+        return error.args[0]
+    return "probe_failed"
 
 
 def _write_result(output: Path, result: Mapping[str, object]) -> None:
@@ -716,6 +745,28 @@ def _close_runtime_resources(
     return clean and tree_closed and scratch_removed
 
 
+def _cleanup_model_runtime(
+    facade: object | None,
+    source_service: object | None,
+    coordinator: object | None,
+    executor: object | None,
+) -> bool:
+    """Clean every constructed runtime resource without short-circuiting."""
+
+    facade_clean = True
+    if facade is not None:
+        try:
+            facade.cleanup()
+        except Exception:
+            facade_clean = False
+    if not all(
+        resource is not None for resource in (source_service, coordinator, executor)
+    ):
+        return False
+    resources_clean = _close_runtime_resources(source_service, coordinator, executor)
+    return facade_clean and resources_clean
+
+
 def _run_one_model(
     model_id: str,
     *,
@@ -723,6 +774,7 @@ def _run_one_model(
     service: object,
     cache_roots: Sequence[Path],
     control: Path,
+    report_stage: Callable[[str], None],
 ) -> dict[str, object]:
     import asyncio
 
@@ -733,13 +785,16 @@ def _run_one_model(
         run_parakeet_provision,
     )
 
+    report_stage("descriptor")
     started = time.monotonic()
     descriptor = parakeet_descriptor(model_id, "int8")
     reference = parakeet_reference(model_id, "int8")
+    report_stage("provision")
     report = asyncio.run(run_parakeet_preflight(model_id, "int8", core=service))
     managed_root = asyncio.run(
         run_parakeet_provision(model_id, "int8", report, core=service)
     )
+    report_stage("external_copy")
     external = scratch / f"external-{MODEL_IDS.index(model_id)}"
     _copy_external_root(managed_root, external, descriptor)
     service.delete(reference)
@@ -763,6 +818,7 @@ def _run_one_model(
     monitor_stop = threading.Event()
     shutdown_completed = False
     try:
+        report_stage("runtime_setup")
         from tldw_chatbook.Local_Ingestion.transcription_service import (
             TranscriptionService,
         )
@@ -782,7 +838,9 @@ def _run_one_model(
         monitor.start()
         key = ParakeetSourceKey.from_values(model_id, "int8")
         records_before = dict(source_service.records())
+        report_stage("external_verify")
         prepared = source_service.prepare_external(key, external)
+        report_stage("managed_copy")
         plan = source_service.plan_managed_copy(prepared.verified)
         copied = source_service.copy_into_managed(
             prepared.verified,
@@ -794,6 +852,7 @@ def _run_one_model(
             raise RuntimeError("managed copy changed source preference")
         service.delete(reference)
 
+        report_stage("transcription")
         inference_started = time.monotonic()
         facade = TranscriptionService(
             local_stt_dispatcher=coordinator,
@@ -810,6 +869,7 @@ def _run_one_model(
             precision="int8",
             model_dir=str(external),
         )
+        report_stage("provenance")
         if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
             raise RuntimeError("native transcription returned an invalid payload")
         provenance = payload.get("provenance")
@@ -829,26 +889,19 @@ def _run_one_model(
         monitor_stop.set()
         if monitor is not None:
             monitor.join(1.0)
-        facade_clean = True
-        if facade is not None:
-            try:
-                facade.cleanup()
-            except Exception:
-                facade_clean = False
-        if all(
-            resource is not None for resource in (source_service, coordinator, executor)
-        ):
-            shutdown_completed = facade_clean and _close_runtime_resources(
-                source_service,
-                coordinator,
-                executor,
-            )
+        shutdown_completed = _cleanup_model_runtime(
+            facade,
+            source_service,
+            coordinator,
+            executor,
+        )
         for key, value in prior_offline.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
 
+    report_stage("post_invariants")
     external_after = _descriptor_token(external, descriptor)
     cache_after = _cache_token(cache_roots)
     store_after = _managed_state_token(service)
@@ -934,13 +987,20 @@ def run_worker(output: Path, scratch: Path, control: Path) -> int:
         )
         models: dict[str, object] = {}
         for model_id in MODEL_IDS:
-            stage = f"model_{MODEL_IDS.index(model_id)}"
+            model_index = MODEL_IDS.index(model_id)
+            stage = f"model_{model_index}_setup"
+
+            def report_stage(substage: str, *, index: int = model_index) -> None:
+                nonlocal stage
+                stage = f"model_{index}_{substage}"
+
             models[model_id] = _run_one_model(
                 model_id,
                 scratch=scratch,
                 service=service,
                 cache_roots=cache_roots,
                 control=control,
+                report_stage=report_stage,
             )
         stage = "final_store"
         result: dict[str, object] = {
@@ -959,7 +1019,7 @@ def run_worker(output: Path, scratch: Path, control: Path) -> int:
     except BaseException as error:
         result = failure_result(
             run_identity,
-            failure_code="probe_failed",
+            failure_code=_normalized_failure_code(error),
             failure_stage=stage,
             failure_type=type(error).__name__,
         )

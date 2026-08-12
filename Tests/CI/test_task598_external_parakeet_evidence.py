@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import importlib
 import json
 import os
 import re
@@ -435,6 +436,86 @@ def test_success_evidence_rejects_failure_type() -> None:
 
     with pytest.raises(ValueError, match="failure_type"):
         evidence.validate_result(result)
+
+
+@pytest.mark.parametrize(
+    ("error_message", "expected_code"),
+    (
+        ("provider_unavailable", "provider_unavailable"),
+        ("native loader opened a private location", "probe_failed"),
+    ),
+)
+def test_worker_records_only_bounded_model_substage_and_failure_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_message: str,
+    expected_code: str,
+) -> None:
+    evidence = _load_probe()
+    artifact_module = importlib.import_module(
+        "tldw_chatbook.Local_Ingestion.parakeet_v2_artifact"
+    )
+    store_module = importlib.import_module("tldw_chatbook.Model_Artifacts.store")
+    managed_root = tmp_path / "data" / "managed"
+
+    class _Service:
+        artifacts_path = managed_root / "artifacts"
+
+    def fail_model(*_args: object, report_stage: object, **_kwargs: object) -> None:
+        report_stage("transcription")
+        raise RuntimeError(error_message)
+
+    monkeypatch.setattr(artifact_module, "parakeet_v2_managed_service", _Service)
+    monkeypatch.setattr(
+        store_module, "managed_model_artifact_root", lambda: managed_root
+    )
+    monkeypatch.setattr(evidence, "_run_one_model", fail_model)
+    monkeypatch.setattr(evidence.signal, "signal", lambda *_args: None)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "cache" / "huggingface"))
+    output = tmp_path / "result.json"
+
+    assert evidence.run_worker(output, tmp_path, tmp_path / "control.json") == 1
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["failure_code"] == expected_code
+    assert result["failure_stage"] == "model_0_transcription"
+    if expected_code == "probe_failed":
+        assert error_message not in output.read_text(encoding="utf-8")
+
+
+def test_normalized_failure_code_never_coerces_a_string_subclass() -> None:
+    evidence = _load_probe()
+
+    class _Secret(str):
+        def __str__(self) -> str:
+            return "private_exception_text"
+
+    error = RuntimeError(_Secret("provider_unavailable"))
+
+    assert evidence._normalized_failure_code(error) == "probe_failed"
+
+
+def test_facade_cleanup_failure_still_closes_native_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence = _load_probe()
+    closed: list[tuple[object, object, object]] = []
+
+    class _Facade:
+        def cleanup(self) -> None:
+            raise RuntimeError("private_exception_text")
+
+    resources = (object(), object(), object())
+
+    def close_resources(*values: object) -> bool:
+        closed.append(values)
+        return True
+
+    monkeypatch.setattr(evidence, "_close_runtime_resources", close_resources)
+
+    assert not evidence._cleanup_model_runtime(_Facade(), *resources)
+    assert closed == [resources]
 
 
 def test_validate_cli_rejects_failure_without_a_path_bearing_traceback(
