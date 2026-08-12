@@ -241,7 +241,7 @@ def _managed_dispatch(leased: object, store_root: Path, model_id: str):
         ),
         local_source=None,
         managed_store_root=store_root,
-        managed_artifact_ref=root.lease_key(),
+        managed_artifact_ref=(root.artifact_id, root.revision, root.variant),
         option_updates=MappingProxyType({}),
     )
 

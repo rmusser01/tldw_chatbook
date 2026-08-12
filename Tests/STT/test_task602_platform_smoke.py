@@ -159,6 +159,23 @@ def test_package_observation_rejects_accelerator_runtime(
         smoke._package_observation()
 
 
+def test_managed_dispatch_uses_public_three_string_artifact_reference() -> None:
+    smoke = _load_smoke()
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("parakeet-v2", "revision", "int8")
+    leased = SimpleNamespace(
+        handle=SimpleNamespace(
+            root=reference,
+            closure_fingerprint="1" * 64,
+        )
+    )
+
+    dispatch = smoke._managed_dispatch(leased, Path("store"), smoke.V2_MODEL)
+
+    assert dispatch.managed_artifact_ref == ("parakeet-v2", "revision", "int8")
+
+
 def test_runtime_probe_does_not_import_native_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
