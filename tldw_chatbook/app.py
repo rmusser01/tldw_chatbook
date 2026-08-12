@@ -4753,6 +4753,7 @@ class TldwCli(
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
         self.console_image_edit_operations = ImageEditOperationRegistry()
+        self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
@@ -9637,8 +9638,24 @@ class TldwCli(
             self._file_notes_session_owner_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_image_edits(self) -> None:
+        """Cancel and settle app-owned H3 edits exactly once before teardown."""
+        task = self._console_image_edit_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                self.console_image_edit_operations.shutdown(),
+                name="shutdown_console_image_edits",
+            )
+            self._console_image_edit_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown_app_owned_lifecycles(self) -> None:
+        """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_console_image_edits()
+        await self._shutdown_file_notes_session_owner()
+
     async def _shutdown(self) -> None:
-        """Settle File Notes Git before Textual closes screens and replicas."""
+        """Settle app-owned durable work before Textual closes screens."""
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
         shutdown_task = asyncio.current_task()
@@ -9647,7 +9664,7 @@ class TldwCli(
         )
         while True:
             try:
-                await self._shutdown_file_notes_session_owner()
+                await self._shutdown_app_owned_lifecycles()
             except asyncio.CancelledError as error:
                 next_cancellation_requests = (
                     shutdown_task.cancelling() if shutdown_task is not None else 0
@@ -9672,7 +9689,7 @@ class TldwCli(
         if shutdown_error is not None:
             if owner_error is not None:
                 shutdown_error.add_note(
-                    "File Notes session owner shutdown also failed before "
+                    "App-owned lifecycle shutdown also failed before "
                     "Textual screen teardown"
                 )
             if cancellation is not None:
@@ -9684,7 +9701,7 @@ class TldwCli(
             if cancellation is not None:
                 owner_error.add_note(
                     "Application shutdown cancellation was delayed while "
-                    "preserving the owner shutdown failure"
+                    "preserving the lifecycle shutdown failure"
                 )
             raise owner_error
         if cancellation is not None:
@@ -9745,10 +9762,10 @@ class TldwCli(
         except Exception:
             pass
         try:
-            await self._shutdown_file_notes_session_owner()
+            await self._shutdown_app_owned_lifecycles()
         except Exception as error:
             self.loguru_logger.warning(
-                "File Notes session owner fallback shutdown failed "
+                "App-owned lifecycle fallback shutdown failed "
                 f"type={type(error).__name__}"
             )
         self._ui_ready = False

@@ -118,10 +118,33 @@ class ImageEditOperationRegistry:
         generation = str(uuid4())
 
         async def _owned() -> None:
+            runner_task = asyncio.create_task(
+                runner(generation),
+                name=f"console-h3-image-edit-runner-{generation}",
+            )
             try:
-                await runner(generation)
-            except asyncio.CancelledError:
-                raise
+                await asyncio.shield(runner_task)
+            except asyncio.CancelledError as cancellation:
+                cancel_event.set()
+                while not runner_task.done():
+                    try:
+                        await asyncio.shield(runner_task)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # pragma: no cover - inspected below
+                        break
+                if runner_task.done():
+                    try:
+                        runner_task.result()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:  # pragma: no cover - containment seam
+                        _LOGGER.error(
+                            "Console image edit runner failed during cancellation "
+                            "settlement (error_type=%s)",
+                            type(exc).__name__,
+                        )
+                raise cancellation
             except Exception as exc:  # pragma: no cover - final containment seam
                 _LOGGER.error(
                     "Console image edit runner escaped containment (error_type=%s)",
@@ -152,6 +175,18 @@ class ImageEditOperationRegistry:
         )
         self._active[session_id] = operation
         return operation
+
+    async def shutdown(self) -> None:
+        """Cancel and drain every app-owned operation to real settlement."""
+        operations = self.active_operations()
+        for operation in operations:
+            operation.cancel_event.set()
+            operation.task.cancel()
+        if operations:
+            await asyncio.gather(
+                *(operation.task for operation in operations),
+                return_exceptions=True,
+            )
 
     def active(self, session_id: str) -> ActiveImageEditOperation | None:
         """Return the exact active operation for ``session_id``."""

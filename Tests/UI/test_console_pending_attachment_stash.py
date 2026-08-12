@@ -597,6 +597,51 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
 
 
 @pytest.mark.asyncio
+async def test_real_app_shutdown_cancels_and_drains_owned_h3_operation():
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    cancel_event = threading.Event()
+    thread_started = threading.Event()
+    thread_settled = threading.Event()
+    durable_count = 0
+
+    async def _runner(_generation: str) -> None:
+        nonlocal durable_count
+
+        def _blocking_success() -> None:
+            try:
+                thread_started.set()
+                assert cancel_event.wait(2)
+            finally:
+                thread_settled.set()
+
+        await asyncio.to_thread(_blocking_success)
+        durable_count += 1
+
+    async with app.run_test(size=(160, 48)):
+        operation = app.console_image_edit_operations.start(
+            session_id="shutdown-session",
+            attachment_id="shutdown-attachment",
+            captured_draft="shutdown draft",
+            cancel_event=cancel_event,
+            runner=_runner,
+        )
+        assert operation is not None
+        assert await asyncio.to_thread(thread_started.wait, 2)
+
+    try:
+        assert cancel_event.is_set()
+        assert thread_settled.is_set()
+        assert durable_count == 1
+        assert app.console_image_edit_operations.active("shutdown-session") is None
+    finally:
+        cancel_event.set()
+        if not operation.task.done():
+            await operation.task
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_kind", ("success", "failure", "cancel"))
 async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
     monkeypatch,

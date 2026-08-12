@@ -631,8 +631,9 @@ Drive `_console_command_generate_image` with actual grammar and store:
 Use deterministic barriers around adapter final event check and durable append:
 
 - Stop before final check: typed cancellation, no card, no consume, no error log;
-- success wins final check: shielded durable append completes exactly once even if caller is cancelled immediately afterward;
-- caller cancellation sets the same event, awaits the real child, then re-raises;
+- success wins final check: shielded durable append completes exactly once even if the app-owned operation task is cancelled immediately afterward;
+- app-owned operation cancellation sets the same event, awaits the real runner child, then re-raises;
+- application shutdown cancels and drains every registered operation before screen/database teardown;
 - persistence failure retains attachment/draft and produces sanitized phase copy;
 - consume mismatch/exception after commit does not roll back or misreport success;
 - UI sync is outside shield, terminal/generation checked, and cancellable;
@@ -672,19 +673,19 @@ Keep `console_image_edit_operations.py` UI-agnostic. The registry owns active ta
 1. parse and resolve backend/config;
 2. branch on `comfyui` before generic preparation;
 3. validate exact attachment/instruction/style/count and build the in-memory reference;
-4. register operation or refuse duplicate;
-5. run blocking batch in an app-owned async child;
+4. register the app-owned operation or refuse a duplicate, refresh Stop, and return from the Textual handler;
+5. have the registry-owned task create and shield the real runner child containing blocking batch work and the durable success append;
 6. on success, append durable PNG+metadata, create/filter completion cleanup, exact-consume source, and clear unchanged draft;
-7. await child with `asyncio.shield`; on outer cancellation set event, await real child, re-raise;
-8. perform live-screen generation-checked UI sync outside shield;
-9. remove active operation in generation-matched `finally`;
+7. on cancellation of the app-owned operation, set the exact event, drain the shielded runner to settlement, then re-raise;
+8. cancel and drain all registered operations during application shutdown before Textual teardown;
+9. perform current-live-screen/session/generation-checked UI settlement after generation-matched active removal;
 10. reconcile byte-free completion records during restore/adoption and on late completion.
 
 The existing generic image path remains unchanged except for shared helper signatures introduced in Task 5.
 
 - [ ] **Step 8: Verify GREEN and required mutations**
 
-Run the same command. Mutation-check backend-before-generic preparation, app-owned duplicate gate, exact event identity, shielded durable append, generation-matched registry removal, exact stash filtering, idempotent hydration, attachment identity, unchanged-draft condition, outer terminal UI gate, and Regenerate early refusal. Restore and rerun.
+Run the same command. Mutation-check backend-before-generic preparation, app-owned duplicate gate, exact event identity, registry-owned shielding and runner drain, application-shutdown drain, generation-matched registry removal, exact stash filtering, idempotent hydration, attachment identity, unchanged-draft condition, outer terminal UI gate, and Regenerate early refusal. Restore and rerun.
 
 - [ ] **Step 9: Static checks and commit**
 

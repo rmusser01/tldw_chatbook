@@ -533,15 +533,18 @@ validating the downloaded output, the adapter performs its final event check. If
 the event is already set, cancellation wins and no local result is returned. If the
 event is clear, success wins; a later cancellation cannot discard that result.
 
-The Console wraps the blocking worker call and, for a success-wins result, the
-durable attachment/metadata append in one owned async operation task. The caller
-awaits that task through `asyncio.shield`. If the caller is cancelled, it sets the
-same event, continues to await the real operation task to settlement, and then
-re-raises cancellation. Thus a success that won the final event check is persisted
-exactly once before cancellation escapes, while a cancellation that won produces
-no local card. Attachment consumption follows the durable append inside the same
-success path. Later UI synchronization is outside the shield, remains cancellable,
-and runs only for the originating live screen/operation generation.
+The Console registers one app-owned operation and returns from the Textual Send
+handler without awaiting image validation, decoding, network work, or persistence.
+The registry-owned operation creates the real runner child and awaits it through
+`asyncio.shield`. Cancellation of that app-owned operation task, including during
+application shutdown, sets the same event, continues to await the real runner to
+settlement, and only then re-raises cancellation. Thus a success that won the final
+event check is persisted exactly once before cancellation escapes, while a
+cancellation that won produces no local card. Attachment consumption follows the
+durable append inside the same success path. Application shutdown cancels and
+drains all registered H3 operations before Textual tears down screens and database
+state. Later UI settlement runs only after generation-matched registry cleanup and
+is gated to the current live screen/session/generation.
 
 The image-generation exception module gains a typed
 `ImageGenerationCancelled(ImageGenerationError)`. The H3 adapter raises it when

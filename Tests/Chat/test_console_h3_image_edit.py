@@ -592,9 +592,7 @@ async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_deco
     screen, _composer = _screen_with_h3_store(store)
     session = store.ensure_session(settings=ConsoleSessionSettings(provider="openai"))
     store.add_pending_attachment(session.id, _pending())
-    side = math.isqrt(
-        request_validation._PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS
-    ) + 1
+    side = math.isqrt(request_validation.PILLOW_DECOMPRESSION_WARNING_MAX_PIXELS) + 1
     config = _cfg(
         max_width=side + 1,
         max_height=side + 1,
@@ -708,8 +706,9 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
 
 
 @pytest.mark.asyncio
-async def test_outer_cancellation_drains_success_winner_through_durable_append(
-    monkeypatch,
+@pytest.mark.parametrize("winner", ("success", "cancel"))
+async def test_app_owned_task_cancellation_drains_linearized_runner_before_reraise(
+    monkeypatch, winner
 ):
     store = ConsoleChatStore()
     screen, _composer = _screen_with_h3_store(store)
@@ -722,58 +721,86 @@ async def test_outer_cancellation_drains_success_winner_through_durable_append(
         "list_image_models_for_catalog",
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
-    success_won = threading.Event()
+    boundary_reached = threading.Event()
+    thread_started = threading.Event()
     release_result = threading.Event()
+    thread_settled = threading.Event()
 
-    def _success_batch(**kwargs):
-        success_won.set()
-        assert release_result.wait(2)
-        return BatchResult(
-            successes=[
-                (
-                    _png_bytes(),
-                    "image/png",
-                    GenerationVariantMeta(
-                        prompt=kwargs["prompt"],
-                        negative_prompt="",
-                        backend="comfyui",
-                        model=None,
-                        seed=4,
-                        style=None,
-                        params={"operation": "edit"},
-                    ),
-                )
-            ],
-            errors=[],
-        )
+    def _linearized_batch(**kwargs):
+        try:
+            thread_started.set()
+            if winner == "cancel":
+                assert kwargs["cancel_event"].wait(2)
+            boundary_reached.set()
+            assert release_result.wait(2)
+            if winner == "cancel":
+                raise ImageGenerationCancelled()
+            return BatchResult(
+                successes=[
+                    (
+                        _png_bytes(),
+                        "image/png",
+                        GenerationVariantMeta(
+                            prompt=kwargs["prompt"],
+                            negative_prompt="",
+                            backend="comfyui",
+                            model=None,
+                            seed=4,
+                            style=None,
+                            params={"operation": "edit"},
+                        ),
+                    )
+                ],
+                errors=[],
+            )
+        finally:
+            thread_settled.set()
 
-    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _success_batch)
-    appended = threading.Event()
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _linearized_batch)
+    append_count = 0
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):
+        nonlocal append_count
+        append_count += 1
         message = original_append(session_id, **kwargs)
-        message.persisted_message_id = "persisted-after-outer-cancel"
-        appended.set()
+        message.persisted_message_id = "persisted-after-owned-task-cancel"
         return message
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
-    caller = asyncio.create_task(
-        screen._console_command_generate_image(
-            CommandParse(
-                kind="command", name="generate-image", args=":comfyui change it"
-            )
+    await screen._console_command_generate_image(
+        CommandParse(
+            kind="command", name="generate-image", args=":comfyui change it"
         )
     )
-    assert await asyncio.to_thread(success_won.wait, 2)
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
     assert operation is not None
-    await caller
-    release_result.set()
-    await operation.task
+    assert await asyncio.to_thread(thread_started.wait, 2)
+    if winner == "success":
+        assert await asyncio.to_thread(boundary_reached.wait, 2)
 
-    assert appended.is_set()
-    assert store.pending_attachments(session.id) == []
+    operation.task.cancel()
+    try:
+        assert await asyncio.to_thread(operation.cancel_event.wait, 2)
+        assert await asyncio.to_thread(boundary_reached.wait, 2)
+        assert not operation.task.done()
+    finally:
+        operation.cancel_event.set()
+        release_result.set()
+        assert await asyncio.to_thread(thread_settled.wait, 2)
+    with pytest.raises(asyncio.CancelledError):
+        await operation.task
+    assert thread_settled.is_set()
+    assert screen.app_instance.console_image_edit_operations.active(session.id) is None
+
+    if winner == "success":
+        assert append_count == 1
+        assert len(store.messages_for_session(session.id)) == 1
+        assert store.pending_attachments(session.id) == []
+    else:
+        assert append_count == 0
+        assert store.messages_for_session(session.id) == []
+        assert store.pending_attachments(session.id) == [pending]
 
 
 @pytest.mark.asyncio
