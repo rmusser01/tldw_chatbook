@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -152,45 +153,6 @@ def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> bool:
     return _pid_has_exited(pid)
 
 
-def _terminate_captured_windows_pid(pid: int) -> None:
-    import ctypes
-    from ctypes import wintypes
-
-    process_terminate = 0x0001
-    synchronize = 0x00100000
-    wait_object_0 = 0
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [
-        wintypes.DWORD,
-        wintypes.BOOL,
-        wintypes.DWORD,
-    ]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
-    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    ctypes.set_last_error(0)
-    handle = kernel32.OpenProcess(process_terminate | synchronize, False, pid)
-    if not handle:
-        error = ctypes.get_last_error()
-        if error == 87:
-            return
-        raise OSError(error, "OpenProcess could not open captured fixture PID")
-    try:
-        if not kernel32.TerminateProcess(handle, 127):
-            error = ctypes.get_last_error()
-            raise OSError(error, "TerminateProcess failed")
-        result = kernel32.WaitForSingleObject(handle, 10_000)
-        if result != wait_object_0:
-            error = ctypes.get_last_error()
-            raise OSError(error, "captured fixture PID did not exit")
-    finally:
-        kernel32.CloseHandle(handle)
-
-
 def _finalize_native_tree(
     tree: ExecutorProcessTree | None,
     process: object,
@@ -206,9 +168,19 @@ def _finalize_native_tree(
     worker_alive = process.is_alive()  # type: ignore[attr-defined]
     child_alive = child_pid is not None and not _pid_has_exited(child_pid)
     if os.name == "nt":
-        for pid in (child_pid, process.pid):  # type: ignore[attr-defined]
-            if pid is not None and not _pid_has_exited(pid):
-                _terminate_captured_windows_pid(pid)
+        if tree is not None and not tree_proven:
+            tree._close_job_handle()
+        if worker_alive:
+            try:
+                process.terminate()  # type: ignore[attr-defined]
+            except OSError:
+                pass
+            process.join(1.0)  # type: ignore[attr-defined]
+            if process.is_alive():  # type: ignore[attr-defined]
+                try:
+                    process.kill()  # type: ignore[attr-defined]
+                except OSError:
+                    pass
     elif (
         (worker_alive or child_alive)
         and identity is not None
@@ -221,6 +193,28 @@ def _finalize_native_tree(
             pass
     process.join(2.0)  # type: ignore[attr-defined]
     return tree_proven
+
+
+def test_windows_finalizer_uses_only_the_owned_process_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+    raw_pid_terminations: list[int] = []
+    process = _FakeProcess(calls)
+
+    monkeypatch.setattr(sys.modules[__name__], "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(sys.modules[__name__], "_pid_has_exited", lambda _pid: False)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_terminate_captured_windows_pid",
+        raw_pid_terminations.append,
+        raising=False,
+    )
+
+    _finalize_native_tree(None, process, None, child_pid=67890)
+
+    assert "terminate_process" in calls
+    assert raw_pid_terminations == []
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows PID probe")

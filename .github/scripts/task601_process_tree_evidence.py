@@ -71,7 +71,14 @@ def _run_url(run_id: str) -> str:
 
 
 def current_run_identity() -> dict[str, str]:
-    """Return the checked-out commit and bounded GitHub workflow identity."""
+    """Return the checked-out commit and bounded GitHub workflow identity.
+
+    Returns:
+        The tested commit and canonical workflow-run fields.
+
+    Raises:
+        ValueError: If Git or the workflow environment lacks a valid identity.
+    """
 
     try:
         tested_commit = subprocess.run(
@@ -122,7 +129,23 @@ def failure_result(
     duration_seconds: float = 0.0,
     required_nodes: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
-    """Return a bounded failed result without exception text or local paths."""
+    """Return a bounded failed result without exception text or local paths.
+
+    Args:
+        run_identity: Canonical commit and workflow-run fields.
+        evidence_name: Allowlisted platform evidence name.
+        failure_code: Stable failure category.
+        failure_stage: Stable workflow stage.
+        pytest_outcome: Bounded pytest process outcome.
+        duration_seconds: Bounded pytest duration.
+        required_nodes: Outcomes already known for required nodes.
+
+    Returns:
+        A validated failed platform-evidence document.
+
+    Raises:
+        ValueError: If any supplied evidence field is invalid.
+    """
 
     result: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -160,7 +183,19 @@ def result_from_junit(
     pytest_outcome: str,
     evidence_name: str,
 ) -> dict[str, object]:
-    """Normalize selected JUnit cases without copying file or failure details."""
+    """Normalize selected JUnit cases without copying file or failure details.
+
+    Args:
+        path: JUnit XML file produced by the bounded pytest run.
+        pytest_outcome: Captured pytest process outcome.
+        evidence_name: Allowlisted platform evidence name.
+
+    Returns:
+        A validated bounded platform-evidence document.
+
+    Raises:
+        ValueError: If the run identity or platform identity is invalid.
+    """
 
     run_identity = current_run_identity()
     if pytest_outcome not in _PYTEST_OUTCOMES:
@@ -314,7 +349,15 @@ def _validate_host(host: Mapping[str, object], evidence_name: object) -> None:
 
 
 def validate_result(result: Mapping[str, object], *, require_pass: bool = True) -> None:
-    """Validate one exact platform result and optionally require release success."""
+    """Validate one exact platform result and optionally require release success.
+
+    Args:
+        result: Candidate platform-evidence document.
+        require_pass: Whether failed-but-well-formed evidence must be rejected.
+
+    Raises:
+        ValueError: If the document violates the schema or required outcome.
+    """
 
     if not isinstance(result, Mapping):
         raise ValueError("evidence must be an object")
@@ -391,7 +434,17 @@ def validate_result(result: Mapping[str, object], *, require_pass: bool = True) 
 
 
 def aggregate_results(results: Sequence[Mapping[str, object]]) -> dict[str, object]:
-    """Aggregate exactly one passing document for each required native platform."""
+    """Aggregate exactly one passing document for each required native platform.
+
+    Args:
+        results: Passing platform documents from one workflow run and commit.
+
+    Returns:
+        The validated three-platform aggregate.
+
+    Raises:
+        ValueError: If platform coverage or run identity is inconsistent.
+    """
 
     if len(results) != len(EXPECTED_PLATFORMS):
         raise ValueError("aggregate requires exactly three platform results")
@@ -426,7 +479,14 @@ def aggregate_results(results: Sequence[Mapping[str, object]]) -> dict[str, obje
 
 
 def validate_aggregate(aggregate: Mapping[str, object]) -> None:
-    """Validate the strict same-commit, same-run three-platform aggregate."""
+    """Validate the strict same-commit, same-run three-platform aggregate.
+
+    Args:
+        aggregate: Candidate aggregate evidence document.
+
+    Raises:
+        ValueError: If schema, platform coverage, or run identity is invalid.
+    """
 
     if not isinstance(aggregate, Mapping):
         raise ValueError("aggregate evidence must be an object")
@@ -526,7 +586,14 @@ def _validate_cli_args(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run one evidence normalization, validation, or aggregation operation."""
+    """Run one evidence normalization, validation, or aggregation operation.
+
+    Args:
+        argv: Optional argument vector; defaults to process arguments.
+
+    Returns:
+        Zero for a valid completed operation, otherwise one.
+    """
 
     args = _parser().parse_args(argv)
     try:
