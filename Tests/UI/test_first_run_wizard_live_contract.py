@@ -515,6 +515,116 @@ async def test_marker_clear_serializes_with_completion_delete():
     container._dismiss_screen.assert_called_once()
 
 
+def _completion_first_race_container():
+    container, _, _ = _draft_mutation_race_container()
+    completion_write_applied = asyncio.Event()
+    release_completion_write = asyncio.Event()
+    writes = []
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        writes.append((settings, delete_keys))
+        container._mirror_into_app_config(settings, delete_keys)
+        first_run = settings.get(WIZARD_STATE_SECTION, {})
+        if first_run.get(SETUP_COMPLETED_KEY) is True:
+            completion_write_applied.set()
+            await release_completion_write.wait()
+        return True
+
+    container.commit_config = commit_config
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+    return container, completion_write_applied, release_completion_write, writes
+
+
+@pytest.mark.asyncio
+async def test_completed_setup_seals_queued_next_step_checkpoint():
+    container, completion_applied, release_completion, writes = (
+        _completion_first_race_container()
+    )
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "queued-model"},
+    }
+
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.wait_for(completion_applied.wait(), timeout=1.0)
+    checkpoint_task = asyncio.create_task(
+        container.persist_setup_checkpoint(STEP_SUMMARY)
+    )
+    await asyncio.sleep(0)
+    assert checkpoint_task.done() is False
+
+    release_completion.set()
+    await completion_task
+    assert await checkpoint_task is False
+
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 1
+    container._dismiss_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_completed_setup_seals_queued_finish_later_checkpoint():
+    container, completion_applied, release_completion, writes = (
+        _completion_first_race_container()
+    )
+    container.current_step = container._step_index_for_id(STEP_MODEL)
+    container.wizard_data = {
+        STEP_WELCOME: {"track": "quick"},
+        STEP_PROVIDER: {"provider_key": "openai", "provider_value": "openai"},
+        STEP_MODEL: {"model_id": "finish-later-queued-model"},
+    }
+
+    completion_task = asyncio.create_task(container._finalize(None))
+    await asyncio.wait_for(completion_applied.wait(), timeout=1.0)
+    finish_later_task = asyncio.create_task(container.persist_current_checkpoint())
+    await asyncio.sleep(0)
+    assert finish_later_task.done() is False
+
+    release_completion.set()
+    await completion_task
+    assert await finish_later_task is False
+
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 1
+    container._dismiss_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_completion_does_not_seal_draft_mutations_and_can_retry():
+    container, _, _ = _draft_mutation_race_container()
+    save_results = iter((False, True))
+    writes = []
+
+    async def commit_config(settings, *, delete_keys=None, after_write=None):
+        writes.append((settings, delete_keys))
+        saved = next(save_results)
+        if saved:
+            container._mirror_into_app_config(settings, delete_keys)
+        return saved
+
+    container.commit_config = commit_config
+    container._finalized = False
+    container._dismiss_screen = MagicMock()
+
+    await container._finalize(None)
+    assert container._draft_mutations_terminal is False
+    container._dismiss_screen.assert_not_called()
+
+    await container._finalize(None)
+    assert container._draft_mutations_terminal is True
+    first_run = container.app_instance.app_config[WIZARD_STATE_SECTION]
+    assert first_run[SETUP_COMPLETED_KEY] is True
+    assert not (set(first_run) & set(SETUP_DRAFT_KEYS))
+    assert len(writes) == 2
+    container._dismiss_screen.assert_called_once()
+
+
 @pytest.mark.parametrize("save_result", [False, RuntimeError("private-value")])
 def test_started_flag_mirrors_only_after_success_and_logs_bounded_failure(
     monkeypatch, save_result

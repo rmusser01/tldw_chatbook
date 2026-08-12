@@ -3605,6 +3605,7 @@ class SetupWizardContainer(WizardContainer):
         self.resume_draft = resume_draft
         self.key_entered = False
         self._draft_mutation_lock = asyncio.Lock()
+        self._draft_mutations_terminal = False
         # (task-2040) MUST be set before ``_create_steps()``: step
         # constructors read ``self.wizard.app_instance`` (SpeechSetupStep
         # reads ``app_config`` through it at __init__ time), and the base
@@ -4271,11 +4272,16 @@ class SetupWizardContainer(WizardContainer):
     async def _complete_setup_locked(self) -> bool:
         """Persist completion and draft deletion while the mutation lock is held."""
 
+        if self._draft_mutations_terminal:
+            return True
         _, delete_keys = wizard_state.build_setup_draft_mutation(None)
-        return await self.commit_config(
+        saved = await self.commit_config(
             wizard_state.build_wizard_state_commit(completed=True),
             delete_keys=delete_keys,
         )
+        if saved:
+            self._draft_mutations_terminal = True
+        return saved
 
     def _show_completion_save_error(self) -> None:
         """Keep completion failures visible without exposing config values."""
@@ -4296,6 +4302,8 @@ class SetupWizardContainer(WizardContainer):
     async def _persist_setup_checkpoint_locked(self, active_step_id: str) -> bool:
         """Persist a checkpoint while the caller holds the mutation lock."""
 
+        if self._draft_mutations_terminal:
+            return False
         try:
             draft = wizard_state.setup_draft_checkpoint(
                 track=self.track,
@@ -4322,6 +4330,8 @@ class SetupWizardContainer(WizardContainer):
             return await self._clear_resume_attempt_locked(expected_target_id)
 
     async def _clear_resume_attempt_locked(self, expected_target_id: str) -> bool:
+        if self._draft_mutations_terminal:
+            return False
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         first_run = app_config.get(wizard_state.WIZARD_STATE_SECTION)
         if not isinstance(first_run, Mapping):
