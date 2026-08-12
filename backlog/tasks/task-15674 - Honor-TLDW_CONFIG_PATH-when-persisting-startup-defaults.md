@@ -1,9 +1,10 @@
 ---
 id: TASK-15674
 title: Honor TLDW_CONFIG_PATH when persisting startup defaults
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-12 06:35'
+updated_date: '2026-08-12 15:37'
 labels:
   - bug
   - config
@@ -26,3 +27,16 @@ Prevent app startup under an isolated config profile from writing normalized def
 - [ ] #4 Existing no-override startup persistence behavior remains covered.
 - [ ] #5 No config values or credentials are emitted in diagnostics.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a real TldwCli startup-to-approved-quit subprocess regression with separate effective and decoy default profiles, deterministic network disablement, and privacy-safe persistence evidence.
+2. Mutation-prove the regression against the production effective-config lookup while preserving current production code unchanged.
+3. Correct the UAT, TASK-3401.14 notes, TASK-15674 wording, and live-verification lesson to distinguish observed drift from proven causality.
+4. Run only touched-file and named config controls, then Ruff, temporary py_compile, privacy checks, and git diff --check.
+
+ADR required: no
+ADR path: N/A
+Reason: regression-only characterization of the existing effective-config boundary; no new storage, security, runtime, or cross-module decision.
+<!-- SECTION:PLAN:END -->
