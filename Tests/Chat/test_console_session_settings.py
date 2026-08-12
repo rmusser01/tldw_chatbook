@@ -152,17 +152,32 @@ def test_explicit_model_outranks_chat_defaults_and_provider_fallback() -> None:
     assert effective.model_source == "session"
 
 
-def test_provider_model_aliases_are_fallbacks_with_precise_provenance() -> None:
-    for field in ("model", "api_model", "default_model"):
-        config = {
-            "chat_defaults": {"provider": "openai"},
-            "api_settings": {"openai": {field: f"{field}-value"}},
-        }
+def test_provider_model_fallback_order_is_model_then_api_model_then_default_model() -> (
+    None
+):
+    provider_settings = {
+        "model": "model-value",
+        "api_model": "api-model-value",
+        "default_model": "default-model-value",
+    }
+    config = {
+        "chat_defaults": {"provider": "openai"},
+        "api_settings": {"openai": provider_settings},
+    }
 
-        effective = session_settings.resolve_effective_chat_configuration(config)
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "model-value"
+    assert effective.model_source == "provider_fallback"
 
-        assert effective.model == f"{field}-value"
-        assert effective.model_source == "provider_fallback"
+    del provider_settings["model"]
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "api-model-value"
+    assert effective.model_source == "provider_fallback"
+
+    del provider_settings["api_model"]
+    effective = session_settings.resolve_effective_chat_configuration(config)
+    assert effective.model == "default-model-value"
+    assert effective.model_source == "provider_fallback"
 
 
 def test_missing_model_reports_none_provenance() -> None:

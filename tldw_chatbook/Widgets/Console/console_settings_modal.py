@@ -47,12 +47,15 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
     DEFAULT_LLAMACPP_BASE_URL,
+    EffectiveChatConfiguration,
     URL_BASED_PROVIDER_KEYS,
+    build_canonical_chat_defaults_mutation,
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
     normalize_console_model_value,
     normalize_llamacpp_base_url,
+    resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -1445,13 +1448,24 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         values are skipped rather than deleting existing defaults.
         """
         sections: dict[str, dict[str, object]] = {}
-        provider_key = provider_config_key(draft.provider)
-        provider_values: dict[str, object] = {}
+        resolved = resolve_effective_chat_configuration(
+            self._app_config,
+            provider=draft.provider,
+            model=draft.model,
+        )
         model = normalize_console_model_value(draft.model)
+        effective = EffectiveChatConfiguration(
+            provider=resolved.provider,
+            model=model,
+            base_url=draft.base_url,
+            model_source="session" if model else "none",
+        )
+        provider_key = effective.provider
+        provider_values: dict[str, object] = {}
         if model:
             provider_values["model"] = model
         base_url = (draft.base_url or "").strip()
-        if base_url and self._provider_uses_base_url(draft.provider):
+        if base_url and self._provider_uses_base_url(provider_key):
             provider_values[self._endpoint_persist_key(provider_key)] = base_url
         saved_defaults: dict[str, object] = {}
         for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
@@ -1462,20 +1476,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             sections[f"api_settings.{provider_key}"] = provider_values
         if provider_key and saved_defaults:
             sections[f"console.provider_defaults.{provider_key}"] = saved_defaults
-        chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
-        if provider_key:
-            chat_defaults["provider"] = provider_key
-        if model:
-            # The model must be written here too, not only into
-            # [api_settings.<provider>]. `resolve_effective_provider_model`
-            # reads `chat_defaults.model` and hands it to
-            # `build_default_console_session_settings` as an EXPLICIT override,
-            # where it outranks the api_settings value. Writing only
-            # api_settings therefore left a stale `chat_defaults.model`
-            # winning in every new session -- new tab, character "Start Chat",
-            # and app relaunch all silently reverted to the previously
-            # selected model after the user had corrected it here.
-            chat_defaults["model"] = model
+        canonical_defaults = build_canonical_chat_defaults_mutation(effective)[
+            "chat_defaults"
+        ]
+        chat_defaults: dict[str, object] = {
+            "streaming": bool(draft.streaming),
+            **canonical_defaults,
+        }
         sections["chat_defaults"] = chat_defaults
         return sections
 

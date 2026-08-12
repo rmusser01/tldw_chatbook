@@ -5785,6 +5785,64 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
 
 
 @pytest.mark.asyncio
+async def test_console_settings_legacy_alias_is_passive_until_canonical_default_save(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    captured: list[dict[str, dict[str, object]]] = []
+    canonical_calls = []
+    real_canonical_mutation = modal_module.build_canonical_chat_defaults_mutation
+
+    def fake_save(sections: dict[str, dict[str, object]]) -> bool:
+        captured.append(sections)
+        return True
+
+    def recording_canonical_mutation(effective):
+        canonical_calls.append(effective)
+        return real_canonical_mutation(effective)
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    monkeypatch.setattr(
+        modal_module,
+        "build_canonical_chat_defaults_mutation",
+        recording_canonical_mutation,
+    )
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="OpenAI-Compatible",
+        model="pocket-tts",
+        streaming=False,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"OpenAI-Compatible": ["pocket-tts"]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        assert captured == []
+        assert canonical_calls == []
+        await pilot.click("#console-settings-save-default")
+
+    assert len(captured) == 1
+    assert len(canonical_calls) == 1
+    assert canonical_calls[0].provider == "openai"
+    assert canonical_calls[0].model == "pocket-tts"
+    assert captured[0]["chat_defaults"] == {
+        "streaming": False,
+        "provider": "openai",
+        "model": "pocket-tts",
+    }
+    assert captured[0]["api_settings.openai"]["model"] == "pocket-tts"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(
     monkeypatch,
 ) -> None:
