@@ -34,6 +34,7 @@ _KNOWN_PATHS = {
     "/v1/audio/speech": ("/v1/audio/speech", "/v1/models"),
 }
 _SCHEME_PATTERN = re.compile(r"(?i)https?://")
+_NUMERIC_IPV4_COMPONENT = re.compile(r"(?i)(?:[0-9]+|0x[0-9a-f]+)\Z")
 _UNICODE_DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 
 
@@ -67,6 +68,9 @@ def _canonical_hostname(parsed: SplitResult) -> tuple[str, bool]:
             return str(ipaddress.IPv4Address(hostname)), False
         except ipaddress.AddressValueError as error:
             raise _invalid_endpoint() from error
+
+    if all(_NUMERIC_IPV4_COMPONENT.fullmatch(label) for label in numeric_labels):
+        raise _invalid_endpoint()
 
     try:
         canonical = idna.encode(

@@ -232,6 +232,54 @@ def test_invalid_dns_hostnames_are_rejected(raw) -> None:
         normalize_openai_compatible_endpoint(raw)
 
 
+def test_canonical_ipv4_spellings_share_origin_and_fingerprint() -> None:
+    canonical = normalize_openai_compatible_endpoint(
+        "http://127.0.0.1:8765/custom/speech"
+    )
+    rooted = normalize_openai_compatible_endpoint(
+        "http://127.0.0.1.:8765/another/speech"
+    )
+
+    assert canonical.origin == "http://127.0.0.1:8765"
+    assert rooted.origin == canonical.origin
+    assert openai_destination_fingerprint(
+        "openai", rooted
+    ) == openai_destination_fingerprint("openai", canonical)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "http://127.1:8765/v1",
+        "http://127.0.1:8765/v1",
+        "http://2130706433:8765/v1",
+        "http://017700000001:8765/v1",
+        "http://0x7f000001:8765/v1",
+        "http://0177.0.0.1:8765/v1",
+        "http://127.00.0.1:8765/v1",
+        "http://0x7f.0.0.1:8765/v1",
+        "http://0x7f.0x0.0x0.0x1:8765/v1",
+    ),
+)
+def test_ambiguous_numeric_ipv4_hostnames_are_rejected(raw) -> None:
+    with pytest.raises(ValueError, match="OpenAI-compatible endpoint"):
+        normalize_openai_compatible_endpoint(raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "origin"),
+    (
+        ("https://123-service.example/v1", "https://123-service.example"),
+        ("https://127.example/v1", "https://127.example"),
+        ("https://v1.2-example.test/v1", "https://v1.2-example.test"),
+    ),
+)
+def test_dns_names_containing_digits_and_hyphens_remain_valid(raw, origin) -> None:
+    endpoint = normalize_openai_compatible_endpoint(raw)
+
+    assert endpoint.origin == origin
+
+
 def _capture_transport(requests: list[httpx.Request]) -> httpx.MockTransport:
     async def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)

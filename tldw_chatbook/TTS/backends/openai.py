@@ -224,7 +224,7 @@ class OpenAITTSBackend(APITTSBackend):
             f"format={response_format}, speed={speed}"
         )
 
-        http_failure: ValueError | None = None
+        safe_failure: ValueError | None = None
         try:
             async with self.client.stream(
                 "POST", self.base_url, headers=headers, json=payload
@@ -276,7 +276,7 @@ class OpenAITTSBackend(APITTSBackend):
 
         except httpx.HTTPStatusError as error:
             status_code = error.response.status_code
-            category, http_failure = _http_status_failure(status_code)
+            category, safe_failure = _http_status_failure(status_code)
             logger.error(
                 "OpenAITTSBackend: Request failed "
                 f"(http_status={status_code}, category={category})"
@@ -285,17 +285,19 @@ class OpenAITTSBackend(APITTSBackend):
         except httpx.RequestError:
             # Log without exposing connection details
             logger.error("OpenAITTSBackend: Network request failed")
-            raise TTSBackendConnectionError(
+            safe_failure = TTSBackendConnectionError(
                 "Unable to connect to TTS service. Please check your internet connection."
             )
 
         except Exception:
             # Log error without stack trace that might contain sensitive data
             logger.error("OpenAITTSBackend: Unexpected error during TTS generation")
-            raise ValueError("An unexpected error occurred during TTS generation.")
+            safe_failure = ValueError(
+                "An unexpected error occurred during TTS generation."
+            )
 
-        if http_failure is not None:
-            raise http_failure
+        if safe_failure is not None:
+            raise safe_failure
 
 
 #
