@@ -18,6 +18,7 @@ from textual.screen import Screen
 from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
+from textual.timer import Timer
 from loguru import logger
 
 from ..Chatbooks.database_paths import (
@@ -382,6 +383,13 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     view_mode = reactive("grid")
     search_query = reactive("")
 
+    #: Debounce for the search `Input` -- mirrors the console picker
+    #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Setting
+    #: `search_query` synchronously runs `_update_content()`, which tears
+    #: down and remounts a card/list item per chatbook; that must not
+    #: happen on every keystroke (task-15476).
+    SEARCH_DEBOUNCE_SECONDS = 0.2
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         """Store the owning app and resolve the default export directory.
 
@@ -394,6 +402,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
         # exports at the old location are not moved by this change.
         self._export_path = get_private_chatbooks_dir()
+        self._search_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         # Header
@@ -708,10 +717,20 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             elif element.id == "manage-action":
                 await self.action_manage_exports()
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
-        if event.input.id == "chatbook-search":
-            self.search_query = event.value
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes (debounced -- task-15476)."""
+        if event.input.id != "chatbook-search":
+            return
+        query = event.value
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_search_query(query)
+        )
+
+    def _apply_search_query(self, query: str) -> None:
+        self._search_debounce_timer = None
+        self.search_query = query
 
     async def action_create_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook creation wizard."""
