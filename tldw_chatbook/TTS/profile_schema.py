@@ -10,6 +10,7 @@ immutable read-only handle used for the rest of validation.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import stat
@@ -20,9 +21,16 @@ from pathlib import Path
 from typing import Literal, TypeAlias, cast
 from uuid import UUID
 
-from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.private_sqlite import (
+    connect_private_sqlite,
+    connect_private_sqlite_descriptor,
+)
 from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
+)
+from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.TTS.migrations.v0_to_v1 import (
     ASSIGNMENT_PROFILE_INDEX_DDL as _ASSIGNMENT_PROFILE_INDEX_DDL,
 )
@@ -134,6 +142,263 @@ RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
+
+
+class _ExactCurrentProfileConnection:
+    """Live SQLite handle retaining the descriptor authority that admitted it."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        evidence_connection: sqlite3.Connection,
+        selected: Path,
+        parent_fd: int,
+        file_fd: int,
+        parent_identity: os.stat_result,
+        file_identity: os.stat_result,
+        sidecar_fds: dict[str, int],
+        sidecar_identities: dict[str, os.stat_result],
+    ) -> None:
+        self._connection = connection
+        self._evidence_connection = evidence_connection
+        self.selected = selected
+        self.parent_fd = parent_fd
+        self.file_fd = file_fd
+        self.parent_identity = parent_identity
+        self.file_identity = file_identity
+        self.sidecar_fds = sidecar_fds
+        self.sidecar_identities = sidecar_identities
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        return self._connection.execute(sql, parameters)  # type: ignore[arg-type]
+
+    def serialize(self) -> bytes:
+        return self._connection.serialize()
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    @property
+    def row_factory(self) -> object:
+        return self._connection.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        self._connection.row_factory = value  # type: ignore[assignment]
+
+    def close(self) -> None:
+        # The pin remains live if SQLite close fails.  Repository cleanup can
+        # safely retry this exact object while retaining the shared lease.
+        self._connection.close()
+        self._evidence_connection.close()
+        for suffix, descriptor in tuple(self.sidecar_fds.items()):
+            os.close(descriptor)
+            del self.sidecar_fds[suffix]
+        if self.file_fd >= 0:
+            os.close(self.file_fd)
+            self.file_fd = -1
+        if self.parent_fd >= 0:
+            os.close(self.parent_fd)
+            self.parent_fd = -1
+
+
+class ExactProfileStoreCleanupError(ProfileRepositoryError):
+    """Carry exact retained authority when an internal close cannot settle."""
+
+    def __init__(self, connection: _ExactCurrentProfileConnection) -> None:
+        super().__init__("operation_failed")
+        self.connection = connection
+
+
+class ExactProfileStoreNotCurrentError(ProfileRepositoryError):
+    """Signal that shared proof must yield to exclusive initialization."""
+
+    def __init__(self) -> None:
+        super().__init__("schema_partial")
+
+
+def _exact_store_namespace_safe(
+    parent_fd: int,
+    leaf: str,
+    *,
+    before_path_open: bool,
+) -> bool:
+    publication = f".{leaf}.migration-publication.json"
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        try:
+            os.stat(
+                f"{publication}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        return False
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            observed = os.stat(
+                f"{leaf}{suffix}",
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if suffix == "-journal":
+            return False
+        if (
+            private_paths._classify_private_file_stat(
+                observed,
+                expected_uid=os.geteuid(),
+            )
+            is not None
+            or stat.S_IMODE(observed.st_mode) != 0o600
+        ):
+            return False
+    return True
+
+
+def _open_exact_store_sidecars(
+    parent_fd: int,
+    leaf: str,
+) -> tuple[dict[str, int], dict[str, os.stat_result]] | None:
+    descriptors: dict[str, int] = {}
+    identities: dict[str, os.stat_result] = {}
+    for suffix in ("-wal", "-shm"):
+        try:
+            descriptor = os.open(
+                f"{leaf}{suffix}",
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_NOCTTY", 0),
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            descriptor = -1
+        except OSError:
+            descriptor = -2
+        if descriptor >= 0:
+            observed = os.fstat(descriptor)
+            try:
+                named = os.stat(
+                    f"{leaf}{suffix}",
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                os.close(descriptor)
+                descriptor = -2
+            else:
+                if (
+                    not private_paths._same_identity(observed, named)
+                    or private_paths._classify_private_file_stat(
+                        observed,
+                        expected_uid=os.geteuid(),
+                    )
+                    is not None
+                    or stat.S_IMODE(observed.st_mode) != 0o600
+                ):
+                    os.close(descriptor)
+                    descriptor = -2
+                else:
+                    descriptors[suffix] = descriptor
+                    identities[suffix] = observed
+        if descriptor == -2:
+            for opened in descriptors.values():
+                os.close(opened)
+            raise _repository_error("operation_failed")
+    if not descriptors:
+        return None
+    if set(descriptors) != {"-wal", "-shm"}:
+        for opened in descriptors.values():
+            os.close(opened)
+        raise ExactProfileStoreNotCurrentError()
+    return descriptors, identities
+
+
+def revalidate_exact_current_profile_store(
+    connection: sqlite3.Connection,
+    path: Path,
+) -> None:
+    """Recheck retained exact-current authority immediately before live use."""
+
+    if not isinstance(connection, _ExactCurrentProfileConnection):
+        return
+    if (
+        connection.selected != path
+        or connection.file_fd < 0
+        or connection.parent_fd < 0
+    ):
+        raise _repository_error("operation_failed")
+    try:
+        opened_parent = os.fstat(connection.parent_fd)
+        opened_file = os.fstat(connection.file_fd)
+        named = os.stat(
+            path.name,
+            dir_fd=connection.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        raise _repository_error("operation_failed") from None
+    sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
+    if sidecars_match:
+        for suffix, descriptor in connection.sidecar_fds.items():
+            try:
+                opened_sidecar = os.fstat(descriptor)
+                named_sidecar = os.stat(
+                    f"{path.name}{suffix}",
+                    dir_fd=connection.parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                sidecars_match = False
+                break
+            expected_sidecar = connection.sidecar_identities[suffix]
+            if (
+                not private_paths._same_identity(opened_sidecar, expected_sidecar)
+                or not private_paths._same_identity(named_sidecar, expected_sidecar)
+                or private_paths._classify_private_file_stat(
+                    named_sidecar,
+                    expected_uid=os.geteuid(),
+                )
+                is not None
+                or stat.S_IMODE(named_sidecar.st_mode) != 0o600
+            ):
+                sidecars_match = False
+                break
+    if (
+        not private_paths._same_identity(opened_parent, connection.parent_identity)
+        or not private_paths._same_identity(opened_file, connection.file_identity)
+        or not private_paths._same_identity(named, connection.file_identity)
+        or private_paths._classify_private_file_stat(
+            named,
+            expected_uid=os.geteuid(),
+        )
+        is not None
+        or stat.S_IMODE(named.st_mode) != 0o600
+        or not sidecars_match
+        or not _exact_store_namespace_safe(
+            connection.parent_fd,
+            path.name,
+            before_path_open=False,
+        )
+    ):
+        raise _repository_error("operation_failed")
 
 
 def encode_uuid(value: UUID) -> str:
@@ -1055,6 +1320,203 @@ def peek_profile_store_schema_version(path: Path) -> int | None:
                 connection.close()
             except Exception:
                 pass
+
+
+def open_exact_current_profile_store(path: Path) -> sqlite3.Connection:
+    """Open exact current v4 without migration while retaining its proof pin."""
+
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise _repository_error("operation_failed")
+    parent_fd = -1
+    file_fd = -1
+    sidecar_fds: dict[str, int] = {}
+    sidecar_identities: dict[str, os.stat_result] = {}
+    descriptor: sqlite3.Connection | None = None
+    live: sqlite3.Connection | None = None
+    owned: _ExactCurrentProfileConnection | None = None
+    body_error: BaseException | None = None
+    try:
+        parent_fd, leaf = private_paths._open_verified_parent(
+            path,
+            missing_leaf_allowed=False,
+        )
+        parent_identity = os.fstat(parent_fd)
+        if not _exact_store_namespace_safe(
+            parent_fd,
+            leaf,
+            before_path_open=True,
+        ):
+            raise ExactProfileStoreNotCurrentError()
+        file_fd = os.open(
+            leaf,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0),
+            dir_fd=parent_fd,
+        )
+        file_identity = os.fstat(file_fd)
+        if (
+            file_identity.st_size > MAX_PROFILE_MIGRATION_ARTIFACT_BYTES
+            or private_paths._classify_private_file_stat(
+                file_identity,
+                expected_uid=os.geteuid(),
+            )
+            is not None
+            or stat.S_IMODE(file_identity.st_mode) != 0o600
+        ):
+            raise ExactProfileStoreNotCurrentError()
+        named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if not private_paths._same_identity(named, file_identity):
+            raise _repository_error("operation_failed")
+        pinned_sidecars = _open_exact_store_sidecars(parent_fd, leaf)
+        if pinned_sidecars is not None:
+            sidecar_fds, sidecar_identities = pinned_sidecars
+
+        descriptor = connect_private_sqlite_descriptor(
+            "tts.profile_store_descriptor",
+            file_fd,
+            isolation_level=None,
+        )
+        _configure_connection(descriptor)
+        descriptor_version = descriptor.execute("PRAGMA user_version").fetchone()[0]
+        if descriptor_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise ExactProfileStoreNotCurrentError()
+        _validate_schema(descriptor)
+        validate_profile_store_rows(descriptor)
+        descriptor_digest = hashlib.sha256(descriptor.serialize()).digest()
+
+        live = connect_private_sqlite(
+            "tts.profile_store",
+            path,
+            must_exist=True,
+            expected_identity=file_identity,
+            isolation_level=None,
+        )
+        live.execute("PRAGMA query_only = ON")
+        if live.execute("PRAGMA query_only").fetchone()[0] != 1:
+            raise _repository_error("schema_corrupt")
+        # Force SQLite to acquire its main database and WAL cohort before
+        # retaining exact sidecar descriptors.
+        live.execute("PRAGMA user_version").fetchone()
+        if live.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            raise ExactProfileStoreNotCurrentError()
+        if not sidecar_fds:
+            opened_sidecars = _open_exact_store_sidecars(parent_fd, leaf)
+            if opened_sidecars is None:
+                raise _repository_error("operation_failed")
+            sidecar_fds, sidecar_identities = opened_sidecars
+        owned = _ExactCurrentProfileConnection(
+            live,
+            evidence_connection=descriptor,
+            selected=path,
+            parent_fd=parent_fd,
+            file_fd=file_fd,
+            parent_identity=parent_identity,
+            file_identity=file_identity,
+            sidecar_fds=sidecar_fds,
+            sidecar_identities=sidecar_identities,
+        )
+        live = None
+        descriptor = None
+        parent_fd = -1
+        file_fd = -1
+        sidecar_fds = {}
+        sidecar_identities = {}
+        _configure_connection(cast(sqlite3.Connection, owned))
+        live_version = owned.execute("PRAGMA user_version").fetchone()[0]
+        if live_version != CURRENT_PROFILE_SCHEMA_VERSION:
+            raise _repository_error("schema_partial")
+        _validate_schema(cast(sqlite3.Connection, owned))
+        validate_profile_store_rows(cast(sqlite3.Connection, owned))
+        live_digest = hashlib.sha256(owned.serialize()).digest()
+        if live_digest != descriptor_digest:
+            # A coexisting current-v4 writer may have committed into the WAL
+            # after the immutable main-file image was pinned.  Accept only a
+            # stable SQLite-owned image of that same still-canonical inode;
+            # without live WAL state, any mismatch is a substitution.
+            revalidate_exact_current_profile_store(
+                cast(sqlite3.Connection, owned),
+                path,
+            )
+            repeated_digest = hashlib.sha256(owned.serialize()).digest()
+            if repeated_digest != live_digest:
+                raise _repository_error("operation_failed")
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+        owned.execute("PRAGMA query_only = OFF")
+        if owned.execute("PRAGMA query_only").fetchone()[0] != 0:
+            raise _repository_error("schema_corrupt")
+        revalidate_exact_current_profile_store(
+            cast(sqlite3.Connection, owned),
+            path,
+        )
+    except FileNotFoundError:
+        body_error = ExactProfileStoreNotCurrentError()
+    except BaseException as error:
+        body_error = error
+
+    if body_error is None:
+        assert owned is not None
+        return cast(sqlite3.Connection, owned)
+
+    if owned is not None:
+        try:
+            owned.close()
+        except BaseException:
+            raise ExactProfileStoreCleanupError(owned) from None
+    else:
+        if (
+            live is not None
+            and descriptor is not None
+            and parent_fd >= 0
+            and file_fd >= 0
+        ):
+            cleanup_owner = _ExactCurrentProfileConnection(
+                live,
+                evidence_connection=descriptor,
+                selected=path,
+                parent_fd=parent_fd,
+                file_fd=file_fd,
+                parent_identity=os.fstat(parent_fd),
+                file_identity=os.fstat(file_fd),
+                sidecar_fds=sidecar_fds,
+                sidecar_identities=sidecar_identities,
+            )
+            try:
+                cleanup_owner.close()
+            except BaseException:
+                raise ExactProfileStoreCleanupError(cleanup_owner) from None
+            live = None
+            descriptor = None
+            parent_fd = -1
+            file_fd = -1
+            sidecar_fds = {}
+        elif live is not None:
+            try:
+                live.close()
+            except BaseException as error:
+                if not isinstance(error, Exception):
+                    raise
+                raise _repository_error("operation_failed") from None
+        if descriptor is not None:
+            try:
+                descriptor.close()
+            except BaseException:
+                pass
+        if file_fd >= 0:
+            os.close(file_fd)
+        for opened in sidecar_fds.values():
+            os.close(opened)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    if not isinstance(body_error, Exception):
+        raise body_error
+    if isinstance(body_error, ProfileRepositoryError):
+        raise body_error
+    raise _repository_error("schema_corrupt") from None
 
 
 def open_profile_store(

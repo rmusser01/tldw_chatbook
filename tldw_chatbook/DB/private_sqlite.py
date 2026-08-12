@@ -318,6 +318,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "TTS profile storage requires a checked writable private database.",
     ),
+    "tts.profile_store_descriptor": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_schema",
+        _READ_ONLY_URI,
+        "TTS shared startup proves the exact current store through an immutable "
+        "view bound to its retained descriptor before opening the live path.",
+        preserve_read_only_source_mode=True,
+    ),
     "tts.profile_candidate": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_schema",
         _READ_ONLY_URI,
@@ -1057,6 +1064,7 @@ def _connect_registered_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
+    expected_identity: os.stat_result | None = None,
     _verified_descriptor_fd: int | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
@@ -1064,6 +1072,11 @@ def _connect_registered_sqlite(
         raise ValueError("The SQLite uri option is owned by the private seam")
     if immutable and not read_only:
         raise ValueError("Immutable SQLite connections must be read-only")
+    if expected_identity is not None and not isinstance(
+        expected_identity,
+        os.stat_result,
+    ):
+        raise TypeError("expected_identity must be an os.stat_result")
     policy = _validated_owner_policy(owner_id)
     if _verified_descriptor_fd is not None:
         if not read_only or not immutable or not must_exist:
@@ -1109,6 +1122,17 @@ def _connect_registered_sqlite(
                 read_only and policy.preserve_read_only_source_mode
             ),
         )
+        if expected_identity is not None:
+            observed_identity = selected.lstat()
+            if not private_paths._same_identity(
+                observed_identity,
+                expected_identity,
+            ):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_expected_identity_changed",
+                )
         for suffix in _SIDECAR_SUFFIXES:
             _prepare_artifact(
                 Path(f"{selected}{suffix}"),
@@ -1146,6 +1170,7 @@ def connect_private_sqlite(
     read_only: bool = False,
     must_exist: bool = False,
     immutable: bool = False,
+    expected_identity: os.stat_result | None = None,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     """Open SQLite only after enforcing the registered target policy."""
@@ -1156,6 +1181,7 @@ def connect_private_sqlite(
         read_only=read_only,
         must_exist=must_exist,
         immutable=immutable,
+        expected_identity=expected_identity,
         **kwargs,
     )
 

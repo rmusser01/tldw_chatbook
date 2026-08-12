@@ -73,6 +73,8 @@ from tldw_chatbook.TTS.profile_reference_types import (
 )
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
+    ExactProfileStoreCleanupError,
+    ExactProfileStoreNotCurrentError,
     decode_assigned_snapshot,
     decode_assignment,
     decode_profile,
@@ -82,6 +84,8 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_utc_datetime,
     encode_uuid,
     open_profile_store,
+    open_exact_current_profile_store,
+    revalidate_exact_current_profile_store,
     validate_profile_candidate,
     validate_profile_store_rows,
 )
@@ -1279,6 +1283,7 @@ class TTSProfileRepository:
                 active_path,
                 "operation_failed",
             )
+            revalidate_exact_current_profile_store(connection, active_path)
         except BaseException as error:
             body_error = error
 
@@ -1348,13 +1353,14 @@ class TTSProfileRepository:
                     return None
             finally:
                 os.close(parent_fd)
-            if (
-                self._worker_exact_schema_version(active_path)
-                != CURRENT_PROFILE_SCHEMA_VERSION
-            ):
+            try:
+                connection = open_exact_current_profile_store(active_path)
+            except ExactProfileStoreNotCurrentError:
                 self._worker_release_unproven_shared(lease, active_path)
                 return None
-            connection = open_profile_store(active_path, must_exist=True)
+            except ExactProfileStoreCleanupError as error:
+                connection = cast(sqlite3.Connection, error.connection)
+                raise
             return lease, connection
         except BaseException as error:
             body_error = error

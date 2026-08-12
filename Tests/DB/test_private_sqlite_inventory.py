@@ -600,9 +600,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # authority before any profile-store open. C46/C47 are descriptor-bound
         # publisher/recovery validation through the centralized SQLite seam;
         # C48 is the exact admitted restore source retained during canonical
-        # candidate preparation.
+        # candidate preparation. C49 is the descriptor-bound exact-current
+        # proof retained through shared live-store use.
         f"C{number:02d}"
-        for number in range(1, 49)
+        for number in range(1, 50)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18)
@@ -948,7 +949,7 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
                 if row["id"] == "C43"
                 else (
                     "connect_private_sqlite_descriptor"
-                    if row["id"] in {"C46", "C47"}
+                    if row["id"] in {"C46", "C47", "C49"}
                     else "connect_private_sqlite"
                 )
             )
