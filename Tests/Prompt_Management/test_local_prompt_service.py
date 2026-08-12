@@ -1,6 +1,16 @@
 import pytest
 
 from tldw_chatbook.Prompt_Management.local_prompt_service import LocalPromptService
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    PromptDeleteReceiptEntry,
+    PromptRestoreResultEntry,
+)
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService as ScopeLocalPromptService,
+)
 
 
 class FakePromptDB:
@@ -95,6 +105,64 @@ class FakePromptDB:
             "version": expected_version + 1,
             "deleted": 0,
         }
+
+
+class FakeAtomicPromptDB:
+    def __init__(self):
+        self.calls = []
+        self.deleted_result = PromptBatchDeleteResult(
+            entries=(PromptDeleteReceiptEntry(7, "Seven", "prompt", 4),)
+        )
+        self.restored_result = PromptBatchRestoreResult(
+            entries=(PromptRestoreResultEntry(7, 5),)
+        )
+
+    def soft_delete_prompts(self, targets):
+        self.calls.append(("delete", targets))
+        return self.deleted_result
+
+    def restore_deleted_prompts(self, targets):
+        self.calls.append(("restore", targets))
+        return self.restored_result
+
+
+def test_local_prompt_batch_methods_are_sync_keyword_only_typed_pass_throughs():
+    import inspect
+    from typing import get_type_hints
+
+    database = FakeAtomicPromptDB()
+    service = ScopeLocalPromptService(database)
+    targets = (PromptBatchTarget(7, 3),)
+
+    assert not inspect.iscoroutinefunction(ScopeLocalPromptService.delete_prompts)
+    assert not inspect.iscoroutinefunction(
+        ScopeLocalPromptService.restore_deleted_prompts
+    )
+    for method_name, result_type in (
+        ("delete_prompts", PromptBatchDeleteResult),
+        ("restore_deleted_prompts", PromptBatchRestoreResult),
+    ):
+        method = getattr(ScopeLocalPromptService, method_name)
+        signature = inspect.signature(method)
+        assert signature.parameters["targets"].kind is inspect.Parameter.KEYWORD_ONLY
+        hints = get_type_hints(method)
+        assert hints["targets"] == tuple[PromptBatchTarget, ...]
+        assert hints["return"] is result_type
+
+    with pytest.raises(TypeError):
+        service.delete_prompts(targets)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        service.restore_deleted_prompts(targets)  # type: ignore[misc]
+
+    deleted = service.delete_prompts(targets=targets)
+    restored = service.restore_deleted_prompts(targets=targets)
+
+    assert deleted is database.deleted_result
+    assert restored is database.restored_result
+    assert database.calls[0][0] == "delete"
+    assert database.calls[0][1] is targets
+    assert database.calls[1][0] == "restore"
+    assert database.calls[1][1] is targets
 
 
 class FakePromptInterop:

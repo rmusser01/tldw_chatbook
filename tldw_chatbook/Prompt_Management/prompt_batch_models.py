@@ -58,6 +58,43 @@ class PromptBatchTarget:
         )
 
 
+def validate_prompt_batch_targets(
+    targets: tuple[PromptBatchTarget, ...],
+) -> tuple[PromptBatchTarget, ...]:
+    """Validate and canonically order one strict Prompt mutation batch.
+
+    Args:
+        targets: Exact non-empty tuple of exact batch targets.
+
+    Returns:
+        Targets in ascending local-ID order. An already canonical tuple is
+        returned unchanged.
+
+    Raises:
+        TypeError: If the container or any target has a non-exact type.
+        ValueError: If the tuple is empty or repeats a local ID.
+    """
+    if type(targets) is not tuple:
+        raise TypeError("targets must be an exact tuple.")
+    if not targets:
+        raise ValueError("targets must be non-empty.")
+    if any(type(target) is not PromptBatchTarget for target in targets):
+        raise TypeError("targets must contain only exact PromptBatchTarget values.")
+    for target in targets:
+        _require_positive_sqlite_integer(target.local_id, field_name="local_id")
+        _require_positive_sqlite_integer(
+            target.expected_version, field_name="expected_version"
+        )
+    if len({target.local_id for target in targets}) != len(targets):
+        raise ValueError("targets must use unique local IDs.")
+    if all(
+        previous.local_id < current.local_id
+        for previous, current in zip(targets, targets[1:])
+    ):
+        return targets
+    return tuple(sorted(targets, key=lambda target: target.local_id))
+
+
 @dataclass(frozen=True, slots=True)
 class PromptDeleteReceiptEntry:
     """One committed Prompt tombstone needed by the UI and atomic Undo.

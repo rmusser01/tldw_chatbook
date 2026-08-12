@@ -14,6 +14,7 @@ from tldw_chatbook.Prompt_Management.prompt_batch_models import (
     PromptBatchTarget,
     PromptDeleteReceiptEntry,
     PromptRestoreResultEntry,
+    validate_prompt_batch_targets,
 )
 
 
@@ -145,6 +146,79 @@ class _StrSubclass(str):
 
 class _TupleSubclass(tuple):
     """A tuple lookalike that strict public boundaries must reject."""
+
+
+class _PromptBatchTargetSubclass(PromptBatchTarget):
+    """A target lookalike that strict public boundaries must reject."""
+
+
+def _forged_batch_target(local_id, expected_version) -> PromptBatchTarget:
+    target = object.__new__(PromptBatchTarget)
+    object.__setattr__(target, "local_id", local_id)
+    object.__setattr__(target, "expected_version", expected_version)
+    return target
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        [],
+        _TupleSubclass((PromptBatchTarget(1, 1),)),
+        (object(),),
+        (_PromptBatchTargetSubclass(1, 1),),
+    ],
+)
+def test_prompt_batch_target_validator_requires_exact_tuple_and_target_types(targets):
+    with pytest.raises(TypeError, match="targets"):
+        validate_prompt_batch_targets(targets)
+
+
+def test_prompt_batch_target_validator_requires_nonempty_unique_ids_without_leaking_ids():
+    with pytest.raises(ValueError, match="non-empty"):
+        validate_prompt_batch_targets(())
+
+    targets = (
+        PromptBatchTarget(71_234_567, 81_234_567),
+        PromptBatchTarget(71_234_567, 91_234_567),
+    )
+    with pytest.raises(ValueError) as raised:
+        validate_prompt_batch_targets(targets)
+
+    assert "unique local IDs" in str(raised.value)
+    assert "71234567" not in str(raised.value)
+    assert "81234567" not in str(raised.value)
+    assert "91234567" not in str(raised.value)
+
+
+def test_prompt_batch_target_validator_canonicalizes_and_preserves_identity_when_sorted():
+    first = PromptBatchTarget(7, 3)
+    second = PromptBatchTarget(9, 2)
+    canonical = (first, second)
+
+    assert validate_prompt_batch_targets(canonical) is canonical
+    assert validate_prompt_batch_targets((second, first)) == canonical
+
+
+@pytest.mark.parametrize(
+    ("local_id", "expected_version", "field"),
+    [
+        (True, 1, "local_id"),
+        (0, 1, "local_id"),
+        (-1, 1, "local_id"),
+        (2**63, 1, "local_id"),
+        (1, False, "expected_version"),
+        (1, 0, "expected_version"),
+        (1, -1, "expected_version"),
+        (1, 2**63, "expected_version"),
+    ],
+)
+def test_prompt_batch_target_validator_revalidates_exact_target_fields(
+    local_id, expected_version, field
+):
+    target = _forged_batch_target(local_id, expected_version)
+
+    with pytest.raises(ValueError, match=field):
+        validate_prompt_batch_targets((target,))
 
 
 @pytest.mark.parametrize(
