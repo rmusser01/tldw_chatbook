@@ -475,6 +475,7 @@ from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
 )
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
