@@ -141,7 +141,9 @@ async def test_modal_typing_filters_rows_by_id_prefix():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "style_"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the row list only re-renders once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         rows = app.screen.query(".console-style-picker-row")
         assert len(rows) == 3
@@ -159,7 +161,9 @@ async def test_modal_unmatched_filter_shows_empty_copy():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "zzz-no-such-style"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the empty state only appears once the
+        # filter settles.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         empty = app.screen.query_one("#console-style-picker-empty", Static)
         assert str(empty.renderable) == EMPTY_STORE_COPY
@@ -258,7 +262,9 @@ async def test_modal_detail_shows_placeholder_when_no_matches():
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "zzz-no-such-style"
-        await pilot.pause(0.1)
+        # Debounced (task-15476): the detail preview only clears once the
+        # filter settles.
+        await pilot.pause(picker_module.SEARCH_DEBOUNCE_SECONDS + 0.1)
 
         detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
         assert str(detail.renderable) == DETAIL_EMPTY_COPY

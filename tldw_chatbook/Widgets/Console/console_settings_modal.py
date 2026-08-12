@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -131,6 +132,11 @@ CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
     "Could not write defaults to the config file; session values still apply."
 )
+#: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). Each settle
+#: rebuilds a full `ConsoleSessionSettings` draft from every form field and
+#: re-validates it, which must not happen on every keystroke (task-15476).
+CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS = 0.2
 # Draft fields persisted under [api_settings.<provider>] by Save as default.
 PROVIDER_DEFAULT_PERSIST_FIELDS = (
     "temperature",
@@ -352,6 +358,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         )
         if initial_base_url:
             self._provider_base_url_drafts[settings.provider] = initial_base_url
+        self._readiness_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -1535,11 +1542,30 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
 
     @on(Input.Changed, "#console-settings-model-input")
     def _model_input_changed(self, event: Input.Changed) -> None:
+        """Mirror the typed id into the picker now; debounce the rest.
+
+        `picker.set_custom_value` only touches the picker's own small
+        display state (its Input mirror, custom-mode button, status line),
+        so it stays immediate. `_sync_readiness_display` rebuilds a full
+        `ConsoleSessionSettings` draft from every form field and
+        re-validates it, and `_sync_visual_representation_availability`
+        does a model-capability lookup -- neither should run on every
+        keystroke (task-15476).
+        """
         picker = self.query_one(
             "#console-settings-model-picker", ModelSearchPicker
         )
         if picker.custom_mode:
             picker.set_custom_value(event.value)
+        if self._readiness_debounce_timer is not None:
+            self._readiness_debounce_timer.stop()
+        self._readiness_debounce_timer = self.set_timer(
+            CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
+            self._apply_readiness_sync_debounced,
+        )
+
+    def _apply_readiness_sync_debounced(self) -> None:
+        self._readiness_debounce_timer = None
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
 

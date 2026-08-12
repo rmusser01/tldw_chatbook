@@ -19,6 +19,7 @@ from typing import Any, Literal, Sequence
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 CharacterPlacement = Literal["swap", "new"]
@@ -26,6 +27,12 @@ CharacterPlacement = Literal["swap", "new"]
 #: Bounds the result list so a large card library cannot mount hundreds of
 #: rows into a modal (the switcher modal caps its own list the same way).
 CHARACTER_PICKER_MAX_RESULTS = 40
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full result refresh
+#: removes and remounts up to `CHARACTER_PICKER_MAX_RESULTS` `Static` rows,
+#: which should not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -148,6 +155,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self._results: tuple[ConsoleCharacterOption, ...] = ()
         self._selected_index = 0
         self._pending: ConsoleCharacterOption | None = None
+        self._query_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-character-picker"):
@@ -238,11 +246,25 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         )
         self.query_one("#console-character-placement-swap", Button).focus()
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
+    def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "console-character-picker-query":
             return
         event.stop()
-        await self._refresh_results(event.value)
+        query = event.value
+        self._cancel_query_debounce()
+        self._query_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._refresh_results(query),
+                exclusive=True,
+                group="console-character-picker-search",
+            ),
+        )
+
+    def _cancel_query_debounce(self) -> None:
+        if self._query_debounce_timer is not None:
+            self._query_debounce_timer.stop()
+            self._query_debounce_timer = None
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "console-character-picker-query":
@@ -263,6 +285,7 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
 
     def _finish(self, placement: CharacterPlacement) -> None:
         assert self._pending is not None
+        self._cancel_query_debounce()
         self.dismiss(
             ConsoleCharacterChoice(
                 character_id=self._pending.character_id,
@@ -298,4 +321,5 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             row.update(f"{marker}{option.name}{current}")
 
     def action_dismiss_picker(self) -> None:
+        self._cancel_query_debounce()
         self.dismiss(None)

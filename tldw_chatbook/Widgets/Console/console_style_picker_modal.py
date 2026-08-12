@@ -23,11 +23,16 @@ real DOM focus can never land on a row.
 
 The searched set is a small, static, in-memory list -- `get_all_templates`
 is cached for the process lifetime (see that function's docstring) -- so
-there is no injected async search callable, no debounce timer, and no
-search-token race to guard against (nothing here ever awaits I/O). Filtering
-runs synchronously on every keystroke; only the row mount/unmount itself is
-awaited (Textual's ``VerticalScroll.remove_children``/``mount_all`` are
-coroutines regardless of where the data came from).
+there is no injected async search callable and no search-token race to
+guard against (nothing here ever awaits I/O). Filtering itself is
+synchronous; what is NOT free is the row mount/unmount that follows it
+(``VerticalScroll.remove_children``/``mount_all`` tear down and rebuild
+every result ``Button``). task-15476: this modal used to run that rebuild
+on every keystroke -- its three sibling Console pickers
+(``ConsolePromptPickerModal``, ``ConsoleSkillPickerModal``,
+``ConsoleCharacterPickerModal``) already debounced theirs, and this one now
+matches: a 0.2 s timer (`SEARCH_DEBOUNCE_SECONDS`) re-arms on every
+keystroke and only the settled query is applied.
 
 Task-559 AC3 adds a template preview: a detail line below the results list
 that shows the highlighted template's base-prompt/negative-prompt snippet
@@ -54,6 +59,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
@@ -74,6 +80,10 @@ EMPTY_STORE_COPY = "No matching styles."
 DETAIL_EMPTY_COPY = "Highlight a style to preview its prompt."
 
 MODAL_TITLE = "Insert image style"
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`, task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 _PREVIEW_SNIPPET_MAX_CHARS = 90
 """Max rendered length of each of the base-prompt/negative-prompt snippets
@@ -174,6 +184,7 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         # field, no duplicate/malformed-id fallback is needed here.
         self._row_ids: list[str] = []
         self._highlighted_index = 0
+        self._search_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id=MODAL_ID):
@@ -205,12 +216,27 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             pass
 
     def action_dismiss_picker(self) -> None:
+        self._cancel_search_debounce()
         self.dismiss(None)
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
-    async def _filter_changed(self, event: Input.Changed) -> None:
+    def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
-        await self._apply_filter(event.value)
+        self._cancel_search_debounce()
+        query = event.value
+        self._search_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._apply_filter(query),
+                exclusive=True,
+                group="console-style-picker-search",
+            ),
+        )
+
+    def _cancel_search_debounce(self) -> None:
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
 
     @on(Input.Submitted, f"#{FILTER_INPUT_ID}")
     def _filter_submitted(self, event: Input.Submitted) -> None:
@@ -322,4 +348,5 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         self._select_record(self._results[self._highlighted_index])
 
     def _select_record(self, template: GenerationTemplate) -> None:
+        self._cancel_search_debounce()
         self.dismiss({"id": template.id, "name": template.name})

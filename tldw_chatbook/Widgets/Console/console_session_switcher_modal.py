@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_switcher_state import (
@@ -19,6 +20,14 @@ from tldw_chatbook.Chat.console_switcher_state import (
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
+
+
+#: Debounce for the search `Input` -- mirrors the console picker family's
+#: 0.2 s shape (`console_prompt_picker_modal.py`). A full refresh removes
+#: and remounts one `Button` per matching entry (up to
+#: `CONSOLE_SWITCHER_RESULT_LIMIT`), which should not happen on every
+#: keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -89,6 +98,7 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         super().__init__(**kwargs)
         self._rows = rows
         self._entries: tuple[ConsoleSwitcherEntry, ...] = ()
+        self._query_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         """Build the search input and results container."""
@@ -151,14 +161,28 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
             await results.mount_all(buttons)
 
     @on(Input.Changed, "#console-switcher-query")
-    async def _query_changed(self, event: Input.Changed) -> None:
-        """Recompute results as the search query changes.
+    def _query_changed(self, event: Input.Changed) -> None:
+        """Recompute results as the search query changes (debounced).
 
         Args:
             event: The search input's change event.
         """
         event.stop()
-        await self._refresh_results(event.value)
+        query = event.value
+        self._cancel_query_debounce()
+        self._query_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._refresh_results(query),
+                exclusive=True,
+                group="console-session-switcher-search",
+            ),
+        )
+
+    def _cancel_query_debounce(self) -> None:
+        if self._query_debounce_timer is not None:
+            self._query_debounce_timer.stop()
+            self._query_debounce_timer = None
 
     @on(Input.Submitted, "#console-switcher-query")
     def _query_submitted(self, event: Input.Submitted) -> None:
@@ -169,6 +193,7 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         """
         event.stop()
         if self._entries:
+            self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[0]))
 
     def _result_buttons(self) -> list[Button]:
@@ -225,10 +250,12 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         event.stop()
         index = self._result_index_from_widget_id(event.button.id or "")
         if index is not None and 0 <= index < len(self._entries):
+            self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[index]))
 
     def action_dismiss_switcher(self) -> None:
         """Dismiss the switcher with no result (Escape)."""
+        self._cancel_query_debounce()
         self.dismiss(None)
 
     def action_rename_entry(self) -> None:
@@ -246,10 +273,12 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         if focused_index is not None and 0 <= focused_index < len(self._entries):
             focused_entry = self._entries[focused_index]
             if focused_entry.native_session_id:
+                self._cancel_query_debounce()
                 self.dismiss(ConsoleSwitcherChoice("rename", focused_entry))
                 return
         for entry in self._entries:
             if entry.native_session_id:
+                self._cancel_query_debounce()
                 self.dismiss(ConsoleSwitcherChoice("rename", entry))
                 return
 
