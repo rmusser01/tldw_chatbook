@@ -194,3 +194,26 @@ collect-only sweep: 11,013 tests, zero import errors.
 No `Docs/User_Guide/` update: no visible UI change (the reader shows the
 same content it always did) -- this is a data-layer/perf change behind the
 existing screen.
+
+## Post-merge fix
+
+A later branch's wider test run turned up a defect this task's own suite
+selection missed: `_load_item_content` (the DETAIL-fetch loader added
+above) is a background `_load*` read whose `except` handler logged the
+failure at `debug` with no toast -- `Tests/UI/test_watchlists_check_now_
+failure.py::test_background_loaders_pay_for_their_debug_exemption_with_a_
+toast`, a structural AST convention check over every `_load*` handler
+guarding an awaited call, was RED at merge because of it. Neither my
+targeted suite selection nor the review round included that file, so the
+gate never ran against this method (that process gap is tracked
+separately, not part of this note). Fixed forward on `fix/15464-load-item-
+toast`: `_load_item_content` now notifies with `severity="error"` in the
+same `except` handler, pattern-matched off the compliant sibling
+`_load_items` immediately below it in the same file. Verified: the
+convention test is green, the full content-pane/items-pane suite (158
+tests) is unaffected, and a manual trace with a forced `get_item_content`
+failure confirms the toast actually fires live. (One unrelated,
+pre-existing failure was found while re-running this file --
+`test_user_initiated_actions_do_not_swallow_failures_into_debug[_delete_
+item]`, a stale method name in `USER_INITIATED_MUTATIONS` -- left
+untouched: out of this fix's scope, and not something this change caused.)
