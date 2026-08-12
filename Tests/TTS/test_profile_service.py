@@ -16,6 +16,13 @@ from uuid import UUID
 import pytest
 
 import tldw_chatbook.TTS.profile_service as profile_service
+import tldw_chatbook.TTS.TTS_Generation as tts_generation
+from tldw_chatbook.TTS.adapter_registry import TTSProviderConfigurationSnapshot
+from tldw_chatbook.TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppSettingsConfig,
+)
+from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSConfigurationRevisionError,
@@ -643,6 +650,46 @@ def _clone_evidence() -> TTSCloneGenerationEvidence:
     )
 
 
+def _guided_clone_config(*, model_id: str = "clone-model") -> dict[str, Any]:
+    recipe = next(
+        item
+        for item in AUDIO_CPP_RECIPE_REGISTRY.recipes
+        if "clone" in item.capabilities
+        and item.reference_requirement.value == "required"
+    )
+    accepted = AudioCppAcceptedPackage(
+        package_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id=model_id,
+        canonical_root="/private/model",
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+    )
+    return AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_binary_path="/private/audiocpp",
+        guided_packages=(accepted,),
+        guided_default_model_id=model_id,
+    ).model_dump(mode="json")
+
+
+def _guided_requirement(*, model_id: str = "clone-model") -> TTSCloneRecipeRequirement:
+    config = AudioCppSettingsConfig.from_mapping(
+        _guided_clone_config(model_id=model_id)
+    )
+    accepted = config.guided_packages[0]
+    return TTSCloneRecipeRequirement(
+        recipe_id=accepted.recipe_id,
+        recipe_revision=accepted.recipe_revision,
+        model_id=model_id,
+    )
+
+
 class _FakeRepository:
     def __init__(self) -> None:
         self.generation = 7
@@ -737,6 +784,7 @@ class _FakeRepository:
         draft: TTSProfileDraft,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         *,
         expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]:
@@ -744,7 +792,14 @@ class _FakeRepository:
         self.calls.append(
             (
                 "create_with_reference",
-                (draft, profile_id, canonical, expected_generation, self.generation),
+                (
+                    draft,
+                    profile_id,
+                    canonical,
+                    recipe_requirement,
+                    expected_generation,
+                    self.generation,
+                ),
             )
         )
         if self.create_with_reference_result is not _UNSET:
@@ -761,6 +816,7 @@ class _FakeRepository:
             sample_encoding=canonical.sample_encoding,
             created_at=_CREATED_AT,
             updated_at=_CREATED_AT,
+            recipe_requirement=recipe_requirement,
         )
         persisted = _profile(
             profile_id=profile_id,
@@ -2146,7 +2202,14 @@ async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically
     assert len(repository.calls) == 1
     call_name, call_value = repository.calls[0]
     assert call_name == "create_with_reference"
-    draft, profile_id, canonical, expected_generation, generation_at_call = call_value  # type: ignore[misc]
+    (
+        draft,
+        profile_id,
+        canonical,
+        requirement,
+        expected_generation,
+        generation_at_call,
+    ) = call_value  # type: ignore[misc]
     assert draft == TTSProfileDraft(
         display_name="Clone voice",
         provider_id="audio_cpp",
@@ -2158,11 +2221,17 @@ async def test_create_clone_from_artifact_uses_exact_success_evidence_atomically
     )
     assert type(profile_id) is UUID
     assert canonical == evidence.canonical_reference
+    assert requirement == TTSCloneRecipeRequirement(
+        recipe_id=evidence.recipe_id,
+        recipe_revision=evidence.recipe_revision,
+        model_id=evidence.model_id,
+    )
     assert expected_generation == 7
     assert generation_at_call == 7
     assert loaded.repository_generation == 7
     assert loaded.profile.revision == 2
     assert loaded.profile.reference is not None
+    assert loaded.profile.reference.recipe_requirement == requirement
 
 
 @pytest.mark.asyncio
@@ -2428,6 +2497,134 @@ def test_profile_service_requires_repository_generation_protocol_member() -> Non
 
 
 @pytest.mark.asyncio
+async def test_guided_dependency_snapshot_reports_exact_without_provider_work() -> None:
+    config = _guided_clone_config()
+
+    class _PureRegistry:
+        acquire_calls = 0
+
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self,
+            provider_id: str,
+        ) -> TTSProviderConfigurationSnapshot:
+            assert provider_id == "audio_cpp"
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=2,
+                applied_config=config,
+                staged_generation=None,
+                staged_config=None,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            self.acquire_calls += 1
+            raise AssertionError("pure dependency inspection acquired an adapter")
+
+    registry = _PureRegistry()
+    service = tts_generation.TTSService(cast(Any, registry))
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(_guided_requirement())
+
+    assert snapshot.state == "exact"
+    assert snapshot.saved_requirement == _guided_requirement()
+    assert snapshot.applied_requirement == _guided_requirement()
+    assert snapshot.pending_configuration is False
+    assert registry.acquire_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requirement", "expected_state"),
+    (
+        (
+            TTSCloneRecipeRequirement(
+                recipe_id="future.valid.recipe",
+                recipe_revision=1,
+                model_id="clone-model",
+            ),
+            "missing",
+        ),
+        (
+            TTSCloneRecipeRequirement(
+                recipe_id=_guided_requirement().recipe_id,
+                recipe_revision=_guided_requirement().recipe_revision + 1,
+                model_id="clone-model",
+            ),
+            "mismatch",
+        ),
+    ),
+)
+async def test_guided_dependency_snapshot_classifies_missing_and_mismatch(
+    requirement: TTSCloneRecipeRequirement,
+    expected_state: str,
+) -> None:
+    config = _guided_clone_config()
+
+    class _PureRegistry:
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self, _provider_id: str
+        ) -> TTSProviderConfigurationSnapshot:
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=2,
+                applied_config=config,
+                staged_generation=None,
+                staged_config=None,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            raise AssertionError("dependency inspection acquired an adapter")
+
+    service = tts_generation.TTSService(cast(Any, _PureRegistry()))
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(requirement)
+
+    assert snapshot.state == expected_state
+
+
+@pytest.mark.asyncio
+async def test_guided_dependency_snapshot_reports_pending_saved_configuration() -> None:
+    saved_config = _guided_clone_config()
+
+    class _PureRegistry:
+        def descriptors(self) -> tuple[object, ...]:
+            return ()
+
+        async def provider_configuration_snapshot(
+            self, _provider_id: str
+        ) -> TTSProviderConfigurationSnapshot:
+            return TTSProviderConfigurationSnapshot(
+                revision=4,
+                applied_generation=1,
+                applied_config={},
+                staged_generation=2,
+                staged_config=saved_config,
+            )
+
+        async def acquire(self, _provider_id: str) -> object:
+            raise AssertionError("dependency inspection acquired an adapter")
+
+    service = tts_generation.TTSService(cast(Any, _PureRegistry()))
+    service._settings_persisted_provider_generations["audio_cpp"] = 2
+    service._settings_persisted_provider_configs["audio_cpp"] = dict(saved_config)
+    before = dict(service._settings_persisted_provider_configs["audio_cpp"])
+
+    snapshot = await service.audio_cpp_guided_dependency_snapshot(_guided_requirement())
+
+    assert snapshot.state == "pending"
+    assert snapshot.saved_requirement == _guided_requirement()
+    assert snapshot.applied_requirement is None
+    assert snapshot.pending_configuration is True
+    assert service._settings_persisted_provider_configs["audio_cpp"] == before
+
+
+@pytest.mark.asyncio
 async def test_rename_only_is_derived_from_loaded_generation_fields() -> None:
     unverified = _capability_snapshot(
         state="unverified",
@@ -2467,6 +2664,34 @@ async def test_rename_only_is_derived_from_loaded_generation_fields() -> None:
             ),
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_reference_profile_generation_edit_is_rejected_without_capability_work() -> (
+    None
+):
+    service, repository, tts_service = _service()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(revision=4, reference=_reference().summary),
+    )
+    changed = TTSProfileDraft(
+        display_name=loaded.profile.display_name,
+        provider_id="audio_cpp",
+        model_id=loaded.profile.model_id,
+        voice_id="other-voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.update_profile(loaded, changed)
+
+    _assert_safe_service_error(caught.value, "operation_failed")
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
 
 
 @pytest.mark.asyncio

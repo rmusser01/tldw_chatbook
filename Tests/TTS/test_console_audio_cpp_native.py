@@ -55,6 +55,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 )
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
+    TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_service import (
@@ -319,7 +320,9 @@ class _CloneCapturingAdapter(_CapturingAdapter):
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         self.clone_requests.append(request)
-        self.clone_reference_bytes.append(request.materialization.voice_ref.read_bytes())
+        self.clone_reference_bytes.append(
+            request.materialization.voice_ref.read_bytes()
+        )
         self.clone_reference_texts.append(request.materialization.reference_text)
         return await super().synthesize(request.request, progress_sink)
 
@@ -997,9 +1000,7 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
             speed=1.0,
         ),
         native_capability_reader=native_capability,
-        clone_materializer=TTSCloneReferenceMaterializer(
-            tmp_path / "clone-runtime"
-        ),
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "clone-runtime"),
     )
     repository = TTSProfileRepository(tmp_path / "voice-profiles.sqlite3")
     await repository.open()
@@ -1023,6 +1024,11 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         draft,
         profile_id,
         _canonical_clone_reference(),
+        TTSCloneRecipeRequirement(
+            recipe_id="audio-cpp-0.5.1.pocket_tts.pocket_tts",
+            recipe_revision=1,
+            model_id="clone-model",
+        ),
         expected_generation=generation,
     )
     await repository.set_assignment(
@@ -1099,9 +1105,7 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         assert adapter.clone_reference_texts == [
             "Mira speaks one private reference sentence."
         ]
-        assert adapter.clone_reference_bytes == [
-            _canonical_clone_reference().wav_bytes
-        ]
+        assert adapter.clone_reference_bytes == [_canonical_clone_reference().wav_bytes]
         assert not admitted.materialization.voice_ref.exists()
         assert artifact is not None
         assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)

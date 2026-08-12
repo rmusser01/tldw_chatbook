@@ -78,6 +78,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
     MAX_REFERENCE_TOTAL_BYTES,
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
@@ -126,8 +127,10 @@ _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _CHARACTER_REF_TYPE = CharacterRef
 _CANONICAL_REFERENCE_TYPE = CanonicalTTSCloneReference
+_CLONE_RECIPE_REQUIREMENT_TYPE = TTSCloneRecipeRequirement
 _TTS_GENERATION_PROFILE_TYPE = TTSGenerationProfile
 _TTS_PROFILE_DRAFT_TYPE = TTSProfileDraft
+_TTS_PROFILE_COLLISION_SNAPSHOT_TYPE = TTSProfileCollisionSnapshot
 _MAX_SEARCH_CHARACTERS = 128
 _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
@@ -157,6 +160,9 @@ _TransactionOperation = Literal[
     "reference_set",
     "reference_remove",
 ]
+TTSBundleImportChoice = Literal["create", "reuse", "copy"]
+TTSBundleDependencyState = Literal["exact", "missing"]
+TTSBundleImportResultKind = Literal["created", "reused", "stale_inspection"]
 _PROFILE_SELECT = PROFILE_WITH_REFERENCE_SELECT
 _BASE_PROFILE_SELECT = """
 SELECT
@@ -216,6 +222,43 @@ class _CandidateSnapshot:
 
     path: Path
     identity: tuple[int, int, int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class TTSBundleImportCommand:
+    """Private canonical bundle values plus one explicit reviewed decision."""
+
+    choice: TTSBundleImportChoice
+    source_profile_id: UUID
+    source_draft: TTSProfileDraft
+    recipe_requirement: TTSCloneRecipeRequirement
+    canonical_reference: CanonicalTTSCloneReference
+    expected_generation: int
+    reviewed_source_collisions: TTSProfileCollisionSnapshot
+    copy_profile_id: UUID | None
+    copy_display_name: str | None
+    dependency_state: TTSBundleDependencyState
+    inactive_consent: bool
+
+    def __repr__(self) -> str:
+        return "TTSBundleImportCommand(<private>)"
+
+
+@dataclass(frozen=True, slots=True)
+class TTSBundleImportRepositoryFacts:
+    """Safe current repository collisions returned after a stale review."""
+
+    source_collisions: TTSProfileCollisionSnapshot
+    copy_collisions: TTSProfileCollisionSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class TTSBundleImportResult:
+    """Atomic exact-reuse/create decision and repository-only stale facts."""
+
+    kind: TTSBundleImportResultKind
+    profile: TTSGenerationProfile | None
+    repository_facts: TTSBundleImportRepositoryFacts | None = None
 
 
 def _repository_error(code: str) -> ProfileRepositoryError:
@@ -403,6 +446,100 @@ def _validate_canonical_reference(value: object) -> CanonicalTTSCloneReference:
         raise _repository_error("operation_failed")
     assert validated is not None
     return validated
+
+
+def _validate_recipe_requirement(
+    value: object,
+    *,
+    model_id: str | None = None,
+) -> TTSCloneRecipeRequirement:
+    """Return a fresh model-coherent exact recipe requirement."""
+
+    if type(value) is not _CLONE_RECIPE_REQUIREMENT_TYPE:
+        raise _repository_error("operation_failed")
+    requirement = cast(TTSCloneRecipeRequirement, value)
+    try:
+        validated = TTSCloneRecipeRequirement(
+            recipe_id=requirement.recipe_id,
+            recipe_revision=requirement.recipe_revision,
+            model_id=requirement.model_id,
+        )
+    except Exception:
+        raise _repository_error("operation_failed") from None
+    if validated != requirement or (
+        model_id is not None and validated.model_id != model_id
+    ):
+        raise _repository_error("operation_failed")
+    return validated
+
+
+def _validate_collision_snapshot(value: object) -> TTSProfileCollisionSnapshot:
+    if type(value) is not _TTS_PROFILE_COLLISION_SNAPSHOT_TYPE:
+        raise _repository_error("operation_failed")
+    snapshot = cast(TTSProfileCollisionSnapshot, value)
+    return TTSProfileCollisionSnapshot(
+        _validate_optional_profile(snapshot.profile_id_match),
+        _validate_optional_profile(snapshot.normalized_name_match),
+    )
+
+
+def _validate_bundle_import_command(value: object) -> TTSBundleImportCommand:
+    """Canonicalize one reviewed import decision before worker admission."""
+
+    if type(value) is not TTSBundleImportCommand:
+        raise _repository_error("operation_failed")
+    command = cast(TTSBundleImportCommand, value)
+    if command.choice not in {"create", "reuse", "copy"}:
+        raise _repository_error("operation_failed")
+    source_draft = _validate_draft(command.source_draft)
+    source_profile_id = _validate_exact_profile_id(command.source_profile_id)
+    requirement = _validate_recipe_requirement(
+        command.recipe_requirement,
+        model_id=source_draft.model_id,
+    )
+    canonical = _validate_canonical_reference(command.canonical_reference)
+    expected_generation = _validate_expected_generation(command.expected_generation)
+    reviewed = _validate_collision_snapshot(command.reviewed_source_collisions)
+    if command.dependency_state not in {"exact", "missing"}:
+        raise _repository_error("operation_failed")
+    if type(command.inactive_consent) is not bool:
+        raise _repository_error("operation_failed")
+    if (
+        command.dependency_state == "missing"
+        and command.choice != "reuse"
+        and not command.inactive_consent
+    ):
+        raise _repository_error("operation_failed")
+    copy_profile_id = _validate_optional_profile_id(command.copy_profile_id)
+    copy_display_name = command.copy_display_name
+    if command.choice == "copy":
+        if copy_profile_id is None or type(copy_display_name) is not str:
+            raise _repository_error("operation_failed")
+        copy_draft = TTSProfileDraft(
+            display_name=copy_display_name,
+            provider_id=source_draft.provider_id,
+            model_id=source_draft.model_id,
+            voice_id=source_draft.voice_id,
+            response_format=source_draft.response_format,
+            speed=source_draft.speed,
+            options=source_draft.options,
+        )
+        copy_display_name = copy_draft.display_name
+    elif copy_profile_id is not None or copy_display_name is not None:
+        raise _repository_error("operation_failed")
+    return TTSBundleImportCommand(
+        choice=command.choice,
+        source_profile_id=source_profile_id,
+        source_draft=source_draft,
+        recipe_requirement=requirement,
+        canonical_reference=canonical,
+        expected_generation=expected_generation,
+        reviewed_source_collisions=reviewed,
+        copy_profile_id=copy_profile_id,
+        copy_display_name=copy_display_name,
+        dependency_state=command.dependency_state,
+        inactive_consent=command.inactive_consent,
+    )
 
 
 def _validate_character_ref(value: object) -> CharacterRef:
@@ -1928,6 +2065,7 @@ class TTSProfileRepository:
         draft: TTSProfileDraft,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         *,
         expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]:
@@ -1952,6 +2090,10 @@ class TTSProfileRepository:
         validated_draft = _validate_draft(draft)
         validated_profile_id = _validate_exact_profile_id(profile_id)
         validated_reference = _validate_canonical_reference(canonical)
+        validated_requirement = _validate_recipe_requirement(
+            recipe_requirement,
+            model_id=validated_draft.model_id,
+        )
         validated_generation = _validate_expected_generation(expected_generation)
         return await self._submit_operation(
             lambda connection: self._worker_create_profile_with_reference(
@@ -1959,6 +2101,7 @@ class TTSProfileRepository:
                 validated_draft,
                 validated_profile_id,
                 validated_reference,
+                validated_requirement,
                 validated_generation,
             ),
             expected_generation=validated_generation,
@@ -1992,6 +2135,21 @@ class TTSProfileRepository:
                 validated_current_profile_id,
             ),
             expected_generation=validated_generation,
+        )
+
+    async def commit_bundle_import(
+        self,
+        command: TTSBundleImportCommand,
+    ) -> ProfileStoreResult[TTSBundleImportResult]:
+        """Recheck and commit one explicit bundle decision in one transaction."""
+
+        validated = _validate_bundle_import_command(command)
+        return await self._submit_operation(
+            lambda connection: self._worker_commit_bundle_import(
+                connection,
+                validated,
+            ),
+            expected_generation=validated.expected_generation,
         )
 
     async def get_profile(
@@ -2158,6 +2316,7 @@ class TTSProfileRepository:
         self,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         *,
         expected_revision: int,
         expected_generation: int,
@@ -2182,6 +2341,9 @@ class TTSProfileRepository:
 
         validated_profile_id = _validate_exact_profile_id(profile_id)
         validated_reference = _validate_canonical_reference(canonical)
+        validated_requirement = _validate_recipe_requirement(
+            recipe_requirement,
+        )
         validated_revision = _validate_expected_revision(expected_revision)
         validated_generation = _validate_expected_generation(expected_generation)
         return await self._submit_operation(
@@ -2189,6 +2351,7 @@ class TTSProfileRepository:
                 connection,
                 validated_profile_id,
                 validated_reference,
+                validated_requirement,
                 validated_revision,
             ),
             expected_generation=validated_generation,
@@ -3506,6 +3669,7 @@ class TTSProfileRepository:
         draft: TTSProfileDraft,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         expected_generation: int,
     ) -> TTSGenerationProfile:
         evidence = _IntegrityEvidence(
@@ -3525,6 +3689,7 @@ class TTSProfileRepository:
                 connection,
                 profile.profile_id,
                 canonical,
+                recipe_requirement,
                 profile.revision,
             )
 
@@ -3582,6 +3747,196 @@ class TTSProfileRepository:
             integrity_evidence=evidence,
         )
 
+    def _worker_commit_bundle_import(
+        self,
+        connection: sqlite3.Connection,
+        command: TTSBundleImportCommand,
+    ) -> TTSBundleImportResult:
+        evidence = _IntegrityEvidence(
+            profile_id=command.source_profile_id,
+            normalized_name=command.source_draft.normalized_name,
+        )
+
+        def commit_import() -> TTSBundleImportResult:
+            self._worker_require_generation(command.expected_generation)
+            collisions = self._worker_read_profile_collisions(
+                connection,
+                command.source_profile_id,
+                command.source_draft.normalized_name,
+            )
+            if collisions != command.reviewed_source_collisions:
+                return TTSBundleImportResult(
+                    kind="stale_inspection",
+                    profile=None,
+                    repository_facts=TTSBundleImportRepositoryFacts(
+                        source_collisions=collisions,
+                        copy_collisions=None,
+                    ),
+                )
+            if command.choice == "reuse":
+                candidate = collisions.profile_id_match
+                if (
+                    candidate is not None
+                    and candidate == collisions.normalized_name_match
+                    and self._worker_bundle_profile_matches(
+                        connection,
+                        candidate,
+                        command,
+                    )
+                ):
+                    return TTSBundleImportResult(kind="reused", profile=candidate)
+                return TTSBundleImportResult(
+                    kind="stale_inspection",
+                    profile=None,
+                    repository_facts=TTSBundleImportRepositoryFacts(
+                        source_collisions=collisions,
+                        copy_collisions=None,
+                    ),
+                )
+            if command.choice == "copy":
+                assert command.copy_profile_id is not None
+                assert command.copy_display_name is not None
+                copy_draft = TTSProfileDraft(
+                    display_name=command.copy_display_name,
+                    provider_id=command.source_draft.provider_id,
+                    model_id=command.source_draft.model_id,
+                    voice_id=command.source_draft.voice_id,
+                    response_format=command.source_draft.response_format,
+                    speed=command.source_draft.speed,
+                    options=command.source_draft.options,
+                )
+                copy_collisions = self._worker_read_profile_collisions(
+                    connection,
+                    command.copy_profile_id,
+                    copy_draft.normalized_name,
+                )
+                if (
+                    collisions.profile_id_match is None
+                    and collisions.normalized_name_match is None
+                ) or (
+                    copy_collisions.profile_id_match is not None
+                    or copy_collisions.normalized_name_match is not None
+                ):
+                    return TTSBundleImportResult(
+                        kind="stale_inspection",
+                        profile=None,
+                        repository_facts=TTSBundleImportRepositoryFacts(
+                            source_collisions=collisions,
+                            copy_collisions=copy_collisions,
+                        ),
+                    )
+                evidence.profile_id = command.copy_profile_id
+                evidence.normalized_name = copy_draft.normalized_name
+                profile = self._worker_insert_profile(
+                    connection,
+                    copy_draft,
+                    command.copy_profile_id,
+                    evidence,
+                )
+                created = self._worker_put_reference(
+                    connection,
+                    profile.profile_id,
+                    command.canonical_reference,
+                    command.recipe_requirement,
+                    profile.revision,
+                )
+                return TTSBundleImportResult(kind="created", profile=created)
+            if command.choice != "create" or (
+                collisions.profile_id_match is not None
+                or collisions.normalized_name_match is not None
+            ):
+                return TTSBundleImportResult(
+                    kind="stale_inspection",
+                    profile=None,
+                    repository_facts=TTSBundleImportRepositoryFacts(
+                        source_collisions=collisions,
+                        copy_collisions=None,
+                    ),
+                )
+            profile = self._worker_insert_profile(
+                connection,
+                command.source_draft,
+                command.source_profile_id,
+                evidence,
+            )
+            created = self._worker_put_reference(
+                connection,
+                profile.profile_id,
+                command.canonical_reference,
+                command.recipe_requirement,
+                profile.revision,
+            )
+            return TTSBundleImportResult(kind="created", profile=created)
+
+        result = self._worker_transaction(
+            connection,
+            commit_import,
+            operation_kind="create",
+            immediate=True,
+            integrity_evidence=evidence,
+        )
+        if result.profile is not None:
+            self._discard_reference_damage_marker(result.profile.profile_id)
+        return result
+
+    def _worker_bundle_profile_matches(
+        self,
+        connection: sqlite3.Connection,
+        profile: TTSGenerationProfile,
+        command: TTSBundleImportCommand,
+    ) -> bool:
+        """Compare complete public/private bundle equality below the boundary."""
+
+        draft = command.source_draft
+        if (
+            profile.profile_id != command.source_profile_id
+            or profile.display_name != draft.display_name
+            or (
+                profile.provider_id,
+                profile.model_id,
+                profile.voice_id,
+                profile.response_format,
+                profile.speed,
+                profile.options,
+            )
+            != (
+                draft.provider_id,
+                draft.model_id,
+                draft.voice_id,
+                draft.response_format,
+                draft.speed,
+                draft.options,
+            )
+            or profile.reference is None
+            or profile.reference.recipe_requirement is None
+            or profile.reference.recipe_requirement != command.recipe_requirement
+        ):
+            return False
+        row = connection.execute(
+            f"{REFERENCE_PAYLOAD_SELECT} WHERE profile_id = ?",
+            (encode_uuid(profile.profile_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        rowid = row["reference_rowid"]
+        byte_length = row["reference_byte_length"]
+        if (
+            type(rowid) is not int
+            or rowid <= 0
+            or type(byte_length) is not int
+            or byte_length <= 0
+        ):
+            return False
+        payload = read_reference_blob(connection, rowid, byte_length)
+        reference = decode_reference_payload(row, payload)
+        canonical = command.canonical_reference
+        return (
+            reference.recipe_requirement == command.recipe_requirement
+            and reference.reference_text == canonical.reference_text
+            and reference.sha256 == canonical.sha256
+            and reference.wav_bytes == canonical.wav_bytes
+        )
+
     def _worker_get_profile(
         self,
         connection: sqlite3.Connection,
@@ -3615,25 +3970,10 @@ class TTSProfileRepository:
         normalized_name: str,
     ) -> TTSProfileCollisionSnapshot:
         def read_collisions() -> TTSProfileCollisionSnapshot:
-            profile_id_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
-                (encode_uuid(profile_id),),
-            ).fetchone()
-            normalized_name_row = connection.execute(
-                f"{_PROFILE_SELECT} WHERE p.normalized_name = ?",
-                (normalized_name,),
-            ).fetchone()
-            return TTSProfileCollisionSnapshot(
-                profile_id_match=(
-                    None
-                    if profile_id_row is None
-                    else _decode_profile_with_reference_row(profile_id_row)
-                ),
-                normalized_name_match=(
-                    None
-                    if normalized_name_row is None
-                    else _decode_profile_with_reference_row(normalized_name_row)
-                ),
+            return self._worker_read_profile_collisions(
+                connection,
+                profile_id,
+                normalized_name,
             )
 
         return self._worker_transaction(
@@ -3641,6 +3981,35 @@ class TTSProfileRepository:
             read_collisions,
             operation_kind="read",
             immediate=False,
+        )
+
+    def _worker_read_profile_collisions(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        normalized_name: str,
+    ) -> TTSProfileCollisionSnapshot:
+        """Read current collision facts inside a caller-owned transaction."""
+
+        profile_id_row = connection.execute(
+            f"{_PROFILE_SELECT} WHERE p.profile_id = ?",
+            (encode_uuid(profile_id),),
+        ).fetchone()
+        normalized_name_row = connection.execute(
+            f"{_PROFILE_SELECT} WHERE p.normalized_name = ?",
+            (normalized_name,),
+        ).fetchone()
+        return TTSProfileCollisionSnapshot(
+            profile_id_match=(
+                None
+                if profile_id_row is None
+                else _decode_profile_with_reference_row(profile_id_row)
+            ),
+            normalized_name_match=(
+                None
+                if normalized_name_row is None
+                else _decode_profile_with_reference_row(normalized_name_row)
+            ),
         )
 
     def _worker_list_profiles(
@@ -3703,6 +4072,22 @@ class TTSProfileRepository:
         def update() -> TTSGenerationProfile:
             stored = self._worker_get_profile(connection, profile_id)
             if stored.revision != expected_revision:
+                raise _repository_error("conflict")
+            if stored.reference is not None and (
+                stored.provider_id,
+                stored.model_id,
+                stored.voice_id,
+                stored.response_format,
+                stored.speed,
+                stored.options,
+            ) != (
+                draft.provider_id,
+                draft.model_id,
+                draft.voice_id,
+                draft.response_format,
+                draft.speed,
+                draft.options,
+            ):
                 raise _repository_error("conflict")
             updated = TTSGenerationProfile(
                 profile_id=profile_id,
@@ -3823,6 +4208,7 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         expected_revision: int,
     ) -> TTSGenerationProfile:
         """Insert a first reference inside the caller-owned transaction."""
@@ -3862,8 +4248,9 @@ class TTSProfileRepository:
             INSERT INTO {REFERENCE_TABLE} (
                 profile_id, reference_id, wav_bytes, reference_text, sha256,
                 byte_length, duration_ms, sample_rate_hz, channels,
-                sample_encoding, created_at, updated_at
-            ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sample_encoding, created_at, updated_at, recipe_id,
+                recipe_revision
+            ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 encoded_profile_id,
@@ -3878,6 +4265,8 @@ class TTSProfileRepository:
                 canonical.sample_encoding,
                 encode_utc_datetime(timestamp),
                 encode_utc_datetime(timestamp),
+                recipe_requirement.recipe_id,
+                recipe_requirement.recipe_revision,
             ),
         )
         if cursor.rowcount != 1:
@@ -3913,12 +4302,15 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         expected_revision: int,
     ) -> TTSGenerationProfile:
         def set_exact() -> TTSGenerationProfile:
             profile = self._worker_get_base_profile(connection, profile_id)
             if profile.revision != expected_revision:
                 raise _repository_error("conflict")
+            if recipe_requirement.model_id != profile.model_id:
+                raise _repository_error("operation_failed")
             encoded_profile_id = encode_uuid(profile_id)
             existing_row = connection.execute(
                 f"SELECT byte_length FROM {REFERENCE_TABLE} WHERE profile_id = ?",
@@ -3973,8 +4365,10 @@ class TTSProfileRepository:
                     channels,
                     sample_encoding,
                     created_at,
-                    updated_at
-                ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    updated_at,
+                    recipe_id,
+                    recipe_revision
+                ) VALUES (?, ?, zeroblob(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(profile_id) DO UPDATE SET
                     reference_id = excluded.reference_id,
                     wav_bytes = excluded.wav_bytes,
@@ -3986,7 +4380,9 @@ class TTSProfileRepository:
                     channels = excluded.channels,
                     sample_encoding = excluded.sample_encoding,
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    recipe_id = excluded.recipe_id,
+                    recipe_revision = excluded.recipe_revision
                 """,
                 (
                     encoded_profile_id,
@@ -4001,6 +4397,8 @@ class TTSProfileRepository:
                     canonical.sample_encoding,
                     encode_utc_datetime(timestamp),
                     encode_utc_datetime(timestamp),
+                    recipe_requirement.recipe_id,
+                    recipe_requirement.recipe_revision,
                 ),
             )
             if cursor.rowcount != 1:

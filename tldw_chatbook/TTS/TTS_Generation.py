@@ -90,6 +90,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.request_admission import (
     TTSRequestAdmissionCoordinator,
@@ -198,6 +199,37 @@ def _audio_cpp_clone_setup_projection(
     )
 
 
+def _guided_clone_requirement(
+    settings: AudioCppSettingsConfig,
+    model_id: str,
+) -> TTSCloneRecipeRequirement | None:
+    """Project one installed exact Guided clone requirement from inert config."""
+
+    if settings.mode != "managed" or settings.managed_setup_source != "guided":
+        return None
+    accepted = next(
+        (
+            package
+            for package in settings.guided_packages
+            if package.public_model_id == model_id
+        ),
+        None,
+    )
+    if accepted is None:
+        return None
+    try:
+        recipe = AUDIO_CPP_RECIPE_REGISTRY.validate_accepted(accepted)
+    except ValueError:
+        return None
+    if "clone" not in recipe.capabilities:
+        return None
+    return TTSCloneRecipeRequirement(
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        model_id=model_id,
+    )
+
+
 TTSSettingsProviderStatus = Literal[
     "applied",
     "pending",
@@ -250,6 +282,27 @@ class AudioCppCloneSetupProjection:
             "both_required_combined",
         }:
             raise ValueError("audio.cpp clone setup voice policy is invalid")
+
+
+AudioCppGuidedDependencyState = Literal[
+    "exact",
+    "missing",
+    "mismatch",
+    "pending",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppGuidedDependencySnapshot:
+    """Pure saved/applied Guided dependency facts for one clone requirement."""
+
+    state: AudioCppGuidedDependencyState
+    provider_configuration_revision: int
+    saved_generation: int
+    applied_generation: int
+    pending_configuration: bool
+    saved_requirement: TTSCloneRecipeRequirement | None
+    applied_requirement: TTSCloneRecipeRequirement | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -617,7 +670,10 @@ class _AdmittedTTSOperation:
                 else:
                     adapter = lease.adapter
                     materializer = self._clone_materializer
-                    if not isinstance(adapter, TTSNativeCloneAdapter) or materializer is None:
+                    if (
+                        not isinstance(adapter, TTSNativeCloneAdapter)
+                        or materializer is None
+                    ):
                         raise TTSOperationError(
                             code="request_invalid",
                             message="The selected TTS request is unavailable",
@@ -685,7 +741,9 @@ class _AdmittedTTSOperation:
         except _AudioCppGenerationChanged:
             generation_changed = True
         except BaseException as error:
-            if capability is not None and isinstance(lease.adapter, TTSNativeCloneAdapter):
+            if capability is not None and isinstance(
+                lease.adapter, TTSNativeCloneAdapter
+            ):
                 lease.adapter.release_clone_capability(capability)
             if materialization is not None:
                 await _cleanup_preserving_primary(materialization.aclose, error)
@@ -2210,6 +2268,79 @@ class TTSService:
         if supervisor is None:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         return supervisor.snapshot()
+
+    async def audio_cpp_guided_dependency_snapshot(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot:
+        """Return pure saved/applied Guided recipe facts without provider work."""
+
+        if type(requirement) is not TTSCloneRecipeRequirement:
+            raise TypeError("Exact clone recipe requirement is required")
+        exact_requirement = TTSCloneRecipeRequirement(
+            recipe_id=requirement.recipe_id,
+            recipe_revision=requirement.recipe_revision,
+            model_id=requirement.model_id,
+        )
+        async with self._request_admission._publication_lock:
+            async with self._request_admission._gate.read():
+                configuration = await self.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+                saved_generation = self._settings_persisted_provider_generations.get(
+                    "audio_cpp",
+                    configuration.applied_generation,
+                )
+                saved_config = self._settings_persisted_provider_configs.get(
+                    "audio_cpp"
+                )
+                if saved_config is None:
+                    if (
+                        configuration.staged_config is not None
+                        and configuration.staged_generation == saved_generation
+                    ):
+                        saved_config = dict(configuration.staged_config)
+                    else:
+                        saved_config = dict(configuration.applied_config)
+                saved = _guided_clone_requirement(
+                    AudioCppSettingsConfig.from_mapping(saved_config),
+                    exact_requirement.model_id,
+                )
+                applied = _guided_clone_requirement(
+                    AudioCppSettingsConfig.from_mapping(configuration.applied_config),
+                    exact_requirement.model_id,
+                )
+
+        pending = saved_generation != configuration.applied_generation
+        installed = next(
+            (
+                recipe
+                for recipe in AUDIO_CPP_RECIPE_REGISTRY.recipes
+                if recipe.recipe_id == exact_requirement.recipe_id
+            ),
+            None,
+        )
+        if installed is None:
+            state: AudioCppGuidedDependencyState = "missing"
+        elif installed.recipe_revision != exact_requirement.recipe_revision:
+            state = "mismatch"
+        elif applied == exact_requirement:
+            state = "exact"
+        elif pending and saved == exact_requirement:
+            state = "pending"
+        elif saved is not None or applied is not None:
+            state = "mismatch"
+        else:
+            state = "missing"
+        return AudioCppGuidedDependencySnapshot(
+            state=state,
+            provider_configuration_revision=configuration.revision,
+            saved_generation=saved_generation,
+            applied_generation=configuration.applied_generation,
+            pending_configuration=pending,
+            saved_requirement=saved,
+            applied_requirement=applied,
+        )
 
     async def audio_cpp_runtime_observation(
         self,

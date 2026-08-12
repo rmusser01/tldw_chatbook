@@ -135,6 +135,7 @@ class _ProfileRepositoryProtocol(Protocol):
         draft: TTSProfileDraft,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         *,
         expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
@@ -1888,6 +1889,11 @@ class TTSProfileService:
         )
         repository_generation = self._current_repository_generation()
         profile_id = self._next_portable_uuid(set())
+        recipe_requirement = TTSCloneRecipeRequirement(
+            recipe_id=evidence.recipe_id,
+            recipe_revision=evidence.recipe_revision,
+            model_id=evidence.model_id,
+        )
 
         failed = False
         result = None
@@ -1896,6 +1902,7 @@ class TTSProfileService:
                 draft,
                 profile_id,
                 evidence.canonical_reference,
+                recipe_requirement,
                 expected_generation=repository_generation,
             )
         except (ProfileRepositoryError, ProfileValidationError):
@@ -1920,6 +1927,7 @@ class TTSProfileService:
             or reference.sample_rate_hz != canonical.sample_rate_hz
             or reference.channels != canonical.channels
             or reference.sample_encoding != canonical.sample_encoding
+            or reference.recipe_requirement != recipe_requirement
         ):
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(repository_generation)
@@ -1941,6 +1949,11 @@ class TTSProfileService:
             draft.options,
         ):
             raise ProfileServiceError("unsupported_profile")
+        if loaded_profile.reference is not None and not self._generation_fields_match(
+            loaded_profile,
+            draft,
+        ):
+            raise ProfileServiceError("operation_failed")
         if not self._generation_fields_match(loaded_profile, draft):
             await self._require_authoritative_capability(draft)
 
