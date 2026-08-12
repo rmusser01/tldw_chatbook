@@ -404,6 +404,21 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         _set_header_visible(header, header_has_visible)
         return rows
 
+    def _filter_state(self) -> tuple[str, str, str | None]:
+        """Everything `_filtered_items()` reads, as one comparable value.
+
+        The open-item pin is part of it, not just the two filters: a
+        selection that moves decides which row survives a filter that would
+        otherwise drop it.
+        """
+        selected = self.selected_item
+        selected_id = (
+            str(selected["id"])
+            if isinstance(selected, dict) and selected.get("id") is not None
+            else None
+        )
+        return (self.status_filter, self.search_query, selected_id)
+
     async def _rebuild_rows(self) -> None:
         """Replace the ListView's children after a data arrival.
 
@@ -411,6 +426,20 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         ListView's own children: the toolbar -- and with it the search
         `Input` the user may still be typing into, since the screen's reload
         is debounced 0.3 s behind the last keystroke -- is never touched.
+
+        `clear()`/`extend()` both yield, and a filter assignment arriving
+        from ANOTHER message pump (the screen re-seeding `search_query`, a
+        selection write) runs its synchronous watcher inside that gap:
+        `_apply_row_visibility` would walk a half-swapped list and leave
+        `_rendered_items` -- the `j`/`k` navigation authority -- describing
+        the new filter while the rows this method then mounts still carry
+        the old one. So the filter state is re-read after the awaits and the
+        visibility pass re-run once if it moved. Once is enough and cannot
+        oscillate: `_apply_row_visibility` awaits nothing, so nothing can
+        interleave inside it, and it derives both the painted rows and
+        `_rendered_items` from a single read of the current filter. A change
+        landing after it returns is an ordinary filter change and arrives
+        through its own watcher.
         """
         try:
             list_view = self.query_one("#items-table", _ArticleListView)
@@ -419,11 +448,15 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             # only just constructed, and `compose()` will build these rows.
             return
         rows = self._build_rows()
+        filter_state = self._filter_state()
         await list_view.clear()
         if not self.is_running or not list_view.is_attached:
             return
         if rows:
             await list_view.extend(rows)
+        if self._filter_state() != filter_state:
+            self._apply_row_visibility()
+            return
         self._update_empty_state()
 
     def _apply_row_visibility(self) -> None:

@@ -113,4 +113,39 @@ mid-string edit).
 Modified: `tldw_chatbook/UI/Watchlists_Modules/article_list.py`,
 `items_pane.py`, `sources_pane.py`. Added:
 `Tests/Watchlists/test_watchlists_pane_filter_in_place.py`.
+
+### Review follow-up (Important, closed before merge)
+
+`_rebuild_rows` captured `_filtered_items()` synchronously and then yielded
+twice (`clear()`, `extend()`). A filter assignment arriving from another
+message pump inside that gap -- the screen re-seeding `search_query`, a
+selection write -- ran its synchronous watcher against a half-swapped list,
+leaving `_rendered_items` (the `j`/`k` authority `displayed_items()` returns)
+describing the NEW filter while the rows the rebuild then mounted still
+carried the old one. Self-healing on the next event, but real and unpinned.
+
+Closed by re-reading the filter state after the awaits (`_filter_state()` --
+both filters plus the open-item pin, since a moved selection also changes
+which row survives) and re-running `_apply_row_visibility()` once if it
+moved. One pass converges and cannot oscillate: that method awaits nothing,
+so nothing can interleave inside it, and it derives the painted rows and
+`_rendered_items` from a single read of the current filter; a change landing
+after it returns is an ordinary filter change arriving through its own
+watcher.
+
+Pinned by
+`test_a_filter_change_during_a_row_rebuild_lands_on_the_new_filter`, which
+forces the gap open deterministically by wrapping the ListView's own
+`clear()` in an awaitable that assigns `search_query` after the removal
+completes, then asserts painted rows == `displayed_items()` == the new
+filter's result. Mutation-verified: with the post-await re-check disabled the
+test fails with both rows painted (`assert 2 == 1`) against a
+`displayed_items()` of one -- exactly the divergence described.
+
+Also corrected a stale docstring/comment in
+`Tests/Watchlists/test_watchlists_collections_screen.py::
+test_typing_in_sources_search_survives_the_recompose`, which described the
+pre-15460 per-keystroke recompose as current behaviour. The test's
+assertions are unchanged -- they are the user-facing outcome and must hold
+through whichever mechanism is underneath.
 <!-- SECTION:NOTES:END -->

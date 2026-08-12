@@ -306,6 +306,67 @@ async def test_article_reload_replaces_the_rows_with_the_new_page():
         assert [item["item_id"] for item in pane.displayed_items()] == [7, 8]
 
 
+async def test_a_filter_change_during_a_row_rebuild_lands_on_the_new_filter():
+    """The reload/keystroke interleave, made deterministic.
+
+    `_rebuild_rows` awaits `clear()` and `extend()`, and a filter assignment
+    from another message pump (the screen re-seeding `search_query`, a
+    selection write) runs its synchronous watcher inside that gap -- against
+    a half-swapped list, with the rebuild then mounting rows built from the
+    PRE-change filter. Without the post-await re-check, `displayed_items()`
+    (which `j`/`k` walk) describes the new filter while the painted rows
+    still show the old one.
+
+    The gap is forced open here by wrapping the ListView's own `clear()` in
+    an awaitable that assigns `search_query` after the removal completes --
+    the same instant a real cross-pump assignment would land in.
+    """
+    app = _ArticleHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.items = [_item(1, title="First page")]
+        await pilot.pause()
+
+        list_view = pane.query_one("#items-table", ListView)
+        original_clear = list_view.clear
+        fired = False
+
+        def clear_then_change_the_filter():
+            nonlocal fired
+            removal = original_clear()
+
+            async def _clear_and_type():
+                await removal
+                nonlocal fired
+                if not fired:
+                    fired = True
+                    pane.search_query = "keeper"
+
+            return _clear_and_type()
+
+        list_view.clear = clear_then_change_the_filter
+
+        # The reload the screen's debounce would fire, carrying a page the
+        # new query only partly matches.
+        pane.items = [
+            _item(7, title="keeper one", published_offset_hours=1),
+            _item(8, title="dropped", published_offset_hours=2),
+        ]
+        await pilot.pause()
+        await pilot.pause()
+
+        assert fired, "the test did not actually open the gap it is pinning"
+        rendered = _visible_rows(pane)
+        assert len(rendered) == 1, (
+            f"painted rows disagree with the new filter: {rendered}"
+        )
+        assert "keeper one" in rendered[0]
+        assert [item["item_id"] for item in pane.displayed_items()] == [7], (
+            "displayed_items() -- the j/k authority -- must agree with what "
+            "is painted"
+        )
+
+
 async def test_article_reload_respects_the_active_search_query():
     app = _ArticleHarness()
     async with app.run_test(size=(120, 40)) as pilot:
