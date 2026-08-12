@@ -705,7 +705,7 @@ def test_setup_mutation_rejects_overlapping_or_incoherent_owned_keys():
     valid = build_provider_setup_mutation(_draft(), {})
     overlapping_deletes = MappingProxyType({"api_settings.llama_cpp": ("api_url",)})
 
-    with pytest.raises(ValueError, match="mutation"):
+    with pytest.raises(ValueError, match="overlapping"):
         ProviderSetupMutation(
             section_values=valid.section_values,
             delete_keys=overlapping_deletes,
@@ -714,11 +714,16 @@ def test_setup_mutation_rejects_overlapping_or_incoherent_owned_keys():
 
     forged_sections = MappingProxyType(
         {
-            **dict(valid.section_values),
+            **{
+                section: values
+                for section, values in valid.section_values.items()
+                if section != "provider_setup.confirmed"
+            },
             "unrelated.section": MappingProxyType({"secret": "canary-secret"}),
         }
     )
-    with pytest.raises(ValueError, match="mutation") as error:
+    assert len(forged_sections) == len(valid.section_values) == 3
+    with pytest.raises(ValueError, match="ownership") as error:
         ProviderSetupMutation(
             section_values=forged_sections,
             delete_keys=valid.delete_keys,
@@ -726,7 +731,7 @@ def test_setup_mutation_rejects_overlapping_or_incoherent_owned_keys():
         )
     assert "canary-secret" not in str(error.value)
 
-    with pytest.raises(ValueError, match="mutation"):
+    with pytest.raises(ValueError, match="identity"):
         ProviderSetupMutation(
             section_values=valid.section_values,
             delete_keys=valid.delete_keys,
@@ -776,6 +781,76 @@ def test_persist_revalidates_instances_that_bypass_construction(monkeypatch):
     with pytest.raises(ValueError, match="mutation") as error:
         persist_provider_setup(forged)
     assert "secret-canary" not in str(error.value)
+
+
+def test_persist_rejects_post_issuance_overlap_without_calling_writer(monkeypatch):
+    forged = build_provider_setup_mutation(_draft(), {})
+    provider_deletes = forged.delete_keys["api_settings.llama_cpp"]
+    object.__setattr__(
+        forged,
+        "delete_keys",
+        MappingProxyType(
+            {
+                **dict(forged.delete_keys),
+                "api_settings.llama_cpp": (*provider_deletes, "api_url"),
+            }
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="overlapping"):
+        persist_provider_setup(forged)
+    assert calls == []
+
+
+def test_persist_rejects_post_issuance_ownership_without_calling_writer(monkeypatch):
+    forged = build_provider_setup_mutation(_draft(), {})
+    forged_sections = MappingProxyType(
+        {
+            **{
+                section: values
+                for section, values in forged.section_values.items()
+                if section != "provider_setup.confirmed"
+            },
+            "unrelated.section": MappingProxyType({"marker": "safe-value"}),
+        }
+    )
+    assert len(forged_sections) == len(forged.section_values) == 3
+    object.__setattr__(forged, "section_values", forged_sections)
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="ownership"):
+        persist_provider_setup(forged)
+    assert calls == []
+
+
+def test_persist_rejects_post_issuance_identity_without_calling_writer(monkeypatch):
+    forged = build_provider_setup_mutation(_draft(), {})
+    other = build_provider_setup_mutation(
+        _draft(endpoint="http://127.0.0.1:9090/v1/models"),
+        {},
+    )
+    object.__setattr__(forged, "semantic_identity", other.semantic_identity)
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match="identity"):
+        persist_provider_setup(forged)
+    assert calls == []
 
 
 def test_dataclass_replace_cannot_copy_issuance_or_persist_oversized_credential(

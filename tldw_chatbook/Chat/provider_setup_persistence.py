@@ -612,6 +612,9 @@ def _validate_provider_setup_mutation(
     validate_credentials: bool,
 ) -> None:
     error = ValueError("Provider setup mutation is invalid.")
+    overlap_error = ValueError("Provider setup mutation has overlapping keys.")
+    ownership_error = ValueError("Provider setup mutation ownership is invalid.")
+    identity_error = ValueError("Provider setup mutation identity is invalid.")
     if type(mutation) is not ProviderSetupMutation:
         raise error
     try:
@@ -666,7 +669,7 @@ def _validate_provider_setup_mutation(
             raise error
         set_keys = section_values.get(section, {})
         if any(key in set_keys for key in keys):
-            raise error
+            raise overlap_error
     if total_keys > _MAX_MUTATION_KEYS:
         raise error
 
@@ -712,7 +715,7 @@ def _validate_provider_setup_mutation(
     if not set(section_values).issubset(allowed_sections) or not set(
         delete_keys
     ).issubset({provider_section, "provider_setup.confirmed"}):
-        raise error
+        raise ownership_error
     provider_values = section_values.get(provider_section)
     if type(provider_values) is not _MAPPING_PROXY_TYPE:
         raise error
@@ -784,9 +787,10 @@ def _validate_provider_setup_mutation(
             type(confirmation) is not _MAPPING_PROXY_TYPE
             or dict(confirmation) != {ownership.provider_key: True}
             or "provider_setup.confirmed" in delete_keys
-            or type(semantic_identity) is not ProviderDraftIdentity
         ):
             raise error
+        if type(semantic_identity) is not ProviderDraftIdentity:
+            raise identity_error
         endpoint_value = provider_values[set_endpoint_keys[0]]
         if type(endpoint_value) is not str:
             raise error
@@ -799,14 +803,14 @@ def _validate_provider_setup_mutation(
             or semantic_identity.connection_identity != connection_identity
             or semantic_identity.credential_source != desired_source
         ):
-            raise error
+            raise identity_error
     else:
-        if (
-            "provider_setup.confirmed" in section_values
-            or delete_keys.get("provider_setup.confirmed") != (ownership.provider_key,)
-            or semantic_identity is not None
-        ):
+        if "provider_setup.confirmed" in section_values or delete_keys.get(
+            "provider_setup.confirmed"
+        ) != (ownership.provider_key,):
             raise error
+        if semantic_identity is not None:
+            raise identity_error
 
 
 def _configured_section_key(
