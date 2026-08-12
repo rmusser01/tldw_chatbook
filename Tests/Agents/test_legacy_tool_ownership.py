@@ -61,14 +61,18 @@ def test_legacy_compatibility_classes_resolve_in_a_fresh_process(
         "PYTHONPATH": str(REPO_ROOT),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
+    env.pop("TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT", None)
     code = """
 import json
+import os
 import sys
 
-blocked_events = {"socket.connect", "socket.getaddrinfo", "sqlite3.connect"}
+forbidden_event_names = {"socket.connect", "socket.getaddrinfo", "sqlite3.connect"}
+forbidden_events = []
 
 def block_external_io(event, _args):
-    if event in blocked_events:
+    if event in forbidden_event_names:
+        forbidden_events.append(event)
         raise RuntimeError("external I/O blocked during compatibility import")
 
 sys.addaudithook(block_external_io)
@@ -76,6 +80,13 @@ sys.addaudithook(block_external_io)
 import tldw_chatbook.Tools as Tools
 
 classes = (Tools.WebSearchTool, Tools.RAGSearchTool, Tools.SearchNotesTool)
+if os.environ.get("TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT") == "1":
+    try:
+        sys.audit("socket.connect", None)
+    except RuntimeError:
+        pass
+if forbidden_events:
+    raise RuntimeError(f"forbidden I/O attempted: {', '.join(forbidden_events)}")
 print(json.dumps(
     {cls.__name__: [cls.__module__, cls.__name__] for cls in classes},
     separators=(",", ":"),
@@ -108,3 +119,17 @@ print(json.dumps(
             "WebSearchTool",
         ],
     }
+
+    probe_env = {**env, "TLDW_TEST_FORCE_FORBIDDEN_AUDIT_EVENT": "1"}
+    probe = subprocess.run(  # nosec B603 # fixed executable and arguments
+        [sys.executable, "-B", "-c", code],
+        cwd=REPO_ROOT,
+        env=probe_env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert probe.returncode != 0
+    assert not probe.stdout
+    assert "forbidden I/O attempted: socket.connect" in probe.stderr
