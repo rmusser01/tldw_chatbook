@@ -71,6 +71,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionTransitionKind,
 )
 from tldw_chatbook.Notes.file_notes_service import (
+    LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
     FileNotesService,
     OpenedFileNote,
@@ -110,7 +111,37 @@ _UNSET = object()
 _SESSION_GIT_MUTATION_BUSY = (
     "Git operation in progress; structural actions are busy."
 )
-_TreeData = tuple[Literal["file", "folder", "deleted"], str]
+FILE_TREE_BATCH_SIZE = 100
+
+
+@dataclass(frozen=True, slots=True)
+class _FolderNodeData:
+    """One lazily materialized navigator folder."""
+
+    relative_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DeletedFolderData:
+    """The virtual Recently deleted folder."""
+
+
+@dataclass(frozen=True, slots=True)
+class _TreePageData:
+    """Cursor for one bounded navigator or search-result batch."""
+
+    source: Literal["files", "deleted", "search"]
+    folder_key: str
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _FolderItem:
+    """One pure folder-index child awaiting Textual materialization."""
+
+    kind: Literal["file", "folder", "deleted"]
+    label: str
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,6 +561,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     #file-notes-breadcrumb,
     #file-notes-save-status,
+    #file-notes-preview-status,
     #file-notes-action-status {
         height: auto;
         min-height: 1;
@@ -540,8 +572,15 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-save-status,
+    #file-notes-preview-status,
     #file-notes-action-status {
         color: $text-muted;
+    }
+
+    #file-notes-preview-status {
+        max-height: 3;
+        text-wrap: wrap;
+        overflow: hidden hidden;
     }
 
     #file-notes-reload-confirm-copy {
@@ -711,6 +750,9 @@ class LibraryFileNotesWorkspace(Vertical):
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
+        self._folder_children: dict[str, tuple[_FolderItem, ...]] = {}
+        self._search_paths: tuple[str, ...] = ()
+        self._restore_expanded_folders: set[str] = set()
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
@@ -896,6 +938,28 @@ class LibraryFileNotesWorkspace(Vertical):
             return "New / move path"
         return "New path"
 
+    @staticmethod
+    def _large_file_preview_copy(opened: OpenedFileNote) -> str:
+        """Describe an exact-size preview without implying editable content."""
+        return (
+            f"Read-only excerpt: first {LARGE_FILE_EXCERPT_CHARS:,} body "
+            f"characters. Exact size: {opened.character_count:,} characters · "
+            f"{opened.size:,} bytes."
+        )
+
+    def _sync_large_file_preview(self) -> None:
+        """Render or hide the retained large-file preview disclosure."""
+        if not self._active or not self.is_mounted:
+            return
+        status = self.query_one("#file-notes-preview-status", Static)
+        opened = self._opened
+        if opened is None or not opened.is_excerpt:
+            status.update("")
+            status.display = False
+            return
+        status.update(self._large_file_preview_copy(opened))
+        status.display = True
+
     def compose(self) -> ComposeResult:
         # LIB-19: Database mode, Files mode (this surface), and the Sync
         # sub-canvas are three folder-notes concepts never related to each
@@ -971,6 +1035,13 @@ class LibraryFileNotesWorkspace(Vertical):
                     id="file-notes-save-status",
                     markup=False,
                 )
+                preview_status = Static(
+                    "",
+                    id="file-notes-preview-status",
+                    markup=False,
+                )
+                preview_status.display = False
+                yield preview_status
                 with Horizontal(id="file-notes-path-row"):
                     yield Static(
                         self._path_field_label_copy(),
@@ -1049,6 +1120,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"Recently deleted: {self._selected_deleted_path}"
             )
         self._set_save_state(self._save_state, self._save_detail)
+        self._sync_large_file_preview()
         self._set_action_status(self._action_detail)
         self._update_root_surface()
         self._sync_navigator_mode()
@@ -1688,61 +1760,148 @@ class LibraryFileNotesWorkspace(Vertical):
 
         def remember_expanded(node: Any) -> None:
             data = node.data
-            if (
-                node.is_expanded
-                and isinstance(data, tuple)
-                and len(data) == 2
-                and data[0] == "folder"
-            ):
-                expanded_folders.add(data[1])
+            if node.is_expanded and isinstance(data, _FolderNodeData):
+                expanded_folders.add(data.relative_path)
             for child in node.children:
                 remember_expanded(child)
 
         for child in tree.root.children:
             remember_expanded(child)
+        self._folder_children = self._build_folder_index(tuple(self._entries))
+        self._restore_expanded_folders = expanded_folders
         root_label = self._root.name if self._root is not None else "Files"
         tree.reset(Text(root_label or "Files"))
-        folder_nodes: dict[str, Any] = {"": tree.root}
-        for relative_path in sorted(self._entries):
-            parts = PurePosixPath(relative_path).parts
-            parent_key = ""
-            parent = tree.root
-            for part in parts[:-1]:
-                key = f"{parent_key}/{part}".lstrip("/")
-                node = folder_nodes.get(key)
-                if node is None:
-                    node = parent.add(
-                        Text(part),
-                        data=("folder", key),
-                        expand=key in expanded_folders,
-                    )
-                    folder_nodes[key] = node
-                parent = node
-                parent_key = key
-            parent.add_leaf(
-                Text(parts[-1]),
-                data=("file", relative_path),
-            )
+        self._append_tree_page(
+            tree.root,
+            _TreePageData("files", "", 0),
+        )
         if self._deleted_paths:
             deleted = tree.root.add(
                 Text("Recently deleted"),
-                data=("folder", "recently-deleted"),
-                expand=True,
+                data=_DeletedFolderData(),
             )
-            for relative_path in self._deleted_paths:
-                deleted.add_leaf(
-                    Text(relative_path),
-                    data=("deleted", relative_path),
-                )
+            self._populate_folder_node(deleted)
+            deleted.expand()
         tree.root.expand()
+
+    @staticmethod
+    def _build_folder_index(
+        relative_paths: tuple[str, ...],
+    ) -> dict[str, tuple[_FolderItem, ...]]:
+        """Build a pure path index without constructing Textual nodes."""
+        children: dict[str, dict[str, _FolderItem]] = {"": {}}
+        for relative_path in sorted(relative_paths):
+            parts = PurePosixPath(relative_path).parts
+            parent_key = ""
+            for part in parts[:-1]:
+                key = f"{parent_key}/{part}".lstrip("/")
+                children.setdefault(parent_key, {})[part] = _FolderItem(
+                    "folder",
+                    part,
+                    key,
+                )
+                children.setdefault(key, {})
+                parent_key = key
+            children.setdefault(parent_key, {})[parts[-1]] = _FolderItem(
+                "file",
+                parts[-1],
+                relative_path,
+            )
+        return {
+            folder: tuple(
+                sorted(
+                    items.values(),
+                    key=lambda item: (
+                        item.kind != "folder",
+                        item.label.casefold(),
+                        item.label,
+                    ),
+                )
+            )
+            for folder, items in children.items()
+        }
+
+    def _page_items(self, page: _TreePageData) -> tuple[_FolderItem, ...]:
+        """Return the immutable source rows represented by one page cursor."""
+        if page.source == "files":
+            return self._folder_children.get(page.folder_key, ())
+        if page.source == "deleted":
+            return tuple(
+                _FolderItem("deleted", path, path) for path in self._deleted_paths
+            )
+        return tuple(_FolderItem("file", path, path) for path in self._search_paths)
+
+    def _append_tree_page(
+        self,
+        parent: Any,
+        page: _TreePageData,
+        *,
+        page_node: Any | None = None,
+    ) -> Any | None:
+        """Materialize at most one fixed batch before an optional cursor row."""
+        items = self._page_items(page)
+        end = min(page.offset + FILE_TREE_BATCH_SIZE, len(items))
+        last_node: Any | None = None
+        for item in items[page.offset:end]:
+            if item.kind == "folder":
+                last_node = parent.add(
+                    Text(item.label),
+                    data=_FolderNodeData(item.value),
+                    before=page_node,
+                    allow_expand=True,
+                )
+                if item.value in self._restore_expanded_folders:
+                    self.call_later(self._restore_folder_expansion, last_node)
+            else:
+                last_node = parent.add_leaf(
+                    Text(item.label),
+                    data=(item.kind, item.value),
+                    before=page_node,
+                )
+
+        remaining = len(items) - end
+        if remaining > 0:
+            next_page = _TreePageData(page.source, page.folder_key, end)
+            label = Text(f"Load more ({remaining:,} remaining)")
+            if page_node is None:
+                parent.add_leaf(label, data=next_page)
+            else:
+                page_node.data = next_page
+                page_node.set_label(label)
+        elif page_node is not None:
+            page_node.remove()
+        return last_node
+
+    def _restore_folder_expansion(self, node: Any) -> None:
+        """Restore one expanded level in its own message-loop callback."""
+        if not self._active or not self.is_mounted:
+            return
+        self._populate_folder_node(node)
+        node.expand()
+
+    def _populate_folder_node(self, node: Any) -> None:
+        """Populate the first bounded batch for an expanded empty folder."""
+        if node.children:
+            return
+        data = node.data
+        if isinstance(data, _FolderNodeData):
+            page = _TreePageData("files", data.relative_path, 0)
+        elif isinstance(data, _DeletedFolderData):
+            page = _TreePageData("deleted", "", 0)
+        else:
+            return
+        self._append_tree_page(node, page)
 
     def _rebuild_search_results(self, paths: tuple[str, ...]) -> None:
         if not self._active or not self.is_mounted:
             return
         results = self.query_one("#file-notes-search-results", Tree)
+        self._search_paths = paths
         results.reset(Text("Search results"))
-        for path in paths:
-            results.root.add_leaf(Text(path), data=("file", path))
+        self._append_tree_page(
+            results.root,
+            _TreePageData("search", "", 0),
+        )
         results.root.expand()
 
     def _refresh_active_search(self) -> None:
@@ -3656,10 +3815,22 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
         )
-        self.query_one("#file-notes-save-copy", Button).disabled = (
+        copy_button = self.query_one("#file-notes-save-copy", Button)
+        exact_export = self._opened is not None and self._opened.is_excerpt
+        copy_label = "Export exact copy" if exact_export else "Save draft as copy"
+        disabled_prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
+        if str(copy_button.label).removeprefix(disabled_prefix) != copy_label:
+            copy_button.label = copy_label
+            copy_button.refresh(layout=True)
+            if copy_button.parent is not None:
+                copy_button.parent.refresh(layout=True)
+        copy_button.disabled = (
             not has_document
             or not structurally_available
-            or self._save_state not in {"dirty", "conflict", "error"}
+            or (
+                not exact_export
+                and self._save_state not in {"dirty", "conflict", "error"}
+            )
         )
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
@@ -3757,7 +3928,10 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-reload": has_document,
             "file-notes-save-copy": (
                 has_document
-                and self._save_state in {"dirty", "conflict", "error"}
+                and (
+                    (self._opened is not None and self._opened.is_excerpt)
+                    or self._save_state in {"dirty", "conflict", "error"}
+                )
             ),
             "file-notes-refresh": has_service,
         }
@@ -4017,6 +4191,7 @@ class LibraryFileNotesWorkspace(Vertical):
         with editor.prevent(TextArea.Changed):
             editor.load_text(opened.body)
         self._sync_editor_read_only()
+        self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
         if opened.editable:
@@ -4048,6 +4223,7 @@ class LibraryFileNotesWorkspace(Vertical):
         with editor.prevent(TextArea.Changed):
             editor.load_text("")
         self._sync_editor_read_only()
+        self._sync_large_file_preview()
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
@@ -4368,6 +4544,7 @@ class LibraryFileNotesWorkspace(Vertical):
             else:
                 self._navigator_mode = "files"
             self._sync_navigator_mode()
+            self._search_paths = ()
             results.reset(Text("Search results"))
             return
         if self._navigator_mode == "git":
@@ -4404,9 +4581,35 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._rebuild_search_results(tuple(paths))
 
+    @on(Tree.NodeExpanded, "#file-notes-tree")
+    def _tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:
+        """Materialize one folder level only when the user expands it."""
+        self._populate_folder_node(event.node)
+
     @on(Tree.NodeSelected)
     async def _tree_node_selected(self, event: Tree.NodeSelected[object]) -> None:
         data = event.node.data
+        if isinstance(data, _TreePageData):
+            event.stop()
+            parent = event.node.parent
+            if parent is None:
+                return
+            last_node = self._append_tree_page(
+                parent,
+                data,
+                page_node=event.node,
+            )
+            if event.node.parent is None and last_node is not None:
+                tree = self.query_one(
+                    (
+                        "#file-notes-search-results"
+                        if data.source == "search"
+                        else "#file-notes-tree"
+                    ),
+                    Tree,
+                )
+                tree.move_cursor(last_node)
+            return
         if not isinstance(data, tuple) or len(data) != 2:
             return
         kind, relative_path = data
@@ -6038,18 +6241,28 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None or opened is None:
             return
-        destination = self._validated_path_input("Save draft as copy")
+        action = "Export exact copy" if opened.is_excerpt else "Save draft as copy"
+        destination = self._validated_path_input(action)
         if destination is None:
             return
-        body = self.query_one("#file-notes-editor", TextArea).text
-        await self._complete_path_action(
-            "Save draft as copy",
-            destination,
-            service.save_copy,
-            opened,
-            body,
-            destination,
-        )
+        if opened.is_excerpt:
+            await self._complete_path_action(
+                action,
+                destination,
+                service.export_exact_file,
+                opened,
+                destination,
+            )
+        else:
+            body = self.query_one("#file-notes-editor", TextArea).text
+            await self._complete_path_action(
+                action,
+                destination,
+                service.save_copy,
+                opened,
+                body,
+                destination,
+            )
 
     @on(Button.Pressed, "#file-notes-refresh")
     async def _refresh_pressed(self, event: Button.Pressed) -> None:

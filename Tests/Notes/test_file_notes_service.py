@@ -25,6 +25,8 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    INTERACTIVE_FILE_CHARS,
+    LARGE_FILE_EXCERPT_CHARS,
     MAX_FILE_BYTES,
     MAX_FILE_CHARS,
     FileNotesService,
@@ -494,6 +496,61 @@ def test_open_keeps_unclosed_frontmatter_in_body_and_marks_unsafe_text_read_only
     monkeypatch.setattr(service_module, "MAX_FILE_BYTES", 8_000_000)
     monkeypatch.setattr(service_module, "MAX_FILE_CHARS", 3)
     assert service.open_file("chars.markdown").read_only_reason == "too-many-chars"
+
+
+def test_large_utf8_file_returns_only_the_fixed_interactive_excerpt(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    assert INTERACTIVE_FILE_CHARS == 200_000
+    assert LARGE_FILE_EXCERPT_CHARS == 100_000
+    root = tmp_path / "notes"
+    root.mkdir()
+    content = "α" * (INTERACTIVE_FILE_CHARS + 1)
+    (root / "large.md").write_text(content, encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    opened = service.open_file("large.md")
+
+    assert not opened.editable
+    assert opened.read_only_reason == "interactive-limit"
+    assert opened.is_excerpt
+    assert opened.character_count == len(content)
+    assert opened.body == content[:LARGE_FILE_EXCERPT_CHARS]
+    assert len(opened.body) == LARGE_FILE_EXCERPT_CHARS
+    assert opened.size == len(content.encode("utf-8"))
+
+
+def test_large_file_exact_export_streams_disk_bytes_without_clobbering(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    source_bytes = ("frontmatter-safe\n" + "x" * 250_000).encode()
+    source = root / "large.md"
+    source.write_bytes(source_bytes)
+    service = FileNotesService(root, replica)
+    opened = service.open_file(source.name)
+    monkeypatch.setattr(service_module, "EXACT_EXPORT_CHUNK_BYTES", 17)
+
+    exported = service.export_exact_file(opened, "copy.md")
+
+    assert exported.status == "ok"
+    assert (root / "copy.md").read_bytes() == source_bytes
+    assert exported.content_hash == _digest(source_bytes)
+    assert service.session_changes[-1] == SessionChange("created", "copy.md")
+
+    (root / "occupied.md").write_bytes(b"keep")
+    occupied = service.export_exact_file(opened, "occupied.md")
+    assert occupied.status == "exists"
+    assert (root / "occupied.md").read_bytes() == b"keep"
+
+    source.write_bytes(source_bytes + b"external")
+    conflicted = service.export_exact_file(opened, "stale-copy.md")
+    assert conflicted.status == "conflict"
+    assert not (root / "stale-copy.md").exists()
 
 
 def test_oversized_file_keeps_exact_replica_and_can_delete_and_restore(

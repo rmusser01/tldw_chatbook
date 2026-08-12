@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +34,9 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     FileNotesSessionOwner,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    INTERACTIVE_FILE_CHARS,
+    LARGE_FILE_EXCERPT_CHARS,
+    FileNoteEntry,
     FileNotesService,
     OperationResult,
     ReconcileResult,
@@ -352,6 +356,11 @@ def _tree_labels(tree: Tree) -> list[str]:
 
     visit(tree.root)
     return labels
+
+
+def _tree_node_count(tree: Tree) -> int:
+    """Return the number of currently materialized nodes, including root."""
+    return len(_tree_labels(tree))
 
 
 @pytest.mark.asyncio
@@ -1830,7 +1839,18 @@ async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
             "initial tree did not load",
         )
         tree = workspace.query_one("#file-notes-tree", Tree)
-        assert {"folder", "alpha.md", "beta.txt"}.issubset(_tree_labels(tree))
+        assert {"folder", "beta.txt"}.issubset(_tree_labels(tree))
+        folder = next(
+            node
+            for node in tree.root.children
+            if getattr(node.label, "plain", str(node.label)) == "folder"
+        )
+        folder.expand()
+        await _wait_until(
+            pilot,
+            lambda: "alpha.md" in _tree_labels(tree),
+            "expanded folder did not mount its first bounded batch",
+        )
 
         search = workspace.query_one("#file-notes-search", Input)
         search.value = "needle"
@@ -3950,3 +3970,140 @@ async def test_file_notes_disclosed_actions_fit_wide_and_compact_layouts(
         _assert_visible_editor_actions_fit(workspace)
 
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_large_navigators_publish_bounded_keyboard_pages(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+    sibling_entries = tuple(
+        FileNoteEntry(
+            relative_path=f"note-{index:04d}.md",
+            size=1,
+            mtime_ns=index,
+            content_hash=str(index),
+            editable=True,
+        )
+        for index in range(5_000)
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._adopt_scan_state(ScanResult("ok", sibling_entries), ())
+        started = perf_counter()
+        workspace._rebuild_tree()
+        publication_seconds = perf_counter() - started
+        tree = workspace.query_one("#file-notes-tree", Tree)
+
+        assert publication_seconds < 0.1
+        assert _tree_node_count(tree) <= workspace_module.FILE_TREE_BATCH_SIZE + 2
+        await pilot.pause()
+        load_more = next(
+            node
+            for node in tree.root.children
+            if getattr(node.label, "plain", str(node.label)).startswith("Load more")
+        )
+        first_count = len(tree.root.children)
+        tree.focus()
+        tree.move_cursor(load_more)
+        await pilot.pause()
+        assert tree.cursor_node is load_more
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: len(tree.root.children) > first_count,
+            "keyboard Load more did not append the next bounded batch",
+        )
+        assert len(tree.root.children) <= (2 * workspace_module.FILE_TREE_BATCH_SIZE) + 1
+        assert tree.has_focus
+
+        search_paths = tuple(f"result-{index:04d}.md" for index in range(5_000))
+        started = perf_counter()
+        workspace._rebuild_search_results(search_paths)
+        search_seconds = perf_counter() - started
+        search = workspace.query_one("#file-notes-search-results", Tree)
+        assert search_seconds < 0.1
+        assert _tree_node_count(search) <= workspace_module.FILE_TREE_BATCH_SIZE + 2
+
+
+@pytest.mark.asyncio
+async def test_file_notes_deep_tree_materializes_only_expanded_levels(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+    deep_path = "/".join(f"folder-{index:04d}" for index in range(500))
+    entry = FileNoteEntry(
+        relative_path=f"{deep_path}/note.md",
+        size=1,
+        mtime_ns=1,
+        content_hash="hash",
+        editable=True,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        started = perf_counter()
+        assert workspace._apply_scan(ScanResult("ok", (entry,)), ())
+        publication_seconds = perf_counter() - started
+        tree = workspace.query_one("#file-notes-tree", Tree)
+        assert publication_seconds < 0.1
+        assert _tree_node_count(tree) == 2
+
+        first_folder = tree.root.children[0]
+        first_folder.expand()
+        await _wait_until(
+            pilot,
+            lambda: bool(first_folder.children),
+            "expanding a folder did not materialize its next level",
+        )
+        assert _tree_node_count(tree) == 3
+
+
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.asyncio
+async def test_large_file_uses_labeled_excerpt_and_exports_exact_disk_bytes(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    content = "x" * (INTERACTIVE_FILE_CHARS + 1)
+    source = root / "large.md"
+    source.write_text(content, encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path(source.name)
+        await pilot.pause()
+
+        opened = workspace.current_document
+        assert opened is not None and opened.is_excerpt
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        preview = workspace.query_one("#file-notes-preview-status", Static)
+        export = workspace.query_one("#file-notes-save-copy", Button)
+        assert editor.read_only
+        assert editor.text == content[:LARGE_FILE_EXCERPT_CHARS]
+        assert len(editor.text) == LARGE_FILE_EXCERPT_CHARS
+        assert preview.display
+        preview_copy = str(preview.renderable)
+        assert "Read-only excerpt: first 100,000" in preview_copy
+        assert f"{len(content):,} characters" in preview_copy
+        assert f"{len(content.encode()):,} bytes" in preview_copy
+        assert preview.region.right <= workspace.region.right
+        assert str(export.label) == "Export exact copy"
+        assert export.display and not export.disabled
+
+        workspace.query_one("#file-notes-path", Input).value = "exact-copy.md"
+        export.press()
+        await _wait_until(
+            pilot,
+            lambda: (root / "exact-copy.md").exists(),
+            "exact export did not create the destination",
+        )
+        assert (root / "exact-copy.md").read_bytes() == source.read_bytes()
