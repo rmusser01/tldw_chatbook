@@ -42,7 +42,8 @@ other value remain unsupported until a real provider requires them.
 - Focused MP4 and WebM tests across the validation, metadata, storage, and
   Console boundaries touched by the change.
 - An amendment to ADR-044 replacing its literal `.mp4` storage-path wording with
-  the validated canonical extension rule.
+  the validated canonical extension rule and adding the container to its durable
+  metadata inventory.
 
 ### Out of scope
 
@@ -98,6 +99,12 @@ populate it from output evidence it actually controls:
 
 Adapters may remain stricter than the shared mapping. The shipped H3 workflows
 continue to require MP4. A generic ComfyUI workflow may request and return WebM.
+Its polling/output parser receives the canonical requested container and selects
+only a descriptor whose suffix maps to that container. It skips MP4, WebM,
+MOV/AVI, and animated-image descriptors that do not match rather than taking the
+first recognized output. Terminal success with no matching canonical descriptor
+fails. No output from an unrelated node or unsupported suffix becomes fallback
+evidence.
 
 ### 4.2 Worker choke point
 
@@ -178,8 +185,13 @@ compatibility rule and then pass the resulting explicit extension.
 The store continues to identify a video by stable message id plus slug. The
 extension is an additional exact lookup fact, not part of the transcript marker.
 Snapshots, retention, oldest-first eviction, rollback, tombstones, and stage
-cleanup treat MP4 and WebM identically. Unsupported files under the managed root
-are not adopted as generated videos.
+cleanup treat MP4 and WebM identically. Snapshot inventory continues to account
+for every safe regular file under the managed root, including a planted legacy
+or unknown suffix, so no file can evade session/TTL cleanup or the total-size
+cap. Only an explicitly requested canonical MP4/WebM path is resolvable as a
+generated video. Unknown files remain managed garbage: retention/capacity may
+remove them transactionally, but the application never adopts or serves them as
+a message result.
 
 `allocate_slug` remains independent of the eventual result but checks candidate
 slugs across every supported canonical extension. A stale `clip.mp4` therefore
@@ -208,6 +220,12 @@ supported video suffix, is rejected with bounded generic guidance and returns to
 the picker. The operation never writes WebM bytes under an MP4 name or vice
 versa. Existing target identity/reconfirmation and no-clobber behavior applies
 to the normalized final target.
+
+The lower-level `_copy_pending_video_external` is an independent mutation
+boundary, not a trusting sink for picker behavior. It accepts only a final target
+whose exact lowercase suffix matches `artifact.extension`, and performs that
+check before capability probing, parent creation, staging, or target inspection.
+Direct or future callers therefore cannot bypass the invariant.
 
 ### 5.3 Durable message resolution and actions
 
@@ -251,12 +269,16 @@ Focused coverage will include:
    `_stage_pending_video`/`TemporaryFile`, and the managed root are untouched for
    unknown and contradictory results;
 3. adapter result construction for exact-MIME MiniMax MP4 and generic ComfyUI
-   MP4/WebM, while generic/non-video and contradictory MiniMax MIME fail and
-   shipped H3 remains MP4-only;
+   MP4/WebM, including adverse-order multi-output history where only the
+   request-matching canonical descriptor is selected; generic/non-video and
+   contradictory MiniMax MIME fail and shipped H3 remains MP4-only;
 4. metadata MP4/WebM round trips, missing-field MP4 compatibility, and explicit
    invalid-container degradation;
-5. VideoStore MP4/WebM save, resolve, snapshot, retention, eviction, rollback,
-   tombstone, and unsupported-extension no-mutation behavior;
+5. parameterized MP4/WebM coverage at extension-sensitive VideoStore boundaries
+   (save/resolve and collision naming), plus unsupported-extension no-mutation
+   and planted unknown-suffix retention/capacity accounting; existing
+   extension-independent eviction, rollback, and stage-cleanup lifecycle tests
+   remain single-source rather than being duplicated per container;
 6. Console managed and pending flows using `.webm`, including explicit initial
    `video_format="webm"`, regeneration format preservation, retry, oversized
    adoption, playback resolution, picker missing/matching/contradictory suffix
@@ -264,7 +286,13 @@ Focused coverage will include:
 7. a real persistence/reload path with a WebM metadata row and `.webm` file that
    resolves on a fresh Console, plus a separate historical metadata JSON payload
    with no container key whose `.mp4` file resolves after the same outer reload;
-8. mutations that remove post-adapter validation, restore MP4 hard-coding, or
+8. a distinct screen-state serialize → `_restore_console_message` → card
+   resolution test proving a WebM message survives navigation remount without
+   relying on the database hydration path;
+9. direct external-write helper tests proving a mismatched suffix fails before
+   parent creation or staging, in addition to picker missing/matching/mismatch
+   behavior;
+10. mutations that remove post-adapter validation, restore MP4 hard-coding, or
    restore permissive extension sanitization must fail named tests.
 
 Static verification is limited to changed Python files, relevant Ruff rules,
@@ -277,5 +305,6 @@ the local validation/storage boundary rather than a remote API contract.
 ADR required: no new ADR
 ADR path: `backlog/decisions/044-ephemeral-generated-video-storage-playback-and-streaming.md`
 Reason: ADR-044 already owns generated-video provider and ephemeral-storage
-boundaries. This task corrects its MP4-specific path wording to use the validated
-canonical container extension; it does not introduce a new architecture choice.
+boundaries. This task amends decision 1's MP4-specific path wording to use the
+validated canonical container extension and decision 7's durable metadata list
+to include that container. It does not introduce a new architecture choice.
