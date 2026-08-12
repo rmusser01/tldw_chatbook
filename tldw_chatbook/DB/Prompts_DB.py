@@ -2588,10 +2588,10 @@ class PromptsDatabase:
     ) -> Optional[Dict[str, Any]]:
         """Read one active Prompt and its keywords from one SQLite snapshot.
 
-        This export-specific seam deliberately avoids the generic transaction
-        and query helpers because their diagnostics include parameters,
-        exception messages, or tracebacks. The detached result contains only
-        portable Chatbook fields.
+        This export-specific seam uses the shared nested-aware transaction
+        context while avoiding query helpers whose diagnostics include
+        parameters, exception messages, or tracebacks. The detached result
+        contains only portable Chatbook fields.
 
         Args:
             prompt_id: Positive SQLite-range Prompt row ID.
@@ -2607,53 +2607,45 @@ class PromptsDatabase:
         if type(prompt_id) is not int or not 1 <= prompt_id <= (2**63 - 1):
             raise ValueError("prompt_id must be a positive integer in SQLite range.")
 
-        conn: Optional[sqlite3.Connection] = None
-        owns_transaction = False
         try:
-            conn = self.get_connection()
-            owns_transaction = not conn.in_transaction
-            if owns_transaction:
-                conn.execute("BEGIN")
-            row = conn.execute(
-                """
-                SELECT name, author, details, system_prompt, user_prompt,
-                       artifact_type, prompt_format, prompt_schema_version,
-                       prompt_definition
-                FROM Prompts
-                WHERE id = ? AND deleted = 0
-                """,
-                (prompt_id,),
-            ).fetchone()
-            if row is None:
-                if owns_transaction:
-                    conn.commit()
-                return None
-            keyword_rows = conn.execute(
-                """
-                SELECT keyword_table.keyword
-                FROM PromptKeywordsTable AS keyword_table
-                JOIN PromptKeywordLinks AS link
-                  ON link.keyword_id = keyword_table.id
-                WHERE link.prompt_id = ? AND keyword_table.deleted = 0
-                ORDER BY keyword_table.keyword COLLATE NOCASE
-                """,
-                (prompt_id,),
-            ).fetchall()
-            result = {
-                "name": row["name"],
-                "author": row["author"],
-                "details": row["details"],
-                "system_prompt": row["system_prompt"],
-                "user_prompt": row["user_prompt"],
-                "keywords": [keyword_row["keyword"] for keyword_row in keyword_rows],
-                "artifact_type": row["artifact_type"],
-                "prompt_format": row["prompt_format"],
-                "prompt_schema_version": row["prompt_schema_version"],
-                "prompt_definition": row["prompt_definition"],
-            }
-            if owns_transaction:
-                conn.commit()
-            return result
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT name, author, details, system_prompt, user_prompt,
+                           artifact_type, prompt_format, prompt_schema_version,
+                           prompt_definition
+                    FROM Prompts
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (prompt_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                keyword_rows = conn.execute(
+                    """
+                    SELECT keyword_table.keyword
+                    FROM PromptKeywordsTable AS keyword_table
+                    JOIN PromptKeywordLinks AS link
+                      ON link.keyword_id = keyword_table.id
+                    WHERE link.prompt_id = ? AND keyword_table.deleted = 0
+                    ORDER BY keyword_table.keyword COLLATE NOCASE
+                    """,
+                    (prompt_id,),
+                ).fetchall()
+                return {
+                    "name": row["name"],
+                    "author": row["author"],
+                    "details": row["details"],
+                    "system_prompt": row["system_prompt"],
+                    "user_prompt": row["user_prompt"],
+                    "keywords": [
+                        keyword_row["keyword"] for keyword_row in keyword_rows
+                    ],
+                    "artifact_type": row["artifact_type"],
+                    "prompt_format": row["prompt_format"],
+                    "prompt_schema_version": row["prompt_schema_version"],
+                    "prompt_definition": row["prompt_definition"],
+                }
         except (
             DatabaseError,
             sqlite3.Error,
@@ -2662,11 +2654,6 @@ class PromptsDatabase:
             KeyError,
             IndexError,
         ):
-            if conn is not None and owns_transaction:
-                try:
-                    conn.rollback()
-                except sqlite3.Error:
-                    pass
             raise DatabaseError("Failed to read Prompt export snapshot.") from None
 
     def get_prompt_by_id(

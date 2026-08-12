@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from collections.abc import Mapping
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -148,6 +149,28 @@ def test_prompt_chatbook_snapshot_uses_one_explicit_read_transaction(
     ]
     assert len(select_indices) == 2
     assert begin_index < select_indices[0] < select_indices[1] < commit_index
+
+
+def test_prompt_chatbook_snapshot_uses_shared_transaction_context(
+    database: PromptsDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt_id = _insert_prompt(database, name="Shared transaction")
+    transaction_calls: list[bool] = []
+    original_transaction = database.transaction
+
+    @contextmanager
+    def recording_transaction(*, immediate: bool = False):
+        transaction_calls.append(immediate)
+        with original_transaction(immediate=immediate) as connection:
+            yield connection
+
+    monkeypatch.setattr(database, "transaction", recording_transaction)
+
+    snapshot = database.fetch_prompt_chatbook_snapshot(prompt_id)
+
+    assert snapshot is not None
+    assert transaction_calls == [False]
 
 
 def test_prompt_chatbook_snapshot_keeps_row_and_keywords_on_one_wal_snapshot(

@@ -108,13 +108,15 @@ def count_export_scope(
     scope: ExportScope,
     media_db: MediaIdSource,
     chachanotes_db: ChaChaNotesIdSource,
-    prompts_db: PromptIdSource,
+    prompts_db: PromptIdSource | None,
 ) -> dict[str, int]:
     """Count every item in ``scope`` per source, with no page cap.
 
     Always returns all four keys ("media", "conversations", "notes",
     "prompts") so the export form can render a stable four-source summary; a source
-    outside ``scope`` reports 0 rather than being omitted from the dict.
+    outside ``scope`` reports 0 rather than being omitted from the dict. When
+    the optional Prompt source is unavailable, its count remains 0 without
+    suppressing healthy sources in an ``everything`` export.
     """
     counts = {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
     if scope.ids:
@@ -128,7 +130,7 @@ def count_export_scope(
         counts["conversations"] = len(chachanotes_db.get_all_conversation_ids())
     if scope.kind in ("everything", "notes"):
         counts["notes"] = len(chachanotes_db.get_all_note_ids())
-    if scope.kind in ("everything", "prompts"):
+    if prompts_db is not None and scope.kind in ("everything", "prompts"):
         counts["prompts"] = len(prompts_db.get_all_active_prompt_ids())
     return counts
 
@@ -137,7 +139,7 @@ def resolve_export_selections(
     scope: ExportScope,
     media_db: MediaIdSource,
     chachanotes_db: ChaChaNotesIdSource,
-    prompts_db: PromptIdSource,
+    prompts_db: PromptIdSource | None,
 ) -> dict[ContentType, list[str]]:
     """Resolve every id in ``scope`` into a ``ChatbookCreator`` content-selection dict.
 
@@ -155,7 +157,8 @@ def resolve_export_selections(
     ``ChatbookCreator.create_chatbook``'s ``if ContentType.X in
     content_selections`` guards -- and the caller's
     ``ContentType.MEDIA in selections`` -> ``include_media`` decision --
-    correct without extra empty-list special-casing downstream.
+    correct without extra empty-list special-casing downstream. An unavailable
+    optional Prompt source is likewise omitted while other sources resolve.
     """
     if scope.ids:
         return {_KIND_TO_CONTENT_TYPE[scope.kind]: list(scope.ids)}
@@ -177,7 +180,7 @@ def resolve_export_selections(
         note_ids = list(chachanotes_db.get_all_note_ids())
         if note_ids:
             selections[ContentType.NOTE] = note_ids
-    if scope.kind in ("everything", "prompts"):
+    if prompts_db is not None and scope.kind in ("everything", "prompts"):
         prompt_ids = [str(value) for value in prompts_db.get_all_active_prompt_ids()]
         if prompt_ids:
             selections[ContentType.PROMPT] = prompt_ids

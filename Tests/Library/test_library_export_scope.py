@@ -237,6 +237,39 @@ def test_empty_dbs_everything_scope_counts_zero_and_selections_empty(
     assert selections == {}
 
 
+def test_missing_prompts_db_preserves_everything_scope_other_sources(
+    media_db, chachanotes_db
+):
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Media", content="content", media_type="article"
+    )
+    conversation_id = chachanotes_db.add_conversation({"title": "Conversation"})
+    note_id = chachanotes_db.add_note("Note", "content")
+    scope = ExportScope(kind="everything")
+
+    counts = count_export_scope(scope, media_db, chachanotes_db, None)
+    selections = resolve_export_selections(scope, media_db, chachanotes_db, None)
+
+    assert counts == {"media": 1, "conversations": 1, "notes": 1, "prompts": 0}
+    assert selections == {
+        ContentType.MEDIA: [str(media_id)],
+        ContentType.CONVERSATION: [conversation_id],
+        ContentType.NOTE: [note_id],
+    }
+
+
+def test_missing_prompts_db_makes_prompt_scope_empty(media_db, chachanotes_db):
+    scope = ExportScope(kind="prompts")
+
+    assert count_export_scope(scope, media_db, chachanotes_db, None) == {
+        "media": 0,
+        "conversations": 0,
+        "notes": 0,
+        "prompts": 0,
+    }
+    assert resolve_export_selections(scope, media_db, chachanotes_db, None) == {}
+
+
 # --- Scope isolation: out-of-scope sources are zeroed / omitted, never touched --
 
 
