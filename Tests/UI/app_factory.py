@@ -318,6 +318,18 @@ def _build_test_app(
                 return_value=user_data_dir,
             ),
             patch(
+                "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
+                return_value=user_data_dir,
+            ),
+            patch(
+                "tldw_chatbook.Video_Generation.video_store.get_video_generation_config",
+                return_value=SimpleNamespace(
+                    retention="session",
+                    retention_ttl_hours=24,
+                    max_store_mb=2048,
+                ),
+            ),
+            patch(
                 "tldw_chatbook.app.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
             ),

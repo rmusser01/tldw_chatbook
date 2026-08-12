@@ -1,21 +1,30 @@
 """/generate-video helpers: parsing, cost text, blocking generation (task-3401.5)."""
 
 import asyncio
+import io
 import json
 from pathlib import Path
 import threading
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
+import tldw_chatbook.Chat.console_generate_video as console_generate_video_module
+import tldw_chatbook.Video_Generation.video_store as video_store_module
 from tldw_chatbook.Chat.console_generate_video import (
+    PendingVideoArtifact,
     estimate_video_cost_text,
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
 )
 from tldw_chatbook.Video_Generation.adapters import comfyui_video_adapter as cva
-from tldw_chatbook.Video_Generation.video_store import VideoStore
+from tldw_chatbook.Video_Generation.video_store import (
+    VideoPublicationGate,
+    VideoStore,
+    VideoStoreSaveError,
+)
 
 
 # -- parsing ------------------------------------------------------------------
@@ -178,6 +187,30 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert store.resolve("msg-42", "a-red-dragon") == path
 
 
+def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
+    _register_fake()
+    received = []
+
+    class CapturingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            received.append(kwargs.get("publication_gate"))
+            return super().save(*args, **kwargs)
+
+    gate = VideoPublicationGate()
+    store = CapturingStore(root=tmp_path / "gv")
+
+    _meta, path = run_video_generation(
+        backend="fakevid",
+        prompt="publication gate",
+        message_id="gated-message",
+        publication_gate=gate,
+        video_store=store,
+    )
+
+    assert received == [gate]
+    assert path.read_bytes() == b"vid-bytes"
+
+
 def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
     from tldw_chatbook.Video_Generation.adapter_registry import get_registry
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
@@ -226,6 +259,286 @@ def test_run_video_generation_invalid_request_never_writes(tmp_path):
             video_store=store,
         )
     assert list(store.iter_stored()) == []
+
+
+def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_path):
+    payload = b"oversized-video" * 70_000
+    assert len(payload) > 1024 * 1024
+    _register_fake(
+        result_content=payload,
+        resolved_model="FakeH3",
+        resolved_seed=321,
+        duration_seconds=6.0,
+        fps=24.0,
+        width=1920,
+        height=1080,
+    )
+    store = VideoStore(
+        root=tmp_path / "gv",
+        config=SimpleNamespace(max_store_mb=1),
+    )
+
+    result = run_video_generation(
+        backend="fakevid",
+        prompt="A Red Dragon",
+        message_id="msg-over-cap",
+        ratio="16:9",
+        video_store=store,
+    )
+
+    assert isinstance(result, PendingVideoArtifact)
+    assert result.reason == "over_capacity"
+    assert result.message_id == "msg-over-cap"
+    assert result.slug == "a-red-dragon"
+    assert result.extension == "mp4"
+    assert result.size_bytes == len(payload)
+    assert result.max_bytes == 1024 * 1024
+    assert result.error_type is None
+    assert result.metadata.name == "a-red-dragon"
+    assert result.metadata.prompt == "A Red Dragon"
+    assert result.metadata.negative_prompt == ""
+    assert result.metadata.backend == "fakevid"
+    assert result.metadata.model == "FakeH3"
+    assert result.metadata.seed == 321
+    assert result.metadata.duration_seconds == 6.0
+    assert result.metadata.fps == 24.0
+    assert result.metadata.width == 1920
+    assert result.metadata.height == 1080
+    assert result.metadata.ratio == "16:9"
+    assert result.stream.tell() == 0
+    assert result.stream.read() == payload
+    assert list(store.iter_stored()) == []
+    result.close()
+
+
+def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
+    tmp_path,
+):
+    payload = b"recoverable-video"
+    _register_fake(result_content=payload, resolved_model="FakeH3")
+
+    class FailingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            raise VideoStoreSaveError("PRIVATE-PATH")
+
+    store = FailingStore(
+        root=tmp_path / "gv",
+        config=SimpleNamespace(max_store_mb=7),
+    )
+    logged: list[str] = []
+    sink_id = logger.add(
+        lambda message: logged.append(str(message)),
+        level="DEBUG",
+    )
+    try:
+        result = run_video_generation(
+            backend="fakevid",
+            prompt="Recover this",
+            message_id="msg-store-failure",
+            video_store=store,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert isinstance(result, PendingVideoArtifact)
+    assert result.reason == "store_failure"
+    assert result.error_type == "VideoStoreSaveError"
+    assert result.max_bytes == store.capacity_bytes == 7 * 1024 * 1024
+    assert result.size_bytes == len(payload)
+    assert result.message_id == "msg-store-failure"
+    assert result.metadata.model == "FakeH3"
+    assert result.stream.tell() == 0
+    assert result.stream.read() == payload
+    assert "PRIVATE-PATH" not in repr(result)
+    assert all("PRIVATE-PATH" not in line for line in logged)
+    result.close()
+
+
+def test_real_malformed_store_root_returns_rewound_sanitized_pending_artifact(
+    tmp_path,
+):
+    payload = b"exact generated bytes after malformed root"
+    private_prompt = "PRIVATE-MALFORMED-PROMPT"
+    root = tmp_path / "PRIVATE-MALFORMED-VIDEO-ROOT"
+    try:
+        root.symlink_to(root.name)
+    except OSError:
+        pytest.skip("symlink loops are unavailable on this platform")
+    _register_fake(result_content=payload, resolved_model="FakeH3")
+    store = VideoStore(
+        root=root,
+        config=SimpleNamespace(max_store_mb=9),
+    )
+    logged: list[str] = []
+    sink_id = logger.add(logged.append, level="DEBUG", format="{message}")
+    try:
+        result = run_video_generation(
+            backend="fakevid",
+            prompt=private_prompt,
+            message_id="malformed-store-message",
+            video_store=store,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert isinstance(result, PendingVideoArtifact)
+    assert result.reason == "store_failure"
+    assert result.error_type == "VideoStoreSaveError"
+    assert result.size_bytes == len(payload)
+    assert result.stream.tell() == 0
+    assert result.stream.read() == payload
+    assert str(root) not in repr(result)
+    assert all(str(root) not in message for message in logged)
+    assert all(private_prompt not in message for message in logged)
+    result.close()
+
+
+def test_pending_video_real_store_contention_remains_readable(
+    tmp_path,
+    monkeypatch,
+):
+    payload = b"contended-video"
+    _register_fake(result_content=payload)
+    root = tmp_path / "gv"
+    holder = VideoStore(
+        root=root,
+        config=SimpleNamespace(max_store_mb=1),
+    )
+    writer = VideoStore(
+        root=root,
+        config=SimpleNamespace(max_store_mb=1),
+    )
+    acquired = threading.Event()
+    release = threading.Event()
+    holder_errors: list[BaseException] = []
+
+    def hold_real_lease() -> None:
+        try:
+            with holder._root_lease():
+                acquired.set()
+                assert release.wait(5)
+        except BaseException as exc:
+            holder_errors.append(exc)
+
+    holder_thread = threading.Thread(target=hold_real_lease)
+    holder_thread.start()
+    assert acquired.wait(2)
+    monkeypatch.setattr(video_store_module, "_ROOT_LEASE_TIMEOUT_SECONDS", 0.05)
+    try:
+        result = run_video_generation(
+            backend="fakevid",
+            prompt="Contended",
+            message_id="msg-contended",
+            video_store=writer,
+        )
+    finally:
+        release.set()
+        holder_thread.join(5)
+
+    assert not holder_thread.is_alive()
+    assert holder_errors == []
+    assert isinstance(result, PendingVideoArtifact)
+    assert result.reason == "store_failure"
+    assert result.error_type == "VideoStoreBusyError"
+    assert result.stream.read() == payload
+    result.close()
+
+
+def test_pending_video_close_is_idempotent_and_releases_owned_stream():
+    class StrictCloseStream(io.BytesIO):
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls > 1:
+                raise AssertionError("underlying stream closed twice")
+            super().close()
+
+    stream = StrictCloseStream(b"video")
+    artifact = PendingVideoArtifact(
+        metadata=SimpleNamespace(),
+        message_id="msg-close",
+        slug="clip",
+        extension="mp4",
+        size_bytes=5,
+        max_bytes=1,
+        reason="over_capacity",
+        stream=stream,
+    )
+
+    artifact.close()
+    artifact.close()
+
+    assert stream.close_calls == 1
+    with pytest.raises(ValueError, match="closed file"):
+        stream.read()
+
+
+def test_pending_video_staging_failure_closes_temp_handle(tmp_path, monkeypatch):
+    _register_fake(result_content=b"recoverable")
+
+    class FailingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            raise VideoStoreSaveError("PRIVATE-PATH")
+
+    class FailingTemp(io.BytesIO):
+        def write(self, _content):
+            raise OSError("temp stage unavailable")
+
+    staged = FailingTemp()
+    monkeypatch.setattr(
+        console_generate_video_module.tempfile,
+        "TemporaryFile",
+        lambda **_kwargs: staged,
+    )
+
+    with pytest.raises(OSError, match="temp stage unavailable"):
+        run_video_generation(
+            backend="fakevid",
+            prompt="Recover this",
+            message_id="msg-stage-failure",
+            video_store=FailingStore(
+                root=tmp_path / "gv",
+                config=SimpleNamespace(max_store_mb=1),
+            ),
+        )
+
+    assert staged.closed
+
+
+def test_pending_video_staging_close_failure_does_not_mask_write_failure(
+    tmp_path,
+    monkeypatch,
+):
+    _register_fake(result_content=b"recoverable")
+
+    class FailingStore(VideoStore):
+        def save(self, *args, **kwargs):
+            raise VideoStoreSaveError("PRIVATE-PATH")
+
+    class FailingTemp(io.BytesIO):
+        def write(self, _content):
+            raise OSError("stage-write-failed")
+
+        def close(self):
+            raise RuntimeError("PRIVATE-CLOSE-FAILED")
+
+    monkeypatch.setattr(
+        console_generate_video_module.tempfile,
+        "TemporaryFile",
+        lambda **_kwargs: FailingTemp(),
+    )
+
+    with pytest.raises(OSError, match="stage-write-failed"):
+        run_video_generation(
+            backend="fakevid",
+            prompt="Recover this",
+            message_id="msg-stage-close-failure",
+            video_store=FailingStore(
+                root=tmp_path / "gv",
+                config=SimpleNamespace(max_store_mb=1),
+            ),
+        )
 
 
 def test_custom_named_h3_dispatch_preserves_positive_suffix_and_strips_style_negative(

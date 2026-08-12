@@ -1,4 +1,7 @@
 import asyncio
+from copy import copy, deepcopy
+from dataclasses import replace
+from uuid import UUID
 
 import pytest
 from PIL import Image as PILImage
@@ -6,11 +9,37 @@ from PIL import Image as PILImage
 from tldw_chatbook.Chat import attachment_core
 from tldw_chatbook.Chat.attachment_core import (
     DEFAULT_MAX_HISTORY_IMAGES,
+    PendingAttachment,
     image_content_parts,
     max_history_images,
     process_attachment_path,
     vision_block_reason,
 )
+
+
+def _pending_attachment(name: str) -> PendingAttachment:
+    return PendingAttachment(
+        file_path=f"/unused/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=b"image",
+        mime_type="image/png",
+        original_size=5,
+        processed_size=5,
+    )
+
+
+def test_pending_attachment_identity_is_unique_opaque_uuid4_and_copy_stable():
+    first = _pending_attachment("first.png")
+    second = _pending_attachment("second.png")
+
+    assert type(first.attachment_id) is str
+    assert UUID(first.attachment_id).version == 4
+    assert first.attachment_id != second.attachment_id
+    assert copy(first).attachment_id == first.attachment_id
+    assert deepcopy(first).attachment_id == first.attachment_id
+    assert replace(first).attachment_id == first.attachment_id
 
 
 def _write_png(path, size=(4, 4)):

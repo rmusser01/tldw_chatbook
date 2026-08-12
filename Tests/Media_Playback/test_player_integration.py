@@ -36,8 +36,13 @@ def _ffmpeg(*args: str) -> None:
 def video_only_clip(tmp_path):
     path = tmp_path / "video_only.mp4"
     _ffmpeg(
-        "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10",
-        "-c:v", "mpeg4", str(path),
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=64x48:rate=10",
+        "-c:v",
+        "mpeg4",
+        str(path),
     )
     return path
 
@@ -46,9 +51,20 @@ def video_only_clip(tmp_path):
 def audio_video_clip(tmp_path):
     path = tmp_path / "audio_video.mp4"
     _ffmpeg(
-        "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10",
-        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-        "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(path),
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=64x48:rate=10",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=1",
+        "-c:v",
+        "mpeg4",
+        "-c:a",
+        "aac",
+        "-shortest",
+        str(path),
     )
     return path
 
@@ -63,9 +79,9 @@ def test_probe_real_clip(video_only_clip):
 def test_frames_flow_from_real_pipeline(video_only_clip):
     probe = probe_file(video_only_clip)
     pipeline = PlayerPipeline(str(video_only_clip), probe, target_fps=10.0)
-    pipeline.start()
+    run = pipeline.start()
     frames = []
-    for index, (pts, data) in enumerate(pipeline.iter_frames()):
+    for index, (pts, data) in enumerate(pipeline.iter_frames(run)):
         frames.append(pts)
         assert len(data) == 64 * 48 * 3
         if index >= 2:
@@ -78,8 +94,8 @@ def test_seek_restarts_at_offset(video_only_clip):
     probe = probe_file(video_only_clip)
     pipeline = PlayerPipeline(str(video_only_clip), probe, target_fps=10.0)
     pipeline.start()
-    pipeline.seek(0.5)
-    pts, _data = next(pipeline.iter_frames())
+    run = pipeline.seek(0.5)
+    pts, _data = next(pipeline.iter_frames(run))
     pipeline.stop()
     assert pts == pytest.approx(0.5, abs=1e-6)
 
@@ -90,11 +106,15 @@ def test_audio_branch_runs_headless(audio_video_clip, monkeypatch):
     probe = probe_file(audio_video_clip)
     assert probe.has_audio is True
     pipeline = PlayerPipeline(str(audio_video_clip), probe, target_fps=10.0)
-    pipeline.start()
+    run = pipeline.start()
     assert pipeline._ffplay is not None
-    pts, data = next(pipeline.iter_frames())
+    ffmpeg = pipeline._ffmpeg
+    ffplay = pipeline._ffplay
+    assert ffmpeg is not None and ffplay is not None
+    pts, data = next(pipeline.iter_frames(run))
     assert pts == pytest.approx(0.0, abs=1e-6)
     assert len(data) == 64 * 48 * 3
     pipeline.stop()
     # Both children are really gone.
     assert pipeline._ffmpeg is None and pipeline._ffplay is None
+    assert ffmpeg.poll() is not None and ffplay.poll() is not None

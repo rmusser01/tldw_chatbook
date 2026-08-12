@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import base64
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from loguru import logger
 
@@ -210,6 +211,7 @@ class PendingAttachment:
     text_content: str | None = None
     original_size: int = 0
     processed_size: int = 0
+    attachment_id: str = field(default_factory=lambda: str(uuid4()))
 
     @property
     def label(self) -> str:

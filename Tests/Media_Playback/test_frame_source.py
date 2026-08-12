@@ -1,16 +1,16 @@
 """AvFrameSource probe/iteration against a real generated clip (task-3401.9)."""
 
 import pytest
+from loguru import logger
 from PIL import Image as PILImage
 
 from tldw_chatbook.Media_Playback.frame_source import AvFrameSource
-
-av = pytest.importorskip("av", reason="PyAV optional dependency not installed")
 
 
 @pytest.fixture
 def clip_path(tmp_path):
     """Write a tiny real mp4 (10 frames, 64x48, 10fps) using PyAV itself."""
+    av = pytest.importorskip("av", reason="PyAV optional dependency not installed")
     path = tmp_path / "fixture.mp4"
     container = av.open(str(path), mode="w")
     stream = container.add_stream("mpeg4", rate=10)
@@ -61,6 +61,88 @@ def test_iter_frames_yields_throttled_pil_frames(clip_path):
         assert stamps == sorted(stamps)
     finally:
         source.close()
+
+
+def test_iter_frames_propagates_decode_failure_without_logging_sensitive_details():
+    sentinel = "SENSITIVE-DECODE-SENTINEL"
+
+    class FailingContainer:
+        def decode(self, *, video):
+            assert video == 0
+            raise RuntimeError(sentinel)
+
+    source = AvFrameSource("unused.mp4")
+    source._container = FailingContainer()
+    source._stream = object()
+    source._opened = True
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            list(source.iter_frames())
+    finally:
+        logger.remove(sink_id)
+
+    assert exc_info.value.args == (sentinel,)
+    assert sentinel not in "".join(messages)
+
+
+def test_iter_frames_keeps_generator_exit_as_normal_stop():
+    class Frame:
+        pts = 0
+        time_base = 1
+
+        @staticmethod
+        def to_image():
+            return object()
+
+    class Container:
+        @staticmethod
+        def decode(*, video):
+            assert video == 0
+            yield Frame()
+
+    source = AvFrameSource("unused.mp4")
+    source._container = Container()
+    source._stream = object()
+    source._opened = True
+    frames = source.iter_frames()
+
+    next(frames)
+    with pytest.raises(GeneratorExit):
+        frames.throw(GeneratorExit)
+
+
+def test_close_clears_state_before_propagating_native_failure_and_is_idempotent():
+    sentinel = "SENSITIVE-CLOSE-SENTINEL"
+    source = AvFrameSource("unused.mp4")
+
+    class FailingContainer:
+        calls = 0
+
+        def close(self):
+            self.calls += 1
+            assert source._container is None
+            assert source._stream is None
+            assert source._opened is False
+            raise RuntimeError(sentinel)
+
+    container = FailingContainer()
+    source._container = container
+    source._stream = object()
+    source._opened = True
+    messages = []
+    sink_id = logger.add(messages.append, format="{message}")
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            source.close()
+        source.close()
+    finally:
+        logger.remove(sink_id)
+
+    assert exc_info.value.args == (sentinel,)
+    assert container.calls == 1
+    assert sentinel not in "".join(messages)
 
 
 def test_close_is_idempotent(clip_path):

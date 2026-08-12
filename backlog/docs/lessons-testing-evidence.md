@@ -2998,3 +2998,49 @@ test persists is what the app reads. And when a test needs a state — no provid
 `[library]` section, a feature off — **arrange it explicitly**; a state you inherited
 from an empty fixture is a state you never chose, and the day the fixture gets honest you
 cannot tell which of your assertions were ever real.
+
+---
+
+## A cancellation flag does not make check-and-commit atomic
+
+**TASK-3401.20, 2026-08-10.** The first generated-video teardown fix checked a
+screen-owned cancellation flag before publishing a managed file. Review found a
+real gap between that check and the filesystem commit: unmount could win in the
+middle, close the staged stream, and still leave a committed file without durable
+message metadata. A second version shielded `asyncio.to_thread()`, but cancellation
+of the awaiting coroutine did not stop the executor thread; releasing ownership in
+the async `finally` could still close bytes the thread was using. Timing-only tests
+missed both defects because they never proved which side had reached lock
+acquisition or the final commit boundary.
+
+**What to do.** Make the state transition linearizable: share one lock across the
+final active check and commit, and cancel under that same lock. When blocking work
+runs through `asyncio.to_thread()`, retain an explicit executor task and keep resource
+ownership until that task actually finishes; coroutine cancellation alone is not
+completion. Put durable commit-winning metadata finalization inside the shielded
+unit, but leave stale-screen UI refresh outside it and normally cancellable. Tests
+must use events or instrumented locks to force both cancel-wins and commit-wins
+orders, including cancellation after commit but before metadata append; a sleep and
+an assertion that “nothing happened yet” are not evidence of ordering.
+
+## Returning from a Textual handler does not make its detached child cancellation-safe
+
+**TASK-3402, 2026-08-11.** An H3 image edit originally awaited its whole operation
+inside the real `Button.Pressed` handler. That kept the screen's MessagePump occupied,
+so the visible Stop press could not run. Moving the operation into an app-owned task
+fixed Stop responsiveness, but the old “outer cancellation drains success” test kept
+passing without ever cancelling anything: it awaited the now-immediate handler return,
+then released and awaited the detached operation normally. Directly cancelling the
+actual operation task exposed the gap—its `asyncio.to_thread()` runner continued while
+the owning coroutine removed the registry entry before durable settlement. App
+shutdown had the same problem because Textual did not drain arbitrary tasks created
+with `asyncio.create_task()`.
+
+**What to do.** For a detached, app-owned operation, test and own cancellation at the
+detached task—not at a caller that has already returned. The owned task must shield the
+real runner, translate cancellation into the exact shared event, await the runner to
+settlement, and only then re-raise. The application shutdown path must explicitly
+cancel and drain those registered tasks before tearing down screens or persistence.
+Use barriers to prove both success-wins (durable append exactly once) and
+cancellation-wins (no card), and mutation-check that the test fails if shielding,
+event propagation, or shutdown draining is removed.

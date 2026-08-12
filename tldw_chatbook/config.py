@@ -1177,6 +1177,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     final_image_generation_settings_cli = get_toml_section("image_generation")
+    final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
     # lives under [first_run] in the raw TOML and was never projected through
     # here -- every other section the app reads via app_config (chat_defaults,
@@ -1355,6 +1356,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
+        "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
@@ -3343,6 +3345,21 @@ default_model = ""
 timeout_seconds = 120
 allowed_extra_params = []
 # swarm_token: secret, resolved via env/keyring precedence, not stored plaintext here
+
+# ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
+# enabled_backends above after reviewing this server boundary. Saving a base_url
+# in F9 Settings consents to sending the source image and instruction to that
+# exact origin. ComfyUI retains uploaded inputs and saved outputs according to
+# the server operator's policy.
+# [image_generation.comfyui]
+# base_url = "http://127.0.0.1:8188"
+# request_timeout_seconds = 30
+# connect_timeout_seconds = 5
+# poll_interval_seconds = 1
+# total_deadline_seconds = 1800
+# default_seed = -1                # omit to use packaged workflow
+# default_steps = 28               # omit to use packaged workflow
+# default_sampler = "euler"        # omit to use packaged workflow
 
 [image_generation.openrouter]
 base_url = "https://openrouter.ai/api/v1"

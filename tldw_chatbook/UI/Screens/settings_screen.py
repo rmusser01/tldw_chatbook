@@ -106,6 +106,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     _default_base_data_dir,
+    apply_settings_mutation_to_cli_config,
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_config_path,
@@ -209,7 +210,7 @@ from ...Video_Generation.config import (
 )
 from ...Image_Generation.config import (
     get_image_generation_config,
-    reset_image_generation_config_cache,
+    reset_image_generation_runtime,
 )
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
@@ -4241,15 +4242,12 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         raw_config = SettingsConfigAdapter().load()
         sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
-        adapter = SettingsConfigAdapter()
-        ok = True
-        if sections:
-            ok = adapter.save_sections(sections) and ok
-        for section, keys in deletions.items():
-            if keys:
-                ok = adapter.delete_values(section, keys) and ok
-        if ok:
-            reset_image_generation_config_cache()
+        mutation = apply_settings_mutation_to_cli_config(
+            sections, delete_keys=deletions
+        )
+        if mutation.file_replaced:
+            reset_image_generation_runtime()
+        ok = mutation.failure_phase is None
         self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
 
     async def _apply_image_gen_save_result(
@@ -13162,6 +13160,13 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static(
                 "Image Gen", classes="destination-section settings-column-title"
+            )
+            yield Static(
+                "ComfyUI sends the source image and instruction to the configured "
+                "server. ComfyUI retains inputs and saved outputs according to the "
+                "server operator's policy.",
+                id="settings-imagegen-comfyui-disclosure",
+                classes="settings-imagegen-hint",
             )
             image_gen_overlay = self._image_gen_overlay_values()
             self._queue_image_gen_select_suppression(image_gen_overlay)

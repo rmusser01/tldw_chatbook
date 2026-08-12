@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+
+JSONScalar = str | int | float | bool | None
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,7 @@ class ImageGenRequest:
     extra_params: dict[str, Any]
     request_id: str | None = None
     reference_image: ResolvedReferenceImage | None = None
+    cancel_event: threading.Event | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,7 @@ class ImageGenResult:
     #: sending) -- never a value merely echoed by a remote response unless
     #: verified. ``None`` when the adapter doesn't populate this (task-558).
     resolved_model: str | None = None
+    effective_params: Mapping[str, JSONScalar] | None = None
 
 
 class ImageGenerationAdapter(Protocol):
