@@ -9041,9 +9041,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 item_id=item_id,
             )
         except Exception:
-            logger.opt(exception=True).debug(
-                "Failed to load watchlist item content for the reader."
-            )
+            logger.debug("Failed to load watchlist item content for the reader.")
             if callable(notify):
                 notify(
                     "Failed to load this item's full content.",

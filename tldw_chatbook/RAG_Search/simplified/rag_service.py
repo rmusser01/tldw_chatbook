@@ -1576,12 +1576,12 @@ class RAGService:
             # the same disclosed path an empty FTS result already takes.
             logger.debug(
                 "Keyword search has no runnable sub-legs (selection={}, "
-                "scoped types={}); returning no results without a database "
+                "scoped id count={}); returning no results without a database "
                 "lookup.",
                 "all" if keyword_source_types is None else sorted(
                     str(value) for value in keyword_source_types
                 ),
-                None if allowlist_ids is None else sorted(allowlist_ids),
+                None if allowlist_ids is None else len(allowlist_ids),
             )
             return []
 

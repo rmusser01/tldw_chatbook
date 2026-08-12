@@ -800,7 +800,7 @@ async def index_entries(
             # unrecorded item is simply re-indexed on the next run.
             logger.warning(
                 f"Could not record indexing state for {len(indexed_records)} "
-                f"item(s) in this batch: {e}"
+                f"item(s) in this batch (error_type={type(e).__name__})"
             )
 
     return summary
