@@ -273,7 +273,8 @@ def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
     video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
     persisted_id = "persisted-video-message"
     stored_path = video_store.save(
-        persisted_id, _video_meta().name, b"video-bytes"
+        persisted_id, _video_meta().name, b"video-bytes",
+        extension="mp4",
     )
     message = ConsoleChatMessage(
         id="fresh-native-message",
@@ -302,7 +303,7 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
         video_metadata=_video_meta(),
     )
     assert message.persisted_message_id is None
-    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes")
+    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes", extension="mp4")
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_video_store = video_store
 

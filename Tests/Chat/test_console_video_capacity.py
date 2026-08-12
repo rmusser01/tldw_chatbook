@@ -512,8 +512,8 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
 ) -> None:
     config = SimpleNamespace(max_store_mb=1, retention="ttl", retention_ttl_hours=24)
     store = VideoStore(root=tmp_path / "videos", config=config)
-    old = store.save("old-message", "old", b"o" * (700 * 1024))
-    second_old = store.save("second-old", "second", b"s" * (200 * 1024))
+    old = store.save("old-message", "old", b"o" * (700 * 1024), extension="mp4")
+    second_old = store.save("second-old", "second", b"s" * (200 * 1024), extension="mp4")
     assert isinstance(old, Path)
     assert isinstance(second_old, Path)
     old_messages = [
@@ -1439,7 +1439,9 @@ async def test_managed_save_copy_failure_logs_and_notifies_without_private_detai
     private_error = f"PRIVATE-SENTINEL failure at {private_path}"
     notifications: list[tuple[str, str | None]] = []
     logged: list[str] = []
-    message = SimpleNamespace(video_metadata=SimpleNamespace(name="private-video"))
+    message = SimpleNamespace(
+        video_metadata=SimpleNamespace(name="private-video", container="mp4")
+    )
 
     class Harness:
         app_instance = SimpleNamespace(

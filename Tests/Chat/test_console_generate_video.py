@@ -197,7 +197,7 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert meta.width == 1920 and meta.height == 1080
     assert meta.container == "mp4"
     assert path.suffix == ".mp4"
-    assert store.resolve("msg-42", "a-red-dragon") == path
+    assert store.resolve("msg-42", "a-red-dragon", extension="mp4") == path
 
 
 def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_path):
