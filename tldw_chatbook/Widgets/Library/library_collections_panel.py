@@ -16,6 +16,14 @@ LIBRARY_COLLECTIONS_STATUS_LINE = (
 )
 
 
+def _compact_receipt_name(value: str, limit: int = 42) -> str:
+    """Keep a Collection name literal, single-line, and bounded."""
+    normalized = " ".join(value.splitlines()).strip() or "Untitled"
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "…"
+
+
 class LibraryCollectionsPanel(Vertical):
     """Render-only Library Collections list, detail, and form controls."""
 
@@ -83,19 +91,15 @@ class LibraryCollectionsPanel(Vertical):
                         ),
                     )
                 if self.delete_pending:
-                    # task-14901 (ADR-055): the confirm affordance states
-                    # the consequence -- members survive, the Collection
-                    # itself has no recovery surface. Keep in lockstep with
-                    # the in-place patcher in ``library_screen.py``
-                    # (``_refresh_collections_panel_action_state_widgets``).
                     yield Button(
                         "Confirm delete",
                         id="library-confirm-delete-collection",
                         tooltip=(
                             "Delete the selected local Collection. Its items "
-                            "stay in the Library; the deletion cannot be "
-                            "undone from Library."
+                            "stay in the Library. Undo will be available in "
+                            "this Collections panel."
                         ),
+                        disabled=self.state.mutation_in_flight,
                         classes="library-source-action library-collection-form-action",
                     )
 
@@ -110,6 +114,34 @@ class LibraryCollectionsPanel(Vertical):
             classes="destination-section",
             markup=False,
         )
+        receipt = self.state.delete_receipt
+        if receipt is not None:
+            receipt_row = Horizontal(
+                id="library-collections-delete-receipt", classes="ds-toolbar"
+            )
+            receipt_row.styles.height = "auto"
+            with receipt_row:
+                yield Static(
+                    "✓ deleted · Collection · "
+                    f"{_compact_receipt_name(receipt.name)}",
+                    id="library-collections-delete-receipt-copy",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
+                yield Button(
+                    "Undo",
+                    id="library-collections-delete-undo",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.state.mutation_in_flight,
+                )
+                yield Button(
+                    "Dismiss",
+                    id="library-collections-delete-receipt-dismiss",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.state.mutation_in_flight,
+                )
         if self.state.status == "error":
             yield Static(
                 self.state.recovery_copy or self.state.error_message,

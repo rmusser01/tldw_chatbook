@@ -67,6 +67,7 @@ from ...Library.export_progress import (
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import (
     LibraryCollectionActionState,
+    LibraryCollectionDeleteReceipt,
     LibraryCollectionsPanelState,
 )
 from ...Library.library_conversations_state import build_library_conversations_state
@@ -2625,6 +2626,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
+        self._library_collection_delete_receipt: LibraryCollectionDeleteReceipt | None = (
+            None
+        )
+        self._library_collections_mutation_in_flight = False
         self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = (
             None
         )
@@ -7400,6 +7405,8 @@ class LibraryScreen(BaseAppScreen):
             error_message=self._library_collections_error,
             create_name=self._library_collection_name_input,
             rename_name=self._library_collection_name_input,
+            delete_receipt=self._library_collection_delete_receipt,
+            mutation_in_flight=self._library_collections_mutation_in_flight,
             sync_profile_summary=self._library_sync_profile_summary,
         )
 
@@ -25104,6 +25111,23 @@ class LibraryScreen(BaseAppScreen):
         else:
             self.refresh(recompose=True)
 
+    def _claim_library_collections_mutation(self) -> bool:
+        """Admit one owner of Collection list/count/receipt mutations.
+
+        Returns:
+            ``True`` when the caller owns mutation state, otherwise ``False``.
+        """
+        if self._library_collections_mutation_in_flight:
+            return False
+        self._library_collections_mutation_in_flight = True
+        return True
+
+    def _release_library_collections_mutation(self) -> None:
+        """Release Collection mutation ownership and repaint action gates."""
+        self._library_collections_mutation_in_flight = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS or not list(
             self.query("#library-collections-panel")
@@ -25146,9 +25170,10 @@ class LibraryScreen(BaseAppScreen):
                         # compose-side copy in ``LibraryCollectionsPanel``.
                         tooltip=(
                             "Delete the selected local Collection. Its items "
-                            "stay in the Library; the deletion cannot be "
-                            "undone from Library."
+                            "stay in the Library. Undo will be available in "
+                            "this Collections panel."
                         ),
+                        disabled=self._library_collections_mutation_in_flight,
                     )
                 )
 
@@ -25685,13 +25710,15 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-create-collection")
     async def create_library_collection(self, event: Button.Pressed) -> None:
         event.stop()
+        if not self._claim_library_collections_mutation():
+            return
         service = getattr(self.app_instance, "library_collections_service", None)
         create_collection = getattr(service, "create_collection", None)
-        if not callable(create_collection):
-            self._library_collections_error = "Library Collections are unavailable."
-            await self._sync_collections_panel(refresh_snapshot=False)
-            return
         try:
+            if not callable(create_collection):
+                self._library_collections_error = "Library Collections are unavailable."
+                await self._sync_collections_panel(refresh_snapshot=False)
+                return
             created = await self._run_library_service_call(
                 create_collection,
                 self._library_collection_name_input,
@@ -25700,26 +25727,31 @@ class LibraryScreen(BaseAppScreen):
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
-        self._library_collections_selected_id = (
-            getattr(created, "collection_id", "") or ""
-        )
-        self._library_collection_name_input = ""
-        self._library_collection_description_input = ""
-        self._library_collection_pending_delete_id = ""
-        await self._sync_collections_panel(refresh_snapshot=True)
+        else:
+            self._library_collections_selected_id = (
+                getattr(created, "collection_id", "") or ""
+            )
+            self._library_collection_name_input = ""
+            self._library_collection_description_input = ""
+            self._library_collection_pending_delete_id = ""
+            await self._sync_collections_panel(refresh_snapshot=True)
+        finally:
+            self._release_library_collections_mutation()
 
     @on(Button.Pressed, "#library-rename-collection")
     async def rename_library_collection(self, event: Button.Pressed) -> None:
         event.stop()
         if not self._library_collections_selected_id:
             return
+        if not self._claim_library_collections_mutation():
+            return
         service = getattr(self.app_instance, "library_collections_service", None)
         rename_collection = getattr(service, "rename_collection", None)
-        if not callable(rename_collection):
-            self._library_collections_error = "Library Collections are unavailable."
-            await self._sync_collections_panel(refresh_snapshot=False)
-            return
         try:
+            if not callable(rename_collection):
+                self._library_collections_error = "Library Collections are unavailable."
+                await self._sync_collections_panel(refresh_snapshot=False)
+                return
             renamed = await self._run_library_service_call(
                 rename_collection,
                 self._library_collections_selected_id,
@@ -25729,19 +25761,26 @@ class LibraryScreen(BaseAppScreen):
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
-        self._library_collections_selected_id = (
-            getattr(renamed, "collection_id", "") or ""
-        )
-        self._library_collection_name_input = ""
-        self._library_collection_description_input = ""
-        self._library_collection_pending_delete_id = ""
-        await self._sync_collections_panel(refresh_snapshot=True)
+        else:
+            self._library_collections_selected_id = (
+                getattr(renamed, "collection_id", "") or ""
+            )
+            self._library_collection_name_input = ""
+            self._library_collection_description_input = ""
+            self._library_collection_pending_delete_id = ""
+            await self._sync_collections_panel(refresh_snapshot=True)
+        finally:
+            self._release_library_collections_mutation()
 
     @on(Button.Pressed, "#library-delete-collection")
     async def arm_library_collection_delete(self, event: Button.Pressed) -> None:
         event.stop()
-        if not self._library_collections_selected_id:
+        if (
+            not self._library_collections_selected_id
+            or self._library_collections_mutation_in_flight
+        ):
             return
+        self._library_collection_delete_receipt = None
         self._library_collection_pending_delete_id = (
             self._library_collections_selected_id
         )
@@ -25751,29 +25790,129 @@ class LibraryScreen(BaseAppScreen):
     async def confirm_library_collection_delete(self, event: Button.Pressed) -> None:
         event.stop()
         target_id = self._library_collection_pending_delete_id
-        if not target_id:
+        if not target_id or not self._claim_library_collections_mutation():
             return
+        target = next(
+            (
+                record
+                for record in self._library_collections_records
+                if _record_value(record, "collection_id") == target_id
+            ),
+            None,
+        )
+        target_name = _record_value(target, "name") or "Untitled"
         service = getattr(self.app_instance, "library_collections_service", None)
         delete_collection = getattr(service, "delete_collection", None)
-        if not callable(delete_collection):
-            self._library_collections_error = "Library Collections are unavailable."
-            await self._sync_collections_panel(refresh_snapshot=False)
-            return
         try:
+            if not callable(delete_collection):
+                self._library_collections_error = "Library Collections are unavailable."
+                await self._sync_collections_panel(refresh_snapshot=False)
+                return
             deleted = await self._run_library_service_call(delete_collection, target_id)
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
-        if not deleted:
-            self._notify_library_collections_warning("Failed to delete Collection.")
+        else:
+            if not deleted:
+                self._notify_library_collections_warning("Failed to delete Collection.")
+                return
+            self._library_collections_selected_id = ""
+            self._library_collection_pending_delete_id = ""
+            self._library_collection_delete_receipt = LibraryCollectionDeleteReceipt(
+                collection_id=target_id,
+                name=target_name,
+            )
+            await self._sync_collections_panel(refresh_snapshot=True)
+        finally:
+            self._release_library_collections_mutation()
+
+    @on(Button.Pressed, "#library-collections-delete-undo")
+    def handle_library_collection_delete_undo(self, event: Button.Pressed) -> None:
+        """Start restoration for the Collection named by the receipt.
+
+        Args:
+            event: Press of the receipt's Undo button.
+
+        Returns:
+            None.
+        """
+        event.stop()
+        receipt = self._library_collection_delete_receipt
+        if receipt is None or not self._claim_library_collections_mutation():
             return
-        self._library_collections_selected_id = ""
-        self._library_collection_pending_delete_id = ""
-        await self._sync_collections_panel(refresh_snapshot=True)
+        self.refresh(recompose=True)
+        self.run_worker(
+            self._undo_library_collection_delete(receipt),
+            exclusive=True,
+            group="library_collection_mutation",
+        )
+
+    @on(Button.Pressed, "#library-collections-delete-receipt-dismiss")
+    def handle_library_collection_delete_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        """Dismiss the Collection recovery receipt without restoring it.
+
+        Args:
+            event: Press of the receipt's Dismiss button.
+
+        Returns:
+            None.
+        """
+        event.stop()
+        if self._library_collections_mutation_in_flight:
+            return
+        self._library_collection_delete_receipt = None
+        self.refresh(recompose=True)
+
+    async def _undo_library_collection_delete(
+        self, receipt: LibraryCollectionDeleteReceipt
+    ) -> None:
+        """Restore one Collection and refresh its retained membership count.
+
+        Args:
+            receipt: Stable Collection identity captured after deletion.
+
+        Returns:
+            None. Success or failure is reflected in panel state and feedback.
+        """
+        restored = False
+        try:
+            service = getattr(self.app_instance, "library_collections_service", None)
+            restore_collection = getattr(service, "restore_collection", None)
+            if not callable(restore_collection):
+                raise LibraryCollectionsServiceError(
+                    "Collection restore is unavailable."
+                )
+            result = await self._run_library_service_call(
+                restore_collection,
+                receipt.collection_id,
+            )
+            restored_id = getattr(result, "collection_id", "")
+            if restored_id != receipt.collection_id:
+                raise LibraryCollectionsServiceError(
+                    "Collection restore returned a different record."
+                )
+            if self._library_collection_delete_receipt == receipt:
+                self._library_collection_delete_receipt = None
+            self._library_collections_selected_id = receipt.collection_id
+            restored = True
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to restore Library Collection {receipt.collection_id!r}."
+            )
+            self._notify_library_collections_warning(
+                "Could not restore this Collection; the receipt is still available."
+            )
+        finally:
+            self._library_collections_mutation_in_flight = False
+            await self._sync_collections_panel(refresh_snapshot=restored)
 
     @on(Button.Pressed, ".library-collection-row")
     async def select_library_collection(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._library_collections_mutation_in_flight:
+            return
         collection_id = getattr(event.button, "collection_id", "")
         if not collection_id:
             return
