@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
@@ -589,3 +590,43 @@ def test_workflow_has_no_model_download_runtime_smoke_or_broad_test_command() ->
     assert "pytest Tests/" not in workflow.replace(
         "python -m pytest ", "python -m pytest\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name"),
+    [
+        (
+            "Tests/Library/test_library_ingest_runner.py",
+            "test_dictation_reservation_gates_only_heavy_library_work",
+        ),
+        (
+            "Tests/Library/test_library_ingest_runner.py",
+            "test_library_terminal_hands_executor_to_pending_dictation_before_top_up",
+        ),
+        (
+            "Tests/UI/test_console_dictation.py",
+            "test_console_mic_has_strict_wall_timer_and_visible_limit_transition",
+        ),
+        (
+            "Tests/UI/test_console_hands_free_wiring.py",
+            "test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press",
+        ),
+    ],
+)
+def test_windows_async_evidence_nodes_opt_into_internal_loopback_only(
+    relative_path: str,
+    function_name: str,
+) -> None:
+    """Windows Proactor setup needs the suite's established loopback opt-in."""
+    tree = ast.parse((PROJECT_ROOT / relative_path).read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+
+    assert len(functions) == 1
+    assert "pytest.mark.allow_network" in {
+        ast.unparse(decorator) for decorator in functions[0].decorator_list
+    }

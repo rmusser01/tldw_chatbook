@@ -190,6 +190,8 @@ async def test_console_mic_inserts_at_caret_without_sending(monkeypatch):
         assert fake.stop_calls == 1
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_console_mic_has_strict_wall_timer_and_visible_limit_transition(
     monkeypatch,

@@ -1794,6 +1794,8 @@ async def test_executor_heavy_job_leaves_remaining_pool_slots_for_documents(
         assert app.library_ingest_jobs.counts()["parsing"] == 3
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_dictation_reservation_gates_only_heavy_library_work(
     tmp_path: Path,
@@ -1971,6 +1973,8 @@ async def test_dictation_race_defers_claimed_library_job_without_failure(
         assert still_parsing.state is IngestJobState.PARSING
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_library_terminal_hands_executor_to_pending_dictation_before_top_up(
     tmp_path: Path,

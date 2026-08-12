@@ -1635,6 +1635,8 @@ async def _wait_for(condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT)
     raise AssertionError(f"condition never became true: {condition!r}")
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
     monkeypatch,
