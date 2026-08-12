@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 
 from loguru import logger
 from rich.text import Text
-from textual import events, on, work
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.compose import compose as _drain_compose_result
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -282,6 +283,48 @@ class ProviderChoiceOption(Option):
         self.provider_key: str | None = provider_key
 
 
+class ProviderChoiceList(OptionList):
+    """Provider options with Space activation and post-navigation signaling."""
+
+    BINDINGS = [Binding("space", "select", "Select", show=False)]
+
+    class Interacted(Message):
+        """A keyboard navigation action has resolved against the list."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._provider_interaction_ready = False
+        super().__init__(*args, **kwargs)
+        self._provider_interaction_ready = True
+
+    def _post_navigation_interaction(self) -> None:
+        if self._provider_interaction_ready:
+            self.post_message(self.Interacted())
+
+    def action_cursor_up(self) -> None:
+        super().action_cursor_up()
+        self._post_navigation_interaction()
+
+    def action_cursor_down(self) -> None:
+        super().action_cursor_down()
+        self._post_navigation_interaction()
+
+    def action_first(self) -> None:
+        super().action_first()
+        self._post_navigation_interaction()
+
+    def action_last(self) -> None:
+        super().action_last()
+        self._post_navigation_interaction()
+
+    def action_page_up(self) -> None:
+        super().action_page_up()
+        self._post_navigation_interaction()
+
+    def action_page_down(self) -> None:
+        super().action_page_down()
+        self._post_navigation_interaction()
+
+
 def _provider_group_option_id(title: str) -> str:
     """Return the deterministic option ID for a provider group heading."""
     return "group-" + "-".join(title.casefold().split())
@@ -313,10 +356,6 @@ def _provider_options(
 
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
-
-    _PROVIDER_NAVIGATION_KEYS = frozenset(
-        {"down", "end", "home", "pagedown", "pageup", "up"}
-    )
 
     def __init__(
         self,
@@ -377,7 +416,7 @@ class ProviderStep(SetupStep):
                 "Use this server", id="setup-provider-use-detected",
                 classes="hidden", variant="primary",
             )
-            yield OptionList(
+            yield ProviderChoiceList(
                 *_provider_options(entries),
                 id="setup-provider-choice",
                 classes="setup-choice-list",
@@ -551,24 +590,25 @@ class ProviderStep(SetupStep):
 
     def _select_provider_option(self, option: Option) -> None:
         provider_key = getattr(option, "provider_key", None)
-        if provider_key is not None and not option.disabled:
+        if (
+            provider_key is not None
+            and not option.disabled
+            and provider_key != self.selected_provider_key
+        ):
             self.select_provider(provider_key)
-
-    def on_key(self, event: events.Key) -> None:
-        """Record user navigation before the OptionList binding runs."""
-        if event.key not in self._PROVIDER_NAVIGATION_KEYS:
-            return
-        try:
-            choices = self.query_one("#setup-provider-choice", OptionList)
-        except Exception:
-            return
-        if self.app.focused is choices:
-            self._provider_choice_interacted = True
 
     @on(OptionList.OptionHighlighted, "#setup-provider-choice")
     def _on_provider_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if self._provider_choice_interacted:
             self._select_provider_option(event.option)
+
+    @on(ProviderChoiceList.Interacted)
+    def _on_provider_list_interacted(self) -> None:
+        self._provider_choice_interacted = True
+        choices = self.query_one("#setup-provider-choice", ProviderChoiceList)
+        highlighted = choices.highlighted_option
+        if highlighted is not None:
+            self._select_provider_option(highlighted)
 
     @on(OptionList.OptionSelected, "#setup-provider-choice")
     def _on_provider_chosen(self, event: OptionList.OptionSelected) -> None:

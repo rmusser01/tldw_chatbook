@@ -475,6 +475,48 @@ async def test_provider_step_untouched_mount_does_not_select_or_commit():
         wizard.commit_config.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_provider_space_only_selects_initial_provider_and_commits():
+    step = _provider_step()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        assert step.selected_provider_key == ""
+
+        choices.focus()
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert step.selected_provider_key == "openai"
+        ok, error = await step.commit()
+        assert ok, error
+        committed = step.wizard.commit_config.call_args.args[0]
+        assert committed["chat_defaults"]["provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_provider_home_on_initial_row_selects_and_commits_openai():
+    step = _provider_step(environ={"OPENAI_API_KEY": "sk-x"})
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        assert step.selected_provider_key == ""
+
+        choices.focus()
+        await pilot.press("home")
+        await pilot.pause()
+
+        assert step.selected_provider_key == "openai"
+        status = step.query_one("#setup-provider-key-status", Static)
+        assert "environment" in str(status.render()).lower()
+        ok, error = await step.commit()
+        assert ok, error
+        committed = step.wizard.commit_config.call_args.args[0]
+        assert committed["chat_defaults"]["provider"] == "openai"
+
+
 def test_provider_grouping_orders_popular_then_other_nonempty_sections():
     """Mirror settings_screen.py:6423's grouping rule (task-6 brief interface)."""
     from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
