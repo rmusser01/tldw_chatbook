@@ -188,6 +188,7 @@ def normalize_message_row(
         "image_mime_type": message_row.get("image_mime_type"),
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
+        "provider_continuation_json": message_row.get("provider_continuation_json"),
         "topology": topology,
         "variant": variant,
     }

@@ -78,6 +78,24 @@ _UNSET = object()
 CONVERSATION_SCOPE_ALL = "all"
 
 
+def _canonical_provider_continuation_json(value: object) -> str:
+    """Return canonical private JSON or a context-free public input error."""
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationValidationError,
+        dump_provider_continuation_json,
+        parse_provider_continuation_json,
+    )
+
+    try:
+        checkpoint = parse_provider_continuation_json(value)
+        canonical = dump_provider_continuation_json(checkpoint)
+        if canonical is not None:
+            return canonical
+    except ContinuationValidationError:
+        pass
+    raise InputError("Invalid provider continuation data.") from None
+
+
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
@@ -163,7 +181,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 36  # Local note folders and memberships (TASK-15705).
+    _CURRENT_SCHEMA_VERSION = 37  # Durable provider continuation on assistant messages.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4896,6 +4914,7 @@ UPDATE db_schema_version
                 / "migrations"
                 / "chachanotes_v35_to_v36_note_folders.sql"
             )
+
             with self.transaction() as cursor:
                 pending = ""
                 for line in migration_path.read_text(encoding="utf-8").splitlines(
@@ -4920,6 +4939,55 @@ UPDATE db_schema_version
         except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
             raise SchemaError(
                 f"Migration from V35 to V36 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v36_to_v37(self, conn: sqlite3.Connection) -> None:
+        """Add private provider continuation to the owning message row."""
+        if self._get_db_version(conn) != 36:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V36→V37] Migration requires schema version 36"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v36_to_v37_provider_continuation.sql"
+        )
+        try:
+            existing_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(messages)")
+            }
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    statement = pending
+                    pending = ""
+                    if (
+                        "provider_continuation_json" in existing_columns
+                        and statement.lstrip().startswith("-- Migration:")
+                        and "ALTER TABLE messages ADD COLUMN" in statement
+                    ):
+                        continue
+                    cursor.execute(statement)
+                if pending.strip():
+                    raise SchemaError(
+                        "Provider continuation migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 37:
+                    raise SchemaError(
+                        "Provider continuation schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V36 to V37 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -5089,6 +5157,7 @@ UPDATE db_schema_version
                     33: self._migrate_from_v33_to_v34,
                     34: self._migrate_from_v34_to_v35,
                     35: self._migrate_from_v35_to_v36,
+                    36: self._migrate_from_v36_to_v37,
                 }
 
                 if current_db_version == 0:
@@ -7726,7 +7795,7 @@ UPDATE db_schema_version
             "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
             "m.version, m.client_id, m.deleted, m.feedback, m.role, "
             "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants, "
-            "m.usage_json, m.metadata_json "
+            "m.usage_json, m.metadata_json, m.provider_continuation_json "
             "FROM messages m "
             "JOIN conversations c ON m.conversation_id = c.id "
             "WHERE m.conversation_id = ? AND m.deleted = 0 "
@@ -7773,7 +7842,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7807,7 +7876,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -8580,18 +8649,6 @@ UPDATE db_schema_version
         for field in required_fields:
             if field not in msg_data:  # Removed "not msg_data[field]" for 'content'
                 raise InputError(f"Required field '{field}' is missing for message.")
-        if not msg_data.get("content") and not msg_data.get("image_data"):
-            raise InputError("Message must have text content or image data.")
-        if msg_data.get("image_data") and not msg_data.get("image_mime_type"):
-            raise InputError("image_mime_type is required if image_data is provided.")
-
-        client_id = msg_data.get("client_id") or self.client_id
-        if not client_id:
-            raise InputError("Client ID is required for message.")
-
-        now = self._get_current_utc_timestamp_iso()
-        timestamp = msg_data.get("timestamp") or now
-
         # Determine role from sender or use provided role
         role = msg_data.get("role")
         if not role:
@@ -8608,12 +8665,40 @@ UPDATE db_schema_version
             else:
                 role = "assistant"  # Default for character names
 
+        provider_continuation_json = None
+        if msg_data.get("provider_continuation_json") is not None:
+            if role != "assistant":
+                raise InputError(
+                    "Provider continuation requires an assistant message."
+                ) from None
+            provider_continuation_json = _canonical_provider_continuation_json(
+                msg_data["provider_continuation_json"]
+            )
+
+        if (
+            not msg_data.get("content")
+            and not msg_data.get("image_data")
+            and provider_continuation_json is None
+        ):
+            raise InputError(
+                "Message must have text content, image data, or assistant continuation."
+            )
+        if msg_data.get("image_data") and not msg_data.get("image_mime_type"):
+            raise InputError("image_mime_type is required if image_data is provided.")
+
+        client_id = msg_data.get("client_id") or self.client_id
+        if not client_id:
+            raise InputError("Client ID is required for message.")
+
+        now = self._get_current_utc_timestamp_iso()
+        timestamp = msg_data.get("timestamp") or now
+
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
                                       timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
+                                      usage_json, metadata_json, provider_continuation_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
                 """
         params = (
             msg_id,
@@ -8630,6 +8715,7 @@ UPDATE db_schema_version
             role,
             msg_data.get("usage_json"),
             msg_data.get("metadata_json"),
+            provider_continuation_json,
         )
         try:
             with self.transaction():
@@ -8666,6 +8752,200 @@ UPDATE db_schema_version
             logger.error(f"Database error adding message: {e}")
             raise
 
+    def create_assistant_with_continuation(
+        self,
+        *,
+        message_id: str,
+        conversation_id: str,
+        parent_message_id: str | None,
+        content: str,
+        provider_continuation_json: str,
+        expected_conversation_version: int | None = None,
+    ) -> str:
+        """Atomically create one assistant owner and its private checkpoint."""
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(conversation_id) is not str or not conversation_id.strip():
+            raise InputError("Conversation ID is required.")
+        if parent_message_id is not None and (
+            type(parent_message_id) is not str or not parent_message_id.strip()
+        ):
+            raise InputError("Parent message ID must be a non-empty string or None.")
+        if type(content) is not str:
+            raise InputError("Assistant content must be text.")
+        if expected_conversation_version is not None and (
+            type(expected_conversation_version) is not int
+            or expected_conversation_version <= 0
+        ):
+            raise InputError("Expected conversation version must be positive.")
+        canonical = _canonical_provider_continuation_json(provider_continuation_json)
+        now = self._get_current_utc_timestamp_iso()
+
+        try:
+            with self.transaction() as conn:
+                conversation = conn.execute(
+                    "SELECT version, deleted FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                if conversation is None or conversation["deleted"]:
+                    raise InputError("Conversation not found or deleted.")
+                if (
+                    expected_conversation_version is not None
+                    and conversation["version"] != expected_conversation_version
+                ):
+                    raise ConflictError(
+                        "Conversation version conflict.",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+                if parent_message_id is not None:
+                    parent = conn.execute(
+                        "SELECT conversation_id, deleted FROM messages WHERE id = ?",
+                        (parent_message_id,),
+                    ).fetchone()
+                    if (
+                        parent is None
+                        or parent["deleted"]
+                        or parent["conversation_id"] != conversation_id
+                    ):
+                        raise InputError(
+                            "Parent message must be active in the same conversation."
+                        )
+
+                conn.execute(
+                    """
+                    INSERT INTO messages (
+                        id, conversation_id, parent_message_id, sender, content,
+                        image_data, image_mime_type, timestamp, ranking,
+                        last_modified, client_id, version, deleted, role,
+                        usage_json, metadata_json, provider_continuation_json
+                    ) VALUES (?, ?, ?, 'assistant', ?, NULL, NULL, ?, NULL,
+                              ?, ?, 1, 0, 'assistant', NULL, NULL, ?)
+                    """,
+                    (
+                        message_id,
+                        conversation_id,
+                        parent_message_id,
+                        content,
+                        now,
+                        now,
+                        self.client_id,
+                        canonical,
+                    ),
+                )
+            return message_id
+        except sqlite3.IntegrityError as exc:
+            if "messages.id" in str(exc):
+                raise ConflictError(
+                    "Message ID already exists.",
+                    entity="messages",
+                    entity_id=message_id,
+                ) from None
+            raise CharactersRAGDBError(
+                "Database integrity error creating assistant continuation."
+            ) from None
+        except sqlite3.Error:
+            raise CharactersRAGDBError(
+                "Database error creating assistant continuation."
+            ) from None
+
+    def update_provider_continuation(
+        self,
+        *,
+        message_id: str,
+        expected_message_version: int,
+        provider_continuation_json: str | None,
+        content: str | None = None,
+        deleted: bool | None = None,
+    ) -> bool:
+        """Atomically replace one assistant owner's whole private checkpoint."""
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(expected_message_version) is not int or expected_message_version <= 0:
+            raise InputError("Expected message version must be positive.")
+        if content is not None and type(content) is not str:
+            raise InputError("Assistant content must be text or None.")
+        if deleted is not None and type(deleted) is not bool:
+            raise InputError("Deleted must be a boolean or None.")
+        canonical = (
+            None
+            if provider_continuation_json is None
+            else _canonical_provider_continuation_json(provider_continuation_json)
+        )
+
+        try:
+            with self.transaction() as conn:
+                current = conn.execute(
+                    """
+                    SELECT role, content, deleted, version
+                      FROM messages
+                     WHERE id = ?
+                    """,
+                    (message_id,),
+                ).fetchone()
+                if current is None:
+                    raise ConflictError(
+                        "Message not found.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                if current["version"] != expected_message_version:
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                if current["role"] != "assistant":
+                    raise InputError(
+                        "Provider continuation requires an assistant message."
+                    )
+
+                next_content = current["content"] if content is None else content
+                if canonical is None:
+                    required_deleted = not bool(next_content)
+                    if deleted is not None and deleted != required_deleted:
+                        raise InputError(
+                            "Deleted state conflicts with continuation discard semantics."
+                        )
+                    next_deleted = required_deleted
+                else:
+                    next_deleted = current["deleted"] if deleted is None else deleted
+
+                now = self._get_current_utc_timestamp_iso()
+                cursor = conn.execute(
+                    """
+                    UPDATE messages
+                       SET provider_continuation_json = ?, content = ?, deleted = ?,
+                           last_modified = ?, version = ?, client_id = ?
+                     WHERE id = ? AND version = ?
+                    """,
+                    (
+                        canonical,
+                        next_content,
+                        int(next_deleted),
+                        now,
+                        expected_message_version + 1,
+                        self.client_id,
+                        message_id,
+                        expected_message_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+            return True
+        except sqlite3.IntegrityError:
+            raise CharactersRAGDBError(
+                "Database integrity error updating assistant continuation."
+            ) from None
+        except sqlite3.Error:
+            raise CharactersRAGDBError(
+                "Database error updating assistant continuation."
+            ) from None
+
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific message by its UUID.
@@ -8682,7 +8962,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -9086,7 +9366,7 @@ UPDATE db_schema_version
                    {image_col}, m.image_mime_type, m.timestamp, m.ranking,
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -9144,6 +9424,7 @@ UPDATE db_schema_version
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                        m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
+                       m.provider_continuation_json,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
@@ -9749,7 +10030,8 @@ UPDATE db_schema_version
                 cursor = conn.execute(
                     """
                     SELECT id, content, sender, role, variant_number, is_selected_variant,
-                           total_variants, timestamp, last_modified, version, feedback
+                           total_variants, timestamp, last_modified, version, feedback,
+                           provider_continuation_json
                     FROM messages 
                     WHERE (id = ? OR variant_of = ?) AND deleted = 0
                     ORDER BY variant_number

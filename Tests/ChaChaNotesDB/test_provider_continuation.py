@@ -1,0 +1,422 @@
+"""Canonical provider continuation persistence on exact message owners."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.Chat.provider_continuation import (
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    ConflictError,
+    InputError,
+)
+
+
+def _checkpoint_json(*, canary: str = "private reasoning") -> str:
+    return json.dumps(
+        {
+            "rounds": [
+                {
+                    "calls": [
+                        {
+                            "state": "pending",
+                            "arguments": '{"expression":"2+2"}',
+                            "name": "calculator",
+                            "call_id": "call_1",
+                        }
+                    ],
+                    "reasoning_blocks": [canary],
+                    "assistant_content": "",
+                }
+            ],
+            "state": "active",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-v4-flash",
+            "protocol": "responses",
+            "provider": "deepseek",
+            "checkpoint_revision": 1,
+            "schema_version": 1,
+        },
+        indent=2,
+    )
+
+
+def _db_with_conversation(tmp_path: Path) -> tuple[CharactersRAGDB, str]:
+    db = CharactersRAGDB(tmp_path / "continuation.db", client_id="continuation-test")
+    conversation_id = db.add_conversation({"title": "continuation"})
+    assert conversation_id is not None
+    return db, conversation_id
+
+
+def test_add_message_canonicalizes_and_round_trips_every_message_projection(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    raw = _checkpoint_json()
+    canonical = dump_provider_continuation_json(parse_provider_continuation_json(raw))
+
+    root_id = db.add_message(
+        {
+            "id": "assistant-owner",
+            "conversation_id": conversation_id,
+            "parent_message_id": None,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "",
+            "provider_continuation_json": raw,
+        }
+    )
+    child_id = db.add_message(
+        {
+            "id": "assistant-child",
+            "conversation_id": conversation_id,
+            "parent_message_id": root_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "visible",
+            "provider_continuation_json": raw,
+        }
+    )
+
+    assert root_id == "assistant-owner"
+    assert db.get_message_by_id(root_id)["provider_continuation_json"] == canonical
+    assert (
+        db.get_latest_message_for_conversation(conversation_id)[
+            "provider_continuation_json"
+        ]
+        == canonical
+    )
+    assert {
+        row["id"]: row["provider_continuation_json"]
+        for row in db.get_messages_for_conversation(conversation_id)
+    } == {root_id: canonical, child_id: canonical}
+    assert (
+        db.get_root_messages_for_conversation(conversation_id, limit=10, offset=0)[0][
+            "provider_continuation_json"
+        ]
+        == canonical
+    )
+    assert (
+        db.get_messages_for_conversation_by_parent_ids(conversation_id, [root_id])[0][
+            "provider_continuation_json"
+        ]
+        == canonical
+    )
+    assert db.search_messages_by_content("private reasoning") == []
+
+
+def test_add_message_rejects_invalid_or_wrong_owner_without_private_error_context(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    canary = "PRIVATE-CANARY-DO-NOT-LOG"
+
+    with pytest.raises(InputError) as invalid:
+        db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "visible",
+                "provider_continuation_json": canary,
+            }
+        )
+    assert canary not in str(invalid.value)
+    assert invalid.value.__cause__ is None
+    assert invalid.value.__context__ is None
+
+    with pytest.raises(InputError):
+        db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "",
+                "provider_continuation_json": _checkpoint_json(),
+            }
+        )
+    with pytest.raises(InputError):
+        db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "",
+            }
+        )
+
+
+def _message_sync_entries(
+    db: CharactersRAGDB, message_id: str
+) -> list[dict[str, object]]:
+    rows = db.get_connection().execute(
+        """
+        SELECT operation, version, payload
+          FROM sync_log
+         WHERE entity = 'messages' AND entity_id = ?
+         ORDER BY change_id
+        """,
+        (message_id,),
+    )
+    return [
+        {
+            "operation": row["operation"],
+            "version": row["version"],
+            "payload": json.loads(row["payload"]),
+        }
+        for row in rows
+    ]
+
+
+def test_atomic_create_preserves_id_version_and_exactly_one_sync_intent(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    conversation = db.get_conversation_by_id(conversation_id)
+    assert conversation is not None
+    message_id = "c15930c4-7596-4475-bdbf-742ed76d7c89"
+    raw = _checkpoint_json()
+    canonical = dump_provider_continuation_json(parse_provider_continuation_json(raw))
+
+    created = db.create_assistant_with_continuation(
+        message_id=message_id,
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="",
+        provider_continuation_json=raw,
+        expected_conversation_version=conversation["version"],
+    )
+
+    assert created == message_id
+    row = db.get_message_by_id(message_id)
+    assert row is not None
+    assert row["version"] == 1
+    assert row["provider_continuation_json"] == canonical
+    entries = _message_sync_entries(db, message_id)
+    assert len(entries) == 1
+    assert entries[0]["operation"] == "create"
+    assert entries[0]["version"] == 1
+    assert entries[0]["payload"]["provider_continuation_json"] == canonical
+
+    with pytest.raises(ConflictError):
+        db.create_assistant_with_continuation(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="",
+            provider_continuation_json=raw,
+        )
+    assert len(_message_sync_entries(db, message_id)) == 1
+
+
+def test_atomic_create_stale_invalid_and_crash_paths_leave_no_row_or_intent(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    conversation = db.get_conversation_by_id(conversation_id)
+    assert conversation is not None
+    raw = _checkpoint_json(canary="PRIVATE-CREATE-CANARY")
+
+    with pytest.raises(ConflictError):
+        db.create_assistant_with_continuation(
+            message_id="stale-owner",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="",
+            provider_continuation_json=raw,
+            expected_conversation_version=conversation["version"] + 1,
+        )
+    assert db.get_message_by_id("stale-owner") is None
+    assert _message_sync_entries(db, "stale-owner") == []
+
+    with pytest.raises(InputError) as invalid:
+        db.create_assistant_with_continuation(
+            message_id="invalid-owner",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="",
+            provider_continuation_json="PRIVATE-CREATE-CANARY",
+        )
+    assert "PRIVATE-CREATE-CANARY" not in str(invalid.value)
+    assert invalid.value.__context__ is None
+    assert db.get_message_by_id("invalid-owner") is None
+
+    connection = db.get_connection()
+    connection.execute(
+        """
+        CREATE TRIGGER inject_create_crash
+        AFTER INSERT ON messages
+        BEGIN
+          SELECT RAISE(ABORT, 'injected crash');
+        END
+        """
+    )
+    connection.commit()
+    with pytest.raises(CharactersRAGDBError):
+        db.create_assistant_with_continuation(
+            message_id="crash-owner",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="",
+            provider_continuation_json=raw,
+        )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE id = 'crash-owner'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert _message_sync_entries(db, "crash-owner") == []
+
+
+def test_atomic_update_is_optimistic_and_rolls_back_row_with_sync_intent(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    message_id = db.create_assistant_with_continuation(
+        message_id="update-owner",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="visible",
+        provider_continuation_json=_checkpoint_json(),
+    )
+    before = db.get_message_by_id(message_id)
+    assert before is not None
+
+    assert db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=before["version"],
+        provider_continuation_json=_checkpoint_json(canary="next private"),
+        content="updated visible",
+    )
+    after = db.get_message_by_id(message_id)
+    assert after is not None
+    assert after["content"] == "updated visible"
+    assert after["version"] == before["version"] + 1
+    entries = _message_sync_entries(db, message_id)
+    assert len(entries) == 2
+    assert entries[1]["operation"] == "update"
+    assert entries[1]["version"] == after["version"]
+    assert entries[1]["payload"]["content"] == "updated visible"
+    assert (
+        entries[1]["payload"]["provider_continuation_json"]
+        == after["provider_continuation_json"]
+    )
+
+    stable = dict(after)
+    with pytest.raises(ConflictError):
+        db.update_provider_continuation(
+            message_id=message_id,
+            expected_message_version=before["version"],
+            provider_continuation_json=None,
+        )
+    assert db.get_message_by_id(message_id) == stable
+    assert len(_message_sync_entries(db, message_id)) == 2
+
+    connection = db.get_connection()
+    connection.execute(
+        """
+        CREATE TRIGGER inject_update_crash
+        AFTER UPDATE ON messages
+        WHEN NEW.id = 'update-owner'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected crash');
+        END
+        """
+    )
+    connection.commit()
+    with pytest.raises(CharactersRAGDBError):
+        db.update_provider_continuation(
+            message_id=message_id,
+            expected_message_version=after["version"],
+            provider_continuation_json=None,
+        )
+    assert db.get_message_by_id(message_id) == stable
+    assert len(_message_sync_entries(db, message_id)) == 2
+
+
+def test_discard_and_variant_ownership_stay_on_exact_assistant_rows(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_with_conversation(tmp_path)
+    blank_id = db.create_assistant_with_continuation(
+        message_id="blank-owner",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="",
+        provider_continuation_json=_checkpoint_json(),
+    )
+    blank_before = db.get_message_by_id(blank_id)
+    assert blank_before is not None
+    assert db.update_provider_continuation(
+        message_id=blank_id,
+        expected_message_version=blank_before["version"],
+        provider_continuation_json=None,
+    )
+    blank_raw = (
+        db.get_connection()
+        .execute(
+            "SELECT deleted, version, provider_continuation_json FROM messages WHERE id = ?",
+            (blank_id,),
+        )
+        .fetchone()
+    )
+    assert tuple(blank_raw) == (1, blank_before["version"] + 1, None)
+    assert [entry["operation"] for entry in _message_sync_entries(db, blank_id)] == [
+        "create",
+        "delete",
+    ]
+
+    visible_id = db.create_assistant_with_continuation(
+        message_id="visible-owner",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="visible answer",
+        provider_continuation_json=_checkpoint_json(),
+    )
+    visible_before = db.get_message_by_id(visible_id)
+    assert visible_before is not None
+    with pytest.raises(InputError):
+        db.update_provider_continuation(
+            message_id=visible_id,
+            expected_message_version=visible_before["version"],
+            provider_continuation_json=None,
+            deleted=True,
+        )
+    assert db.update_provider_continuation(
+        message_id=visible_id,
+        expected_message_version=visible_before["version"],
+        provider_continuation_json=None,
+    )
+    visible_after = db.get_message_by_id(visible_id)
+    assert visible_after is not None
+    assert visible_after["content"] == "visible answer"
+    assert visible_after["deleted"] == 0
+    assert visible_after["provider_continuation_json"] is None
+    assert visible_after["version"] == visible_before["version"] + 1
+    assert len(_message_sync_entries(db, visible_id)) == 2
+
+    variant_id = db.create_message_variant(visible_id, "regenerated answer")
+    assert variant_id is not None
+    variants = {row["id"]: row for row in db.get_message_variants(visible_id)}
+    assert variants[visible_id]["provider_continuation_json"] is None
+    assert variants[variant_id]["provider_continuation_json"] is None
+
+    variant_before = db.get_message_by_id(variant_id)
+    assert variant_before is not None
+    assert db.update_provider_continuation(
+        message_id=variant_id,
+        expected_message_version=variant_before["version"],
+        provider_continuation_json=_checkpoint_json(canary="variant private"),
+    )
+    assert db.select_message_variant(variant_id)
+    variants = {row["id"]: row for row in db.get_message_variants(variant_id)}
+    assert variants[visible_id]["provider_continuation_json"] is None
+    assert variants[variant_id]["provider_continuation_json"] is not None
