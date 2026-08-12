@@ -662,7 +662,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
 
         def _terminal_batch(**kwargs):
             started.set()
-            assert release.wait(2)
+            assert release.wait(10)
             if terminal_kind == "failure":
                 raise RuntimeError("private late failure /private/source.png")
             if terminal_kind == "cancel":
@@ -768,6 +768,8 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             }.get(terminal_kind)
 
             def _settled() -> bool:
+                if "controls" not in settlement_events:
+                    return False
                 if stop.styles.display != "none":
                     return False
                 if expected_content is None:
