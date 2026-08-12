@@ -167,6 +167,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
 
+    def _after_recompose(self) -> None:
+        """Re-run the post-compose wiring ``on_mount`` does.
+
+        ``on_mount`` fires once, when the canvas itself mounts -- a
+        ``refresh(recompose=True)`` remounts this widget's CHILDREN without
+        re-firing it, so ``sync_state``'s recompose would otherwise leave the
+        editor's stable subtree (populated by ``apply_session_state``) and the
+        compact label rewrites showing compose-time defaults.
+
+        Implemented as ``PostRecomposeCallback``'s hook rather than a
+        ``recompose()`` override so it runs BEFORE any queued follow-up
+        (task-15457 review round 1, minor 5): with the override form, a
+        ``then=`` that focused a control saw its pre-compact label.
+        """
+        self._apply_post_compose_state()
+
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
             yield from self._compose_loading()
@@ -786,6 +802,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
+        self._apply_post_compose_state()
+
+    def _apply_post_compose_state(self) -> None:
+        """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``."""
         self.apply_compact_presentation(self.compact)
         if self.mode == "editor" and self.presentation_state is not None:
             self.apply_session_state(self.presentation_state)

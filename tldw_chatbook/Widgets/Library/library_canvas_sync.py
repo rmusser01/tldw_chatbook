@@ -60,15 +60,38 @@ class PostRecomposeCallback:
         """
         self._post_recompose_callback = callback
 
+    def _after_recompose(self) -> None:
+        """Subclass hook: post-compose wiring, run BEFORE the queued callback.
+
+        ``on_mount`` fires once, when the widget itself mounts -- a
+        ``refresh(recompose=True)`` remounts only its CHILDREN, so any
+        wiring that hook performs has to be re-run here. Ordered ahead of
+        the callback deliberately: a queued follow-up focuses or measures a
+        child, and must see it in its final, post-wiring form (for the notes
+        canvas that means after ``apply_compact_presentation`` has rewritten
+        the compact labels).
+        """
+        return None
+
     async def recompose(self) -> None:
-        """Recompose, then fire the queued callback against fresh children."""
+        """Recompose, then re-wire and fire the queued callback."""
         await super().recompose()  # type: ignore[misc]
         callback = self._post_recompose_callback
+        # Cleared unconditionally: a callback that itself queues another one
+        # (or raises) must not be re-run by the next recompose, and a
+        # callback whose recompose never happened must not fire against some
+        # unrelated LATER one.
+        self._post_recompose_callback = None
+        # ``Widget.recompose`` early-returns without touching the children
+        # when the widget is detached or being pruned. Nothing was rebuilt,
+        # so neither the re-wiring nor the follow-up has a tree to act on --
+        # and a follow-up that focuses a child of a detached widget is
+        # actively wrong, not merely useless.
+        if not self.is_attached or getattr(self, "_pruning", False):
+            return
+        self._after_recompose()
         if callback is None:
             return
-        # Cleared BEFORE invoking: a callback that itself queues another one
-        # (or raises) must not be re-run by the next recompose.
-        self._post_recompose_callback = None
         try:
             callback()
         except Exception:

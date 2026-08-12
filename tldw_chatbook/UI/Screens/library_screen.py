@@ -1371,7 +1371,17 @@ def _sync_library_canvas(
             sync_args = (screen._build_library_conversations_state(),)
         elif kind == "media":
             canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
-            sync_args = (screen._build_library_media_state(),)
+            media_state = screen._build_library_media_state()
+            # The state builder RESOLVES the selection -- a requested id the
+            # active type filter no longer renders falls back to the first
+            # row -- so the screen's pointer has to be re-read from it, the
+            # same mirror ``compose_content`` and
+            # ``_replace_library_browse_canvas`` perform. Without it,
+            # filtering the selected item out left the canvas highlighting
+            # row 0 while "Open in viewer" still opened the filtered-out
+            # item (task-15457 review round 1, Critical 1).
+            screen._selected_media_id = media_state.selected_id
+            sync_args = (media_state,)
         elif kind == "media-trash":
             # task-4025: the media canvas's Trash view -- same targeted
             # contract, its own mounted widget/state builder.
@@ -1418,8 +1428,37 @@ def _sync_library_canvas(
                     "Mouse-capture release before Library canvas sync skipped.",
                     exc_info=True,
                 )
-        if then is not None:
-            canvas.queue_after_recompose(then)
+        # task-15457 review round 1, Critical 2 + Important 3: the DEFAULT
+        # follow-up. A whole-screen recompose restores portable Notes focus
+        # and the named region's scroll offset through ``LibraryScreen.
+        # refresh`` -> ``_rehydrate_library_notes_after_recompose`` ->
+        # ``_restore_library_notes_focus_identity``. A canvas-scoped sync
+        # bypasses that override entirely, so every converted notes site
+        # WITHOUT its own ``then=`` let DOM focus escape to the console rail
+        # when its focused child was recomposed away, and (only visible
+        # below ``LIBRARY_NOTES_COMPACT_BREAKPOINT``, where the list can
+        # actually scroll) dropped the notes list back to the top.
+        # Captured here, at the same choke point the footer fix uses, and
+        # gated on the notes workflow owning the route -- the identity is
+        # Notes-specific, so a media/ingest/search sync must not build one.
+        # An explicit ``then`` COMPOSES with this rather than replacing it:
+        # the restore runs first (portable focus + scroll), then the site's
+        # own follow-up gets the last word on where focus lands.
+        follow_up: Callable[[], None] | None = then
+        if screen._library_notes_workflow_active():
+            identity = screen._capture_library_notes_focus_identity()
+
+            def _restore_then_explicit(
+                _identity: LibraryNotesFocusIdentity = identity,
+                _explicit: Callable[[], None] | None = then,
+            ) -> None:
+                screen._restore_library_notes_after_targeted_sync(_identity)
+                if _explicit is not None:
+                    _explicit()
+
+            follow_up = _restore_then_explicit
+        if follow_up is not None:
+            canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)
         # task-15457: the one thing a canvas sync cannot skip.
         # ``LibraryScreen.refresh`` (the override) re-derives the footer on
@@ -1448,7 +1487,9 @@ def _sync_library_canvas(
             # The fallback tears the canvas down, taking any callback queued
             # on it; re-schedule the follow-up the way a whole-screen
             # recompose has always scheduled one, so a failed targeted sync
-            # costs a rebuild but never the user's focus.
+            # costs a rebuild but never the user's focus. Only the EXPLICIT
+            # follow-up is re-scheduled: the default restore above is what
+            # the whole-screen path does for itself.
             screen.call_after_refresh(then)
 
 
@@ -4126,6 +4167,40 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_pending_focus_identity = None
             self._library_notes_pending_focus_generation = None
         return restored_exact_target
+
+    def _restore_library_notes_after_targeted_sync(
+        self, identity: LibraryNotesFocusIdentity
+    ) -> None:
+        """Restore portable Notes focus + scroll after a canvas-scoped sync.
+
+        task-15457 review round 1. The whole-screen seam does this through
+        ``_rehydrate_library_notes_after_recompose``; a canvas-scoped sync
+        never reaches ``LibraryScreen.refresh``, so it needs its own entry
+        into the same restore. No ``_LibraryNotesRestoreGuard`` is passed:
+        the guard exists to invalidate a DEFERRED restore that a newer
+        navigation intent has superseded, and this one runs synchronously
+        from the canvas's own ``recompose``, against the state that was
+        captured moments earlier in the same handler.
+
+        Args:
+            identity: The portable identity captured before the sync.
+
+        Returns:
+            None.
+        """
+        # Focus FIRST and synchronously: the callback runs from the canvas's
+        # own ``recompose``, so focus is restored before any frame in which
+        # it could be seen sitting outside the canvas.
+        self._restore_library_notes_focus_identity(identity)
+        # Scroll SECOND and deferred. The restore above already attempts it,
+        # but at this point the freshly mounted children have not been laid
+        # out yet -- the container's max scroll is still 0, so ``scroll_to``
+        # clamps the offset away (measured: a 12-row offset restored as 0).
+        # The whole-screen seam never hits this because it restores from
+        # ``call_after_refresh``, i.e. after a display refresh; re-applying
+        # from the same primitive here gives the offset a laid-out container
+        # to land in. Idempotent, so the earlier attempt costs nothing.
+        self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
 
     def _restore_library_notes_scroll_offset(
         self,
