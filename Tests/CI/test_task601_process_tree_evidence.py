@@ -888,3 +888,88 @@ def test_schema_version_rejects_boolean_alias_for_one() -> None:
 
     with pytest.raises(ValueError, match="schema_version"):
         evidence.validate_result(result)
+
+
+@pytest.mark.parametrize(
+    "duration",
+    (
+        True,
+        None,
+        "0.75",
+        -1,
+        1_200.1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        10**309,
+    ),
+    ids=(
+        "bool",
+        "null",
+        "string",
+        "negative",
+        "too-large",
+        "nan",
+        "positive-inf",
+        "negative-inf",
+        "huge-int",
+    ),
+)
+@pytest.mark.parametrize("document_kind", ("result", "aggregate"))
+def test_duration_validation_rejects_every_non_bounded_number(
+    duration: object, document_kind: str
+) -> None:
+    evidence = _load_evidence()
+    result = _valid_result("linux-x86_64")
+    result["pytest"]["duration_seconds"] = duration
+    if document_kind == "result":
+        document = result
+        validator = evidence.validate_result
+    else:
+        document = evidence.aggregate_results(
+            [_valid_result(name) for name in EXPECTED_PLATFORMS]
+        )
+        document["platforms"]["linux-x86_64"] = result
+        validator = evidence.validate_aggregate
+
+    with pytest.raises(ValueError, match="duration_seconds"):
+        validator(document)
+
+
+@pytest.mark.parametrize(
+    ("flag", "document_kind"),
+    (("--validate", "result"), ("--validate-aggregate", "aggregate")),
+)
+def test_cli_huge_duration_is_bounded_and_does_not_modify_files(
+    tmp_path: Path, flag: str, document_kind: str
+) -> None:
+    evidence = _load_evidence()
+    result = _valid_result("linux-x86_64")
+    result["pytest"]["duration_seconds"] = 10**309
+    if document_kind == "result":
+        document = result
+    else:
+        document = evidence.aggregate_results(
+            [_valid_result(name) for name in EXPECTED_PLATFORMS]
+        )
+        document["platforms"]["linux-x86_64"] = result
+    input_path = tmp_path / f"{document_kind}.json"
+    original = json.dumps(document)
+    input_path.write_text(original, encoding="utf-8")
+    destination = tmp_path / "output.json"
+
+    completed = subprocess.run(
+        [sys.executable, str(EVIDENCE_PATH), flag, str(input_path)],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "Traceback" not in completed.stderr
+    assert str(PROJECT_ROOT) not in completed.stderr
+    assert str(tmp_path) not in completed.stderr
+    assert input_path.read_text(encoding="utf-8") == original
+    assert not destination.exists()

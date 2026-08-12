@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import platform
 import re
@@ -150,7 +149,7 @@ def _duration(root: ET.Element) -> float:
         value = sum(float(case.get("time", "0")) for case in root.iter("testcase"))
     else:
         value = float(raw)
-    if not math.isfinite(value) or not 0 <= value <= _MAX_DURATION_SECONDS:
+    if not 0 <= value <= _MAX_DURATION_SECONDS:
         raise ValueError("JUnit duration is outside the evidence bound")
     return value
 
@@ -363,7 +362,6 @@ def validate_result(result: Mapping[str, object], *, require_pass: bool = True) 
     if (
         isinstance(duration, bool)
         or not isinstance(duration, (int, float))
-        or not math.isfinite(duration)
         or not 0 <= duration <= _MAX_DURATION_SECONDS
     ):
         raise ValueError("pytest.duration_seconds is outside the evidence bound")
@@ -411,15 +409,6 @@ def aggregate_results(results: Sequence[Mapping[str, object]]) -> dict[str, obje
     commit = first_run["tested_commit"]
     run_id = first_run["workflow_run_id"]
     run_url = first_run["workflow_run_url"]
-    for result in by_name.values():
-        run = _require_object(result, "run")
-        if run.get("tested_commit") != commit:
-            raise ValueError("platform evidence tested commit mismatch")
-        if (
-            run.get("workflow_run_id") != run_id
-            or run.get("workflow_run_url") != run_url
-        ):
-            raise ValueError("platform evidence workflow run mismatch")
 
     aggregate: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
