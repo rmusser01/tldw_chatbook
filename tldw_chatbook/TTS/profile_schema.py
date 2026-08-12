@@ -228,6 +228,13 @@ class ExactProfileStoreNotCurrentError(ProfileRepositoryError):
         super().__init__("schema_partial")
 
 
+class ExactProfileStoreAuthorityError(ProfileRepositoryError):
+    """Signal that retained live-store namespace authority no longer matches."""
+
+    def __init__(self) -> None:
+        super().__init__("operation_failed")
+
+
 def _exact_store_namespace_safe(
     parent_fd: int,
     leaf: str,
@@ -333,18 +340,19 @@ def _open_exact_store_sidecars(
 
 def revalidate_exact_current_profile_store(
     connection: sqlite3.Connection,
-    path: Path,
+    path: Path | None,
 ) -> None:
     """Recheck retained exact-current authority immediately before live use."""
 
     if not isinstance(connection, _ExactCurrentProfileConnection):
         return
     if (
-        connection.selected != path
+        path is None
+        or connection.selected != path
         or connection.file_fd < 0
         or connection.parent_fd < 0
     ):
-        raise _repository_error("operation_failed")
+        raise ExactProfileStoreAuthorityError()
     try:
         opened_parent = os.fstat(connection.parent_fd)
         opened_file = os.fstat(connection.file_fd)
@@ -354,7 +362,7 @@ def revalidate_exact_current_profile_store(
             follow_symlinks=False,
         )
     except OSError:
-        raise _repository_error("operation_failed") from None
+        raise ExactProfileStoreAuthorityError() from None
     sidecars_match = set(connection.sidecar_fds) == {"-wal", "-shm"}
     if sidecars_match:
         for suffix, descriptor in connection.sidecar_fds.items():
@@ -398,7 +406,7 @@ def revalidate_exact_current_profile_store(
             before_path_open=False,
         )
     ):
-        raise _repository_error("operation_failed")
+        raise ExactProfileStoreAuthorityError()
 
 
 def encode_uuid(value: UUID) -> str:

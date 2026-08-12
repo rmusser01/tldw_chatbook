@@ -74,6 +74,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
     ExactProfileStoreCleanupError,
+    ExactProfileStoreAuthorityError,
     ExactProfileStoreNotCurrentError,
     decode_assigned_snapshot,
     decode_assignment,
@@ -926,6 +927,9 @@ def _fresh_repository_error(
     error: ProfileRepositoryError,
 ) -> ProfileRepositoryError:
     """Recreate one structured error without its traceback, chain, or notes."""
+
+    if isinstance(error, ExactProfileStoreAuthorityError):
+        return ExactProfileStoreAuthorityError()
 
     code: object = "operation_failed"
     code_error: BaseException | None = None
@@ -2654,6 +2658,8 @@ class TTSProfileRepository:
                 assignment_count=assignment_count,
             )
         except BaseException as error:
+            if isinstance(error, ExactProfileStoreAuthorityError):
+                self._worker_seal_exact_authority(error)
             primary_error = error
 
         retained_failed_connection = False
@@ -2811,6 +2817,7 @@ class TTSProfileRepository:
         lease = self._lease
         if connection is None or lease is None:
             raise _repository_error("invalid_state")
+        self._worker_revalidate_exact_authority(connection)
         _require_restore_time(deadline)
         timeout_row = connection.execute("PRAGMA busy_timeout").fetchone()
         if (
@@ -2852,6 +2859,7 @@ class TTSProfileRepository:
             or tuple(checkpoint) != (0, 0, 0)
         ):
             raise _repository_error("restore_failed")
+        self._worker_revalidate_exact_authority(connection)
         connection.close()
         self._connection = None
         lease.release()
@@ -3005,9 +3013,11 @@ class TTSProfileRepository:
     def _worker_rebind_current_store(self) -> None:
         active_path = self._worker_active_path()
         if self._connection is not None and self._lease is not None:
+            self._worker_revalidate_exact_authority(self._connection)
             validate_profile_store_rows(self._connection)
             validate_reference_rows(self._connection)
             self._worker_store_counts(self._connection)
+            self._worker_revalidate_exact_authority(self._connection)
             return
 
         cleanup_error: BaseException | None = None
@@ -3027,9 +3037,11 @@ class TTSProfileRepository:
         lease, connection = shared
         body_error: BaseException | None = None
         try:
+            self._worker_revalidate_exact_authority(connection, active_path)
             validate_profile_store_rows(connection)
             validate_reference_rows(connection)
             self._worker_store_counts(connection)
+            self._worker_revalidate_exact_authority(connection, active_path)
         except BaseException as error:
             body_error = error
         if body_error is None:
@@ -4236,6 +4248,7 @@ class TTSProfileRepository:
         try:
             connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
             value = operation()
+            self._worker_revalidate_exact_authority(connection)
             self._commit_transaction(connection)
         except BaseException as error:
             body_error = error
@@ -4397,12 +4410,44 @@ class TTSProfileRepository:
         operation_error: BaseException | None = None
         value: _T | None = None
         try:
+            self._worker_revalidate_exact_authority(connection)
             value = operation(connection)
+            self._worker_revalidate_exact_authority(connection)
         except BaseException as error:
             operation_error = error
         if operation_error is not None:
+            if isinstance(operation_error, ExactProfileStoreAuthorityError):
+                self._worker_seal_exact_authority(operation_error)
             _raise_operation_error(operation_error)
         return cast(_T, value)
+
+    def _worker_revalidate_exact_authority(
+        self,
+        connection: sqlite3.Connection,
+        active_path: Path | None = None,
+    ) -> None:
+        """Fence one worker operation against live namespace substitution."""
+
+        selected_path = (
+            self._active_database_path if active_path is None else active_path
+        )
+        revalidate_exact_current_profile_store(connection, selected_path)
+
+    def _worker_seal_exact_authority(
+        self,
+        error: ExactProfileStoreAuthorityError,
+    ) -> None:
+        """Seal live use and settle exact authority before releasing its lease."""
+
+        cleanup_error: BaseException | None = None
+        with self._state_lock:
+            if not self._terminal:
+                self._state = ProfileRepositoryState.UNAVAILABLE
+        try:
+            self._worker_cleanup()
+        except BaseException as caught:
+            cleanup_error = caught
+        _raise_with_cleanup_precedence(error, cleanup_error)
 
     def _worker_state_error_locked(self, generation: int) -> str | None:
         if generation != self._generation:

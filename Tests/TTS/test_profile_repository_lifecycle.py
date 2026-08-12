@@ -1406,6 +1406,257 @@ async def test_current_shared_proof_rejects_main_swap_with_live_wal_pair(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("read", "create", "update", "delete"))
+async def test_live_operation_fence_rejects_valid_v4_main_replacement_before_sql(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    detached = tmp_path / "detached.sqlite3"
+    await _create_profile_store(replacement, "Foreign current")
+    await _create_profile_store(database_path, "Original")
+    replacement_before = replacement.read_bytes()
+    repository = _repository(database_path)
+    await repository.open()
+    profile_id = UUID("00000000-0000-4000-8000-000000000001")
+    os.replace(database_path, detached)
+    os.replace(replacement, database_path)
+
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            if operation == "read":
+                await repository.list_profiles()
+            elif operation == "create":
+                await repository.create_profile(
+                    _draft("New"),
+                    UUID("00000000-0000-4000-8000-000000000067"),
+                )
+            elif operation == "update":
+                await repository.update_profile(
+                    profile_id,
+                    1,
+                    _draft("Updated"),
+                    expected_generation=repository.generation,
+                )
+            else:
+                await repository.delete_profile(
+                    profile_id,
+                    expected_generation=repository.generation,
+                )
+
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert database_path.read_bytes() == replacement_before
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sidecar_suffix", ("-wal", "-shm"))
+async def test_live_operation_fence_rejects_replaced_sqlite_sidecar(
+    tmp_path: Path,
+    sidecar_suffix: str,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    repository = _repository(database_path)
+    await repository.open()
+    sidecar = Path(f"{database_path}{sidecar_suffix}")
+    replacement = tmp_path / f"replacement{sidecar_suffix}"
+    replacement.write_bytes(sidecar.read_bytes())
+    replacement.chmod(0o600)
+    os.replace(replacement, sidecar)
+
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.list_profiles()
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_kind", ("publication", "rollback"))
+async def test_live_operation_fence_rejects_inserted_journal_artifact(
+    tmp_path: Path,
+    artifact_kind: str,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path)
+    repository = _repository(database_path)
+    await repository.open()
+    artifact = (
+        tmp_path / ".profiles.sqlite3.migration-publication.json"
+        if artifact_kind == "publication"
+        else Path(f"{database_path}-journal")
+    )
+    artifact.write_bytes(b"foreign journal evidence")
+    artifact.chmod(0o600)
+
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.list_profiles()
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert artifact.read_bytes() == b"foreign journal evidence"
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_write_transaction_revalidates_authority_immediately_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    detached = tmp_path / "detached.sqlite3"
+    await _create_profile_store(replacement, "Foreign current")
+    await _create_profile_store(database_path)
+    replacement_before = replacement.read_bytes()
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    real_revalidate = module.revalidate_exact_current_profile_store
+    swapped = False
+
+    def swap_inside_transaction(
+        connection: sqlite3.Connection,
+        path: Path,
+    ) -> None:
+        nonlocal swapped
+        if connection.in_transaction and not swapped:
+            os.replace(database_path, detached)
+            os.replace(replacement, database_path)
+            swapped = True
+        real_revalidate(connection, path)
+
+    monkeypatch.setattr(
+        module,
+        "revalidate_exact_current_profile_store",
+        swap_inside_transaction,
+    )
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.create_profile(
+                _draft("Must roll back"),
+                UUID("00000000-0000-4000-8000-000000000044"),
+            )
+        assert swapped is True
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert database_path.read_bytes() == replacement_before
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_read_transaction_revalidates_authority_before_returning_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    detached = tmp_path / "detached.sqlite3"
+    await _create_profile_store(database_path, "Detached result")
+    await _create_profile_store(replacement, "Foreign current")
+    replacement_before = replacement.read_bytes()
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    real_revalidate = module.revalidate_exact_current_profile_store
+    swapped = False
+
+    def swap_after_read(
+        connection: sqlite3.Connection,
+        path: Path,
+    ) -> None:
+        nonlocal swapped
+        if connection.in_transaction and not swapped:
+            os.replace(database_path, detached)
+            os.replace(replacement, database_path)
+            swapped = True
+        real_revalidate(connection, path)
+
+    monkeypatch.setattr(
+        module,
+        "revalidate_exact_current_profile_store",
+        swap_after_read,
+    )
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.list_profiles()
+        assert swapped is True
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert database_path.read_bytes() == replacement_before
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_authority_mismatch_close_failure_retains_connection_and_shared_lease(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    detached = tmp_path / "detached.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    await _create_profile_store(replacement, "Foreign current")
+    repository = _repository(database_path)
+    await repository.open()
+    authority = cast(Any, repository._connection)
+    close_proxy = _CloseFailingSQLiteProxy(
+        cast(sqlite3.Connection, authority._connection),
+        str(tmp_path / "secret-close-error"),
+    )
+    authority._connection = close_proxy
+    os.replace(database_path, detached)
+    os.replace(replacement, database_path)
+
+    with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+        await repository.list_profiles()
+
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository._connection is authority
+    assert repository._lease is not None
+    assert repository._lease.mode is ProfileStoreLockMode.SHARED
+    assert repository._lease.acquired is True
+    await _assert_exclusive_lease_blocked(database_path)
+
+    close_proxy.fail_close = False
+    await repository.close()
+    assert repository._connection is None
+    assert repository._lease is None
+    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.asyncio
+async def test_restore_fences_live_authority_before_checkpoint_or_publication(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    detached = tmp_path / "detached.sqlite3"
+    await _create_profile_store(database_path, "Original")
+    await _create_profile_store(replacement, "Foreign current")
+    await _create_profile_store(candidate, "Restore candidate")
+    replacement_before = replacement.read_bytes()
+    candidate_before = candidate.read_bytes()
+    repository = _repository(database_path)
+    await repository.open()
+    os.replace(database_path, detached)
+    os.replace(replacement, database_path)
+
+    try:
+        with pytest.raises(ProfileRepositoryError, match="operation_failed"):
+            await repository.restore_from(candidate)
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert database_path.read_bytes() == replacement_before
+        assert candidate.read_bytes() == candidate_before
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("journal_suffix", ("", "-wal", "-shm", "-journal"))
 async def test_journal_present_under_shared_reader_never_runs_recovery(
     tmp_path: Path,
