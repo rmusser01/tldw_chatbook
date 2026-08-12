@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, cast
 
 _SQLITE_MAX_INTEGER = 2**63 - 1
 _ARTIFACT_TYPES = frozenset({"prompt", "recipe"})
@@ -33,7 +33,8 @@ def _require_canonical_entries(entries: tuple[object, ...], entry_type: type) ->
         raise TypeError(
             f"entries must contain only exact {entry_type.__name__} values."
         )
-    local_ids = tuple(entry.local_id for entry in entries)
+    validated_entries = cast(tuple[Any, ...], entries)
+    local_ids = tuple(entry.local_id for entry in validated_entries)
     if local_ids != tuple(sorted(set(local_ids))):
         raise ValueError("entries must use unique canonical ascending local IDs.")
 

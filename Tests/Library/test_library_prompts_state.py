@@ -1228,6 +1228,37 @@ def test_selection_browse_projection_exposes_checked_versions_and_page_counts():
 
 
 @pytest.mark.parametrize(
+    "selection",
+    [
+        None,
+        PromptSelectionBasket(
+            entries=(PromptSelectionEntry(7, 3, "Captured", "prompt"),),
+            generation=1,
+        ),
+    ],
+)
+def test_selection_browse_projection_deduplicates_valid_page_ids_first_seen(
+    selection,
+):
+    result = _direct_prompt_browse_result(
+        [
+            {"local_id": 7, "name": "First", "version": 3},
+            {"local_id": 7, "name": "Duplicate", "version": 4},
+        ],
+        total_items=2,
+    )
+
+    state = prompts_state_module.build_prompt_browse_list_state(
+        result, now=NOW, selection=selection, select_mode=selection is not None
+    )
+
+    assert [(row.prompt_id, row.name, row.version) for row in state.rows] == [
+        (7, "First", 3)
+    ]
+    assert state.selected_on_page == (1 if selection is not None else 0)
+
+
+@pytest.mark.parametrize(
     "malformed",
     [
         {"local_id": True, "name": "Bad id", "version": 1},
@@ -1272,6 +1303,27 @@ def test_selection_browse_projection_drops_malformed_page_rows(malformed):
 def test_selection_list_row_rejects_invalid_version_or_checked(kwargs, field):
     with pytest.raises((TypeError, ValueError), match=field):
         PromptListRow(**kwargs)
+
+
+def test_selection_legacy_list_keeps_convertible_ids_and_missing_versions():
+    state = build_prompts_list_state(
+        [
+            {
+                "local_id": "41",
+                "id": "local:prompt:uuid",
+                "name": "Legacy recipe",
+                "artifact_type": "recipe",
+            },
+            {"id": "42", "name": None, "artifact_type": "unsupported"},
+        ],
+        query="",
+        sort="newest",
+        now=NOW,
+    )
+
+    assert [
+        (row.prompt_id, row.name, row.artifact_type, row.version) for row in state.rows
+    ] == [(41, "Legacy recipe", "recipe", 1), (42, "", "prompt", 1)]
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():

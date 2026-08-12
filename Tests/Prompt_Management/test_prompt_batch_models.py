@@ -173,24 +173,50 @@ def test_batch_results_require_unique_canonical_ascending_ids(result_type, entri
 
 
 def test_batch_models_expose_deterministic_targets_and_hide_identities_from_repr():
-    target = PromptBatchTarget(local_id=7, expected_version=3)
+    target = PromptBatchTarget(local_id=71_234_567, expected_version=81_234_567)
     entry = PromptDeleteReceiptEntry(
-        local_id=7,
-        title="Literal [name]",
+        local_id=91_234_567,
+        title="Literal [private-991827]",
         artifact_type="recipe",
-        tombstone_version=4,
+        tombstone_version=101_234_567,
     )
     deleted = PromptBatchDeleteResult(entries=(entry,))
     restored = PromptBatchRestoreResult(
-        entries=(PromptRestoreResultEntry(local_id=7, restored_version=5),)
+        entries=(
+            PromptRestoreResultEntry(
+                local_id=111_234_567, restored_version=121_234_567
+            ),
+        )
     )
 
-    assert deleted.targets == (PromptBatchTarget(7, 4),)
-    assert restored.entries[0].restored_version == 5
-    for value in (target, entry, deleted, restored.entries[0], restored):
-        representation = repr(value)
-        assert "7" not in representation
-        assert "Literal [name]" not in representation
+    assert deleted.targets == (PromptBatchTarget(91_234_567, 101_234_567),)
+    assert restored.entries[0].restored_version == 121_234_567
+
+    target_repr = repr(target)
+    assert "71234567" not in target_repr
+    assert "81234567" not in target_repr
+
+    entry_repr = repr(entry)
+    assert "91234567" not in entry_repr
+    assert "Literal [private-991827]" not in entry_repr
+    assert "101234567" not in entry_repr
+
+    deleted_repr = repr(deleted)
+    assert "91234567" not in deleted_repr
+    assert "Literal [private-991827]" not in deleted_repr
+    assert "101234567" not in deleted_repr
+
+    restore_target_repr = repr(deleted.targets[0])
+    assert "91234567" not in restore_target_repr
+    assert "101234567" not in restore_target_repr
+
+    restored_entry_repr = repr(restored.entries[0])
+    assert "111234567" not in restored_entry_repr
+    assert "121234567" not in restored_entry_repr
+
+    restored_repr = repr(restored)
+    assert "111234567" not in restored_repr
+    assert "121234567" not in restored_repr
     with pytest.raises(FrozenInstanceError):
-        target.expected_version = 8  # type: ignore[misc]
+        target.expected_version = 131_234_567  # type: ignore[misc]
     assert not hasattr(target, "__dict__")

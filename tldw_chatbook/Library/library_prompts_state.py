@@ -2032,22 +2032,47 @@ def _row(
     *,
     now: datetime,
     checked_ids: frozenset[int] = frozenset(),
+    strict_selection: bool = False,
 ) -> PromptListRow | None:
-    raw_prompt_id = record.get("local_id") if "local_id" in record else record.get("id")
-    version = record.get("version")
-    name = record.get("name")
-    raw_artifact_type = record.get("artifact_type", "prompt")
-    if (
-        type(raw_prompt_id) is not int
-        or not 1 <= raw_prompt_id <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
-        or type(version) is not int
-        or not 1 <= version <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
-        or type(name) is not str
-        or not name.strip()
-        or type(raw_artifact_type) is not str
-        or raw_artifact_type not in _PROMPT_SELECTION_ARTIFACT_TYPES
-    ):
-        return None
+    if strict_selection:
+        raw_prompt_id = (
+            record.get("local_id") if "local_id" in record else record.get("id")
+        )
+        version = record.get("version")
+        name = record.get("name")
+        raw_artifact_type = record.get("artifact_type", "prompt")
+        if (
+            type(raw_prompt_id) is not int
+            or not 1 <= raw_prompt_id <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
+            or type(version) is not int
+            or not 1 <= version <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
+            or type(name) is not str
+            or not name.strip()
+            or type(raw_artifact_type) is not str
+            or raw_artifact_type not in _PROMPT_SELECTION_ARTIFACT_TYPES
+        ):
+            return None
+        prompt_id = raw_prompt_id
+        row_version = version
+        row_name = name.strip()
+        artifact_type = cast(ArtifactType, raw_artifact_type)
+    else:
+        legacy_prompt_id = _to_int(record.get("local_id")) or _to_int(record.get("id"))
+        if legacy_prompt_id is None:
+            return None
+        prompt_id = legacy_prompt_id
+        legacy_version = _to_int(record.get("version"))
+        row_version = (
+            legacy_version
+            if legacy_version is not None
+            and 1 <= legacy_version <= _PROMPT_SELECTION_SQLITE_MAX_INTEGER
+            else 1
+        )
+        row_name = _text(record.get("name"))
+        artifact_type = cast(
+            ArtifactType,
+            "recipe" if record.get("artifact_type") == "recipe" else "prompt",
+        )
     # Task 8b D2/U1: surfaces the prompt's PURPOSE (details) instead of
     # `author · age` -- author (and keywords, never present on list rows
     # anyway -- see `_matches_query`'s comment) are dropped from the
@@ -2056,7 +2081,6 @@ def _row(
     raw_timestamp = _timestamp_raw(record)
     age = format_console_relative_age(raw_timestamp, now=now) if raw_timestamp else ""
     secondary = " · ".join(part for part in (details, age) if part)
-    artifact_type = cast(ArtifactType, raw_artifact_type)
     has_system = record.get("has_system_prompt")
     if not isinstance(has_system, bool):
         has_system = bool(_raw_text(record.get("system_prompt")).strip())
@@ -2073,15 +2097,15 @@ def _row(
         lane_summary = "Empty"
     source = _text(record.get("backend")) or "local"
     return PromptListRow(
-        prompt_id=raw_prompt_id,
-        name=name.strip(),
+        prompt_id=prompt_id,
+        name=row_name,
         secondary=secondary,
         artifact_type=artifact_type,
         type_label=artifact_type.title(),
         lane_summary=lane_summary,
         source_label=source.title(),
-        version=version,
-        checked=raw_prompt_id in checked_ids,
+        version=row_version,
+        checked=prompt_id in checked_ids,
     )
 
 
@@ -2158,13 +2182,20 @@ def build_prompt_browse_list_state(
     if type(select_mode) is not bool:
         raise TypeError("select_mode must be a bool.")
     selected_ids = frozenset(entry.local_id for entry in selected_entries)
-    rows = tuple(
-        row
-        for row in (
-            _row(record, now=now, checked_ids=selected_ids) for record in result.items
+    rows_list: list[PromptListRow] = []
+    seen_ids: set[int] = set()
+    for record in result.items:
+        row = _row(
+            record,
+            now=now,
+            checked_ids=selected_ids,
+            strict_selection=True,
         )
-        if row
-    )
+        if row is None or row.prompt_id in seen_ids:
+            continue
+        rows_list.append(row)
+        seen_ids.add(row.prompt_id)
+    rows = tuple(rows_list)
     return PromptsListState(
         rows=rows,
         count=len(rows),
