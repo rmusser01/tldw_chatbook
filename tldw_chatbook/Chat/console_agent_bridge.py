@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import os
 import threading
 import time
@@ -587,6 +588,62 @@ def format_change_summary_marker(
     )
 
 
+#: PR3a-1 Task 6c (audit F2): which window a ``change_snapshots`` row
+#: covers. A row's kind is what lets resume re-derive the same transcript
+#: rows the live run emitted -- without it, a post-turn row and a turn row
+#: are indistinguishable and collapse into one summary that never happened.
+CHANGE_KIND_TURN = "turn"
+#: The turn's own window, taken while a sub-agent from an EARLIER turn was
+#: still writing: the diff may contain changes this turn's agent never made.
+CHANGE_KIND_TURN_CONCURRENT_SUBAGENT = "turn_concurrent_subagent"
+#: The window AFTER a turn's E snapshot, during which that turn's surviving
+#: sub-agents kept working.
+CHANGE_KIND_SUBAGENT_POST_TURN = "subagent_post_turn"
+
+
+def format_subagent_post_turn_change_marker(
+    files_changed: int, adds: int, dels: int
+) -> str:
+    """The change-summary row for a turn's SURVIVORS (PR3a-1 Task 6c).
+
+    A separate row rather than folding into the turn's own counts: these
+    changes were made after the turn answered, by a sub-agent the user may
+    have forgotten was running. Same live/resume parity rule as
+    :func:`format_change_summary_marker`.
+
+    Args:
+        files_changed: Changed-file count across the window's roots.
+        adds: Total added lines.
+        dels: Total deleted lines.
+
+    Returns:
+        The row text.
+    """
+    noun = "file" if files_changed == 1 else "files"
+    return (
+        f"✎ A sub-agent edited {files_changed} {noun} after this turn"
+        f"  +{adds} −{dels} — review with `v`"
+    )
+
+
+def format_concurrent_subagent_change_marker() -> str:
+    """The disclosure row for a turn that shared the tree (Task 6c).
+
+    Change tracking diffs a working tree; it cannot tell two concurrent
+    writers apart. When a sub-agent from an earlier turn was still running
+    during this one, this turn's diff may hold changes its own agent never
+    made -- and a review surface the user makes trust decisions from must
+    say so rather than imply sole authorship.
+
+    Returns:
+        The row text ("⚠ a sub-agent from an earlier turn ...").
+    """
+    return (
+        "⚠ a sub-agent from an earlier turn was still writing during this "
+        "turn — some of these changes may be its, not this turn's"
+    )
+
+
 def format_change_tracking_failure_marker(root: str, error: str) -> str:
     """The disclosure row for a root whose tracking failed (TASK-1972).
 
@@ -946,6 +1003,36 @@ class AgentLiveSnapshot:
     step: int = 0
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
+
+
+@dataclass
+class _PostTurnChangeWindow:
+    """One conversation's open "what did the survivors do" change window.
+
+    PR3a-1 Task 6c (audit F2). Its ``handle``'s baselines are the shas the
+    turn's own E snapshot recorded, so this window starts exactly where
+    that turn's record stopped -- the property that makes a survivor's
+    write land in exactly ONE record rather than in none.
+
+    Attributes:
+        run_id: The run whose survivors this window covers; the record and
+            its transcript row are filed against it.
+        session_id: Session the transcript row is appended to.
+        handle: The pre-satisfied follow-on handle (see
+            ``ChangeTurnTracker.continuation``).
+        successor: The NEXT turn's ``TurnHandle``, once one has started.
+            Its baseline shas become this window's end, whoever closes it
+            and whenever -- because from the instant that baseline is
+            taken, the tree belongs to the next turn's record, and a
+            window ending anywhere later would put the same write on two
+            cards (found by mutation: a survivor finishing mid-turn was
+            counted twice).
+    """
+
+    run_id: str
+    session_id: str
+    handle: Any
+    successor: Any = None
 
 
 class _ModelCallLifeline:
@@ -2025,6 +2112,26 @@ class ConsoleAgentBridge:
         # could nest (a snapshot copy is taken, then the lock is
         # released).
         self._fleet_survivor_lock = threading.Lock()
+        # PR3a-1 Task 6c (audit F2) -- the change-review window that covers
+        # what a turn's SURVIVORS do after that turn's E snapshot.
+        #
+        # `[conversation_id] -> _PostTurnChangeWindow`, at most one per
+        # conversation: opened by `run_reply`'s finally when children are
+        # still running, closed by whichever comes first -- the last of
+        # them exiting `_child_run_scope`, or the NEXT turn's end (using
+        # that turn's BASELINE shas, so the two windows share a boundary
+        # and nothing can land between them).
+        self._post_turn_change_windows: dict[str, "_PostTurnChangeWindow"] = {}
+        # Live sub-agent count per conversation, incremented/decremented by
+        # `_child_run_scope` on the CHILD's own thread. Deliberately not
+        # read off the coordinator: `fleet.finish()` runs AFTER the child's
+        # scope exits, so a coordinator read at that instant still reports
+        # the child as running and the window would never close.
+        self._live_child_counts: dict[str, int] = {}
+        # Guards both of the above together -- their invariant is a pair
+        # ("a window is open only while a child is live"), so a lock per
+        # dict could not express it.
+        self._change_window_lock = threading.Lock()
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -2704,9 +2811,20 @@ class ConsoleAgentBridge:
         # the run (spec failure posture): begin_turn cannot raise, and the
         # wrapper's await records timeouts as per-root disclosures.
         change_handle = None
+        # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
+        # running now belongs to an EARLIER turn (this one has not spawned
+        # anything yet), and a working-tree differ cannot tell its writes
+        # from this turn's agent's -- so this turn's record is stamped
+        # `turn_concurrent_subagent` and discloses the overlap rather than
+        # implying sole authorship.
+        concurrent_subagent = self._live_child_count(conversation_id) > 0
         if self._change_tracker is not None and change_roots:
             try:
                 change_handle = self._change_tracker.begin_turn(change_roots)
+                # PR3a-1 Task 6c: an earlier turn's survivor window ends
+                # HERE, at this turn's baseline -- fixed now, applied
+                # whenever that window is actually closed.
+                self._note_successor_turn(conversation_id, change_handle)
             except Exception:  # noqa: BLE001 -- tracking must never block a run
                 logger.opt(exception=True).warning(
                     "change_review: begin_turn failed; turn untracked"
@@ -2740,7 +2858,15 @@ class ConsoleAgentBridge:
             # PR3a-1 Task 1: every fleet child gets its own model-call
             # lifeline, entered on the child's own thread and torn down
             # when the CHILD finishes -- never when this turn does.
-            child_model_scope=adapter.child_lifeline,
+            # PR3a-1 Task 6c wraps that lifeline (it does not replace it)
+            # so the same enter/exit also counts live children: "the last
+            # child of this conversation just finished" is the signal that
+            # closes a survivor's change-review window, and nothing else
+            # in the bridge knows it (the coordinator marks a handle
+            # terminal only AFTER this scope exits).
+            child_model_scope=functools.partial(
+                self._child_run_scope, conversation_id, adapter
+            ),
             # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
             # turn's -- the only thing that makes `[agents]
             # max_live_subagents` a bound on the fleet rather than on one
@@ -2863,8 +2989,25 @@ class ConsoleAgentBridge:
             # them to), and the exception still propagates unchanged.
             if change_handle is not None:
                 try:
+                    # PR3a-1 Task 6c: close the EARLIER turn's survivor
+                    # window (if its children are still going and nothing
+                    # closed it yet) -- so its record lands here rather
+                    # than waiting on a child that need never finish, and
+                    # in the transcript position resume re-derives it in.
+                    # It ends at THIS turn's baseline shas, bound by
+                    # `_note_successor_turn` at turn start, so the two
+                    # windows abut on one sha: a survivor's write lands in
+                    # exactly one of them, never in the crack between and
+                    # never on both cards.
+                    self._close_post_turn_change_window(conversation_id)
                     _steps = (
                         outcome.steps if "outcome" in locals() else []
+                    )
+                    # Read before E: a child still running when the end
+                    # snapshot is taken is a child whose later writes this
+                    # turn's record cannot contain.
+                    _had_live_children = (
+                        self._live_child_count(conversation_id) > 0
                     )
                     _records = self._change_tracker.end_turn(
                         change_handle,
@@ -2873,22 +3016,32 @@ class ConsoleAgentBridge:
                         ),
                     )
                     if "run_id" in locals():
-                        for _rec in _records:
-                            self._db.record_change_snapshot(
-                                run_id=run_id,
-                                root=_rec.root,
-                                baseline_sha=_rec.baseline_sha,
-                                end_sha=_rec.end_sha,
-                                files_changed=_rec.files_changed,
-                                adds=_rec.adds,
-                                dels=_rec.dels,
-                                tracking_error=_rec.tracking_error,
-                                untracked_oversize=_rec.untracked_oversize,
-                                nested_repos=_rec.nested_repos,
-                            )
-                        self._append_change_markers(
-                            session_id, run_id, _records
+                        self._record_change_snapshots(
+                            run_id=run_id,
+                            records=_records,
+                            kind=(
+                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                                if concurrent_subagent
+                                else CHANGE_KIND_TURN
+                            ),
                         )
+                        self._append_change_markers(
+                            session_id,
+                            run_id,
+                            _records,
+                            kind=(
+                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                                if concurrent_subagent
+                                else CHANGE_KIND_TURN
+                            ),
+                        )
+                        if _had_live_children:
+                            self._open_post_turn_change_window(
+                                conversation_id,
+                                run_id=run_id,
+                                session_id=session_id,
+                                handle=change_handle,
+                            )
                     elif _records:
                         logger.warning(
                             "change_review: run crashed before a run row "
@@ -3011,6 +3164,207 @@ class ConsoleAgentBridge:
                 )
                 if service not in retained:
                     retained.append(service)
+
+    @contextlib.contextmanager
+    def _child_run_scope(self, conversation_id: str, adapter: Any):
+        """One fleet child's whole life, as seen by this bridge (Task 6c).
+
+        Wraps the per-child model-call lifeline PR3a-1 Task 1 introduced
+        (``adapter.child_lifeline``) with the one fact change review needs
+        and nothing else has: **when a child's run actually ends**.
+
+        Entered on the child's own thread before its run starts and exited
+        when that run returns, so the count it maintains is the count of
+        children genuinely still working -- unlike the coordinator, whose
+        ``finish()`` lands AFTER this scope exits and which therefore still
+        reports the last child as running at the exact moment the window
+        should close.
+
+        The lifeline's own contract is preserved exactly: a failure to
+        start it still propagates (see ``child_lifeline``'s docstring for
+        why that must not degrade), and the count is still decremented,
+        because a child that never started is not a child still running.
+
+        Args:
+            conversation_id: The conversation this child belongs to.
+            adapter: The turn's ``_StreamingModelAdapter``.
+        """
+        with self._change_window_lock:
+            self._live_child_counts[conversation_id] = (
+                self._live_child_counts.get(conversation_id, 0) + 1
+            )
+        try:
+            with adapter.child_lifeline():
+                yield
+        finally:
+            with self._change_window_lock:
+                remaining = self._live_child_counts.get(conversation_id, 1) - 1
+                if remaining > 0:
+                    self._live_child_counts[conversation_id] = remaining
+                    last = False
+                else:
+                    self._live_child_counts.pop(conversation_id, None)
+                    last = True
+            if last:
+                # The window is closed OUTSIDE the lock: closing takes a
+                # git snapshot and writes a DB row, and holding a lock
+                # every child thread contends on across that would
+                # serialise fleet teardown behind disk I/O.
+                self._close_post_turn_change_window(conversation_id)
+
+    def _live_child_count(self, conversation_id: str) -> int:
+        """How many of this conversation's sub-agents are mid-run."""
+        with self._change_window_lock:
+            return self._live_child_counts.get(conversation_id, 0)
+
+    def _open_post_turn_change_window(
+        self,
+        conversation_id: str,
+        *,
+        run_id: str,
+        session_id: str,
+        handle: Any,
+    ) -> None:
+        """Start tracking what this turn's survivors do from here on.
+
+        Called from ``run_reply``'s ``finally``, right after the turn's own
+        E snapshot, and only when a child was still running when that
+        snapshot was taken. The window's baseline IS that E sha, so the
+        two windows share a boundary: no write can land between them.
+
+        Closed immediately when the last child turns out to have finished
+        in the meantime -- the window then covers the sliver between E and
+        now, which is exactly where that child's final writes would be.
+
+        Never raises: change tracking must not fail a reply.
+
+        Args:
+            conversation_id: The conversation the survivors belong to.
+            run_id: The turn whose survivors this window covers.
+            session_id: Session for the transcript row.
+            handle: The turn's own (already ended) ``TurnHandle``.
+        """
+        if self._change_tracker is None:
+            return
+        try:
+            follow_on = self._change_tracker.continuation(handle)
+            if follow_on is None:
+                return
+            window = _PostTurnChangeWindow(
+                run_id=run_id, session_id=session_id, handle=follow_on
+            )
+            # A previous window for this conversation should already be
+            # closed (this turn closed it at its own baseline), so this is
+            # a no-op -- but installing over one that ISN'T would drop its
+            # record with nothing said, which is the exact failure class
+            # this window exists to remove. Mutation-found: deleting the
+            # baseline close made the previous window vanish silently
+            # instead of merely recording a wider one.
+            self._close_post_turn_change_window(conversation_id)
+            with self._change_window_lock:
+                self._post_turn_change_windows[conversation_id] = window
+                still_live = self._live_child_counts.get(conversation_id, 0) > 0
+            if not still_live:
+                self._close_post_turn_change_window(conversation_id)
+        except Exception:  # noqa: BLE001 -- tracking never breaks a reply
+            logger.opt(exception=True).warning(
+                "change_review: could not open the post-turn window"
+            )
+
+    def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
+        """Tell an open survivor window where it must stop (Task 6c).
+
+        Called as soon as a new turn's baseline is KICKED (not settled) --
+        the window's end is decided by that turn's existence, not by when
+        its snapshot finishes, so a survivor that ends mid-turn stops at
+        the same sha as one that ends after it.
+
+        Args:
+            conversation_id: The conversation starting a turn.
+            handle: That turn's ``TurnHandle``.
+        """
+        with self._change_window_lock:
+            window = self._post_turn_change_windows.get(conversation_id)
+            if window is not None and window.successor is None:
+                window.successor = handle
+
+    def _close_post_turn_change_window(self, conversation_id: str) -> None:
+        """Close this conversation's survivor window and record it.
+
+        Two callers, and the pop under the lock is what makes them safe
+        together: the last child leaving ``_child_run_scope`` (on the
+        child's own thread, promptly) and the next turn's ``finally``.
+
+        Where the window ENDS does not depend on which of them closes it:
+        at the successor turn's baseline shas when a next turn has
+        started, else at a fresh snapshot. That is the whole attribution
+        rule -- windows abut, never overlap, so a write belongs to exactly
+        one record.
+
+        Never raises: it runs inside a child's teardown and inside a
+        turn's ``finally``, neither of which may die of a git failure.
+
+        Args:
+            conversation_id: The conversation whose window to close.
+        """
+        with self._change_window_lock:
+            window = self._post_turn_change_windows.pop(conversation_id, None)
+        if window is None or self._change_tracker is None:
+            return
+        try:
+            end_shas = None
+            if window.successor is not None:
+                # The same wait `end_turn` does anyway; here it only makes
+                # the boundary sha available to a closer that may be
+                # running well before the successor turn ends.
+                window.successor.await_baseline()
+                end_shas = dict(window.successor.baselines)
+            records = self._change_tracker.end_turn(
+                window.handle, end_shas=end_shas
+            )
+            if not records:
+                return
+            self._record_change_snapshots(
+                run_id=window.run_id,
+                records=records,
+                kind=CHANGE_KIND_SUBAGENT_POST_TURN,
+            )
+            self._append_change_markers(
+                window.session_id,
+                window.run_id,
+                records,
+                kind=CHANGE_KIND_SUBAGENT_POST_TURN,
+            )
+        except Exception:  # noqa: BLE001 -- never break a child's teardown
+            logger.opt(exception=True).warning(
+                "change_review: post-turn window failed; a survivor's "
+                "changes are untracked"
+            )
+
+    def _record_change_snapshots(
+        self, *, run_id: str, records: list, kind: str
+    ) -> None:
+        """Persist one window's records against a run.
+
+        Args:
+            run_id: The run the rows belong to.
+            records: ``TurnChangeRecord`` list from the tracker.
+            kind: Which window these rows cover (``CHANGE_KIND_*``).
+        """
+        for record in records:
+            self._db.record_change_snapshot(
+                run_id=run_id,
+                root=record.root,
+                baseline_sha=record.baseline_sha,
+                end_sha=record.end_sha,
+                files_changed=record.files_changed,
+                adds=record.adds,
+                dels=record.dels,
+                tracking_error=record.tracking_error,
+                untracked_oversize=record.untracked_oversize,
+                nested_repos=record.nested_repos,
+                kind=kind,
+            )
 
     def _retained_fleet_owners(self, conversation_id: str) -> list[AgentService]:
         """A stable copy of this conversation's retained survivor owners.
@@ -3690,13 +4044,35 @@ class ConsoleAgentBridge:
                         )
                     )
             snap_rows = snap_by_run.get(str(record.get("id")), [])
-            clean = [r for r in snap_rows if not r.get("tracking_error")]
-            files = sum(int(r.get("files_changed") or 0) for r in clean)
-            if files:
+            # PR3a-1 Task 6c: a run can now hold rows from TWO windows --
+            # its own turn, and the window covering what its surviving
+            # sub-agents did afterwards. Live emits one counts row per
+            # window (in this order); summing them into a single row here
+            # would resume a transcript showing a turn that never happened.
+            turn_rows = [
+                r
+                for r in snap_rows
+                if str(r.get("kind") or CHANGE_KIND_TURN)
+                != CHANGE_KIND_SUBAGENT_POST_TURN
+            ]
+            post_turn_rows = [
+                r
+                for r in snap_rows
+                if str(r.get("kind") or CHANGE_KIND_TURN)
+                == CHANGE_KIND_SUBAGENT_POST_TURN
+            ]
+            for _rows, _summary in (
+                (turn_rows, format_change_summary_marker),
+                (post_turn_rows, format_subagent_post_turn_change_marker),
+            ):
+                clean = [r for r in _rows if not r.get("tracking_error")]
+                files = sum(int(r.get("files_changed") or 0) for r in clean)
+                if not files:
+                    continue
                 block.append(
                     ConsoleChatMessage(
                         role=ConsoleMessageRole.TOOL,
-                        content=format_change_summary_marker(
+                        content=_summary(
                             files,
                             sum(int(r.get("adds") or 0) for r in clean),
                             sum(int(r.get("dels") or 0) for r in clean),
@@ -3705,6 +4081,18 @@ class ConsoleAgentBridge:
                         change_review_run_id=str(record.get("id")),
                     )
                 )
+                if _rows is turn_rows and any(
+                    str(r.get("kind") or "")
+                    == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                    for r in clean
+                ):
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_concurrent_subagent_change_marker(),
+                            status="complete",
+                        )
+                    )
             # Parity for the FAILURE shape too (review finding 2): live
             # emits a disclosure row per failed root; resume must render
             # byte-identical or a resumed transcript hides that a turn's
@@ -3739,7 +4127,12 @@ class ConsoleAgentBridge:
     # -- internals ------------------------------------------------------
 
     def _append_change_markers(
-        self, session_id: str, run_id: str, records: list
+        self,
+        session_id: str,
+        run_id: str,
+        records: list,
+        *,
+        kind: str = CHANGE_KIND_TURN,
     ) -> None:
         """Append the turn's change rows to the transcript (TASK-1972).
 
@@ -3752,21 +4145,38 @@ class ConsoleAgentBridge:
             session_id: The run's owning session.
             run_id: The run the rows review (carried on the counts row).
             records: The turn's ``TurnChangeRecord`` list.
+            kind: Which window produced ``records`` (``CHANGE_KIND_*``).
+                PR3a-1 Task 6c: a survivor's window gets its own counts
+                row rather than being folded into the turn's, and a turn
+                that shared the tree with an earlier turn's sub-agent gets
+                an extra disclosure row. ``resume_marker_messages``
+                re-derives exactly these rows from the stored ``kind``.
         """
         try:
             changed = [r for r in records if not r.tracking_error]
             files = sum(r.files_changed for r in changed)
             if files:
+                summary = (
+                    format_subagent_post_turn_change_marker
+                    if kind == CHANGE_KIND_SUBAGENT_POST_TURN
+                    else format_change_summary_marker
+                )
                 self._store.append_message(
                     session_id,
                     role=ConsoleMessageRole.TOOL,
-                    content=format_change_summary_marker(
+                    content=summary(
                         files,
                         sum(r.adds for r in changed),
                         sum(r.dels for r in changed),
                     ),
                     change_review_run_id=run_id,
                 )
+                if kind == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT:
+                    self._store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_concurrent_subagent_change_marker(),
+                    )
             for rec in records:
                 if rec.tracking_error:
                     self._store.append_message(
