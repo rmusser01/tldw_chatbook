@@ -1,9 +1,10 @@
 ---
 id: TASK-3403
 title: MIME-driven generated-video file extensions
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-09 04:39'
+updated_date: '2026-08-12 01:09'
 labels:
   - video
   - generation
