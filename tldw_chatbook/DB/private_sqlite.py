@@ -364,6 +364,13 @@ _SQLITE_OWNER_POLICIES = {
         "retained artifacts before and after durable namespace replacement.",
         preserve_read_only_source_mode=True,
     ),
+    "tts.profile_migration_recovery": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_migration_recovery",
+        _READ_ONLY_URI,
+        "TTS startup recovery immutably validates journal-classified exact "
+        "active and retained backup authority before profile-store open.",
+        preserve_read_only_source_mode=True,
+    ),
     "tts.profile_restore_stage": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _PRIVATE_AND_READ_ONLY,

@@ -1,0 +1,612 @@
+"""Pre-open recovery for interrupted profile-migration publication."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import stat
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from hashlib import sha256
+from pathlib import Path
+from threading import Lock
+from typing import Final
+
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.TTS import profile_schema
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_journal import (
+    MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
+    ParsedProfileMigrationJournal,
+    ProfileMigrationJournalSlot,
+    ProfileMigrationPublicationSlot,
+    parse_profile_migration_journal,
+)
+from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathStatus,
+    lexical_path,
+    secure_private_directory,
+)
+
+
+_SIDECARS: Final = ("-wal", "-shm", "-journal")
+_RECOVERY_LOCK = Lock()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ObservedArtifact:
+    leaf: str
+    identity: os.stat_result
+    kind: str
+    row: ProfileMigrationJournalSlot
+
+    def __repr__(self) -> str:
+        return "_ObservedArtifact(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ObservedRow:
+    row: ProfileMigrationJournalSlot
+    candidate: _ObservedArtifact | None
+    target: _ObservedArtifact | None
+    rollback: _ObservedArtifact | None
+
+    def __repr__(self) -> str:
+        return "_ObservedRow(<private>)"
+
+
+def _safe_failure(code: str = "migration_failed") -> ProfileRepositoryError:
+    error = ProfileRepositoryError(code)
+    error.__cause__ = None
+    error.__context__ = None
+    return error
+
+
+def _valid_stat(value: os.stat_result, *, links: frozenset[int]) -> bool:
+    return (
+        stat.S_ISREG(value.st_mode)
+        and value.st_uid == os.geteuid()
+        and stat.S_IMODE(value.st_mode) == 0o600
+        and value.st_nlink in links
+    )
+
+
+def _sidecars_absent(parent_fd: int, leaf: str) -> bool:
+    for suffix in _SIDECARS:
+        try:
+            os.stat(f"{leaf}{suffix}", dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        return False
+    return True
+
+
+def _read_stable(
+    file_fd: int, *, maximum: int | None = None
+) -> tuple[bytes, os.stat_result]:
+    before = os.fstat(file_fd)
+    if maximum is not None and before.st_size > maximum:
+        raise ValueError
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(file_fd, min(1024 * 1024, before.st_size - offset), offset)
+        if not chunk:
+            raise ValueError
+        chunks.append(chunk)
+        offset += len(chunk)
+    after = os.fstat(file_fd)
+    if (
+        not private_paths._same_identity(before, after)
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    ):
+        raise ValueError
+    return b"".join(chunks), after
+
+
+def _hash_sqlite(file_fd: int) -> tuple[int, bytes, int, os.stat_result]:
+    before = os.fstat(file_fd)
+    digest = sha256()
+    header = b""
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(file_fd, min(1024 * 1024, before.st_size - offset), offset)
+        if not chunk:
+            raise ValueError
+        if len(header) < 64:
+            header += chunk[: 64 - len(header)]
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(file_fd)
+    if (
+        len(header) < 64
+        or not private_paths._same_identity(before, after)
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    ):
+        raise ValueError
+    return before.st_size, digest.digest(), int.from_bytes(header[60:64], "big"), after
+
+
+def _open_leaf(parent_fd: int, leaf: str) -> int:
+    return os.open(
+        leaf,
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0),
+        dir_fd=parent_fd,
+    )
+
+
+def _observe_artifact(
+    parent_fd: int,
+    leaf: str,
+    row: ProfileMigrationJournalSlot,
+) -> _ObservedArtifact | None:
+    try:
+        entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if not _sidecars_absent(parent_fd, leaf):
+            raise ValueError
+        return None
+    if not _valid_stat(entry, links=frozenset({1, 2})):
+        raise ValueError
+    file_fd = _open_leaf(parent_fd, leaf)
+    try:
+        byte_length, digest, schema_version, opened = _hash_sqlite(file_fd)
+        current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not private_paths._same_identity(entry, opened)
+            or not private_paths._same_identity(opened, current)
+            or not _valid_stat(opened, links=frozenset({1, 2}))
+            or not _valid_stat(current, links=frozenset({1, 2}))
+            or not _sidecars_absent(parent_fd, leaf)
+        ):
+            raise ValueError
+        kind = row.classify_artifact(
+            opened,
+            byte_length=byte_length,
+            sha256_digest=digest,
+            schema_version=schema_version,
+        )
+        if kind is None:
+            raise ValueError
+        return _ObservedArtifact(leaf, opened, kind, row)
+    finally:
+        os.close(file_fd)
+
+
+def _observe_rows(
+    parent_fd: int,
+    parsed: ParsedProfileMigrationJournal,
+) -> tuple[_ObservedRow, ...]:
+    observed = tuple(
+        _ObservedRow(
+            row,
+            _observe_artifact(parent_fd, row.candidate, row),
+            _observe_artifact(parent_fd, row.target, row),
+            _observe_artifact(parent_fd, row.rollback, row),
+        )
+        for row in parsed.recovery_rows
+    )
+    artifacts = tuple(
+        artifact
+        for item in observed
+        for artifact in (item.candidate, item.target, item.rollback)
+        if artifact is not None
+    )
+    counts = Counter(
+        (artifact.identity.st_dev, artifact.identity.st_ino) for artifact in artifacts
+    )
+    if any(
+        counts[(artifact.identity.st_dev, artifact.identity.st_ino)]
+        != artifact.identity.st_nlink
+        for artifact in artifacts
+    ):
+        raise ValueError
+    for item in observed:
+        candidate, target, rollback = item.candidate, item.target, item.rollback
+        if (
+            (candidate is not None and candidate.kind != "candidate")
+            or (rollback is not None and rollback.kind != "prior")
+            or (not item.row.had_prior and rollback is not None)
+        ):
+            raise ValueError
+        for pair in ((candidate, target), (target, rollback)):
+            left, right = pair
+            if left is not None and right is not None and left.kind == right.kind:
+                if not private_paths._same_identity(left.identity, right.identity):
+                    raise ValueError
+    return observed
+
+
+def _read_journal(
+    parent_fd: int,
+    journal_leaf: str,
+) -> tuple[bytes, os.stat_result] | None:
+    try:
+        entry = os.stat(journal_leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if not _sidecars_absent(parent_fd, journal_leaf):
+            raise ValueError
+        return None
+    if not _valid_stat(entry, links=frozenset({1})):
+        raise ValueError
+    file_fd = _open_leaf(parent_fd, journal_leaf)
+    try:
+        raw, opened = _read_stable(
+            file_fd,
+            maximum=MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
+        )
+        current = os.stat(journal_leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not private_paths._same_identity(entry, opened)
+            or not private_paths._same_identity(opened, current)
+            or not _valid_stat(opened, links=frozenset({1}))
+            or not _valid_stat(current, links=frozenset({1}))
+            or not _sidecars_absent(parent_fd, journal_leaf)
+        ):
+            raise ValueError
+        return raw, opened
+    finally:
+        os.close(file_fd)
+
+
+def _reobserve_exact(parent_fd: int, expected: _ObservedArtifact) -> os.stat_result:
+    current = _observe_artifact(parent_fd, expected.leaf, expected.row)
+    if (
+        current is None
+        or current.kind != expected.kind
+        or not private_paths._same_identity(current.identity, expected.identity)
+    ):
+        raise ValueError
+    return current.identity
+
+
+def _fsync_parent(parent_fd: int, parent_identity: os.stat_result) -> None:
+    os.fsync(parent_fd)
+    if not private_paths._same_identity(os.fstat(parent_fd), parent_identity):
+        raise ValueError
+
+
+def _remove_exact(
+    parent_fd: int,
+    parent_identity: os.stat_result,
+    expected: _ObservedArtifact,
+) -> None:
+    _reobserve_exact(parent_fd, expected)
+    os.unlink(expected.leaf, dir_fd=parent_fd)
+    _fsync_parent(parent_fd, parent_identity)
+
+
+def _move_exact(
+    parent_fd: int,
+    parent_identity: os.stat_result,
+    source: _ObservedArtifact,
+    destination_leaf: str,
+) -> None:
+    identity = _reobserve_exact(parent_fd, source)
+    try:
+        os.stat(destination_leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if not _sidecars_absent(parent_fd, destination_leaf):
+            raise ValueError
+    else:
+        raise ValueError
+    os.link(
+        source.leaf,
+        destination_leaf,
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+    linked = os.stat(destination_leaf, dir_fd=parent_fd, follow_symlinks=False)
+    if not private_paths._same_identity(linked, identity) or linked.st_nlink != 2:
+        raise ValueError
+    _fsync_parent(parent_fd, parent_identity)
+    os.unlink(source.leaf, dir_fd=parent_fd)
+    file_fd = _open_leaf(parent_fd, destination_leaf)
+    try:
+        moved = os.fstat(file_fd)
+        if not private_paths._same_identity(moved, identity) or not _valid_stat(
+            moved, links=frozenset({1})
+        ):
+            raise ValueError
+        os.fsync(file_fd)
+    finally:
+        os.close(file_fd)
+    _fsync_parent(parent_fd, parent_identity)
+
+
+def _remove_journal(
+    parent_fd: int,
+    parent_identity: os.stat_result,
+    journal_leaf: str,
+    journal_identity: os.stat_result,
+) -> None:
+    current = os.stat(journal_leaf, dir_fd=parent_fd, follow_symlinks=False)
+    if not private_paths._same_identity(current, journal_identity) or not _valid_stat(
+        current, links=frozenset({1})
+    ):
+        raise ValueError
+    os.unlink(journal_leaf, dir_fd=parent_fd)
+    _fsync_parent(parent_fd, parent_identity)
+
+
+def _rollback_possible(rows: Sequence[_ObservedRow]) -> bool:
+    for item in rows:
+        prior = tuple(
+            artifact
+            for artifact in (item.target, item.rollback)
+            if artifact is not None and artifact.kind == "prior"
+        )
+        if item.row.had_prior and not prior:
+            return False
+        if not item.row.had_prior and prior:
+            return False
+    return True
+
+
+def _completion_possible(rows: Sequence[_ObservedRow]) -> bool:
+    return all(
+        any(
+            artifact is not None and artifact.kind == "candidate"
+            for artifact in (item.candidate, item.target)
+        )
+        for item in rows
+    )
+
+
+def _only_completed_authority(rows: Sequence[_ObservedRow]) -> bool:
+    return all(
+        item.target is not None
+        and item.target.kind == "candidate"
+        and item.rollback is None
+        for item in rows
+    )
+
+
+def _rollback(
+    parent_fd: int,
+    parent_identity: os.stat_result,
+    rows: Sequence[_ObservedRow],
+) -> None:
+    for item in reversed(rows):
+        candidate, target, rollback = item.candidate, item.target, item.rollback
+        if target is not None and target.kind == "candidate":
+            if candidate is None:
+                _move_exact(
+                    parent_fd,
+                    parent_identity,
+                    target,
+                    item.row.candidate,
+                )
+            else:
+                _remove_exact(parent_fd, parent_identity, target)
+            target = None
+        if item.row.had_prior:
+            if target is not None and target.kind == "prior":
+                if rollback is not None:
+                    _remove_exact(parent_fd, parent_identity, rollback)
+            elif target is None and rollback is not None:
+                _move_exact(parent_fd, parent_identity, rollback, item.row.target)
+            else:
+                raise ValueError
+        elif target is not None or rollback is not None:
+            raise ValueError
+    for item in rows:
+        candidate = _observe_artifact(parent_fd, item.row.candidate, item.row)
+        if candidate is not None:
+            _remove_exact(parent_fd, parent_identity, candidate)
+
+
+def _complete(
+    parent_fd: int,
+    parent_identity: os.stat_result,
+    rows: Sequence[_ObservedRow],
+) -> None:
+    for item in rows:
+        candidate, target, rollback = item.candidate, item.target, item.rollback
+        if target is not None and target.kind == "prior":
+            if rollback is None:
+                _move_exact(parent_fd, parent_identity, target, item.row.rollback)
+            elif not private_paths._same_identity(target.identity, rollback.identity):
+                raise ValueError
+            else:
+                _remove_exact(parent_fd, parent_identity, target)
+            target = None
+        if target is None:
+            if candidate is None:
+                raise ValueError
+            _move_exact(parent_fd, parent_identity, candidate, item.row.target)
+            candidate = None
+        elif target.kind != "candidate":
+            raise ValueError
+        if candidate is not None:
+            _remove_exact(parent_fd, parent_identity, candidate)
+    refreshed = _observe_rows(
+        parent_fd,
+        ParsedProfileMigrationJournal(
+            2,
+            "complete",
+            tuple(item.row for item in rows),
+            parent_identity.st_dev,
+            parent_identity.st_ino,
+        ),
+    )
+    for item in refreshed:
+        if item.target is None or item.target.kind != "candidate":
+            raise ValueError
+        if item.rollback is not None:
+            _remove_exact(parent_fd, parent_identity, item.rollback)
+
+
+def _validate_authoritative_targets(
+    parent_fd: int,
+    parent_path: Path,
+    parsed: ParsedProfileMigrationJournal,
+    *,
+    kind: str,
+) -> None:
+    for row in parsed.recovery_rows:
+        if kind == "prior" and not row.had_prior:
+            try:
+                os.stat(row.target, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if not _sidecars_absent(parent_fd, row.target):
+                    raise ValueError
+                continue
+            raise ValueError
+        path = parent_path / row.target
+        before = _observe_artifact(parent_fd, row.target, row)
+        if before is None or before.kind != kind or before.identity.st_nlink != 1:
+            raise ValueError
+        connection = connect_private_sqlite(
+            "tts.profile_migration_recovery",
+            path,
+            read_only=True,
+            must_exist=True,
+            immutable=True,
+            isolation_level=None,
+        )
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA query_only = ON")
+            version_row = connection.execute("PRAGMA user_version").fetchone()
+            if version_row is None or type(version_row[0]) is not int:
+                raise ValueError
+            profile_schema.validate_profile_store_version(connection, version_row[0])
+        finally:
+            connection.close()
+        after = _observe_artifact(parent_fd, row.target, row)
+        if (
+            after is None
+            or after.kind != kind
+            or after.identity.st_nlink != 1
+            or not private_paths._same_identity(before.identity, after.identity)
+        ):
+            raise ValueError
+
+
+def _choose_action(
+    phase: str,
+    rows: Sequence[_ObservedRow],
+) -> str:
+    if phase == "prepared":
+        if not _rollback_possible(rows):
+            raise ValueError
+        return "rollback"
+    if phase == "complete":
+        if not _completion_possible(rows):
+            raise ValueError
+        return "complete"
+    if phase == "publishing" and _only_completed_authority(rows):
+        return "complete"
+    if _rollback_possible(rows):
+        return "rollback"
+    if phase == "publishing" and _completion_possible(rows):
+        return "complete"
+    raise ValueError
+
+
+def recover_profile_migration_publication(
+    active_store_path: str | os.PathLike[str],
+    *,
+    _stage_hook: Callable[[str], None] | None = None,
+) -> bool:
+    """Recover one recognized publication before any profile-store open."""
+
+    selected = lexical_path(active_store_path)
+    journal_leaf = f".{selected.name}.migration-publication.json"
+    with _RECOVERY_LOCK:
+        parent_fd = -1
+        admitted = False
+        deferred: BaseException | None = None
+        body_error: BaseException | None = None
+        recovered = False
+        try:
+            result = secure_private_directory(
+                selected.parent,
+                create=False,
+                application_owned=True,
+            )
+            if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+                raise ValueError
+            parent_fd, _leaf = private_paths._open_verified_parent(
+                selected,
+                missing_leaf_allowed=True,
+            )
+            parent_identity = os.fstat(parent_fd)
+            journal_result = _read_journal(parent_fd, journal_leaf)
+            if journal_result is None:
+                return False
+            raw, journal_identity = journal_result
+            parsed = parse_profile_migration_journal(raw)
+            if (
+                not parsed.matches_parent(parent_identity)
+                or not parsed.recovery_rows
+                or parsed.recovery_rows[0].slot
+                is not ProfileMigrationPublicationSlot.ACTIVE
+                or not parsed.recovery_rows[0].had_prior
+                or parsed.recovery_rows[0].target != selected.name
+            ):
+                raise ValueError
+            rows = _observe_rows(parent_fd, parsed)
+            action = _choose_action(parsed.phase, rows)
+            admitted = True
+
+            def stage(name: str) -> None:
+                nonlocal deferred
+                if _stage_hook is None:
+                    return
+                try:
+                    _stage_hook(name)
+                except BaseException as error:
+                    if isinstance(error, Exception):
+                        raise
+                    if deferred is None:
+                        deferred = error
+
+            stage("admitted")
+            if action == "rollback":
+                _rollback(parent_fd, parent_identity, rows)
+            else:
+                _complete(parent_fd, parent_identity, rows)
+            stage("repaired")
+            _validate_authoritative_targets(
+                parent_fd,
+                selected.parent,
+                parsed,
+                kind="prior" if action == "rollback" else "candidate",
+            )
+            stage("validated")
+            _remove_journal(
+                parent_fd,
+                parent_identity,
+                journal_leaf,
+                journal_identity,
+            )
+            stage("settled")
+            if deferred is not None:
+                raise deferred
+            recovered = True
+        except BaseException as error:
+            body_error = error
+        finally:
+            if parent_fd >= 0:
+                os.close(parent_fd)
+        if body_error is not None:
+            if not isinstance(body_error, Exception):
+                raise body_error
+            raise _safe_failure("unavailable" if admitted else "migration_failed")
+        return recovered
+
+
+__all__ = ["recover_profile_migration_publication"]

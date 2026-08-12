@@ -583,9 +583,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # its prompts sub-leg (TASK-15020/B2). C43 is the isolated TTS
         # migration-boundary memory snapshot and opaque private destination.
         # C44 is immutable validation of exact migration-publication
-        # candidates, rollback identities, active state, and backups.
+        # candidates, rollback identities, active state, and backups. C45
+        # is immutable validation of journal-classified startup recovery
+        # authority before any profile-store open.
         f"C{number:02d}"
-        for number in range(1, 45)
+        for number in range(1, 46)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 19)
