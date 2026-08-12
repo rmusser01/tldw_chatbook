@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,17 @@ EXPECTED_PLATFORMS = {
     "macos-arm64": ("Darwin", "arm64"),
     "macos-x86_64": ("Darwin", "x86_64"),
 }
+EXPECTED_STEP_NAMES = (
+    "Check out the exact tested commit",
+    "Set up Python",
+    "Initialize failure evidence",
+    "Install test dependencies",
+    "Record dependency installation failure",
+    "Run bounded dictation contract tests",
+    "Normalize platform evidence",
+    "Validate platform evidence",
+    "Upload platform evidence",
+)
 
 
 def _load_evidence() -> ModuleType:
@@ -42,6 +54,49 @@ def _load_evidence() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _workflow_text() -> str:
+    assert WORKFLOW_PATH.is_file(), "TASK-603 evidence workflow is missing"
+    return WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def _yaml_block(text: str, header: str) -> str:
+    lines = text.splitlines()
+    matches = [index for index, line in enumerate(lines) if line == header]
+    assert len(matches) == 1, f"expected one YAML header: {header!r}"
+    start = matches[0]
+    indentation = len(header) - len(header.lstrip())
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and len(line) - len(line.lstrip()) <= indentation:
+            end = index
+            break
+    return "\n".join(lines[start + 1 : end])
+
+
+def _workflow_step(workflow: str, name: str) -> str:
+    return _yaml_block(workflow, f"      - name: {name}")
+
+
+def _step_command(step: str) -> str:
+    lines = step.splitlines()
+    run_lines = [
+        index for index, line in enumerate(lines) if line.startswith("        run:")
+    ]
+    assert len(run_lines) == 1
+    run_index = run_lines[0]
+    first = lines[run_index].removeprefix("        run:").strip()
+    if first != "|":
+        return first
+    command_lines: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) <= 8:
+            break
+        if line.strip():
+            command_lines.append(line.strip().removesuffix("\\").rstrip())
+    return " ".join(command_lines)
 
 
 def _run_identity(
@@ -425,5 +480,112 @@ def test_cli_aggregate_writes_only_a_validated_matrix(tmp_path: Path) -> None:
     evidence.validate_aggregate(json.loads(output.read_text(encoding="utf-8")))
 
 
-def test_workflow_file_is_deferred_to_the_workflow_tdd_phase() -> None:
-    assert not WORKFLOW_PATH.exists()
+def test_workflow_has_only_explicit_triggers_and_read_only_permissions() -> None:
+    workflow = _workflow_text()
+
+    assert [
+        line for line in _yaml_block(workflow, "on:").splitlines() if line.strip()
+    ] == [
+        "  pull_request:",
+        "    types: [labeled]",
+        "  workflow_dispatch:",
+    ]
+    assert [
+        line
+        for line in _yaml_block(workflow, "permissions:").splitlines()
+        if line.strip()
+    ] == ["  contents: read"]
+    assert "push:" not in workflow
+    assert "schedule:" not in workflow
+    assert "concurrency:" not in workflow
+    assert "secrets." not in workflow
+    assert ": write" not in workflow
+
+
+def test_workflow_has_one_gated_job_and_exact_five_platform_matrix() -> None:
+    workflow = _workflow_text()
+    jobs = _yaml_block(workflow, "jobs:")
+
+    assert re.findall(r"^  ([a-z0-9-]+):$", jobs, re.MULTILINE) == ["platform-evidence"]
+    assert (
+        "if: github.event_name == 'workflow_dispatch' || "
+        "github.event.label.name == 'task-603-platform-evidence'"
+    ) in jobs
+    assert "timeout-minutes: 30" in jobs
+    assert "fail-fast: false" in jobs
+    assert "runs-on: ${{ matrix.os }}" in jobs
+    matrix_pairs = re.findall(
+        r"- evidence_name: ([a-z0-9_-]+)\n\s+os: ([a-z0-9.-]+)", jobs
+    )
+    assert matrix_pairs == [
+        ("linux-x86_64", "ubuntu-24.04"),
+        ("linux-aarch64", "ubuntu-24.04-arm"),
+        ("windows-x86_64", "windows-2022"),
+        ("macos-arm64", "macos-15"),
+        ("macos-x86_64", "macos-15-intel"),
+    ]
+
+
+def test_workflow_uses_exact_ordered_steps_and_checked_out_commit() -> None:
+    workflow = _workflow_text()
+
+    assert re.findall(r"^      - name: (.+)$", workflow, re.MULTILINE) == list(
+        EXPECTED_STEP_NAMES
+    )
+    checkout = _workflow_step(workflow, EXPECTED_STEP_NAMES[0])
+    setup = _workflow_step(workflow, EXPECTED_STEP_NAMES[1])
+    install = _workflow_step(workflow, EXPECTED_STEP_NAMES[3])
+    assert "uses: actions/checkout@v4" in checkout
+    assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in checkout
+    assert "uses: actions/setup-python@v5" in setup
+    assert 'python-version: "3.12"' in setup
+    assert _step_command(install) == "python -m pip install -e '.[dev]'"
+
+
+def test_workflow_runs_each_exact_required_node_once_with_junit() -> None:
+    workflow = _workflow_text()
+    command = _step_command(_workflow_step(workflow, EXPECTED_STEP_NAMES[5]))
+
+    assert command.startswith("python -m pytest ")
+    for node in REQUIRED_NODES:
+        assert command.count(node) == 1
+    assert command.count("Tests/") == len(REQUIRED_NODES)
+    assert "--timeout=60" in command
+    assert '--junitxml="$RUNNER_TEMP/task-603-junit.xml"' in command
+    assert command.endswith("-q")
+
+
+def test_workflow_preserves_failure_outcome_and_validates_before_upload() -> None:
+    workflow = _workflow_text()
+    initialize = _workflow_step(workflow, EXPECTED_STEP_NAMES[2])
+    tests = _workflow_step(workflow, EXPECTED_STEP_NAMES[5])
+    normalize = _workflow_step(workflow, EXPECTED_STEP_NAMES[6])
+    validate = _workflow_step(workflow, EXPECTED_STEP_NAMES[7])
+    upload = _workflow_step(workflow, EXPECTED_STEP_NAMES[8])
+
+    assert "--initialize" in _step_command(initialize)
+    assert "id: platform_tests" in tests
+    assert "continue-on-error: true" in tests
+    assert "if: always() && steps.dependencies.outcome == 'success'" in normalize
+    assert '--pytest-outcome "${{ steps.platform_tests.outcome }}"' in _step_command(
+        normalize
+    )
+    assert "if: always()" in validate
+    assert "--validate" in _step_command(validate)
+    assert "if: always()" in upload
+    assert "uses: actions/upload-artifact@v4" in upload
+    assert "name: task-603-platform-${{ matrix.evidence_name }}" in upload
+    assert "path: ${{ runner.temp }}/task-603-platform-evidence.json" in upload
+    assert "if-no-files-found: error" in upload
+
+
+def test_workflow_has_no_model_download_runtime_smoke_or_broad_test_command() -> None:
+    workflow = _workflow_text()
+
+    assert "task602_platform_smoke" not in workflow
+    assert "transcription_parakeet_onnx" not in workflow
+    assert "huggingface" not in workflow.lower()
+    assert "cache:" not in workflow
+    assert "pytest Tests/" not in workflow.replace(
+        "python -m pytest ", "python -m pytest\n"
+    )
