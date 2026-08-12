@@ -286,6 +286,139 @@ async def test_final_render_after_fence_close_matches_unthrottled_render(monkeyp
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["complete", "stopped", "failed"])
+async def test_stream_ending_mid_open_fence_flushes_buffered_tail(
+    monkeypatch, terminal_status: str
+):
+    """AC#2 regression (fix round 1): a stream that ends while its fence is
+    STILL OPEN must not strand buffered content.
+
+    Reproduces the exact production path a code reviewer caught the first
+    version of this task missing: the transcript reconciler calls
+    ``sync_message`` on a status-only change (status is part of the row
+    signature), which is exactly what "user presses Stop mid-code-block" or
+    a length-limit cutoff looks like -- the message body stops growing and
+    the NEXT (and only remaining) call carries the SAME body text with a
+    new terminal status. `sync_message`'s "body unchanged" fast path used
+    to return before ever looking at the pending fence buffer, permanently
+    stranding whatever was deferred. This drives the body deep enough into
+    an open fence that the throttle is guaranteed to be holding a
+    non-empty buffer (the fake clock never advances far enough to cross
+    the deadline on its own), then flips status with NO further body
+    change -- the one shape that previously lost content.
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr(console_transcript_module, "monotonic", clock)
+
+    final_body = (
+        "Cutting off mid-block:\n\n"
+        "```python\n"
+        "def add(a, b):\n"
+        "    return a + b\n\n"
+        "for i in range(3):\n"
+        "    print(add(i, i))\n"
+    )  # deliberately never closed -- fence is still open when streaming ends
+
+    app_a = MarkdownHarness()
+    async with app_a.run_test() as pilot_a:
+        transcript_a = app_a.query_one(ConsoleTranscript)
+        streamed = ""
+        transcript_a.set_messages([_assistant(streamed)])
+        await transcript_a.refresh_messages()
+        await pilot_a.pause()
+
+        chunk_size = 5
+        for start in range(0, len(final_body), chunk_size):
+            streamed = final_body[: start + chunk_size]
+            transcript_a.set_messages([_assistant(streamed)])
+            await transcript_a.refresh_messages()
+            await pilot_a.pause()
+            # Advance well under the 1.0s deadline so nothing flushes on
+            # its own -- only the terminal-status transition below can be
+            # responsible for delivering the tail.
+            clock.advance(0.05)
+
+        row_a = transcript_a.query_one("#console-message-a1", ConsoleMarkdownMessage)
+        # Sanity: the throttle really is holding something back at this
+        # point, and the widget's own source really is behind the logical
+        # body -- otherwise this test would pass for the wrong reason.
+        assert row_a._pending_fence_delta != ""
+        markdown_a = row_a.query_one(Markdown)
+        assert markdown_a.source != streamed
+
+        # Same body text, terminal status, no further growth -- the exact
+        # shape that used to hit the early return and strand the buffer.
+        transcript_a.set_messages([_assistant(streamed, status=terminal_status)])
+        await transcript_a.refresh_messages()
+        await pilot_a.pause()
+
+        assert row_a._pending_fence_delta == ""
+        assert markdown_a.source == final_body
+        fences_a = list(markdown_a.query(MarkdownFence))
+        assert len(fences_a) == 1
+
+    # Reference: render the identical final (still-open-fence) content
+    # directly, never streamed/throttled at all.
+    app_b = MarkdownHarness()
+    async with app_b.run_test() as pilot_b:
+        transcript_b = app_b.query_one(ConsoleTranscript)
+        transcript_b.set_messages(
+            [_assistant(final_body, status=terminal_status, id="a1")]
+        )
+        await transcript_b.refresh_messages()
+        await pilot_b.pause()
+
+        row_b = transcript_b.query_one("#console-message-a1", ConsoleMarkdownMessage)
+        markdown_b = row_b.query_one(Markdown)
+        assert markdown_b.source == final_body
+        fences_b = list(markdown_b.query(MarkdownFence))
+        assert len(fences_b) == 1
+
+    assert fences_a[0].code == fences_b[0].code
+    assert fences_a[0].lexer == fences_b[0].lexer
+    assert fences_a[0]._highlighted_code.plain == fences_b[0]._highlighted_code.plain
+    assert list(fences_a[0]._highlighted_code.spans) == list(
+        fences_b[0]._highlighted_code.spans
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["complete", "stopped", "failed"])
+async def test_status_only_change_with_no_pending_buffer_is_a_no_op(
+    monkeypatch, terminal_status: str
+):
+    """Companion to the regression above: when there is nothing buffered,
+    a status-only change must stay a true no-op (no spurious append)."""
+    clock = _FakeClock()
+    monkeypatch.setattr(console_transcript_module, "monotonic", clock)
+
+    app = MarkdownHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        body = "plain prose, no fence"
+        transcript.set_messages([_assistant(body)])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        row = transcript.query_one("#console-message-a1", ConsoleMarkdownMessage)
+        markdown = row.query_one(Markdown)
+        append_calls = []
+        original_append = markdown.append
+        monkeypatch.setattr(
+            markdown,
+            "append",
+            lambda text: append_calls.append(text) or original_append(text),
+        )
+
+        assert row._pending_fence_delta == ""
+        transcript.set_messages([_assistant(body, status=terminal_status)])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert append_calls == []
+
+
 # ---------------------------------------------------------------------------
 # AC#3: multi-block prose streaming is untouched.
 # ---------------------------------------------------------------------------

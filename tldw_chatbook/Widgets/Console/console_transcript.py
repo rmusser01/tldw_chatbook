@@ -790,7 +790,21 @@ def _console_markdown_body_ends_in_open_fence(body: str) -> bool:
     would say "open" only skips an optimization opportunity (falls back to
     the unthrottled append, today's behavior). Neither ever drops or
     reorders content -- the throttle that consumes this always applies the
-    complete accumulated text on flush.
+    complete accumulated text on flush, and (fix round 1, TASK-15456) every
+    path that can end a message's active streaming --
+    ``_append_or_defer_body_delta`` seeing a non-"streaming" status, AND
+    ``sync_message``'s no-new-body-text fast path -- flushes any buffered
+    text unconditionally, without consulting this function at all. So a
+    false "open" verdict here is now purely a *delayed-highlight* risk, not
+    a drop risk, regardless of how this scan is wrong.
+
+    Known cost: this rescans the *entire* ``body`` on every call that needs
+    a decision (``_append_or_defer_body_delta`` passes ``self._body_text``,
+    not just the new delta), so it is O(body length) per streamed tick, not
+    O(delta). For a single assistant reply that stays well under a few
+    hundred KB (the normal case) this is negligible next to the Pygments
+    cost it exists to avoid, but it is a real, unbounded-with-message-size
+    cost worth knowing about, not a free check.
     """
     fence_char: str | None = None
     fence_len = 0
@@ -1053,6 +1067,19 @@ class ConsoleMarkdownMessage(Vertical):
         footer.display = footer_content is not None
         new_body = _assistant_markdown_body(message, presentation)
         if new_body == self._body_text:
+            # TASK-15456 fix round 1: a status-only change (Stop, a
+            # length-cutoff, a failure -- all routine mid-open-fence exits
+            # from "streaming") reaches this fast path with an UNCHANGED
+            # body, because the reconciler calls sync_message whenever the
+            # row signature changes and status is part of that signature.
+            # `self._body_text` already mirrors the true full content (it
+            # advances immediately in the growth branch below, even when
+            # the corresponding widget append was deferred) -- so this is
+            # the only place a still-buffered fence-interior tail can ever
+            # reach the widget once the message stops growing. Returning
+            # here without checking would strand that text permanently.
+            if self._pending_fence_delta and message.status != "streaming":
+                self._flush_pending_fence_delta(markdown)
             return
         if new_body.startswith(self._body_text):
             delta = new_body[len(self._body_text) :]
@@ -1061,11 +1088,30 @@ class ConsoleMarkdownMessage(Vertical):
         else:
             # Non-append edit (variant switch, retry, DB-resume rebind): the
             # prior diff base no longer applies, so any deferred fence
-            # buffer is void too -- the full update below supersedes it.
+            # buffer is void too -- markdown.update(new_body) below replaces
+            # the widget's content wholesale, so the (now-irrelevant, would
+            # have been superseded anyway) pending text is safe to discard
+            # rather than flush.
             self._pending_fence_delta = ""
             self._fence_defer_deadline = None
             markdown.update(new_body)
             self._body_text = new_body
+
+    def _flush_pending_fence_delta(self, markdown: Markdown) -> None:
+        """Hand any buffered fence-interior text to the widget and clear state.
+
+        The single place that actually calls ``Markdown.append()`` for
+        deferred text, used both by a deadline/status-driven flush inside
+        ``_append_or_defer_body_delta`` and by ``sync_message``'s terminal-
+        status fast path above -- so there is exactly one flush
+        implementation for the "hand over the complete buffered text"
+        invariant to hold against.
+        """
+        pending = self._pending_fence_delta
+        self._pending_fence_delta = ""
+        self._fence_defer_deadline = None
+        if pending:
+            markdown.append(pending)
 
     def _append_or_defer_body_delta(
         self, markdown: Markdown, delta: str, message: ConsoleChatMessage
@@ -1082,9 +1128,12 @@ class ConsoleMarkdownMessage(Vertical):
         both the buffered memory and the visible staleness window. Every
         branch below still ends by handing the widget the *complete*
         buffered text -- append-order and final content are unaffected, only
-        the number of Markdown/Pygments passes changes.
+        the number of Markdown/Pygments passes changes. A buffer started
+        here can also be flushed later from ``sync_message``'s terminal-
+        status fast path (see ``_flush_pending_fence_delta``) if the message
+        stops growing before this function runs again.
         """
-        pending = self._pending_fence_delta + delta
+        self._pending_fence_delta += delta
         now = monotonic()
         deadline_due = (
             self._fence_defer_deadline is not None and now >= self._fence_defer_deadline
@@ -1094,13 +1143,10 @@ class ConsoleMarkdownMessage(Vertical):
             and not deadline_due
             and _console_markdown_body_ends_in_open_fence(self._body_text)
         ):
-            self._pending_fence_delta = pending
             if self._fence_defer_deadline is None:
                 self._fence_defer_deadline = now + _FENCE_APPEND_DEFER_SECONDS
             return
-        self._pending_fence_delta = ""
-        self._fence_defer_deadline = None
-        markdown.append(pending)
+        self._flush_pending_fence_delta(markdown)
 
     @on(Markdown.LinkClicked)
     def _open_link(self, event: Markdown.LinkClicked) -> None:

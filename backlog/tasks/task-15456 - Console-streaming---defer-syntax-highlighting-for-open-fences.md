@@ -147,3 +147,65 @@ Python fence at simulated 0.2s cadence with real wall-clock timing:
 TASK-` and silently wrote a stray, empty `backlog/tasks/task-task- - .md`
 instead of touching this file. Deleted the stray file; this file was hand-edited
 directly per that lesson's guidance.
+
+### Fix round 1 (code review, not approved on first pass)
+
+**Critical, reviewer-reproduced against the real classes.** `sync_message`'s
+pre-existing early return (`if new_body == self._body_text: return`) fired
+*before* the new pending-fence buffer was ever consulted. The throttle broke
+the old invariant that `_body_text` mirrors what had actually been handed to
+the Markdown widget: `_body_text` now advances immediately in the growth
+branch even when the corresponding `markdown.append()` call is deferred. The
+reconciler calls `sync_message` on a status-only row-signature change (status
+is part of that signature), so a routine "Stop mid-code-block" or a
+length-limit cutoff -- unchanged body text, new terminal status -- hit the
+early return and the buffered fence-interior tail was **never flushed**,
+permanently, even though the true message content in the store was always
+complete and correct. A rendering-only bug, but a real, live one.
+
+**Fix.** `sync_message`'s unchanged-body fast path now flushes
+`_pending_fence_delta` whenever it is non-empty AND the message's status is
+no longer `"streaming"`, before returning. Extracted the actual
+`markdown.append()` + state-clear into a single shared
+`_flush_pending_fence_delta` helper, called from both that fast path and
+`_append_or_defer_body_delta`'s existing deadline/status-driven flush, so
+there is exactly one implementation of "hand the widget the complete
+buffered text" to keep correct. Audited every other terminal/flush path:
+the non-append-edit branch (`markdown.update(new_body)`) already discards
+the buffer correctly (the whole widget content is replaced wholesale, so
+the stale pending text is superseded, not lost); a pruned/unmounted row
+carries no data-loss risk either, because `_build_row_widget` always
+constructs a *fresh* `ConsoleMarkdownMessage` from the live message content
+on remount (`compose()` does a full parse, never depends on any prior
+widget's pending buffer).
+
+**Detector comment updated** (per review) to state the corrected
+consequence precisely: since the terminal flush no longer consults the
+fence detector at all, a false "open" verdict in an untracked
+blockquote/list context is now purely a delayed-highlight risk, never a
+drop risk. Also documented the detector's known O(body length) per-tick
+cost (it rescans the full accumulated body, not just the delta, on every
+call that needs a decision) as an accepted, non-Pygments-level cost.
+
+**New tests**, both parametrized over all three terminal statuses
+(`complete`, `stopped`, `failed`):
+- `test_stream_ending_mid_open_fence_flushes_buffered_tail` -- streams into
+  a fence that is *never closed*, holds the throttle's buffer non-empty by
+  advancing the fake clock well under the defer deadline, then flips status
+  with the body text unchanged (the exact shape that escaped review).
+  Verified this test fails red against the pre-fix early return (manually
+  reverted the fix, reran, confirmed `AssertionError` on all three
+  parametrizations with the stranded fence text in the diff, then restored
+  the fix) before trusting it as a real regression test. Also compares the
+  final `MarkdownFence` against an unthrottled reference render of the same
+  still-open-fence content (byte-identical `.code`/`.lexer`/highlighted
+  output).
+- `test_status_only_change_with_no_pending_buffer_is_a_no_op` -- companion
+  negative case: a status-only change with nothing buffered must not
+  trigger a spurious `markdown.append()`.
+
+**Re-verification.** `Tests/UI/test_console_transcript_fence_throttle.py`
+(26 tests, up from 20) plus the same
+console_transcript/tail-follow/markdown/pruning/region/selection/diff/jump-pill
+suites as round 1: **90 passed**, no regressions. `ruff check` on both
+touched files: clean.
