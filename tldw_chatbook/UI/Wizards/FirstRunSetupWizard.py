@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 
 from loguru import logger
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.compose import compose as _drain_compose_result
@@ -314,6 +314,10 @@ def _provider_options(
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
+    _PROVIDER_NAVIGATION_KEYS = frozenset(
+        {"down", "end", "home", "pagedown", "pageup", "up"}
+    )
+
     def __init__(
         self,
         wizard: Optional["SetupWizardContainer"] = None,
@@ -339,6 +343,7 @@ class ProviderStep(SetupStep):
         self._last_committed_provider_value: Optional[str] = None
         self._entered_key = False
         self._clear_requested = False
+        self._provider_choice_interacted = False
 
     def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Chat.console_provider_support import (
@@ -549,18 +554,33 @@ class ProviderStep(SetupStep):
         if provider_key is not None and not option.disabled:
             self.select_provider(provider_key)
 
+    def on_key(self, event: events.Key) -> None:
+        """Record user navigation before the OptionList binding runs."""
+        if event.key not in self._PROVIDER_NAVIGATION_KEYS:
+            return
+        try:
+            choices = self.query_one("#setup-provider-choice", OptionList)
+        except Exception:
+            return
+        if self.app.focused is choices:
+            self._provider_choice_interacted = True
+
     @on(OptionList.OptionHighlighted, "#setup-provider-choice")
     def _on_provider_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        self._select_provider_option(event.option)
+        if self._provider_choice_interacted:
+            self._select_provider_option(event.option)
 
     @on(OptionList.OptionSelected, "#setup-provider-choice")
     def _on_provider_chosen(self, event: OptionList.OptionSelected) -> None:
+        self._provider_choice_interacted = True
         self._select_provider_option(event.option)
 
     def _effective_provider_key(self) -> str:
         """Return the selected key, falling back to the highlighted option."""
         if self.selected_provider_key:
             return self.selected_provider_key
+        if not self._provider_choice_interacted:
+            return ""
         try:
             highlighted = self.query_one(
                 "#setup-provider-choice", OptionList

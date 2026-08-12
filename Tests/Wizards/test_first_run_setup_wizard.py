@@ -417,8 +417,8 @@ async def test_provider_step_commit_writes_key_and_notes_key_entered():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_commit_reads_highlighted_option_without_event():
-    """Commit recovers the live OptionList highlight if its event is pending."""
+async def test_provider_step_commit_recovers_user_driven_highlight():
+    """Commit fallback requires prior user navigation of the provider list."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -433,15 +433,14 @@ async def test_provider_step_commit_reads_highlighted_option_without_event():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         choices = step.query_one("#setup-provider-choice", OptionList)
-        target_index = next(
-            index
-            for index in range(choices.option_count)
-            if getattr(
-                choices.get_option_at_index(index), "provider_key", None
-            ) == "anthropic"
-        )
+        choices.focus()
+        await pilot.press("down")
+        await pilot.pause()
+        assert step.selected_provider_key == "anthropic"
+
+        # Exercise fallback independently after confirmed user navigation:
+        # the live highlight remains user-driven, so commit may recover it.
         step.selected_provider_key = ""
-        choices.highlighted = target_index
 
         ok, error = await step.commit()
         assert ok, error
@@ -451,8 +450,8 @@ async def test_provider_step_commit_reads_highlighted_option_without_event():
 
 
 @pytest.mark.asyncio
-async def test_provider_step_nothing_highlighted_still_legitimately_skips():
-    """Commit skips when neither state nor the OptionList supplies a choice."""
+async def test_provider_step_untouched_mount_does_not_select_or_commit():
+    """The framework's initial highlight is not a provider choice."""
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
@@ -467,8 +466,8 @@ async def test_provider_step_nothing_highlighted_still_legitimately_skips():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         choices = step.query_one("#setup-provider-choice", OptionList)
-        choices.highlighted = None
-        step.selected_provider_key = ""
+        assert choices.highlighted is not None
+        assert step.selected_provider_key == ""
 
         ok, error = await step.commit()
         assert ok, error
@@ -2828,13 +2827,8 @@ async def test_provider_list_grouped_popular_first_with_pinned_discovery():
         assert first_keys[0] == "openai"
         assert "anthropic" in first_keys
         # Provider rows still function with disabled headers interleaved.
-        choices.highlighted = next(
-            index
-            for index in range(choices.option_count)
-            if getattr(
-                choices.get_option_at_index(index), "provider_key", None
-            ) == "anthropic"
-        )
+        choices.focus()
+        await pilot.press("down")
         await pilot.pause()
         assert step.selected_provider_key == "anthropic"
         # The discovery banner sits ABOVE the list in DOM order.
