@@ -20077,6 +20077,93 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoints() -> (
+    None
+):
+    """The wide rail yields canvas space without losing its mounted state."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
+        await pilot.pause()
+
+        rail = screen.query_one("#library-rail", LibraryRail)
+        canvas = screen.query_one("#library-canvas")
+        handle = screen.query_one("#library-rail-handle")
+        collapse = screen.query_one("#library-rail-collapse", Button)
+        search = screen.query_one("#library-search-input", Input)
+        details_body = screen.query_one("#library-rail-section-body-details")
+        selected = screen.query_one(
+            f"#{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_CONVERSATIONS}",
+            Button,
+        )
+        search.value = "retained query"
+        assert not details_body.display
+        initial_canvas_width = canvas.region.width
+
+        collapse.focus()
+        collapse.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: handle.display and not rail.display,
+            message="Library rail did not collapse to its handle",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.region.width > initial_canvas_width,
+            message="Library canvas did not receive the collapsed rail width",
+        )
+        assert screen.focused is screen.query_one("#library-rail-open", Button)
+        assert canvas.region.width > initial_canvas_width
+        assert screen.query_one("#library-rail", LibraryRail) is rail
+        assert search.value == "retained query"
+        assert selected.has_class("library-rail-row-selected")
+        assert screen.query_one("#library-rail-section-body-details") is details_body
+        assert not details_body.display
+
+        canvas_action = screen.query_one("#library-conversation-row-0", Button)
+        canvas_action.focus()
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert screen.focused is screen.query_one("#library-rail-open", Button)
+
+        screen.query_one("#library-rail-open", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: rail.display and not handle.display,
+            message="Library rail did not expand from its handle",
+        )
+        assert screen.focused is search
+        assert search.value == "retained query"
+        assert selected.has_class("library-rail-row-selected")
+        assert not details_body.display
+
+        collapse.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: handle.display and not rail.display,
+            message="Library rail did not re-collapse",
+        )
+        await pilot.resize_terminal(60, 20)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        assert rail.display
+        assert not handle.display
+        assert not collapse.display
+
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        assert not rail.display
+        assert handle.display
+        assert canvas.display
+
+
+@pytest.mark.asyncio
 async def test_library_note_compact_stage_drills_in_and_back_without_losing_origin() -> (
     None
 ):

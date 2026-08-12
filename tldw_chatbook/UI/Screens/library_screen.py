@@ -312,6 +312,7 @@ from ...Widgets.Library import (
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
+    LibraryNavigationRailHandle,
     LibraryPromptsListCanvas,
     LibraryRail,
     LibrarySearchRagPanel,
@@ -1659,8 +1660,12 @@ class LibraryScreen(BaseAppScreen):
     #: action, which exists only on the landing.
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
+            "library-rail-handle",
+            ("library-rail-open",),
+        ),
+        WorkbenchPaneTarget(
             "library-rail",
-            ("library-search-input",),
+            ("library-search-input", "library-rail-collapse"),
         ),
         WorkbenchPaneTarget(
             "library-canvas",
@@ -2903,6 +2908,7 @@ class LibraryScreen(BaseAppScreen):
         # explicit presentation input now so compact/wide utility grouping is
         # testable without coupling the canvas to terminal geometry.
         self._library_notes_compact: bool = False
+        self._library_rail_collapsed: bool = False
         self._library_notes_stage: Literal["rail", "notes"] = "rail"
         self._library_notes_explicit_stage_intent = False
         self._library_notes_pending_focus_identity: LibraryNotesFocusIdentity | None = (
@@ -4110,6 +4116,7 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             shell = self.query_one("#library-shell-grid", Widget)
+            rail_handle = self.query_one("#library-rail-handle", Widget)
             rail = self.query_one("#library-rail", Widget)
             canvas = self.query_one("#library-canvas", Widget)
         except (NoMatches, QueryError):
@@ -4130,12 +4137,26 @@ class LibraryScreen(BaseAppScreen):
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
-        rail_display = not single_stage or self._library_notes_stage == "rail"
+        manually_collapsed = (
+            self._library_rail_collapsed and not self._library_notes_compact
+        )
+        rail_display = (
+            not single_stage or self._library_notes_stage == "rail"
+        ) and not manually_collapsed
         canvas_display = not single_stage or self._library_notes_stage == "notes"
+        handle_display = manually_collapsed
+        if rail_handle.display != handle_display:
+            rail_handle.display = handle_display
         if rail.display != rail_display:
             rail.display = rail_display
         if canvas.display != canvas_display:
             canvas.display = canvas_display
+        try:
+            collapse = rail.query_one("#library-rail-collapse", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            collapse.display = not self._library_notes_compact
 
     def _transition_library_notes_presentation(
         self,
@@ -7685,6 +7706,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
         with shell_grid:
+            rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
+            rail_handle.styles.height = "100%"
+            rail_handle.display = (
+                self._library_rail_collapsed and not self._library_notes_compact
+            )
+            yield rail_handle
             rail = LibraryRail(
                 shell,
                 preferences,
@@ -7696,7 +7723,12 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-workbench-pane",
             )
             rail.styles.height = "100%"
-            rail.display = not single_notes_stage or self._library_notes_stage == "rail"
+            rail.display = (
+                (not single_notes_stage or self._library_notes_stage == "rail")
+                and not (
+                    self._library_rail_collapsed and not self._library_notes_compact
+                )
+            )
             yield rail
             canvas_host = Vertical(
                 id="library-canvas", classes="destination-workbench-pane"
@@ -11848,6 +11880,32 @@ class LibraryScreen(BaseAppScreen):
             save_setting_to_cli_config("library.rail_state", "sections", serialized)
         except Exception:
             pass
+
+    def _set_library_rail_collapsed(self, collapsed: bool) -> None:
+        """Toggle wide Library navigation in place without rebuilding state."""
+        self._library_rail_collapsed = collapsed
+        self._apply_library_notes_stage_visibility()
+        if not self.is_mounted or self._library_notes_compact:
+            return
+        selector = "#library-rail-open" if collapsed else "#library-search-input"
+        try:
+            target = self.query_one(selector)
+        except (NoMatches, QueryError):
+            return
+        self.set_focus(target, scroll_visible=False)
+        self.call_after_refresh(target.focus)
+
+    @on(Button.Pressed, "#library-rail-collapse")
+    def _collapse_library_rail(self, event: Button.Pressed) -> None:
+        """Collapse the wide navigation rail to its keyboard-reachable handle."""
+        event.stop()
+        self._set_library_rail_collapsed(True)
+
+    @on(Button.Pressed, "#library-rail-open")
+    def _expand_library_rail(self, event: Button.Pressed) -> None:
+        """Expand Library navigation and return focus to its search field."""
+        event.stop()
+        self._set_library_rail_collapsed(False)
 
     @on(Button.Pressed, "#library-ingest-top-button")
     async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:

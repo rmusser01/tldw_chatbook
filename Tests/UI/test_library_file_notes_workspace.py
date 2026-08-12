@@ -4230,6 +4230,61 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     replica.close()
 
 
+@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_file_notes_delete_is_last_and_spatially_separated_from_new(
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    """Verify Delete stays last in keyboard order and away from routine actions.
+
+    Args:
+        tmp_path: Temporary directory used as the File Notes root.
+        size: Terminal width and height used to exercise the responsive layout.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "safety.md").write_text("keep me\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("safety.md")
+        await pilot.pause()
+        await pilot.pause()
+
+        toolbar = workspace.query_one("#file-notes-file-actions")
+        new = workspace.query_one("#file-notes-new", Button)
+        delete = workspace.query_one("#file-notes-delete", Button)
+        spacer = workspace.query_one("#file-notes-delete-spacer", Static)
+        button_ids = [button.id for button in toolbar.query(Button)]
+
+        assert button_ids[0] == "file-notes-new"
+        assert button_ids[-1] == "file-notes-delete"
+        assert new.display and delete.display
+        assert new.render_line(0).text.strip() == "New"
+        assert delete.render_line(0).text.strip() == "Delete"
+        if size[0] == 120:
+            assert not workspace.has_class("-stack-editor-actions")
+            assert spacer.display
+            assert delete.region.x > new.region.right
+            assert delete.region.right == toolbar.content_region.right
+        else:
+            assert workspace.has_class("-stack-editor-actions")
+            assert not spacer.display
+            assert delete.region.y > new.region.y
+            assert delete.region.width == toolbar.content_region.width
+
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_disabled_file_notes_actions_carry_marker_and_visible_recovery(
     tmp_path: Path,

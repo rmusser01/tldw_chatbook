@@ -814,9 +814,20 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0;
     }
 
+    #file-notes-delete-spacer {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+    }
+
     LibraryFileNotesWorkspace.-stack-editor-actions
-    #file-notes-delete.-confirm-delete {
+    #file-notes-delete-spacer {
+        display: none;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-delete {
         column-span: 2;
+        width: 1fr;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-save-copy {
@@ -826,6 +837,18 @@ class LibraryFileNotesWorkspace(Vertical):
     LibraryFileNotesWorkspace.-stack-editor-actions
     #file-notes-maintenance-toggle {
         column-span: 2;
+    }
+
+    LibraryFileNotesWorkspace.-single-editor-actions .file-notes-toolbar {
+        grid-size: 1;
+        grid-columns: 1fr;
+    }
+
+    LibraryFileNotesWorkspace.-single-editor-actions #file-notes-delete,
+    LibraryFileNotesWorkspace.-single-editor-actions #file-notes-save-copy,
+    LibraryFileNotesWorkspace.-single-editor-actions
+    #file-notes-maintenance-toggle {
+        column-span: 1;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions
@@ -1235,7 +1258,6 @@ class LibraryFileNotesWorkspace(Vertical):
                     classes="file-notes-toolbar",
                 ):
                     yield Button("New", id="file-notes-new", compact=True)
-                    yield Button("Delete", id="file-notes-delete", compact=True)
                     yield Button("Restore", id="file-notes-restore", compact=True)
                     yield Button(
                         "Compare",
@@ -1257,6 +1279,8 @@ class LibraryFileNotesWorkspace(Vertical):
                         id="file-notes-maintenance-toggle",
                         compact=True,
                     )
+                    yield Static("", id="file-notes-delete-spacer")
+                    yield Button("Delete", id="file-notes-delete", compact=True)
                 with Horizontal(
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
@@ -1980,7 +2004,8 @@ class LibraryFileNotesWorkspace(Vertical):
         available_width = pane.content_region.width
         if available_width <= 0:
             return
-        needs_stack = any(
+        single_column = available_width <= 40
+        needs_stack = single_column or any(
             toolbar.display
             and sum(
                 cell_len(str(button.label)) + 4
@@ -1991,6 +2016,11 @@ class LibraryFileNotesWorkspace(Vertical):
             for toolbar in pane.query(".file-notes-toolbar")
         )
         self.set_class(needs_stack, "-stack-editor-actions")
+        self.set_class(single_column, "-single-editor-actions")
+        delete = self.query_one("#file-notes-delete", Button)
+        self.query_one("#file-notes-delete-spacer", Static).display = (
+            delete.display and not needs_stack
+        )
 
     def _rebuild_tree(self) -> None:
         if not self._active or not self.is_mounted:
@@ -4237,6 +4267,10 @@ class LibraryFileNotesWorkspace(Vertical):
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
             button.display = displayed
+        self.query_one("#file-notes-delete-spacer", Static).display = (
+            visibility["file-notes-delete"]
+            and not self.has_class("-stack-editor-actions")
+        )
 
         maintenance_toggle = self.query_one(
             "#file-notes-maintenance-toggle", Button

@@ -22,7 +22,8 @@ Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
 **Database** | **Files**. Click **Files** — while the workspace loads you'll
 briefly see "Opening File Notes…". At 120 columns and wider, the rail stays
-visible and the workspace fills the canvas pane next to it. On compact
+beside the workspace unless you press **Collapse** in its **Navigation**
+heading; use the slim **Nav** handle to expand it again. On compact
 terminals, Library shows the File Notes canvas as the single visible stage so
 its controls remain on-screen; **Escape** or **Database** returns to Database
 Notes. Either switch first saves any unsaved edits on the side you're leaving.
@@ -46,9 +47,10 @@ Notes. Either switch first saves any unsaved edits on the side you're leaving.
   one; "Recently deleted: \<path\>" right after a delete), a save-status
   label (Idle / Dirty / Saving / Saved / Conflict / Error, sometimes with a
   detail after a dash), a path input with placeholder "relative/path.md",
-  two toolbars (**New Delete Restore Save draft as copy More file actions**
-  and the disclosed secondary actions), the text editor itself, and an action-status
-  line where results like "Deleted. Restore remains available." appear.
+  two toolbars (a primary row beginning with **New** and ending with
+  **Delete**, plus the disclosed secondary actions), the text editor itself,
+  and an action-status line where results like "Deleted. Restore remains
+  available." appear.
 - **Session Git panel** — pressing **Session Git (N)** swaps the whole
   workspace for the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **Back to navigator** returns to the files.
@@ -69,6 +71,10 @@ Notes. Either switch first saves any unsaved edits on the side you're leaving.
 The path input ("relative/path.md") is the target for **New**, **Move**, and
 **Save draft as copy** or **Export exact copy**: type where you want the file
 to go, then press the relevant button.
+
+On a wide editor, **New** stays at the far left and **Delete** is separated
+from the routine actions at the far right. On a compact editor, **Delete** is
+the final full-width row. Its two-activation confirmation is unchanged.
 
 | Control | What it does |
 |---|---|
