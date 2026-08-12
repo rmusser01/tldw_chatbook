@@ -631,8 +631,22 @@ class LocalPromptService:
         )
         return self.get_prompt(prompt_uuid or prompt_id, include_deleted=True)
 
-    def delete_prompt(self, prompt_identifier: str | int) -> Any:
-        return self.prompt_db.soft_delete_prompt(prompt_identifier)
+    def delete_prompt(
+        self,
+        prompt_identifier: str | int,
+        *,
+        expected_version: int | None = None,
+    ) -> Any:
+        return self.prompt_db.soft_delete_prompt(
+            prompt_identifier, expected_version=expected_version
+        )
+
+    def restore_deleted_prompt(
+        self, prompt_identifier: str | int, *, expected_version: int
+    ) -> Any:
+        return self.prompt_db.restore_deleted_prompt(
+            prompt_identifier, expected_version=expected_version
+        )
 
     def record_prompt_usage(self, prompt_identifier: str | int) -> Any:
         if hasattr(self.prompt_db, "record_prompt_usage"):
@@ -1518,14 +1532,55 @@ class PromptScopeService:
         *,
         mode: PromptBackend | str | None = None,
         prompt_identifier: str | int,
+        expected_version: int | None = None,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
-        response = await self._maybe_await(service.delete_prompt(prompt_identifier))
+        if normalized_mode == PromptBackend.LOCAL and expected_version is not None:
+            response = await self._maybe_await(
+                service.delete_prompt(
+                    prompt_identifier,
+                    expected_version=expected_version,
+                )
+            )
+        else:
+            response = await self._maybe_await(service.delete_prompt(prompt_identifier))
         if response == {}:
             return True
         return bool(response)
+
+    async def restore_deleted_prompt(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        prompt_identifier: str | int,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        """Restore one exact local Prompt/Recipe tombstone.
+
+        Resurrection is local-only until a server capability explicitly owns
+        an equivalent contract. It is governed as an ordinary conditional
+        update and returned through the same normalized record envelope used
+        by the rest of the Library Prompt surface.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError("Deleted Prompt restore is local-only.")
+        self._enforce_policy(self._action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        restore_prompt = getattr(service, "restore_deleted_prompt", None)
+        if not callable(restore_prompt):
+            raise ValueError("Local Prompt restore is unavailable.")
+        response = await self._maybe_await(
+            restore_prompt(
+                prompt_identifier,
+                expected_version=expected_version,
+            )
+        )
+        return self._normalize_prompt_record(
+            response, backend=normalized_mode.value
+        )
 
     async def record_prompt_usage(
         self,

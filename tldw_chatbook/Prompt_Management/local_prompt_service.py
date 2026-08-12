@@ -178,8 +178,22 @@ class LocalPromptService:
             "message": message,
         }
 
-    async def delete_prompt(self, prompt_id: int | str) -> bool:
-        return bool(self.interop.soft_delete_prompt(prompt_id))
+    async def delete_prompt(
+        self, prompt_id: int | str, *, expected_version: int | None = None
+    ) -> bool:
+        return bool(
+            self.interop.soft_delete_prompt(
+                prompt_id, expected_version=expected_version
+            )
+        )
+
+    async def restore_deleted_prompt(
+        self, prompt_id: int | str, *, expected_version: int
+    ) -> dict[str, Any]:
+        """Restore one exact local Prompt/Recipe tombstone."""
+        return self.interop.get_db_instance().restore_deleted_prompt(
+            prompt_id, expected_version=expected_version
+        )
 
     async def list_prompt_versions(
         self,

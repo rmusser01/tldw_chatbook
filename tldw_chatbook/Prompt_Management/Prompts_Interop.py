@@ -233,10 +233,16 @@ def update_keywords_for_prompt(prompt_id: int, keywords_list: List[str]) -> None
     db.update_keywords_for_prompt(prompt_id, keywords_list)
 
 
-def soft_delete_prompt(prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
+def soft_delete_prompt(
+    prompt_id_or_name_or_uuid: Union[int, str],
+    *,
+    expected_version: Optional[int] = None,
+) -> bool:
     """Soft deletes a prompt. See PromptsDatabase.soft_delete_prompt for details."""
     db = get_db_instance()
-    return db.soft_delete_prompt(prompt_id_or_name_or_uuid)
+    return db.soft_delete_prompt(
+        prompt_id_or_name_or_uuid, expected_version=expected_version
+    )
 
 
 def soft_delete_keyword(keyword_text: str) -> bool:

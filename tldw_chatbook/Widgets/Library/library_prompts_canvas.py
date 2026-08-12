@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
+    LibraryPromptDeleteReceipt,
     PromptBrowseResult,
     PromptEditorState,
     PromptHistoryState,
@@ -52,6 +53,14 @@ _EMPTY_PROMPT_COLLECTION_COPY = (
 # explaining the two-part prompt model to a new user.
 _SYSTEM_PROMPT_HINT = "Instructions the model always follows."
 _USER_PROMPT_HINT = "The message inserted into the composer."
+
+
+def _compact_receipt_name(value: str, limit: int = 42) -> str:
+    """Keep an untrusted artifact name literal and bounded in the action row."""
+    normalized = " ".join(value.splitlines()).strip() or "Untitled"
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "…"
 
 
 class LibraryPromptsListCanvas(Vertical):
@@ -131,6 +140,8 @@ class LibraryPromptsListCanvas(Vertical):
         collection_label: str = "All prompts",
         membership_state: PromptMembershipState | None = None,
         sort_choices_visible: bool = False,
+        delete_receipt: LibraryPromptDeleteReceipt | None = None,
+        mutation_in_flight: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -154,6 +165,8 @@ class LibraryPromptsListCanvas(Vertical):
         self.history_current_compatible = history_current_compatible
         self.collection_label = collection_label
         self.membership_state = membership_state
+        self.delete_receipt = delete_receipt
+        self.mutation_in_flight = mutation_in_flight
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -181,6 +194,35 @@ class LibraryPromptsListCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
+        if self.delete_receipt is not None:
+            receipt = self.delete_receipt
+            artifact_label = receipt.artifact_type.title()
+            receipt_name = _compact_receipt_name(receipt.title)
+            receipt_row = Horizontal(
+                id="library-prompts-delete-receipt", classes="ds-toolbar"
+            )
+            receipt_row.styles.height = "auto"
+            with receipt_row:
+                yield Static(
+                    f"✓ deleted · {artifact_label} · {receipt_name}",
+                    id="library-prompts-delete-receipt-copy",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
+                yield Button(
+                    "Undo",
+                    id="library-prompts-delete-undo",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
+                yield Button(
+                    "Dismiss",
+                    id="library-prompts-delete-receipt-dismiss",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                )
         yield Input(
             placeholder="Filter prompts… (Enter)",
             id="library-prompts-filter",
