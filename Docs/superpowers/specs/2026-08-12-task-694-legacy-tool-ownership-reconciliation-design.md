@@ -1,10 +1,10 @@
 # TASK-694 Legacy Tool Ownership Reconciliation Design
 
-**Status:** Approved for specification review
-**Date:** 2026-08-12
-**Task:** TASK-694
-**Existing decisions:** ADR-030 (direct local Library tools), ADR-032 (local
-agent tool permission boundary)
+- **Status:** Approved for specification review
+- **Date:** 2026-08-12
+- **Task:** TASK-694
+- **Existing decisions:** ADR-030 (direct local Library tools), ADR-032 (local
+  agent tool permission boundary)
 
 ## Goal
 
@@ -218,13 +218,13 @@ one.
 
 ## ADR Check
 
-**ADR required:** no
-**ADR path:** N/A; reuse ADR-030 and ADR-032.
-**Reason:** this task introduces no storage, provider, permission, runtime, or
-security boundary. It reconciles backlog and documentation with boundaries
-already accepted and preserves runtime behavior. The expanded TASK-743 remains
-the owner of any future audit-boundary decision and will need to perform its
-own ADR check if it keeps/redesigns the feature.
+- **ADR required:** no
+- **ADR path:** N/A; reuse ADR-030 and ADR-032.
+- **Reason:** this task introduces no storage, provider, permission, runtime, or
+  security boundary. It reconciles backlog and documentation with boundaries
+  already accepted and preserves runtime behavior. The expanded TASK-743 remains
+  the owner of any future audit-boundary decision and will need to perform its
+  own ADR check if it keeps/redesigns the feature.
 
 ## Non-Goals
 
