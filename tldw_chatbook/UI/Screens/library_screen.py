@@ -1402,6 +1402,23 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
                     exc_info=True,
                 )
         canvas.sync_state(*sync_args, **sync_kwargs)
+        # task-15457: the one thing a canvas sync cannot skip.
+        # ``LibraryScreen.refresh`` (the override) re-derives the footer on
+        # every whole-screen recompose, so these sites used to get it for
+        # free. Two footer tiers genuinely change under a targeted sync:
+        # the Notes tier branches on select mode and on the sort strip's
+        # visibility (``_library_notes_footer_shortcuts``), and the shared
+        # choice-strip tier advertises "enter choose … / esc cancel" while
+        # a media/prompts/skills/export strip is open
+        # (``_library_open_choice_strip``). Applied HERE, at the one choke
+        # point every converted site passes through, rather than per call
+        # site -- the media bulk-delete confirm's own two hand-added
+        # ``_register_footer_shortcuts()`` calls are the precedent for how
+        # easily a per-site version is forgotten.
+        if kind == "notes":
+            screen._apply_library_notes_footer_context()
+        else:
+            screen._register_footer_shortcuts()
     except Exception:
         logger.debug(
             f"Library {kind} canvas sync failed; falling back to full recompose.",
