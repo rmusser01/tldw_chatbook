@@ -17,6 +17,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
+from textual.timer import Timer
 from textual.widgets import Button, Input, RichLog, Static
 from rich.text import Text
 
@@ -31,6 +32,19 @@ if TYPE_CHECKING:
 #: Bounded record buffer mirroring app._log_records (kept in sync by the
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
+
+#: Debounce for the free-text filter `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). Every render
+#: pass rescans up to `MAX_LOG_RECORDS` buffered records, so it must not run
+#: on every keystroke (task-15476).
+FILTER_DEBOUNCE_SECONDS = 0.2
+
+#: Cap the RichLog rendered slice: a filter matching thousands of buffered
+#: records must not clear+rewrite the widget with all of them on every
+#: render pass. The status line discloses when the cap trims output
+#: (task-15476, AC #2); the most RECENT matches are kept, mirroring the
+#: buffer's own oldest-evicted-first policy.
+MAX_RENDERED_LINES = 1000
 
 #: Level chips are THRESHOLDS, ordered by severity, matching the journalctl
 #: convention: each chip shows its level and above. "Info+" hides DEBUG/TRACE
@@ -153,6 +167,17 @@ class LogsWindow(Container):
         self._pending_while_paused = 0
         self._rendered_count = 0
         self._loaded_from_app = False
+        # task-15476: how many records the active filter actually matched
+        # (>= _rendered_count once MAX_RENDERED_LINES trims the render),
+        # the records actually written to the RichLog on the last render
+        # pass (n/N error-jump indexes against this, not the full matched
+        # set, since that's all that's really on screen to scroll to), and
+        # a one-entry cache so re-rendering with the same filter text does
+        # not recompile the same regex.
+        self._visible_total = 0
+        self._last_rendered: list[LogRecord] = []
+        self._compiled_pattern_cache: tuple[str, "re.Pattern | None"] | None = None
+        self._filter_debounce_timer: Timer | None = None
 
     # ------------------------------------------------------------------
     # Composition
@@ -285,16 +310,26 @@ class LogsWindow(Container):
             record, self._level_chip, text, self._compile_pattern(text)
         )
 
-    @staticmethod
-    def _compile_pattern(text: str) -> "re.Pattern | None":
+    def _compile_pattern(self, text: str) -> "re.Pattern | None":
         """Compile the filter text as a regex; invalid input falls back to
-        plain substring matching (None means: use substring)."""
+        plain substring matching (None means: use substring).
+
+        Cached on ``text`` (task-15476, AC #2): the level-chip buttons and
+        the debounced text filter both re-render through this on every
+        settle, and re-compiling the same pattern each time is pure waste.
+        """
+        cached = self._compiled_pattern_cache
+        if cached is not None and cached[0] == text:
+            return cached[1]
         if not text:
-            return None
-        try:
-            return re.compile(text, re.IGNORECASE)
-        except re.error:
-            return None
+            pattern = None
+        else:
+            try:
+                pattern = re.compile(text, re.IGNORECASE)
+            except re.error:
+                pattern = None
+        self._compiled_pattern_cache = (text, pattern)
+        return pattern
 
     def _visible_records(self) -> list[LogRecord]:
         text = self.query_one("#logs-filter-text", Input).value
@@ -306,11 +341,19 @@ class LogsWindow(Container):
         ]
 
     def _render_view(self) -> None:
-        """Re-render the log view from the record buffer."""
+        """Re-render the log view from the record buffer.
+
+        Caps the rendered slice to the most recent `MAX_RENDERED_LINES`
+        filter matches (task-15476, AC #2): a filter matching thousands of
+        the buffered records must not clear+rewrite the RichLog with all of
+        them. `_update_status_line` discloses the truncation.
+        """
         log_widget = self.query_one("#app-log-display", RichLog)
         empty_state = self.query_one("#logs-empty-state", Static)
         if not self._records:
             self._rendered_count = 0
+            self._visible_total = 0
+            self._last_rendered = []
             empty_state.display = "block"
             log_widget.display = False
         else:
@@ -318,9 +361,16 @@ class LogsWindow(Container):
             log_widget.display = True
             log_widget.clear()
             visible = self._visible_records()
-            for record in visible:
+            capped = (
+                visible[-MAX_RENDERED_LINES:]
+                if len(visible) > MAX_RENDERED_LINES
+                else visible
+            )
+            for record in capped:
                 log_widget.write(_styled_line(record))
-            self._rendered_count = len(visible)
+            self._rendered_count = len(capped)
+            self._visible_total = len(visible)
+            self._last_rendered = capped
             log_widget.scroll_end()
         self._update_status_line()
         self._update_filter_chips()
@@ -351,10 +401,17 @@ class LogsWindow(Container):
             chip.set_class(chip_id == self._level_chip, "is-active")
 
     def _update_status_line(self) -> None:
-        """Honest accounting of what's shown, filtered, and paused."""
+        """Honest accounting of what's shown, filtered, capped, and paused."""
         total = len(self._records)
         shown = self._rendered_count
         parts = [f"Showing {shown} of {total} lines"]
+        if self._visible_total > shown:
+            # task-15476 AC #2: the filter matched more than the rendered
+            # cap -- say so, rather than silently showing a partial result.
+            parts.append(
+                f"(filter matched {self._visible_total}; "
+                f"showing most recent {shown})"
+            )
         if total >= MAX_LOG_RECORDS:
             parts.append(f"(buffer keeps last {MAX_LOG_RECORDS:,})")
         if self._paused:
@@ -401,6 +458,17 @@ class LogsWindow(Container):
 
     @on(Input.Changed, "#logs-filter-text")
     def _on_filter_text_changed(self, event: Input.Changed) -> None:
+        """Debounced (task-15476): a render pass rescans up to
+        `MAX_LOG_RECORDS` buffered records and clears+rewrites the RichLog,
+        so it must not run on every keystroke."""
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+        self._filter_debounce_timer = self.set_timer(
+            FILTER_DEBOUNCE_SECONDS, self._apply_filter_text_debounced
+        )
+
+    def _apply_filter_text_debounced(self) -> None:
+        self._filter_debounce_timer = None
         self._render_view()
 
     @on(Button.Pressed, "#logs-pause")
@@ -498,10 +566,17 @@ class LogsWindow(Container):
         self._jump_to_error(-1)
 
     def _error_row_indices(self) -> list[int]:
-        """Indices of error/critical records within the current view."""
+        """Indices of error/critical records within the RENDERED view.
+
+        Indexed against `_last_rendered` (what `_render_view` actually
+        wrote to the RichLog), not the full filtered match set: when
+        `MAX_RENDERED_LINES` trims the render, an index computed from the
+        full match set could point past what the widget can `scroll_to`
+        (task-15476).
+        """
         return [
             index
-            for index, record in enumerate(self._visible_records())
+            for index, record in enumerate(self._last_rendered)
             if record.level in ("ERROR", "CRITICAL")
         ]
 
