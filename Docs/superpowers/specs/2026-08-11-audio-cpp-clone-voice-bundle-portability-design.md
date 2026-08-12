@@ -580,6 +580,14 @@ confirms exact reuse or inserts profile+recipe+reference atomically. Any
 disagreement returns `stale_inspection` plus safe refreshed facts; no partial
 write occurs. No character or default owner is in the call graph.
 
+Dependency snapshot validation follows the producer's full cross-product,
+not a state-to-pending shortcut. `exact` may still report queued unrelated
+settings (`pending_configuration=true`); `missing` and `mismatch` may report
+either pending value; and `pending` requires queued configuration plus the
+exact saved requirement. The pending flag remains coherent with saved/applied
+generations. Inspection and commit consume only these pure facts and perform no
+adapter, provider, launch, health, network, or Settings work.
+
 ## Export publication
 
 After acknowledgement and destination selection, export:
@@ -591,12 +599,24 @@ After acknowledgement and destination selection, export:
 - requires the selected destination to remain absent;
 - fsyncs the file, publishes with an atomic no-replace primitive, and fsyncs
   the directory where supported; and
-- removes its temporary output if fresh publication fails.
+- removes only its exact temporary output if publication has not occurred.
 
 If the selected filename already exists, the user must choose a different name
 (or remove it outside this operation and reselect). A destination appearing or
 parent type/identity change before publication returns `destination_changed`.
 The final bundle is owner-private even when its user-selected parent is not.
+
+The successful no-replace link/rename is the export point of no return. Before
+it, cancellation propagates after exact temporary cleanup and leaves no final.
+After it, cancellation is deferred and the retained worker completes exact
+final identity, mode, content, and parent-fsync verification before reporting
+successful publication. Ordinary post-publication faults are retried through
+that convergence path. The service never unlinks the final pathname: POSIX has
+no exact-inode unlink-by-descriptor operation, and a `stat`-then-`unlink` pair
+could delete a foreign substitution. If post-publication substitution or total
+storage failure makes verification impossible, the service preserves the
+pathname occupant and returns bounded cleanup/unavailability; it does not
+claim rollback.
 
 The acknowledgement is not persisted as a preference. Selection changes,
 navigation, modal replacement, or shutdown fence late publication and UI
@@ -608,9 +628,11 @@ Archive copy, validation, decompression, atomic export publication, and cleanup
 run as retained bundle-service work. Repository migration, backup, and commit
 remain retained repository-owned work.
 
-Cancellation joins a shielded blocking worker before propagating and cleans any
-published staging/output it owns. UI unmount prevents stale presentation but
-does not abandon work.
+Cancellation joins a shielded blocking worker before propagating. Before bundle
+publication it cleans the exact private temporary sibling; after the export
+point of no return it defers cancellation and reports successful publication
+only after convergence. UI unmount prevents stale presentation but does not
+abandon work.
 
 The bundle portability service closes before repository shutdown. Its close
 seals new import/export/session admission, invalidates handles, and joins

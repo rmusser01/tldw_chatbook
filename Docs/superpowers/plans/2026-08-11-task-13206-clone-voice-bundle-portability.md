@@ -312,9 +312,22 @@ async def test_stale_commit_returns_new_review_session_with_refreshed_safe_facts
 
 Create `TTSVoiceBundlePortabilityService` with service identity, sealed admission, retained task set, an opaque token that cannot be copied/deep-copied/pickled, expiry, and `close()`/`wait_closed()`. A shielded worker descriptor-pins/copies/validates into an app-owned 0700 operation root, deletes first-pass extracted files before returning safe facts, and privately retains only source identity/fingerprint/evidence. Cancellation awaits settlement and identity cleanup. Commit consumes once, fully revalidates, obtains the Task-3 pure dependency snapshot, and submits Task 3's repository command. When the repository reports stale repository facts, the service recomputes dependency facts, invalidates the old handle, and returns a new bounded inspection session with refreshed safe combined facts; commit never proceeds until the user confirms that new review. Export publishes a 0600 temporary sibling with atomic no-replace. App construction and exact close ordering live in `app.py`, and shut this owner before the profile repository.
 
+Validate the pure dependency snapshot as the producer emits it: exact may have
+queued settings, missing/mismatch may have either pending value, and pending
+requires queued configuration plus the exact saved requirement. Keep the
+pending flag coherent with saved/applied generations without treating it as a
+state alias, and prove inspection/commit perform zero provider work.
+
+The successful atomic no-replace publication is export's non-cancellable point
+of no return. Pre-publication cancellation cleans only the exact temporary
+sibling and propagates with no final. Post-publication cancellation is deferred
+while exact final identity/mode/content and parent fsync converge, then returns
+successful publication. Never unlink the final pathname after publication;
+POSIX cannot make a `stat`-then-`unlink` sequence substitution-safe.
+
 - [ ] **Step 4: Mutation-check lifecycle/identity**
 
-Use unretained `to_thread` and confirm cancellation leaks ownership; use path cleanup after substitution and confirm cleanup test fails; restore.
+Use unretained `to_thread` and confirm cancellation leaks ownership; use path cleanup after substitution and confirm cleanup test fails; remove the post-PONR final-unlink prohibition and confirm the substitution/no-unlink regression fails; restore.
 
 - [ ] **Step 5: Commit**
 

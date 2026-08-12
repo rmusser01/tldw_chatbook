@@ -111,6 +111,43 @@ def _dependency(*, state: str = "exact", revision: int = 4):
     )
 
 
+def _producer_dependency_cases():
+    requirement = _requirement()
+    return (
+        (
+            "exact",
+            AudioCppGuidedDependencySnapshot(
+                "exact", 4, 2, 2, False, requirement, requirement
+            ),
+            False,
+        ),
+        (
+            "exact-pending-settings",
+            AudioCppGuidedDependencySnapshot(
+                "exact", 5, 3, 2, True, requirement, requirement
+            ),
+            False,
+        ),
+        (
+            "missing-pending-settings",
+            AudioCppGuidedDependencySnapshot("missing", 5, 3, 2, True, None, None),
+            True,
+        ),
+        (
+            "mismatch-stable-settings",
+            AudioCppGuidedDependencySnapshot("mismatch", 4, 2, 2, False, None, None),
+            True,
+        ),
+        (
+            "pending-saved-exact",
+            AudioCppGuidedDependencySnapshot(
+                "pending", 5, 3, 2, True, requirement, None
+            ),
+            True,
+        ),
+    )
+
+
 class _Repository:
     def __init__(self) -> None:
         self.generation = 3
@@ -1019,7 +1056,7 @@ async def test_inspect_preserves_unsupported_platform_code(
         ("state", "unknown"),
         ("provider_configuration_revision", -1),
         ("saved_generation", True),
-        ("pending_configuration", True),
+        ("state", "pending"),
         ("saved_requirement", None),
         ("applied_requirement", TTSCloneRecipeRequirement("other", 1, "other")),
     ),
@@ -1043,6 +1080,35 @@ async def test_invalid_dependency_snapshot_fails_before_review_publication(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("_case", "snapshot", "inactive_consent"),
+    _producer_dependency_cases(),
+)
+async def test_real_dependency_snapshot_cross_product_inspects_and_commits(
+    tmp_path: Path,
+    _case: str,
+    snapshot: AudioCppGuidedDependencySnapshot,
+    inactive_consent: bool,
+) -> None:
+    source = tmp_path / "selected.tldw-voice.zip"
+    _write_source(source)
+    service, repository, dependency = _service(tmp_path)
+    dependency.snapshot = snapshot
+
+    review = await service.inspect(source)
+    assert review.dependency_state == snapshot.state
+    result = await service.commit(
+        review.handle,
+        TTSVoiceBundleImportChoice("create", inactive_consent),
+    )
+
+    assert result.status == "created"
+    assert len(repository.commits) == 1
+    assert dependency.calls == 2
+    await service.close()
+
+
+@pytest.mark.asyncio
 async def test_invalidate_is_idempotent_and_foreign_handles_are_bounded(
     tmp_path: Path,
 ) -> None:
@@ -1054,7 +1120,14 @@ async def test_invalidate_is_idempotent_and_foreign_handles_are_bounded(
 
     await service.invalidate(review.handle)
     await service.invalidate(review.handle)
-    await foreign.invalidate(review.handle)
+    with pytest.raises(TTSVoiceBundleError, match="stale_inspection") as foreign_error:
+        await foreign.invalidate(review.handle)
+    assert foreign_error.value.__cause__ is None
+    assert foreign_error.value.__context__ is None
+    with pytest.raises(TTSVoiceBundleError, match="stale_inspection") as malformed:
+        await foreign.invalidate(object())  # type: ignore[arg-type]
+    assert malformed.value.__cause__ is None
+    assert malformed.value.__context__ is None
     with pytest.raises(TTSVoiceBundleError, match="stale_inspection"):
         await service.commit(
             review.handle,
@@ -1239,7 +1312,7 @@ async def test_export_cancellation_after_durable_publication_returns_success(
 @pytest.mark.parametrize(
     "fault_boundary", ("destination_post_link", "destination_post_fsync")
 )
-async def test_export_post_link_fault_leaves_no_unreported_final(
+async def test_export_post_ponr_fault_converges_to_reported_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fault_boundary: str,
@@ -1282,7 +1355,72 @@ async def test_export_post_link_fault_leaves_no_unreported_final(
             raise OSError("CANARY-post-link-private")
 
     monkeypatch.setattr(bundle_service, "_test_boundary", fault)
-    with pytest.raises(TTSVoiceBundleError, match="operation_failed"):
+    await service.export(
+        PROFILE_ID,
+        destination,
+        expected_generation=repository.generation,
+        expected_revision=profile.revision,
+        acknowledged=True,
+    )
+    assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_export_never_unlinks_final_path_after_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle, profile = _install_export_record(repository)
+    real_unlink = bundle_service.os.unlink
+    final_unlinks: list[str] = []
+
+    def refuse_final_unlink(path, *args, **kwargs):
+        if os.fspath(path) == destination.name:
+            final_unlinks.append(os.fspath(path))
+            raise AssertionError("published final must never be unlinked")
+        return real_unlink(path, *args, **kwargs)
+
+    def post_link_fault(boundary: str) -> None:
+        if boundary == "destination_post_link":
+            raise OSError("transient after PONR")
+
+    monkeypatch.setattr(bundle_service.os, "unlink", refuse_final_unlink)
+    monkeypatch.setattr(bundle_service, "_test_boundary", post_link_fault)
+    await service.export(
+        PROFILE_ID,
+        destination,
+        expected_generation=repository.generation,
+        expected_revision=profile.revision,
+        acknowledged=True,
+    )
+
+    assert final_unlinks == []
+    assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_export_preserves_foreign_substitution_after_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    _bundle_value, profile = _install_export_record(repository)
+    foreign = b"foreign destination occupant"
+
+    def substitute(boundary: str) -> None:
+        if boundary != "destination_post_link":
+            return
+        destination.unlink()
+        destination.write_bytes(foreign)
+        destination.chmod(0o600)
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", substitute)
+    with pytest.raises(TTSVoiceBundleError, match="cleanup_failed"):
         await service.export(
             PROFILE_ID,
             destination,
@@ -1290,7 +1428,54 @@ async def test_export_post_link_fault_leaves_no_unreported_final(
             expected_revision=profile.revision,
             acknowledged=True,
         )
-    assert not destination.exists()
+    assert destination.read_bytes() == foreign
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary", ("destination_pre_publish", "destination_post_link")
+)
+async def test_export_cancellation_respects_atomic_publication_ponr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    destination = tmp_path / "portable.tldw-voice.zip"
+    service, repository, _dependency_service = _service(tmp_path)
+    bundle, profile = _install_export_record(repository)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def pause(observed: str) -> None:
+        if observed != boundary:
+            return
+        entered.set()
+        release.wait(5)
+
+    monkeypatch.setattr(bundle_service, "_test_boundary", pause)
+    exporting = asyncio.create_task(
+        service.export(
+            PROFILE_ID,
+            destination,
+            expected_generation=repository.generation,
+            expected_revision=profile.revision,
+            acknowledged=True,
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 5)
+    exporting.cancel()
+    await asyncio.sleep(0)
+    release.set()
+
+    if boundary == "destination_pre_publish":
+        with pytest.raises(asyncio.CancelledError):
+            await exporting
+        assert not destination.exists()
+    else:
+        await exporting
+        assert destination.read_bytes() == encode_clone_voice_bundle(bundle)
+    assert not tuple(tmp_path.glob(".portable.tldw-voice.zip.*.tmp"))
     await service.close()
 
 

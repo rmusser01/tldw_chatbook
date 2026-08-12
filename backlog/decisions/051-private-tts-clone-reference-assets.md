@@ -225,6 +225,12 @@ Post-ready generation drift still blocks before private materialization or
 synthesis HTTP. It never silently falls back or retargets. Dependency recovery
 changes availability only; it never assigns a character or changes a default.
 
+The snapshot's pending flag is generation/configuration evidence rather than
+an alias for its state. Exact, missing, and mismatch states may coexist with
+queued settings; pending state additionally requires an exact compatible saved
+requirement. Bundle inspection and commit validate this producer cross-product
+without acquiring provider authority.
+
 Reference-bearing profile editing is display-name-only. Model, voice, format,
 speed, or option changes require a newly admitted result/new profile or a
 future explicit atomic reference replacement; every v4 reference set/replacement
@@ -239,6 +245,19 @@ platform has verified ADR-029 application-owned containment, bundle controls
 fail closed with a truthful unsupported-platform explanation. Archive workers,
 migration backup, atomic output publication, cleanup, and repository commit are
 retained and joined across cancellation and shutdown.
+
+For bundle export, the successful atomic no-replace namespace publication is
+the explicit non-cancellable point of no return. Cancellation before that point
+propagates after the exact private temporary sibling is cleaned and no final
+exists. Cancellation after that point is deferred while the service converges
+the exact published inode through mode/content/identity verification and parent
+directory fsync, then returns successful publication. The service never unlinks
+the final pathname after publication. POSIX has no exact-inode
+unlink-by-descriptor primitive, so a pathname `stat` followed by `unlink` could
+delete a substituted foreign file; post-publication substitution is therefore
+preserved and reported as bounded cleanup/unavailability rather than rolled
+back. An owned final can accompany failure only when substitution or total
+storage failure makes convergence unverifiable.
 
 ## Context
 

@@ -708,6 +708,91 @@ def _fingerprint_source_sync(
             os.close(parent_fd)
 
 
+def _published_file_matches(
+    parent_fd: int,
+    destination: Path,
+    parent_identity: tuple[int, int, int, int],
+    published_identity: tuple[int, int],
+    payload: bytes,
+) -> bool:
+    named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+    if _identity(named) != published_identity or not _private_file(named):
+        return False
+    descriptor = os.open(destination.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(descriptor)
+        digest = sha256()
+        size = 0
+        while True:
+            chunk = os.read(descriptor, _COPY_CHUNK_BYTES)
+            if not chunk:
+                break
+            size += len(chunk)
+            digest.update(chunk)
+        final_opened = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    final_named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+    if (
+        _identity(opened) != published_identity
+        or _identity(final_opened) != published_identity
+        or _identity(final_named) != published_identity
+        or not _private_file(final_opened)
+        or size != len(payload)
+        or digest.digest() != sha256(payload).digest()
+        or _parent_identity(os.fstat(parent_fd)) != parent_identity
+        or _parent_identity(os.lstat(destination.parent)) != parent_identity
+    ):
+        return False
+    os.fsync(parent_fd)
+    return (
+        _identity(os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False))
+        == published_identity
+        and _parent_identity(os.fstat(parent_fd)) == parent_identity
+        and _parent_identity(os.lstat(destination.parent)) == parent_identity
+    )
+
+
+def _converge_published_file(
+    parent_fd: int,
+    destination: Path,
+    parent_identity: tuple[int, int, int, int],
+    published_identity: tuple[int, int],
+    payload: bytes,
+) -> bool:
+    for _ in range(3):
+        try:
+            return _published_file_matches(
+                parent_fd,
+                destination,
+                parent_identity,
+                published_identity,
+                payload,
+            )
+        except OSError:
+            continue
+    return False
+
+
+def _unlink_exact_temporary_after_publication(
+    parent_fd: int,
+    temporary_leaf: str,
+    temporary_identity: tuple[int, int],
+) -> bool:
+    for _ in range(3):
+        try:
+            named = os.stat(temporary_leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if _identity(named) != temporary_identity or not _private_file(
+                named, links=(2,)
+            ):
+                return False
+            os.unlink(temporary_leaf, dir_fd=parent_fd)
+            return True
+        except OSError:
+            continue
+    return False
+
+
 def _publish_sync(
     destination: Path, payload: bytes, cancellation: Event | None = None
 ) -> _WorkerOutcome:
@@ -717,8 +802,6 @@ def _publish_sync(
     temporary_identity: tuple[int, int] | None = None
     published_identity: tuple[int, int] | None = None
     parent_identity: tuple[int, int, int, int] | None = None
-    published = False
-    durable = False
     code: str | None = None
     try:
         if not _posix_supported():
@@ -728,11 +811,10 @@ def _publish_sync(
             raise TTSVoiceBundleError("destination_changed")
         parent_fd = os.open(destination.parent, _DIRECTORY_FLAGS)
         opened_parent = os.fstat(parent_fd)
-        named_parent = os.lstat(destination.parent)
         parent_identity = _parent_identity(opened_parent)
         if (
             _parent_identity(before) != parent_identity
-            or _parent_identity(named_parent) != parent_identity
+            or _parent_identity(os.lstat(destination.parent)) != parent_identity
         ):
             raise TTSVoiceBundleError("destination_changed")
         try:
@@ -748,11 +830,15 @@ def _publish_sync(
             dir_fd=parent_fd,
         )
         os.fchmod(temporary_fd, _PRIVATE_FILE_MODE)
-        info = os.fstat(temporary_fd)
-        named = os.stat(temporary_leaf, dir_fd=parent_fd, follow_symlinks=False)
-        if not _private_file(info) or _identity(info) != _identity(named):
+        temporary_info = os.fstat(temporary_fd)
+        temporary_named = os.stat(
+            temporary_leaf, dir_fd=parent_fd, follow_symlinks=False
+        )
+        if not _private_file(temporary_info) or _identity(temporary_info) != _identity(
+            temporary_named
+        ):
             raise TTSVoiceBundleError("destination_changed")
-        temporary_identity = _identity(info)
+        temporary_identity = _identity(temporary_info)
         view = memoryview(payload)
         while view:
             written = os.write(temporary_fd, view)
@@ -782,49 +868,40 @@ def _publish_sync(
             )
         except FileExistsError:
             raise TTSVoiceBundleError("destination_changed") from None
-        published = True
+
+        # The no-replace link is the publication PONR. The final pathname is
+        # never removed by this service after this point.
         published_identity = temporary_identity
-        _test_boundary("destination_post_link")
-        destination_info = os.stat(
-            destination.name, dir_fd=parent_fd, follow_symlinks=False
-        )
-        if _identity(destination_info) != temporary_identity or not _private_file(
-            destination_info, links=(2,)
-        ):
-            raise TTSVoiceBundleError("destination_changed")
-        if cancellation is not None and cancellation.is_set():
-            raise asyncio.CancelledError
-        os.unlink(temporary_leaf, dir_fd=parent_fd)
-        temporary_identity = None
-        os.fsync(parent_fd)
-        settled = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
-        descriptor = os.open(destination.name, _SOURCE_FLAGS, dir_fd=parent_fd)
         try:
-            final_opened = os.fstat(descriptor)
-            digest = sha256()
-            size = 0
-            while True:
-                chunk = os.read(descriptor, _COPY_CHUNK_BYTES)
-                if not chunk:
-                    break
-                size += len(chunk)
-                digest.update(chunk)
-        finally:
-            os.close(descriptor)
-        if (
-            not _private_file(settled)
-            or _identity(settled) != _identity(destination_info)
-            or _identity(final_opened) != _identity(settled)
-            or size != len(payload)
-            or digest.digest() != sha256(payload).digest()
-            or _parent_identity(os.fstat(parent_fd)) != parent_identity
-            or _parent_identity(os.lstat(destination.parent)) != parent_identity
+            _test_boundary("destination_post_link")
+        except Exception:
+            pass
+        if not _unlink_exact_temporary_after_publication(
+            parent_fd, temporary_leaf, temporary_identity
         ):
-            raise TTSVoiceBundleError("destination_changed")
-        _test_boundary("destination_post_fsync")
-        if cancellation is not None and cancellation.is_set():
-            raise asyncio.CancelledError
-        durable = True
+            raise TTSVoiceBundleError("cleanup_failed")
+        temporary_identity = None
+
+        if not _converge_published_file(
+            parent_fd,
+            destination,
+            parent_identity,
+            published_identity,
+            payload,
+        ):
+            return _WorkerOutcome("cleanup_failed", None)
+        try:
+            _test_boundary("destination_post_fsync")
+        except Exception:
+            if not _converge_published_file(
+                parent_fd,
+                destination,
+                parent_identity,
+                published_identity,
+                payload,
+            ):
+                return _WorkerOutcome("cleanup_failed", None)
+        return _WorkerOutcome(None, True)
     except TTSVoiceBundleError as error:
         code = error.code
     except BaseException as error:
@@ -847,46 +924,21 @@ def _publish_sync(
                     named, links=(1, 2)
                 ):
                     os.unlink(temporary_leaf, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
                 else:
                     code = "cleanup_failed"
             except FileNotFoundError:
                 pass
             except OSError:
                 code = "cleanup_failed"
-        if code is not None and published and not durable and parent_fd >= 0:
-            try:
-                final = os.stat(
-                    destination.name, dir_fd=parent_fd, follow_symlinks=False
-                )
-                if (
-                    published_identity is not None
-                    and _identity(final) == published_identity
-                    and _private_file(final)
-                ):
-                    os.unlink(destination.name, dir_fd=parent_fd)
-                    os.fsync(parent_fd)
-                    published = False
-                else:
-                    code = "cleanup_failed"
-            except FileNotFoundError:
-                published = False
-            except OSError:
-                code = "cleanup_failed"
-        try:
-            if (
-                parent_fd >= 0
-                and parent_identity is not None
-                and _parent_identity(os.fstat(parent_fd)) != parent_identity
-            ):
-                code = "destination_changed"
-        except OSError:
-            code = "cleanup_failed"
         if parent_fd >= 0:
             try:
                 os.close(parent_fd)
             except OSError:
                 code = "cleanup_failed"
-    return _WorkerOutcome(None if durable else code, durable)
+    if published_identity is not None:
+        return _WorkerOutcome(code or "cleanup_failed", None)
+    return _WorkerOutcome(code or "operation_failed", None)
 
 
 async def _await_retained(
@@ -948,12 +1000,24 @@ def _valid_dependency_snapshot(
     for item in (snapshot.saved_requirement, snapshot.applied_requirement):
         if item is not None and type(item) is not TTSCloneRecipeRequirement:
             return None
-    if snapshot.pending_configuration != (snapshot.state == "pending"):
+        if item is not None:
+            try:
+                rebuilt = TTSCloneRecipeRequirement(
+                    recipe_id=item.recipe_id,
+                    recipe_revision=item.recipe_revision,
+                    model_id=item.model_id,
+                )
+            except (TypeError, ValueError, TTSVoiceBundleError):
+                return None
+            if rebuilt != item:
+                return None
+    if snapshot.pending_configuration != (
+        snapshot.saved_generation != snapshot.applied_generation
+    ):
         return None
     if snapshot.state == "exact" and not (
         snapshot.saved_requirement == requirement
         and snapshot.applied_requirement == requirement
-        and snapshot.saved_generation == snapshot.applied_generation
     ):
         return None
     if snapshot.state == "missing" and (
@@ -964,6 +1028,10 @@ def _valid_dependency_snapshot(
     if snapshot.state == "mismatch" and (
         snapshot.saved_requirement == requirement
         and snapshot.applied_requirement == requirement
+    ):
+        return None
+    if snapshot.state == "pending" and not (
+        snapshot.pending_configuration and snapshot.saved_requirement == requirement
     ):
         return None
     return snapshot
@@ -1628,10 +1696,11 @@ class TTSVoiceBundlePortabilityService:
         call = await self._admit()
         try:
             async with self._session_lock:
-                if type(handle) is TTSVoiceBundleHandle and handle._belongs_to(
+                if type(handle) is not TTSVoiceBundleHandle or not handle._belongs_to(
                     self._identity
                 ):
-                    self._sessions.pop(handle, None)
+                    raise TTSVoiceBundleError("stale_inspection")
+                self._sessions.pop(handle, None)
         finally:
             await self._release(call)
 
