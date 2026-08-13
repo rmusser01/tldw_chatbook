@@ -173,6 +173,7 @@ def _file_facts(
         or size <= 0
         or type(oid) is not str
         or _SHA256_RE.fullmatch(oid) is None
+        or type(entry.get("size")) is not int
         or entry.get("size") != size
     ):
         raise ValueError(f"unknown file shape for LFS file {path!r}")

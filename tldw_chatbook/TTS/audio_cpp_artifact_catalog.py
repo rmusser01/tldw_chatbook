@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any
 
@@ -103,9 +103,12 @@ def _relative_path(value: object, label: str) -> str:
     path = _string(value, label)
     parts = path.split("/")
     pure_path = PurePosixPath(path)
+    windows_path = PureWindowsPath(path)
     if (
         "\\" in path
         or pure_path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
         or any(part in {"", ".", ".."} for part in parts)
         or pure_path.as_posix() != path
     ):

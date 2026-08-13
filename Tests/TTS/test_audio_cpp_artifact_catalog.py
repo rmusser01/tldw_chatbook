@@ -139,7 +139,16 @@ def test_manifest_rejects_duplicate_paths_within_a_package(
 
 
 @pytest.mark.parametrize("path_field", ["source_path", "managed_path"])
-@pytest.mark.parametrize("value", ["../model.gguf", "models/../model.gguf", "/model.gguf"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "../model.gguf",
+        "models/../model.gguf",
+        "/model.gguf",
+        "C:/escape.gguf",
+        "C:escape.gguf",
+    ],
+)
 def test_manifest_rejects_path_traversal_or_absolute_paths(
     tmp_path: Path,
     path_field: str,
@@ -297,6 +306,29 @@ def test_refresh_refuses_unknown_requested_file_shapes(tmp_path: Path) -> None:
     manifest_path = _write_manifest(tmp_path, _valid_manifest())
     tree = json.dumps(
         [{"type": "directory", "path": "example/model.gguf", "oid": "a" * 40}]
+    ).encode()
+
+    def recorded_urlopen(_request: object) -> _Response:
+        return _Response(tree)
+
+    with pytest.raises(ValueError, match="unknown file shape"):
+        refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+
+def test_refresh_rejects_boolean_top_level_lfs_size(tmp_path: Path) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+    tree = json.dumps(
+        [
+            {
+                "type": "file",
+                "path": "example/model.gguf",
+                "oid": "a" * 40,
+                "size": True,
+                "lfs": {"oid": "b" * 64, "size": 1, "pointerSize": 127},
+            }
+        ]
     ).encode()
 
     def recorded_urlopen(_request: object) -> _Response:
