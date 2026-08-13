@@ -176,7 +176,9 @@ def _relative_luminance(rgb: tuple[int, int, int]) -> float:
     return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
 
 
-def _contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int, int]) -> float:
+def _contrast_ratio(
+    foreground: tuple[int, int, int], background: tuple[int, int, int]
+) -> float:
     lighter, darker = sorted(
         (_relative_luminance(foreground), _relative_luminance(background)),
         reverse=True,
@@ -191,9 +193,7 @@ def _painted_text_contrast(
     """Measure final compositor colors for alphanumeric glyphs owned by a control."""
 
     strips = app.screen._compositor.render_strips()
-    painted: list[
-        tuple[tuple[int, int, int], tuple[int, int, int]]
-    ] = []
+    painted: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
     for y in range(widget.region.y, widget.region.bottom):
         for x in range(widget.region.x, widget.region.right):
             try:
@@ -591,8 +591,7 @@ async def test_inventory_failure_after_selection_blocks_stale_managed_launch(
                 window.query_one(f"#{provider}-gguf-source-status", Static).render()
             )
             assert recovery == (
-                "Managed GGUF inventory unavailable. "
-                "Refresh managed models to retry."
+                "Managed GGUF inventory unavailable. Refresh managed models to retry."
             )
             assert PRIVATE_MANAGED_PATH not in recovery
 
@@ -614,14 +613,8 @@ async def test_inventory_failure_after_selection_blocks_stale_managed_launch(
         await pilot.pause()
         assert not starts["llamacpp"].disabled
         assert not starts["llamafile"].disabled
-        assert (
-            window.gguf_source_snapshot("llamacpp").mode
-            is GGUFSourceMode.EXTERNAL
-        )
-        assert (
-            window.gguf_source_snapshot("llamafile").mode
-            is GGUFSourceMode.EMBEDDED
-        )
+        assert window.gguf_source_snapshot("llamacpp").mode is GGUFSourceMode.EXTERNAL
+        assert window.gguf_source_snapshot("llamafile").mode is GGUFSourceMode.EMBEDDED
 
         monkeypatch.setattr(app, "run_worker", real_run_worker)
         for provider in modes:
@@ -883,9 +876,9 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
                 mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
                 mode.value = source_mode
                 if source_mode == "external":
-                    window.query_one(f"#{provider}-model-path", Input).value = (
-                        "/outside/readable-model.gguf"
-                    )
+                    window.query_one(
+                        f"#{provider}-model-path", Input
+                    ).value = "/outside/readable-model.gguf"
                     active_source_controls = (
                         window.query_one(f"#{provider}-model-path", Input),
                         window.query_one(f"#{provider}-browse-model-button", Button),
@@ -1198,7 +1191,9 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         window._handle_server_process_state_change(provider)
         window._handle_server_process_state_change(provider)
         await pilot.pause()
-        assert window.query_one(f"#{provider}-stop-server-button", Button) is stop_identity
+        assert (
+            window.query_one(f"#{provider}-stop-server-button", Button) is stop_identity
+        )
         assert stop_identity.has_focus
 
         await pilot.press("enter")
