@@ -104,6 +104,7 @@ from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
+    ACTIVE_INGEST_STATES,
     ActiveIngestSubmissionRefused,
     IngestJobState,
     LibraryIngestJob,
@@ -657,6 +658,9 @@ class _LibraryIngestStartConsent:
     active_source_count: int
     tooling_affected_count: int
     is_folder: bool
+    request_fingerprint: str = ""
+    authoritative_refusal: bool = False
+    active_registry_job_ids: tuple[str, ...] = ()
 
     @property
     def owed(self) -> bool:
@@ -3358,6 +3362,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_scope_id: str | None = None
         self._library_external_submit_worker: Worker | None = None
         self._library_external_submit_backend: str | None = None
+        self._library_external_submit_consent: _LibraryIngestStartConsent | None = None
         self._library_external_submit_busy: bool = False
         self._library_external_submit_status: str = ""
         self._library_model_install_progress_label: str = ""
@@ -11869,7 +11874,12 @@ class LibraryScreen(BaseAppScreen):
             # Lifecycle tokens are deliberately absent from the
             # fingerprint. Only a different set of active jobs invalidates
             # what the user armed against on a registry tick.
-            if pending.active_job_ids != armed.active_job_ids:
+            if (
+                pending.active_job_ids != armed.active_job_ids
+                and not self._authoritative_library_ingest_consent_is_current(
+                    armed, pending
+                )
+            ):
                 self._disarm_library_ingest_start_confirm()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._update_library_ingest_dynamic_regions()
@@ -23751,6 +23761,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_worker = None
         self._library_external_submit_scope_id = None
         self._library_external_submit_backend = None
+        self._library_external_submit_consent = None
         if scope_id:
             try:
                 self.app_instance._ensure_parakeet_source_service().release_scope(
@@ -24154,7 +24165,7 @@ class LibraryScreen(BaseAppScreen):
             for job in matches
             if (key := normalized(job.source_path)) is not None
         }
-        fingerprint_payload = {
+        request_payload = {
             "source": submitted_source,
             "backend": backend,
             "title": self._safe_text(form.title, max_length=300),
@@ -24162,6 +24173,16 @@ class LibraryScreen(BaseAppScreen):
             "keywords": parse_keywords(form.keywords),
             "options": self._build_ingest_options_snapshot(),
             "warnings": form.preflight.warnings if form.preflight else [],
+        }
+        request_fingerprint = json.dumps(
+            request_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        fingerprint_payload = {
+            **request_payload,
             "active_job_ids": active_job_ids,
         }
         fingerprint = json.dumps(
@@ -24177,6 +24198,28 @@ class LibraryScreen(BaseAppScreen):
             active_source_count=len(matched_source_keys),
             tooling_affected_count=tooling_affected_count,
             is_folder=is_folder,
+            request_fingerprint=request_fingerprint,
+        )
+
+    def _active_library_ingest_job_ids(self) -> tuple[str, ...]:
+        """Return stable IDs for every currently active visible ingest job."""
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        return tuple(job.job_id for job in jobs if job.state in ACTIVE_INGEST_STATES)
+
+    def _authoritative_library_ingest_consent_is_current(
+        self,
+        armed: _LibraryIngestStartConsent,
+        pending: _LibraryIngestStartConsent,
+    ) -> bool:
+        """Validate a refusal fallback without re-scanning its source."""
+        return bool(
+            armed.authoritative_refusal
+            and armed.request_fingerprint == pending.request_fingerprint
+            and pending.active_job_ids in ((), armed.active_job_ids)
+            and armed.active_registry_job_ids
+            == self._active_library_ingest_job_ids()
         )
 
     def _submit_library_ingest_form(self) -> None:
@@ -24230,6 +24273,13 @@ class LibraryScreen(BaseAppScreen):
             submitted_source, gate_state
         )
         armed = self._library_ingest_start_consent
+        if (
+            armed is not None
+            and self._authoritative_library_ingest_consent_is_current(
+                armed, pending
+            )
+        ):
+            pending = armed
         if pending.owed:
             if armed is None or armed.fingerprint != pending.fingerprint:
                 self._library_ingest_start_consent = pending
@@ -24244,14 +24294,17 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return
             allow_active_duplicate = armed.allows_active_duplicate
+            confirmed_consent = armed if allow_active_duplicate else None
             self._disarm_library_ingest_start_confirm()
         else:
             allow_active_duplicate = False
+            confirmed_consent = None
             if armed is not None:
                 self._disarm_library_ingest_start_confirm()
         self._do_submit_ingest(
             submitted_source,
             allow_active_duplicate=allow_active_duplicate,
+            confirmed_consent=confirmed_consent,
         )
 
     def _do_submit_ingest(
@@ -24259,6 +24312,7 @@ class LibraryScreen(BaseAppScreen):
         submitted_source: str,
         *,
         allow_active_duplicate: bool = False,
+        confirmed_consent: _LibraryIngestStartConsent | None = None,
     ) -> None:
         """Perform the actual Library ingest job submission."""
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
@@ -24306,6 +24360,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_generation = generation
             self._library_external_submit_scope_id = scope_id
             self._library_external_submit_backend = captured_backend
+            self._library_external_submit_consent = confirmed_consent
             self._set_library_external_status(
                 "Verifying external Parakeet model directory…",
                 busy=True,
@@ -24444,6 +24499,7 @@ class LibraryScreen(BaseAppScreen):
         if error is not None or prepared is None:
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self.app_instance._ensure_parakeet_source_service().release_scope(scope_id)
             self._clear_library_external_vad_progress()
             if error == "vad_failed":
@@ -24503,6 +24559,40 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
             return
+        confirmed_consent = getattr(
+            self, "_library_external_submit_consent", None
+        )
+        if confirmed_consent is not None:
+            submitted_source = str(submit_kwargs.get("source_path") or "")
+            pending = self._current_library_ingest_start_consent(submitted_source)
+            request_changed = (
+                pending.request_fingerprint
+                != confirmed_consent.request_fingerprint
+            )
+            membership_changed = (
+                pending.active_job_ids != confirmed_consent.active_job_ids
+            )
+            if request_changed or (membership_changed and pending.owed):
+                self.app_instance._ensure_parakeet_source_service().release_scope(
+                    scope_id
+                )
+                self._library_external_submit_scope_id = None
+                self._library_external_submit_backend = None
+                self._library_external_submit_consent = None
+                self._clear_library_external_vad_progress()
+                self._set_library_external_status("", busy=False)
+                self._library_ingest_start_consent = pending if pending.owed else None
+                if pending.owed:
+                    self._library_ingest_start_confirm_armed_at = time.monotonic()
+                self._update_library_ingest_gate(
+                    self._build_library_ingest_state()
+                )
+                return
+            if membership_changed:
+                # The confirmed match finished while preparation ran. The
+                # request may proceed, but only under the ordinary guard.
+                submit_kwargs["allow_active_duplicate"] = False
+        self._library_external_submit_consent = None
         self._set_library_external_status("Queueing import…", busy=True)
         self._enqueue_library_ingest_snapshot(
             submit_kwargs,
@@ -24672,6 +24762,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self._clear_library_external_vad_progress()
             self._set_library_external_status("", busy=False)
 
@@ -24699,6 +24790,9 @@ class LibraryScreen(BaseAppScreen):
                     active_source_count=0,
                     tooling_affected_count=pending.tooling_affected_count,
                     is_folder=False,
+                    request_fingerprint=pending.request_fingerprint,
+                    authoritative_refusal=True,
+                    active_registry_job_ids=self._active_library_ingest_job_ids(),
                 )
             self._library_ingest_start_consent = pending
             self._library_ingest_start_confirm_armed_at = time.monotonic()
@@ -24721,6 +24815,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self._clear_library_external_vad_progress()
             self._set_library_external_status(
                 "Queueing failed. Correct the form and retry.",
@@ -24735,6 +24830,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_external_submit_worker = None
             self._library_external_submit_scope_id = None
             self._library_external_submit_backend = None
+            self._library_external_submit_consent = None
             self._clear_library_external_vad_progress()
             self._set_library_external_status("", busy=False)
         # One batched write. Saving key-by-key re-read and re-parsed the whole
@@ -25379,6 +25475,9 @@ class LibraryScreen(BaseAppScreen):
         if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
             return
         self._invalidate_library_external_submission()
+        # Reset mutates the same options snapshot the pending Start
+        # fingerprint covers, so revoke consent before changing the form.
+        self._disarm_library_ingest_start_confirm()
         # opt-{group}-reset -> {group}
         group = button_id[4:-6]
         form = self._library_ingest_form

@@ -95,6 +95,7 @@ def _minimal_library_screen() -> LibraryScreen:
     screen._library_external_submit_scope_id = None
     screen._library_external_submit_worker = None
     screen._library_external_submit_backend = None
+    screen._library_external_submit_consent = None
     screen._notify_library_ingest_warning = MagicMock()
     screen._update_library_ingest_gate = MagicMock()
     screen._build_ingest_options_snapshot = MagicMock(
@@ -105,6 +106,7 @@ def _minimal_library_screen() -> LibraryScreen:
     )
     screen.refresh = MagicMock()
     screen.call_after_refresh = MagicMock()
+    screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
     screen.app_instance = MagicMock()
     screen.app_instance.library_ingest_jobs = LibraryIngestJobRegistry()
     screen.app_instance._resolve_ingest_backend = lambda: "local"
@@ -425,6 +427,116 @@ def test_late_active_refusal_releases_untransferred_external_scope(tmp_path):
     service.release_scope.assert_called_once_with("scope-3")
     assert screen._library_ingest_form.path == source
     assert screen._library_ingest_start_consent is not None
+
+
+def test_late_refusal_fallback_single_file_can_be_confirmed(tmp_path):
+    screen = _minimal_library_screen()
+    source = _stage_plain_file(screen, tmp_path)
+    hidden = tmp_path / "worker-canonical.txt"
+    hidden.write_text("body")
+    job = screen.app_instance.library_ingest_jobs.submit(source_path=str(hidden))
+    refusal = ActiveIngestSubmissionRefused(
+        (ActiveIngestJobRef(job.job_id, IngestJobState.QUEUED),)
+    )
+    screen.app_instance.submit_library_ingest_job.side_effect = [refusal, None]
+
+    screen._enqueue_library_ingest_snapshot(
+        {"source_path": source, "ingest_options": {}}
+    )
+    screen.app_instance.library_ingest_jobs.mark_parsing(job.job_id)
+    screen.app_instance.library_ingest_jobs.mark_writing(job.job_id)
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+
+    assert screen.app_instance.submit_library_ingest_job.call_count == 2
+    assert (
+        screen.app_instance.submit_library_ingest_job.call_args.kwargs[
+            "allow_active_duplicate"
+        ]
+        is True
+    )
+
+
+def test_late_refusal_fallback_folder_can_be_confirmed(tmp_path):
+    screen = _minimal_library_screen()
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    child = folder / "captured.txt"
+    child.write_text("body")
+    hidden = tmp_path / "expanded-later.txt"
+    hidden.write_text("body")
+    job = screen.app_instance.library_ingest_jobs.submit(source_path=str(hidden))
+    screen._library_ingest_form.path = str(folder)
+    screen._library_ingest_form.preflight = _preflight(
+        type_groups={"generic": [str(child)]}, total_files=1
+    )
+    refusal = ActiveIngestSubmissionRefused(
+        (ActiveIngestJobRef(job.job_id, IngestJobState.PARSING),)
+    )
+    screen.app_instance.submit_library_ingest_job.side_effect = [refusal, None]
+
+    screen._enqueue_library_ingest_snapshot(
+        {"source_path": str(folder), "ingest_options": {}}
+    )
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+
+    assert screen.app_instance.submit_library_ingest_job.call_count == 2
+    assert (
+        screen.app_instance.submit_library_ingest_job.call_args.kwargs[
+            "allow_active_duplicate"
+        ]
+        is True
+    )
+
+
+def test_external_preparation_revalidates_active_membership_before_enqueue(
+    tmp_path,
+):
+    screen = _minimal_library_screen()
+    source = _stage_external_parakeet_audio(screen, tmp_path)
+    first = screen.app_instance.library_ingest_jobs.submit(source_path=source)
+
+    screen._submit_library_ingest_form()
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+    prepare_args = screen._prepare_library_external_submission.call_args.args
+    generation, scope_id = prepare_args[:2]
+    submit_kwargs = prepare_args[-1]
+    screen.app_instance.library_ingest_jobs.mark_done(first.job_id, media_id=1)
+    second = screen.app_instance.library_ingest_jobs.submit(source_path=source)
+
+    screen._apply_library_external_preparation(
+        generation,
+        scope_id,
+        MagicMock(),
+        submit_kwargs,
+        None,
+        None,
+    )
+
+    screen.app_instance.submit_library_ingest_job.assert_not_called()
+    assert screen._library_ingest_start_consent.active_job_ids == (second.job_id,)
+    screen.app_instance._ensure_parakeet_source_service.return_value.release_scope.assert_called_once_with(
+        scope_id
+    )
+
+
+def test_option_reset_disarms_pending_consent_before_repaint(tmp_path):
+    screen = _minimal_library_screen()
+    source = _stage_plain_file(screen, tmp_path)
+    screen._library_ingest_form.type_options["generic"] = {"custom_prompt": "old"}
+    screen.app_instance.library_ingest_jobs.submit(source_path=source)
+    screen._submit_library_ingest_form()
+    assert screen._library_ingest_start_consent is not None
+    event = MagicMock()
+    event.button.id = "opt-generic-reset"
+
+    with patch.object(library_screen_module, "save_settings_to_cli_config"):
+        screen.handle_library_ingest_option_reset(event)
+
+    assert screen._library_ingest_start_consent is None
+    screen._refresh_library_ingest_canvas_preserving_context.assert_called_once_with()
 
 
 # --- migrated from the retired guardrail suite: submit-flow contracts -------
