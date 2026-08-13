@@ -1047,7 +1047,7 @@ def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     claim a `1fr` share of its `#approval-batch-rows` parent's remaining
     space instead of hugging its own single-line content, the same
     fr-inside-auto-parent collapse class documented on
-    `MCPAuditMode.DEFAULT_CSS`'s Findings-view comment."""
+    `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
         ".approval-row {", ("height: auto;", "width: 1fr;")
     )

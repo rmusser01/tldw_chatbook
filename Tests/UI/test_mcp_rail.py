@@ -312,7 +312,7 @@ async def test_rail_active_row_label_is_not_blank_with_bundled_css():
     The rail's own `#mcp-hub-rail Button.mcp-rail-row.is-active` rule used to
     only set `text-style: bold`, leaving the generic `.is-active` rule's
     `border: round $ds-action-focus` in effect. Button.mcp-rail-row is fixed
-    at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at least 2
+    at height 1 (see MCPRail.BUNDLED_CSS); a round border needs at least 2
     lines to render, so it consumed the row's only line and the label's
     content area collapsed to height 0 -- the selected row rendered as a
     blank bordered box. The fix adds `border: none` to that rule (mirroring

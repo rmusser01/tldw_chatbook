@@ -232,6 +232,43 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
     )
 
 
+def widget_defaults_sources(
+    css_dir: Path,
+) -> list[tuple[tuple[str, str], str, int, str]]:
+    """The consolidated widget-defaults sources, as ``_get_default_css`` wants them.
+
+    Shared by the real app and by test harnesses that mount a consolidated
+    widget, so both put these rules in the same cascade position. Each entry is
+    ``(location, css, tie_breaker, scope)``; prepend them to the stack returned
+    by ``super()._get_default_css()``.
+
+    The self stream keeps tie-breaker 0 -- the position each class's own
+    ``DEFAULT_CSS`` had. The scoped stream takes a tie-breaker below every other
+    default-CSS source, because writing its scope selector out costs it one
+    specificity point Textual's injected one did not, and it must therefore lose
+    the ties that shift created. See ``widget_css.py``.
+
+    Args:
+        css_dir: The package's ``css`` directory.
+
+    Returns:
+        The sources, self stream first. A sheet that cannot be read is skipped
+        rather than raising: an unstyled widget beats an app that will not boot.
+    """
+    sources: list[tuple[tuple[str, str], str, int, str]] = []
+    for filename, tie_breaker in (
+        (WIDGET_DEFAULTS_SELF_FILENAME, 0),
+        (WIDGET_DEFAULTS_SCOPED_FILENAME, SCOPED_DEFAULTS_TIE_BREAKER),
+    ):
+        path = css_dir / filename
+        try:
+            css = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        sources.append(((str(path), filename), css, tie_breaker, ""))
+    return sources
+
+
 def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     """Write the two consolidated screen/modal stylesheets.
 

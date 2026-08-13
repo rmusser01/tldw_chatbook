@@ -347,7 +347,7 @@ class _BundledStripHarness(App[None]):
     """Mount the strip with the production stylesheet.
 
     The bundle is required: the bug under test lives in the bundle's global
-    `.is-active` rule, which beats LabModeStrip.DEFAULT_CSS. A harness
+    `.is-active` rule, which beats LabModeStrip.BUNDLED_CSS. A harness
     without CSS_PATH passes vacuously.
     """
 

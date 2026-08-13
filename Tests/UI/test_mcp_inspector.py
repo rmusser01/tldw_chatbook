@@ -393,7 +393,7 @@ async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
 async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
     """A3: Button defaults BOTH `text-align` and `content-align` to center
     (see Textual's own Button.DEFAULT_CSS -- the same lesson already
-    documented on `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and
+    documented on `Button.mcp-rail-row` in MCPRail.BUNDLED_CSS and
     `Button.mcp-callout` in _agentic_terminal.tcss). `Button.mcp-inspector-
     action` must override both, or the inspector's action stack (Connect/
     Check readiness/Edit config/... and the lone Cancel button during an

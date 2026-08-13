@@ -518,7 +518,7 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
     """
     divergences = []
     for selector, declarations in _parse_css_blocks(
-        AppFooterStatus.DEFAULT_CSS
+        AppFooterStatus.BUNDLED_CSS
     ).items():
         bundle_selector = selector.replace("AppFooterStatus #", "#")
         bundle_declarations = bundle_blocks.get(bundle_selector)
@@ -538,7 +538,7 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
 
 
 def test_default_css_matches_the_live_bundle_source():
-    """AppFooterStatus.DEFAULT_CSS must stay a faithful subset of the live
+    """AppFooterStatus.BUNDLED_CSS must stay a faithful subset of the live
     bundle source (css/components/_widgets.tcss footer block) -- otherwise
     stylesheet-less harnesses silently diverge from production geometry
     (task-264's KEEP-IN-SYNC contract, previously comment-only)."""
@@ -546,7 +546,7 @@ def test_default_css_matches_the_live_bundle_source():
         _footer_section_blocks(_CSS_ROOT / "components" / "_widgets.tcss")
     )
     assert divergences == [], (
-        "AppFooterStatus.DEFAULT_CSS diverged from _widgets.tcss's footer "
+        "AppFooterStatus.BUNDLED_CSS diverged from _widgets.tcss's footer "
         f"block: {divergences}. Update BOTH sides (they are KEEP-IN-SYNC) "
         "and rebuild the bundle (python3 tldw_chatbook/css/build_css.py)."
     )

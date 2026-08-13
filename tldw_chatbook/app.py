@@ -5103,29 +5103,17 @@ class TldwCli(
         Returns:
             The default-CSS stack, widget defaults first.
         """
-        css_stack = super()._get_default_css()
         css_dir = Path(__file__).parent / "css"
-        sheets = (
-            (build_css.WIDGET_DEFAULTS_SELF_FILENAME, 0),
-            (
-                build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
-                build_css.SCOPED_DEFAULTS_TIE_BREAKER,
-            ),
-        )
-        for index, (filename, tie_breaker) in enumerate(sheets):
-            path = css_dir / filename
-            try:
-                css = path.read_text(encoding="utf-8")
-            except OSError as exc:
-                # Never fatal: the app still runs, just with unstyled widgets
-                # whose CSS was consolidated. Loud, because that is a
-                # build/packaging bug, not a user-facing condition.
-                loguru_logger.error(
-                    f"Could not read consolidated widget CSS {path}: {exc}"
-                )
-                continue
-            css_stack.insert(index, ((str(path), filename), css, tie_breaker, ""))
-        return css_stack
+        sources = build_css.widget_defaults_sources(css_dir)
+        if len(sources) != 2:
+            # Never fatal: the app still runs, just with unstyled widgets whose
+            # CSS was consolidated. Loud, because that is a build/packaging bug,
+            # not a user-facing condition.
+            loguru_logger.error(
+                f"Consolidated widget CSS missing from {css_dir}: read "
+                f"{len(sources)} of 2 sheets. Run css/build_css.py."
+            )
+        return sources + super()._get_default_css()
     # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
     # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
     # (Lab, Logs, Settings) so every destination has a keyboard route.

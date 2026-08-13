@@ -891,7 +891,7 @@ async def test_update_server_profiles_markup_safe():
 
 
 def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-table` the same
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-table` the same
     `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
     `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
     instead of ballooning to fill the canvas and stranding the
@@ -923,7 +923,7 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-preview`
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-preview`
     `height: auto;` so the policy-preview Static hugs its own (one- or
     two-sentence) content instead of competing with the matrix table above
     for the canvas's remaining space. Pins the matching bundle-layer copy

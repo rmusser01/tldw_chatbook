@@ -737,7 +737,7 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
 
 def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T7 (P3 UX batch) gave `#mcp-tools-table` `height: auto; max-height:
-    70%;` in `MCPToolsMode.DEFAULT_CSS` alone -- no matching rule was ever
+    70%;` in `MCPToolsMode.BUNDLED_CSS` alone -- no matching rule was ever
     added to the bundle-source component file (`_agentic_terminal.tcss`),
     unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
     form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
@@ -769,7 +769,7 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.DEFAULT_CSS`
+    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.BUNDLED_CSS`
     gives `#mcp-tools-filter-server-slot Select` a fixed `width: 28`, but
     Textual's cascade always treats every CSS_PATH-sourced rule (the app
     bundle) as higher priority than any widget's own DEFAULT_CSS regardless
@@ -808,7 +808,7 @@ class ToolsModeAppWithBundledCSS(App):
     `RailAppWithBundledCSS` in test_mcp_rail.py. Regression coverage for
     Defect 1 (QA round mcp-hub-phase3-2026-07): before the bundle-layer fix
     above, this Select rendered at 0x0 under the real app stylesheet even
-    though `MCPToolsMode.DEFAULT_CSS` alone (no CSS_PATH) already asked for
+    though `MCPToolsMode.BUNDLED_CSS` alone (no CSS_PATH) already asked for
     the correct `width: 28`."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)

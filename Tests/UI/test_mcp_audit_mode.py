@@ -53,18 +53,18 @@ def _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
 ) -> None:
     """T9 (MCP Hub Phase 5): Extended assertion that checks ``selector``'s
     block carries every one of ``expected_declarations`` in THREE places:
-    the MCPAuditMode.DEFAULT_CSS source, the bundle-source component file
+    the MCPAuditMode.BUNDLED_CSS source, the bundle-source component file
     (_agentic_terminal.tcss), and the generated bundle (tldw_cli_modular.tcss).
     This prevents the three layers from silently drifting -- if DEFAULT_CSS
     is ever changed, both bundle layers must also change to match."""
     from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 
-    default_css = MCPAuditMode.DEFAULT_CSS
+    default_css = MCPAuditMode.BUNDLED_CSS
     agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
     bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
     for text, label in (
-        (default_css, "MCPAuditMode.DEFAULT_CSS"),
+        (default_css, "MCPAuditMode.BUNDLED_CSS"),
         (agentic_terminal, "_agentic_terminal.tcss"),
         (bundled_stylesheet, "tldw_cli_modular.tcss"),
     ):
@@ -670,7 +670,7 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
 
 def test_audit_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T9 (MCP Hub Phase 5): `#mcp-audit-table` gets `height: auto;
-    max-height: 70%;` in `MCPAuditMode.DEFAULT_CSS` alone -- mirrors
+    max-height: 70%;` in `MCPAuditMode.BUNDLED_CSS` alone -- mirrors
     `#mcp-servers-table`/`#mcp-tools-table`/`#mcp-perm-table`'s own
     established lockstep bundle-source copies (test_mcp_servers_mode.py /
     test_mcp_tools_mode.py / test_mcp_permissions_mode.py) so app-loaded
