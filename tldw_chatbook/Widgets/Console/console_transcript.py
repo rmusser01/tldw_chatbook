@@ -2075,7 +2075,16 @@ class ConsoleTranscript(VerticalScroll):
             # transcript_window_lines = 0` mounts the whole history, the
             # behaviour that shipped before this task. The escape hatch is the
             # point: a windowing bug must be switchable off without a release.
-            window_start = 0
+            #
+            # It must still leave the WATERMARK prune alone. Forcing 0 here
+            # cleared `_pruned_message_ids` on every ingest, so an
+            # over-watermark session re-mounted its entire history on each
+            # 0.2s sync tick and pruned it back down again (measured: 180 rows
+            # remounted, settled to 11, every tick). Pre-task code kept pruning
+            # sticky across ingests (`_pruned_message_ids &= message_ids`);
+            # carrying the preserved boundary forward reproduces that, while a
+            # fresh or disjoint ingest still starts at 0 = mount everything.
+            window_start = 0 if preserved_start is None else preserved_start
         elif preserved_start is None:
             window_start = self._tail_window_start(
                 self._messages,

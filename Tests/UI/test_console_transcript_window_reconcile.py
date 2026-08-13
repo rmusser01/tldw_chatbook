@@ -259,8 +259,14 @@ async def test_scrollback_hydration_and_pruning_reach_a_fixed_point():
 
 @pytest.mark.asyncio
 async def test_explicit_hydration_still_works_below_the_low_watermark():
-    """The fixed point must not cost ordinary scrollback its hydration."""
-    app = ReconcileHarness()  # pruning disabled: the default reader case
+    """The fixed point must not cost ordinary scrollback its hydration.
+
+    Watermarks are ENABLED here (the shipped defaults) so the new gate is
+    actually evaluated: a normal transcript sits far below the low mark, and
+    hydration must be allowed. With `high = 0` the gate short-circuits and this
+    test would prove nothing about it.
+    """
+    app = ReconcileHarness(low=12_000, high=20_000)
     async with app.run_test(size=(100, 30)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages(_messages(180))
@@ -432,3 +438,55 @@ async def test_configured_window_lines_change_the_load_window():
         f"the configured floor must widen the window ({big_window} vs {default_window})"
     )
     assert big_window < 300, "a configured floor is still a window"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_does_not_resurrect_watermark_pruned_rows():
+    """The kill switch disables WINDOWING, not the height watermarks.
+
+    Measured before the fix: forcing the window start to 0 on every ingest
+    cleared the pruned prefix, so an over-watermark session re-mounted its
+    whole history on each 0.2s sync tick and pruned it back down again (180
+    rows remounted, settled to 11, every tick). The default-watermark kill
+    switch test cannot see this — nothing is ever pruned there.
+    """
+    app = ReconcileHarness(low=45, high=70, window_lines=0)
+    history = _messages(180)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "the watermarks must still prune with windowing disabled"
+        )
+        await _settle(pilot)
+        pruned = set(transcript._pruned_message_ids)
+        settled_mounted = len(_mounted_message_ids(transcript))
+        assert settled_mounted < 30, "the fixture must settle well under the history"
+
+        mounted_per_tick: list[int] = []
+        original_mount = transcript.mount
+
+        def _recording_mount(*widgets, **kwargs):
+            mounted_per_tick.append(len(widgets))
+            return original_mount(*widgets, **kwargs)
+
+        transcript.mount = _recording_mount  # type: ignore[method-assign]
+        try:
+            for _ in range(3):
+                transcript.set_messages(list(history))
+                assert transcript._pruned_message_ids >= pruned, (
+                    "an ingest must not resurrect watermark-pruned rows"
+                )
+                await transcript.refresh_messages()
+                assert len(_mounted_message_ids(transcript)) <= settled_mounted, (
+                    "the tick must not re-mount the full history"
+                )
+                await _settle(pilot, times=4)
+        finally:
+            transcript.mount = original_mount  # type: ignore[method-assign]
+
+        assert sum(mounted_per_tick) < 60, (
+            f"steady-state ticks must mount almost nothing, saw {mounted_per_tick}"
+        )
+        assert len(transcript._messages) == 180

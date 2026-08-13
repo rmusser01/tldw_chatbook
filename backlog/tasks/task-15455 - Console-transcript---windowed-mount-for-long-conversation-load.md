@@ -123,6 +123,34 @@ arm (window budget patched back to the constants, same build, same window
 size): 357.3 ms vs 360.0 ms medians over 5 runs each — inside run-to-run noise,
 no regression.
 
+**Review round (reconciliation).** One Important: the kill switch
+(`transcript_window_lines = 0`) forced `window_start = 0` on EVERY ingest,
+which cleared the watermark-pruned prefix — an over-watermark session
+re-mounted its whole history on each 0.2s sync tick and pruned it back down
+(reproduced: 180 rows remounted, settled to 11, every tick). Pre-task code kept
+pruning sticky across ingests; the disabled branch now carries the preserved
+boundary forward (`0 if preserved_start is None else preserved_start`), so a
+fresh/disjoint ingest still mounts everything while the watermarks keep their
+prefix. Regression test runs at churn-triggering marks (45/70, 180 messages,
+repeated ingests, instrumented mounts) — the default-watermark kill-switch test
+cannot see this, because nothing is ever pruned there. Minors: the
+"still hydrates" test now runs with watermarks ENABLED so the new gate is
+actually evaluated, and the guide states that the two line settings are FLOORS
+under `viewport x 6` (inert at the shipped 144 on any terminal >= 24 rows) and
+names the LOW watermark as the scroll-back ceiling.
+
+**Residuals, untracked (for the controller to file).**
+1. *Unbounded reveal.* Selecting/jumping to a message near the start of a long
+   session reveals everything from it to the tail in one pass — measured ~490
+   rows mounted for `m10` of 500. Inherited from the merged design, not
+   introduced here, and latent for any future "jump to search hit" feature.
+2. *Scroll-back reachability ceiling.* Once the mounted view reaches the low
+   watermark (~12,000 rendered rows by default) scroll-back stops loading
+   older history; the content is reachable only via export or a jump. Removing
+   the ceiling needs two-sided windowing (trim the tail as the head grows),
+   which neither implementation has and which would touch tail-follow,
+   streaming, and the jump pill — a design task, not a tweak.
+
 **Files (this PR).** `tldw_chatbook/Widgets/Console/console_transcript.py`,
 `tldw_chatbook/UI/Console_Modules/transcript.py`, `tldw_chatbook/config.py`,
 `Docs/User_Guide/console.md`,

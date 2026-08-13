@@ -159,11 +159,18 @@ under you, keeping the same message in view; the jump-to-latest pill or a new
 send takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
 context sent to the model always use the full history. Very long sessions still
 stop growing the view at the height watermarks, and once the mounted view
-reaches that limit scrolling further back stops loading more (the alternative is
-the view churning rows in and out indefinitely). Tune it under `[chat_defaults]`
-in `config.toml` — `transcript_window_lines` (rows kept at load; set it to `0`
-to mount everything, as before), `transcript_scrollback_lines` (rows added per
-step), and the `prune_*_watermark` pair.
+reaches `prune_low_watermark` (12,000 rows by default) scrolling further back
+stops loading more — the alternative is the view churning rows in and out
+indefinitely. Tune it under `[chat_defaults]` in `config.toml`:
+
+- `transcript_window_lines` (144) and `transcript_scrollback_lines` (96) are
+  **floors**, not the budget. The window actually used is the larger of the
+  floor and your terminal height ×6 (×4 per scroll-back step), so on any
+  terminal 24 rows or taller the shipped floors change nothing — raise them
+  above `height × 6` to widen the window, or set `transcript_window_lines` to
+  `0` to mount the whole history at load, as before.
+- `prune_low_watermark` / `prune_high_watermark` bound the mounted view itself
+  and keep working with the window disabled.
 
 ### Composer
 
