@@ -1009,6 +1009,34 @@ def test_batch_refactor_routes_legacy_single_wrappers_through_shared_helpers(
     assert restored["version"] == 3
 
 
+@pytest.mark.parametrize("restore_mode", ["single", "batch"])
+def test_restore_reuses_prevalidated_keyword_recovery_rows(
+    db, monkeypatch, restore_mode
+):
+    local_id, _ = _add_artifact(
+        db,
+        name=f"Recovery rows {restore_mode}",
+        keywords=["recovery keyword"],
+    )
+    deleted = db.soft_delete_prompts((PromptBatchTarget(local_id, 1),))
+    original = db._restore_prompt_keyword_rows
+    calls = 0
+
+    def recovery_spy(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_restore_prompt_keyword_rows", recovery_spy)
+
+    if restore_mode == "single":
+        db.restore_deleted_prompt(local_id, expected_version=2)
+    else:
+        db.restore_deleted_prompts(deleted.targets)
+
+    assert calls == 1
+
+
 def test_batch_success_diagnostics_are_aggregate_and_privacy_safe(db):
     _set_next_prompt_id(db, 71_234_567)
     first_id, first_uuid = _add_artifact(

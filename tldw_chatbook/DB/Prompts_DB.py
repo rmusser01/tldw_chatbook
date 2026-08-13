@@ -2259,16 +2259,17 @@ class PromptsDatabase:
         *,
         row: sqlite3.Row,
         expected_version: int,
-    ) -> None:
+    ) -> tuple[sqlite3.Row, ...]:
         self._require_canonical_uuid(
             row["uuid"], "Prompt tombstone recovery metadata is unavailable."
         )
-        self._restore_prompt_keyword_rows(
+        keyword_rows = self._restore_prompt_keyword_rows(
             conn, row=row, expected_version=expected_version
         )
         PromptRestoreResultEntry(
             local_id=int(row["id"]), restored_version=expected_version + 1
         )
+        return keyword_rows
 
     def _delete_prompt_in_transaction(
         self,
@@ -2340,13 +2341,11 @@ class PromptsDatabase:
         *,
         row: sqlite3.Row,
         expected_version: int,
+        keyword_rows: tuple[sqlite3.Row, ...],
     ) -> "PromptRestoreResultEntry":
         """Restore one prevalidated row without owning transaction settlement."""
         prompt_id = int(row["id"])
         prompt_uuid = str(row["uuid"])
-        keywords = self._restore_prompt_keyword_rows(
-            conn, row=row, expected_version=expected_version
-        )
         current_time = self._get_current_utc_timestamp_str()
         new_version = expected_version + 1
         cursor = conn.execute(
@@ -2374,7 +2373,7 @@ class PromptsDatabase:
             new_version,
             restored_payload,
         )
-        for keyword in keywords:
+        for keyword in keyword_rows:
             if int(keyword["deleted"]) == 1:
                 keyword_version = int(keyword["version"])
                 keyword_uuid = str(keyword["keyword_uuid"])
@@ -2446,7 +2445,20 @@ class PromptsDatabase:
     def soft_delete_prompts(
         self, targets: tuple["PromptBatchTarget", ...]
     ) -> "PromptBatchDeleteResult":
-        """Atomically soft-delete one strict batch of active Prompt rows."""
+        """Atomically soft-delete one strict batch of active Prompt rows.
+
+        Args:
+            targets: Exact Prompt IDs and expected active-row versions.
+
+        Returns:
+            The canonical receipt for the committed batch.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ExpectedVersionConflictError: If any target is missing or stale.
+            DatabaseError: If transaction ownership or persistence fails.
+        """
         canonical_targets = self._canonical_prompt_batch_targets(targets)
         try:
             self._require_prompt_mutation_transaction_ownership()
@@ -2505,7 +2517,20 @@ class PromptsDatabase:
     def restore_deleted_prompts(
         self, targets: tuple["PromptBatchTarget", ...]
     ) -> "PromptBatchRestoreResult":
-        """Atomically restore one strict batch of Prompt tombstones."""
+        """Atomically restore one strict batch of Prompt tombstones.
+
+        Args:
+            targets: Exact Prompt IDs and expected tombstone versions.
+
+        Returns:
+            The canonical result for the committed batch restore.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ExpectedVersionConflictError: If any target is missing or stale.
+            DatabaseError: If recovery metadata or persistence is unavailable.
+        """
         canonical_targets = self._canonical_prompt_batch_targets(targets)
         try:
             self._require_prompt_mutation_transaction_ownership()
@@ -2524,20 +2549,27 @@ class PromptsDatabase:
                             "Prompt batch restore conflict."
                         )
                     prepared.append((target, row))
-                for target, row in prepared:
-                    self._validate_restore_prompt_row(
-                        conn,
-                        row=row,
-                        expected_version=target.expected_version,
+                validated = [
+                    (
+                        target,
+                        row,
+                        self._validate_restore_prompt_row(
+                            conn,
+                            row=row,
+                            expected_version=target.expected_version,
+                        ),
                     )
+                    for target, row in prepared
+                ]
                 result = PromptBatchRestoreResult(
                     entries=tuple(
                         self._restore_prompt_in_transaction(
                             conn,
                             row=row,
                             expected_version=target.expected_version,
+                            keyword_rows=keyword_rows,
                         )
-                        for target, row in prepared
+                        for target, row, keyword_rows in validated
                     )
                 )
         except ExpectedVersionConflictError as exc:
@@ -2662,14 +2694,14 @@ class PromptsDatabase:
                     raise ExpectedVersionConflictError(
                         "Prompt tombstone changed or is no longer deleted."
                     )
-                self._validate_restore_prompt_row(
-                    conn, row=row, expected_version=expected_version
-                )
-                recovery_keywords = self._restore_prompt_keyword_rows(
+                recovery_keywords = self._validate_restore_prompt_row(
                     conn, row=row, expected_version=expected_version
                 )
                 entry = self._restore_prompt_in_transaction(
-                    conn, row=row, expected_version=expected_version
+                    conn,
+                    row=row,
+                    expected_version=expected_version,
+                    keyword_rows=recovery_keywords,
                 )
                 restored_row = conn.execute(
                     "SELECT * FROM Prompts WHERE id = ?", (entry.local_id,)

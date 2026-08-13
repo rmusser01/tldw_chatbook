@@ -672,6 +672,12 @@ class LocalPromptService:
 
         Returns:
             The exact committed database receipt.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ConflictError: If any active Prompt target is missing or stale.
+            DatabaseError: If transaction ownership or persistence fails.
         """
         validated_targets = validate_prompt_batch_targets(targets)
         return self.prompt_db.soft_delete_prompts(validated_targets)
@@ -707,6 +713,12 @@ class LocalPromptService:
 
         Returns:
             The exact committed database restore result.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ConflictError: If any Prompt tombstone is missing or stale.
+            DatabaseError: If recovery metadata or persistence is unavailable.
         """
         validated_targets = validate_prompt_batch_targets(targets)
         return self.prompt_db.restore_deleted_prompts(validated_targets)
