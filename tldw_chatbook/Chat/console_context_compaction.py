@@ -340,6 +340,7 @@ def plan_compaction(
             mandatory=without_old.mandatory,
             compactable=without_old.compactable,
             active_request=without_old.active_request,
+            active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
         )
         remaining = prepare_main(remaining_semantic)
@@ -349,6 +350,7 @@ def plan_compaction(
             mandatory=remaining_semantic.mandatory,
             compactable=remaining_semantic.compactable,
             active_request=remaining_semantic.active_request,
+            active_continuation_groups=remaining_semantic.active_continuation_groups,
             tools=remaining_semantic.tools,
         )
         empty_memory = prepare_main(empty_memory_semantic)
@@ -438,18 +440,7 @@ class ConsoleCompactionService:
                     started_at=started.isoformat(),
                 )
             )
-            logger.bind(
-                operation_id=operation_id,
-                conversation_id=admission.conversation_id,
-                purpose="conversation_compaction",
-                provider=admission.provider,
-                model=admission.model,
-                requested_output_cap=plan.requested_output_cap,
-                estimated_input_tokens=plan.estimated_input_tokens,
-                before_input_tokens=plan.before_input_tokens,
-                target_conversation_tokens=plan.target_conversation_tokens,
-                selected_unit_count=len(plan.selected_units),
-            ).info("console_compaction_auxiliary_started")
+            logger.info("console_compaction_auxiliary_started")
             started_tick = self._monotonic()
             try:
                 completion = await self._gateway.complete_auxiliary(
@@ -505,6 +496,9 @@ class ConsoleCompactionService:
                 mandatory=plan.remaining_semantic.mandatory,
                 compactable=plan.remaining_semantic.compactable,
                 active_request=plan.remaining_semantic.active_request,
+                active_continuation_groups=(
+                    plan.remaining_semantic.active_continuation_groups
+                ),
                 tools=plan.remaining_semantic.tools,
             )
             after = prepare_main(after_semantic)
@@ -620,23 +614,7 @@ class ConsoleCompactionService:
             usage=usage,
             pricing=pricing,
         )
-        logger.bind(
-            operation_id=operation_id,
-            purpose="conversation_compaction",
-            status=status.value,
-            elapsed_ms=elapsed_ms,
-            usage_total_tokens=(usage.total_tokens if usage is not None else None),
-            usage_input_tokens=(
-                usage.uncached_input + usage.cache_read + usage.cache_write
-                if usage is not None
-                else None
-            ),
-            usage_output_tokens=(usage.output if usage is not None else None),
-            pricing_source=(pricing.source if pricing is not None else None),
-            pricing_revision=(
-                pricing.catalog_revision if pricing is not None else None
-            ),
-        ).info("console_compaction_auxiliary_finished")
+        logger.info("console_compaction_auxiliary_finished")
 
     @staticmethod
     def _pricing_provenance(

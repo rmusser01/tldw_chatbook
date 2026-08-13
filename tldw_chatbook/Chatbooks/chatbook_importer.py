@@ -8,12 +8,14 @@ Chatbook Importer
 Handles the import and validation of chatbooks into the application.
 """
 
+import heapq
 import json
 import os
 import re
 import shutil
 import stat
 import tempfile
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -25,6 +27,11 @@ from .conflict_resolver import ConflictResolver, ConflictResolution
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
+)
+from ..Chat.provider_continuation import (
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
 )
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -40,6 +47,19 @@ from ..Utils.private_paths import secure_private_directory
 
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
+_MAX_ARCHIVE_MEMBERS = 10_000
+_MAX_ARCHIVE_MEMBER_BYTES = 128 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 512 * 1024 * 1024
+_MAX_ARCHIVE_COMPRESSION_RATIO = 1_000
+_ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
+_ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
+_MAX_V2_GRAPH_MESSAGES = 10_000
+_MAX_V2_MESSAGE_ID_CHARS = 256
+_MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
+_MAX_V2_MESSAGE_CONTENT_CHARS = 1024 * 1024
+_MAX_V2_TOTAL_CONTENT_CHARS = 16 * 1024 * 1024
+_MAX_V2_TOTAL_PRIVATE_BYTES = 16 * 1024 * 1024
+_MAX_V2_GRAPH_DEPTH = 2_048
 
 
 class ImportStatus:
@@ -129,8 +149,24 @@ class ChatbookImporter:
         """Extract regular ZIP members with owner-only permissions."""
 
         with zipfile.ZipFile(chatbook_path, "r") as archive:
-            for member in archive.infolist():
+            members = archive.infolist()
+            if len(members) > _MAX_ARCHIVE_MEMBERS:
+                raise ValueError(_ARCHIVE_LIMIT_ERROR)
+            total_bytes = 0
+            validated: list[tuple[zipfile.ZipInfo, tuple[str, ...]]] = []
+            for member in members:
                 parts = self._validated_archive_parts(member)
+                total_bytes += member.file_size
+                if (
+                    member.file_size > _MAX_ARCHIVE_MEMBER_BYTES
+                    or total_bytes > _MAX_ARCHIVE_TOTAL_BYTES
+                    or member.file_size
+                    > max(member.compress_size, 1) * _MAX_ARCHIVE_COMPRESSION_RATIO
+                ):
+                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                validated.append((member, parts))
+
+            for member, parts in validated:
                 target = extract_dir.joinpath(*parts)
                 if member.is_dir():
                     secure_private_directory(
@@ -154,7 +190,17 @@ class ChatbookImporter:
                     with os.fdopen(file_fd, "wb") as destination:
                         file_fd = -1
                         with archive.open(member, "r") as source:
-                            shutil.copyfileobj(source, destination)
+                            written = 0
+                            while chunk := source.read(_ARCHIVE_COPY_CHUNK_BYTES):
+                                written += len(chunk)
+                                if (
+                                    written > member.file_size
+                                    or written > _MAX_ARCHIVE_MEMBER_BYTES
+                                ):
+                                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+                                destination.write(chunk)
+                            if written != member.file_size:
+                                raise ValueError(_ARCHIVE_LIMIT_ERROR)
                         destination.flush()
                         os.fsync(destination.fileno())
                 finally:
@@ -271,7 +317,7 @@ class ChatbookImporter:
             )
 
             # Check version compatibility
-            if manifest.version != ChatbookVersion.V1:
+            if manifest.version not in {ChatbookVersion.V1, ChatbookVersion.V2}:
                 status.add_warning(
                     f"Chatbook version {manifest.version.value} may not be fully compatible"
                 )
@@ -441,6 +487,19 @@ class ChatbookImporter:
                 with open(conv_file, "r", encoding="utf-8") as f:
                     conv_data = json.load(f)
 
+                graph_messages = None
+                if manifest.version == ChatbookVersion.V2:
+                    if (
+                        not isinstance(conv_data, dict)
+                        or type(conv_id) is not str
+                        or not conv_id.strip()
+                        or type(conv_data.get("id")) is not str
+                        or not conv_data["id"].strip()
+                        or conv_data["id"] != conv_id
+                    ):
+                        raise ValueError("Invalid V2 conversation identity.")
+                    graph_messages = self._validate_v2_conversation_graph(conv_data)
+
                 # Check for existing conversation with same name
                 conv_name = conv_data["name"]
                 if prefix_imported:
@@ -490,7 +549,12 @@ class ChatbookImporter:
                 # so the transaction below holds the write lock only for
                 # pure DB writes — no disk I/O inside the transaction.
                 staged_messages = []
-                for msg in conv_data.get("messages", []):
+                source_messages = (
+                    graph_messages
+                    if graph_messages is not None
+                    else conv_data.get("messages", [])
+                )
+                for msg in source_messages:
                     image_kwargs, attachment_rows = self._load_message_attachments(
                         extract_dir, msg, status
                     )
@@ -514,7 +578,7 @@ class ChatbookImporter:
                 # records context for rows that get rolled back.
                 imported_message_context: list[tuple[str, str, dict]] = []
                 new_conv_id = None
-                with db.transaction():
+                with db.transaction() as connection:
                     new_conv_id = db.add_conversation(conv_dict)
                     logger.info(
                         f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}"
@@ -524,7 +588,22 @@ class ChatbookImporter:
                         logger.info(
                             f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages"
                         )
-                        for msg, image_kwargs, attachment_rows in staged_messages:
+                        message_id_map: dict[str, str] = {}
+                        if graph_messages is not None:
+                            message_id_map = {
+                                str(msg["id"]): str(
+                                    uuid.uuid5(
+                                        uuid.NAMESPACE_URL,
+                                        f"chatbook:{new_conv_id}:{msg['id']}",
+                                    )
+                                )
+                                for msg in graph_messages
+                            }
+                        for ordinal, (
+                            msg,
+                            image_kwargs,
+                            attachment_rows,
+                        ) in enumerate(staged_messages, start=1):
                             msg_dict = {
                                 "conversation_id": new_conv_id,
                                 "sender": msg["role"],
@@ -533,9 +612,56 @@ class ChatbookImporter:
                                     "timestamp", datetime.now().isoformat()
                                 ),
                             }
+                            if graph_messages is not None:
+                                old_id = str(msg["id"])
+                                parent_id = msg.get("parent_id")
+                                msg_dict.update(
+                                    {
+                                        "id": message_id_map[old_id],
+                                        "parent_message_id": message_id_map.get(
+                                            str(parent_id)
+                                            if parent_id is not None
+                                            else ""
+                                        ),
+                                        "role": msg["role"],
+                                    }
+                                )
+                                continuation = self._imported_continuation_json(
+                                    msg,
+                                    ordinal=ordinal,
+                                    status=status,
+                                )
+                                if continuation is not None:
+                                    msg_dict["provider_continuation_json"] = (
+                                        continuation
+                                    )
+                            elif msg.get("_private") is not None:
+                                status.add_warning(
+                                    "Exact tool continuation was discarded for "
+                                    f"message {ordinal}."
+                                )
                             msg_dict.update(image_kwargs)
                             new_message_id = db.add_message(msg_dict)
                             if new_message_id:
+                                if graph_messages is not None:
+                                    variant_of = msg.get("variant_of")
+                                    connection.execute(
+                                        "UPDATE messages SET variant_of = ?, "
+                                        "variant_number = ?, is_selected_variant = ?, "
+                                        "total_variants = ?, deleted = ? WHERE id = ?",
+                                        (
+                                            message_id_map.get(
+                                                str(variant_of)
+                                                if variant_of is not None
+                                                else ""
+                                            ),
+                                            msg["variant_number"],
+                                            int(msg["is_selected_variant"]),
+                                            msg["total_variants"],
+                                            int(msg["deleted"]),
+                                            new_message_id,
+                                        ),
+                                    )
                                 if attachment_rows:
                                     db.set_message_attachments(
                                         str(new_message_id), attachment_rows
@@ -543,6 +669,13 @@ class ChatbookImporter:
                                 imported_message_context.append(
                                     (str(new_conv_id), str(new_message_id), msg)
                                 )
+                        if graph_messages is not None:
+                            active_leaf = conv_data.get("active_leaf_message_id")
+                            connection.execute(
+                                "UPDATE conversations SET active_leaf_message_id = ? "
+                                "WHERE id = ?",
+                                (message_id_map.get(active_leaf), new_conv_id),
+                            )
 
                 if new_conv_id:
                     for (
@@ -574,6 +707,245 @@ class ChatbookImporter:
                     "ChatbookImporter._import_conversations: Error importing conversation {}",
                     conv_id,
                 )
+
+    @staticmethod
+    def _validate_v2_conversation_graph(
+        conversation: object,
+    ) -> list[dict[str, Any]]:
+        """Validate a complete V2 graph before allocating any local owner IDs."""
+        if not isinstance(conversation, dict):
+            raise ValueError("Invalid V2 conversation graph.")
+        raw_messages = conversation.get("messages")
+        if (
+            not isinstance(raw_messages, list)
+            or len(raw_messages) > _MAX_V2_GRAPH_MESSAGES
+        ):
+            raise ValueError("Invalid V2 conversation graph.")
+        messages: list[dict[str, Any]] = []
+        by_id: dict[str, dict[str, Any]] = {}
+        orders: set[int] = set()
+        total_id_chars = 0
+        total_content_chars = 0
+        total_private_bytes = 0
+        for raw in raw_messages:
+            if not isinstance(raw, dict):
+                raise ValueError("Invalid V2 conversation graph.")
+            message_id = raw.get("id")
+            order = raw.get("order")
+            role = raw.get("role")
+            content = raw.get("content")
+            if (
+                not isinstance(message_id, str)
+                or not message_id
+                or len(message_id) > _MAX_V2_MESSAGE_ID_CHARS
+                or message_id in by_id
+                or type(order) is not int
+                or order < 0
+                or order in orders
+                or role not in {"user", "assistant", "system", "tool"}
+                or not isinstance(content, str)
+                or len(content) > _MAX_V2_MESSAGE_CONTENT_CHARS
+                or type(raw.get("deleted")) is not bool
+                or type(raw.get("variant_number")) is not int
+                or raw["variant_number"] < 1
+                or type(raw.get("is_selected_variant")) is not bool
+                or type(raw.get("total_variants")) is not int
+                or raw["total_variants"] < 1
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            total_id_chars += len(message_id)
+            total_content_chars += len(content)
+            for link in ("parent_id", "variant_of"):
+                target = raw.get(link)
+                if target is not None and (
+                    not isinstance(target, str)
+                    or len(target) > _MAX_V2_MESSAGE_ID_CHARS
+                ):
+                    raise ValueError("Invalid V2 conversation graph.")
+                total_id_chars += len(target or "")
+            if (
+                total_id_chars > _MAX_V2_TOTAL_ID_CHARS
+                or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            item = raw
+            private = raw.get("_private")
+            if (
+                isinstance(private, dict)
+                and set(private) == {"provider_continuation"}
+                and role == "assistant"
+            ):
+                checkpoint = read_provider_continuation_json(
+                    private.get("provider_continuation")
+                ).checkpoint
+                if checkpoint is not None:
+                    canonical = dump_provider_continuation_json(checkpoint)
+                    private_bytes = len(
+                        (f'{{"provider_continuation":{canonical}}}').encode("utf-8")
+                    )
+                    if (
+                        total_private_bytes + private_bytes
+                        > _MAX_V2_TOTAL_PRIVATE_BYTES
+                    ):
+                        item = dict(raw)
+                        item["_private"] = {"provider_continuation": None}
+                    else:
+                        total_private_bytes += private_bytes
+            messages.append(item)
+            by_id[message_id] = item
+            orders.add(order)
+        if orders != set(range(len(messages))):
+            raise ValueError("Invalid V2 conversation graph.")
+        for message in messages:
+            for link in ("parent_id", "variant_of"):
+                target = message.get(link)
+                if target is not None and (
+                    target not in by_id or target == message["id"]
+                ):
+                    raise ValueError("Invalid V2 conversation graph.")
+
+        # Resolve each parent chain once. Completed paths memoize both cycle
+        # state and depth, so a long chain remains linear rather than quadratic.
+        states: dict[str, int] = {}
+        depths: dict[str, int] = {}
+        for message in messages:
+            current: str | None = str(message["id"])
+            path: list[str] = []
+            while current is not None and states.get(current, 0) == 0:
+                states[current] = 1
+                path.append(current)
+                parent = by_id[current].get("parent_id")
+                current = str(parent) if parent is not None else None
+            if current is not None and states.get(current) == 1:
+                raise ValueError("Invalid V2 conversation graph.")
+            depth = depths.get(current, 0) if current is not None else 0
+            for message_id in reversed(path):
+                depth += 1
+                if depth > _MAX_V2_GRAPH_DEPTH:
+                    raise ValueError("Invalid V2 conversation graph.")
+                depths[message_id] = depth
+                states[message_id] = 2
+
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for message in messages:
+            root_id = str(message.get("variant_of") or message["id"])
+            root = by_id[root_id]
+            if root.get("variant_of") is not None:
+                raise ValueError("Invalid V2 conversation graph.")
+            if (
+                message.get("parent_id") != root.get("parent_id")
+                or message["role"] != root["role"]
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+            groups.setdefault(root_id, []).append(message)
+        for variants in groups.values():
+            count = len(variants)
+            if (
+                {variant["variant_number"] for variant in variants}
+                != set(range(1, count + 1))
+                or sum(bool(variant["is_selected_variant"]) for variant in variants)
+                != 1
+                or any(variant["total_variants"] != count for variant in variants)
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
+
+        active_leaf = conversation.get("active_leaf_message_id")
+        if active_leaf is not None and (
+            not isinstance(active_leaf, str)
+            or active_leaf not in by_id
+            or by_id[active_leaf]["deleted"]
+        ):
+            raise ValueError("Invalid V2 conversation graph.")
+        selected_path = conversation.get("selected_path_message_ids")
+        if (
+            not isinstance(selected_path, list)
+            or len(selected_path) > _MAX_V2_GRAPH_DEPTH
+            or any(
+                not isinstance(message_id, str)
+                or len(message_id) > _MAX_V2_MESSAGE_ID_CHARS
+                for message_id in selected_path
+            )
+        ):
+            raise ValueError("Invalid V2 conversation graph.")
+        expected_path: list[str] = []
+        current = active_leaf
+        while current is not None:
+            if by_id[current]["deleted"]:
+                raise ValueError("Invalid V2 conversation graph.")
+            expected_path.append(current)
+            current = by_id[current].get("parent_id")
+        expected_path.reverse()
+        if selected_path != expected_path:
+            raise ValueError("Invalid V2 conversation graph.")
+
+        # Kahn ordering respects both parent and variant ownership without
+        # repeatedly scanning the remaining graph.
+        indegrees = {str(message["id"]): 0 for message in messages}
+        dependents: dict[str, list[str]] = {
+            str(message["id"]): [] for message in messages
+        }
+        for message in messages:
+            message_id = str(message["id"])
+            dependencies = {
+                str(target)
+                for target in (message.get("parent_id"), message.get("variant_of"))
+                if target is not None
+            }
+            indegrees[message_id] = len(dependencies)
+            for dependency in dependencies:
+                dependents[dependency].append(message_id)
+        ready = [
+            (int(message["order"]), str(message["id"]))
+            for message in messages
+            if indegrees[str(message["id"])] == 0
+        ]
+        heapq.heapify(ready)
+        ordered: list[dict[str, Any]] = []
+        while ready:
+            _, message_id = heapq.heappop(ready)
+            ordered.append(by_id[message_id])
+            for dependent in dependents[message_id]:
+                indegrees[dependent] -= 1
+                if indegrees[dependent] == 0:
+                    heapq.heappush(
+                        ready, (int(by_id[dependent]["order"]), dependent)
+                    )
+        if len(ordered) != len(messages):
+            raise ValueError("Invalid V2 conversation graph.")
+        return ordered
+
+    @staticmethod
+    def _imported_continuation_json(
+        message: Mapping[str, Any],
+        *,
+        ordinal: int,
+        status: ImportStatus,
+    ) -> str | None:
+        """Return validated private continuation or add one redacted warning."""
+        private = message.get("_private")
+        if private is None:
+            return None
+        checkpoint: ProviderContinuationCheckpoint | None = None
+        if (
+            isinstance(private, dict)
+            and set(private) == {"provider_continuation"}
+            and message.get("role") == "assistant"
+        ):
+            result = read_provider_continuation_json(
+                private.get("provider_continuation")
+            )
+            checkpoint = result.checkpoint
+        if checkpoint is not None and (
+            checkpoint.provider != "moonshot"
+            or checkpoint.model != "kimi-k3"
+            or checkpoint.state != "complete"
+            or checkpoint.rounds[-1].assistant_content == message.get("content")
+        ):
+            return dump_provider_continuation_json(checkpoint)
+        status.add_warning(
+            f"Exact tool continuation was discarded for message {ordinal}."
+        )
+        return None
 
     @staticmethod
     def _load_message_attachments(

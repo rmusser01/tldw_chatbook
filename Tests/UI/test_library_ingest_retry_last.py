@@ -118,7 +118,7 @@ def test_retry_last_shows_once_the_queue_has_settled():
 def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     """The snapshot is taken BEFORE the form clears: source, metadata,
     generic toggles, and a per-group copy of the options."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -145,12 +145,14 @@ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
     screen.call_after_refresh = MagicMock()
     screen.app_instance = MagicMock()
 
-    with patch.object(
-        library_screen_module,
-        "save_settings_to_cli_config",
-        lambda *_a, **_k: True,
-    ):
-        screen._do_submit_ingest("/tmp/talk.mp3")
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_options`), which needs a
+    # running app to dispatch through `run_worker` -- this screen was never
+    # mounted. Patching that instance method (rather than the module-level
+    # `save_settings_to_cli_config` it wraps) keeps this test's own
+    # subject -- the pre-clear submission snapshot -- intact.
+    screen._save_library_ingest_options = lambda *_a, **_k: True
+    screen._do_submit_ingest("/tmp/talk.mp3")
 
     snapshot = screen._library_ingest_last_submission
     assert snapshot is not None

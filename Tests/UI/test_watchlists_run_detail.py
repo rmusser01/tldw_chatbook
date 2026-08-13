@@ -254,11 +254,33 @@ async def test_run_detail_survives_a_workbench_rebuild():
             lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
         ), "precondition: the detail is populated"
 
-        # `[` toggles a rail, which rebuilds the workbench and with it the pane.
-        await pilot.press("[")
+        # Rebuild the region the pane lives in, through the production
+        # primitive that does it: `WatchlistsWorkbench.refresh_region_content`
+        # calls the region factory again and swaps the result in. Every
+        # rebuild route reaches this -- a section switch (`_swap_active_
+        # section`), a collapsed region being expanded again, the surface
+        # drain -- so it is the seam, not a test-only shortcut.
+        #
+        # This used to be a single `[`, back when any layout key recomposed
+        # the whole workbench. task-15461 scoped that to the region whose form
+        # moved, so a rail toggle deliberately leaves this pane's instance
+        # alone (`test_a_rail_toggle_rebuilds_only_the_toggled_region` pins
+        # it), and `z` is refused outright off the Read tab -- which the Runs
+        # section is. The contract under test -- a REBUILT pane is re-seeded
+        # with its selection AND its detail -- is unchanged; only the trigger
+        # moves.
+        from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+        from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+            WatchlistsWorkbench,
+        )
+
+        await screen.query_one(WatchlistsWorkbench).refresh_region_content(
+            Region.ITEMS
+        )
         rebuilt = await _settle_until(
             pilot,
-            lambda: screen.query_one("#watchlists-runs-pane", RunsPane) is not pane,
+            lambda: bool(screen.query("#watchlists-runs-pane"))
+            and screen.query_one("#watchlists-runs-pane", RunsPane) is not pane,
         )
         assert rebuilt, "precondition: the pane really was reconstructed"
         fresh = screen.query_one("#watchlists-runs-pane", RunsPane)

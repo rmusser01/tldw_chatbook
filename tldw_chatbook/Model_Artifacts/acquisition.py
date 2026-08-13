@@ -940,6 +940,13 @@ class ArtifactAcquisitionService:
             )
             entries.append(entry)
             if not already_installed:
+                if descriptor.provenance == (
+                    ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+                ):
+                    raise CatalogError(
+                        f"{ref.artifact_id}@{ref.revision} local integrity "
+                        "descriptors cannot be acquired"
+                    )
                 # Fail loudly here, not just later in _fetch_artifact: a
                 # not-yet-installed descriptor whose files don't fully
                 # resolve to credential-free URLs is a catalog-contract

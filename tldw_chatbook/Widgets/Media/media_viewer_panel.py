@@ -8,11 +8,13 @@ This component provides:
 - Analysis display
 """
 
+from functools import partial
 from typing import TYPE_CHECKING, Dict, Optional, List, Tuple, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import (
     Static,
     Button,
@@ -65,6 +67,7 @@ ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP = "Show the previous analysis version."
 ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP = "Already viewing the first analysis version."
 ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP = "Show the next analysis version."
 ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP = "Already viewing the last analysis version."
+MEDIA_CONTENT_SEARCH_DEBOUNCE_SECONDS = 0.25
 READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
 READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = (
     "Select a reading highlight before updating it."
@@ -584,11 +587,19 @@ class MediaViewerPanel(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._original_data = None
+        self._content_search_timer: Timer | None = None
+        self._content_search_generation = 0
+        self._content_search_query = ""
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         # Populate providers on mount
         self.populate_providers()
+
+    def on_unmount(self) -> None:
+        """Cancel deferred content searches before the panel is detached."""
+        self._invalidate_content_search_timer()
+        self._content_search_query = ""
 
     def compose(self) -> ComposeResult:
         """Compose the viewer panel UI."""
@@ -1001,8 +1012,6 @@ class MediaViewerPanel(Container):
                 # Update search status
                 self._update_search_status()
 
-            # Clear and update to ensure proper refresh
-            content_display.update("")
             content_display.update(content)
         except Exception as e:
             logger.error(f"Error updating content display: {e}")
@@ -1043,6 +1052,8 @@ class MediaViewerPanel(Container):
     def clear_display(self) -> None:
         """Clear all displays when no item is selected."""
         try:
+            self._invalidate_content_search_timer()
+            self._content_search_query = ""
             self.media_data = None
             self.all_analyses = []
             self.current_analysis = None
@@ -1205,9 +1216,33 @@ class MediaViewerPanel(Container):
     def handle_content_search(self, event: Input.Changed) -> None:
         """Handle content search input."""
         if event.value:
-            self.search_content(event.value)
+            generation = self._invalidate_content_search_timer()
+            self._content_search_query = event.value
+            self._content_search_timer = self.set_timer(
+                MEDIA_CONTENT_SEARCH_DEBOUNCE_SECONDS,
+                partial(self._apply_debounced_content_search, generation, event.value),
+            )
         else:
+            self._invalidate_content_search_timer()
+            self._content_search_query = ""
             self.clear_search()
+
+    def _invalidate_content_search_timer(self) -> int:
+        """Stop a pending content search and advance its lifecycle generation."""
+        if self._content_search_timer is not None:
+            self._content_search_timer.stop()
+            self._content_search_timer = None
+        self._content_search_generation += 1
+        return self._content_search_generation
+
+    def _apply_debounced_content_search(self, generation: int, query: str) -> None:
+        """Run a delayed content search only if its lifecycle is still current."""
+        if generation != self._content_search_generation:
+            return
+        if query != self._content_search_query or not self.is_mounted:
+            return
+        self._content_search_timer = None
+        self.search_content(query)
 
     @on(Button.Pressed, "#prev-match")
     def handle_prev_match(self) -> None:
@@ -1301,6 +1336,7 @@ class MediaViewerPanel(Container):
 
     def load_media(self, media_data: Dict[str, Any]) -> None:
         """Load new media data into the viewer."""
+        self._invalidate_content_search_timer()
         self.media_data = media_data
         self.edit_mode = False
         self.clear_search()

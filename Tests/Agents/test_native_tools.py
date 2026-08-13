@@ -184,6 +184,27 @@ def test_parse_native_tool_calls_happy_path_and_order():
     ]
 
 
+def test_parse_native_tool_calls_preserves_exact_string_arguments() -> None:
+    raw_arguments = '{ "b": 2, "a": 1 }'
+    calls = parse_native_tool_calls(
+        {
+            "tool_calls": [
+                {
+                    "id": "exact",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": raw_arguments,
+                    },
+                }
+            ]
+        }
+    )
+
+    assert calls[0].args == {"a": 1, "b": 2}
+    assert calls[0].raw_arguments == raw_arguments
+
+
 def test_parse_native_tool_calls_malformed_and_junk():
     message = {
         "tool_calls": [
@@ -210,6 +231,7 @@ def test_parse_native_tool_calls_malformed_and_junk():
         ("calculator", {}),
         ("calculator", {"expression": "1"}),
     ]
+    assert [c.raw_arguments for c in calls] == ["{not json", ""]
     assert parse_native_tool_calls({}) == ()
     assert parse_native_tool_calls({"tool_calls": None}) == ()
     assert parse_native_tool_calls(None) == ()

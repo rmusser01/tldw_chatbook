@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from loguru import logger
 from rich.console import RenderableType
 from rich.table import Table
-from textual import events, on
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -28,7 +28,11 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryE
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import (
+    get_cli_setting,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
 
 
 class RecentLocations:
@@ -59,8 +63,19 @@ class RecentLocations:
         except Exception as e:
             logger.error(f"Failed to save recent locations: {e}")
 
-    def add(self, path: Path, file_type: str = "file"):
-        """Add a path to recent locations"""
+    def add(self, path: Path, file_type: str = "file", *, persist: bool = True):
+        """Add a path to recent locations.
+
+        Args:
+            persist: When True (default), also writes to disk immediately
+                (synchronously, on whatever thread calls this). task-15470
+                review round: ``EnhancedFileDialog`` passes ``persist=False``
+                and coalesces the actual disk write with its last-directory
+                write into one deferred, off-event-loop mutation instead --
+                calling this with the default from a click handler
+                reproduces the exact bug that round found (a config
+                rewrite still firing on the click path).
+        """
         path_str = str(path.resolve())
 
         # Remove if already exists
@@ -76,7 +91,8 @@ class RecentLocations:
 
         # Trim to max
         self._recent = self._recent[:self.max_items]
-        self.save_to_config()
+        if persist:
+            self.save_to_config()
 
     def get_recent(self) -> List[Dict[str, Any]]:
         """Get recent locations"""
@@ -1134,13 +1150,49 @@ class EnhancedFileDialog(BaseFileDialog):
             pass
         return None
 
-    def _save_last_directory(self, path: Path):
-        """Save the last used directory for this context"""
+    @work(thread=True)
+    def _persist_recent_and_last_directory(
+        self, last_directory: Optional[Path]
+    ) -> None:
+        """Persist recent-locations and the last directory as ONE deferred write.
+
+        task-15470: this used to be two separate concerns, both firing a
+        full config.toml read+atomic-rewrite+cache-reload straight on the
+        event loop -- ``RecentLocations.add()`` persisted synchronously as
+        part of its own body (called from ``_add_to_recent`` on every
+        navigation, and from ``dismiss`` on every confirm), and
+        ``_save_last_directory`` did the same for the last-dir key
+        immediately next to it. Deferring only the last-dir half (the
+        first task-15470 pass) left the recent-locations write still
+        firing inline right beside it, neutering the fix for this click
+        path entirely (review round). Both callers now update
+        ``self.recent_locations`` in memory only (``persist=False``) and
+        hand off here, which does both writes as one atomic
+        ``save_settings_to_cli_config`` mutation instead of two separate
+        ones. ``EnhancedFileDialog`` is a ``ModalScreen``, so
+        ``self.app``/``run_worker`` are always available while it is open.
+        """
         try:
-            dir_path = path if path.is_dir() else path.parent
-            save_setting_to_cli_config("filepicker", f"last_dir_{self.context}", str(dir_path))
+            section_values: dict[str, dict[str, object]] = {
+                "filepicker": {
+                    f"recent_{self.context}": self.recent_locations.get_recent(),
+                }
+            }
+            if last_directory is not None:
+                dir_path = (
+                    last_directory
+                    if last_directory.is_dir()
+                    else last_directory.parent
+                )
+                section_values["filepicker"][f"last_dir_{self.context}"] = str(
+                    dir_path
+                )
+            save_settings_to_cli_config(section_values)
         except Exception as e:
-            logger.error(f"Failed to save last directory: {e}")
+            logger.error(
+                "Failed to persist file-picker recent/last-dir state: {}",
+                type(e).__name__,
+            )
 
     def compose(self) -> ComposeResult:
         """Compose the enhanced file picker UI.
@@ -1793,8 +1845,8 @@ class EnhancedFileDialog(BaseFileDialog):
 
     def _add_to_recent(self, path: Path, file_type: str) -> None:
         """Persist a recent location and refresh the list."""
-        self.recent_locations.add(path, file_type)
-        self._save_last_directory(path)
+        self.recent_locations.add(path, file_type, persist=False)
+        self._persist_recent_and_last_directory(path)
         self._load_recent_locations()
 
     def _update_bookmarks_list(self):
@@ -2064,23 +2116,40 @@ class EnhancedFileDialog(BaseFileDialog):
         self.action_toggle_selection()
 
     def dismiss(self, result: Optional[Union[Path, List[Path]]]) -> None:
-        """Override dismiss to save recent location(s) and last directory."""
+        """Override dismiss to save recent location(s) and last directory.
+
+        task-15470 review round: this used to call ``recent_locations.add()``
+        (which persisted synchronously as part of its own body) directly on
+        the event loop, once per confirm -- the exact click-path config
+        rewrite the audit was about, still firing here even after
+        ``_save_last_directory`` (right below it) had already been deferred.
+        The in-memory update stays here (cheap, no I/O); persistence for
+        both recent-locations and the last directory is coalesced into one
+        deferred, off-loop write via `_persist_recent_and_last_directory`.
+        """
         if isinstance(result, list):
             for path in result:
                 self.recent_locations.add(
-                    path, "file" if path.is_file() else "directory"
+                    path, "file" if path.is_file() else "directory", persist=False
                 )
         elif result:
             self.recent_locations.add(
-                result, "file" if result.is_file() else "directory"
+                result, "file" if result.is_file() else "directory", persist=False
             )
-            self._save_last_directory(result)
 
+        # Preserves the original ordering: dir_nav.location wins when the
+        # query succeeds (even for a list `result`, which never set one
+        # itself), otherwise a single non-list `result` is the fallback.
+        last_directory: Optional[Path] = (
+            result if not isinstance(result, list) and result else None
+        )
         try:
             dir_nav = self.query_one(SearchableDirectoryNavigation)
-            self._save_last_directory(dir_nav.location)
+            last_directory = dir_nav.location
         except Exception:
             pass
+
+        self._persist_recent_and_last_directory(last_directory)
 
         super().dismiss(result)
 

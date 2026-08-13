@@ -1,0 +1,60 @@
+name: TASK-2062.1 GGUF import evidence
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gguf-import-evidence:
+    name: GGUF import evidence - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout
+
+      - name: Run exact GGUF import evidence nodes
+        run: |
+          python -m pytest \
+            Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_windows_reparse_point \
+            Tests/Model_Artifacts/test_gguf_admission.py::test_validate_local_gguf_rejects_replacement_between_lstat_and_open \
+            Tests/Model_Artifacts/test_service.py::test_import_local_gguf_promotes_path_private_full_digest_artifact \
+            Tests/Model_Artifacts/test_service.py::test_import_cancel_during_copy_removes_only_its_stage \
+            Tests/Model_Artifacts/test_service.py::test_import_cancel_immediately_before_promotion_never_publishes \
+            Tests/Model_Artifacts/test_service.py::test_import_finalizing_is_point_of_no_return \
+            Tests/Model_Artifacts/test_service.py::test_reconcile_removes_only_abandoned_import_stage \
+            Tests/Model_Artifacts/test_service.py::test_concurrent_identical_imports_converge_on_one_manifest \
+            Tests/Model_Artifacts/test_service.py::test_import_local_gguf_preserves_retryable_lease_timeout \
+            Tests/UI/test_model_installed_view.py::test_tldwcli_css_finish_slice_restores_terminal_import_focus \
+            Tests/UI/test_model_installed_view.py::test_import_progress_updates_without_replacing_focused_cancel \
+            Tests/UI/test_model_installed_view.py::test_physical_cancel_sets_service_probe_and_preserves_source \
+            Tests/UI/test_model_installed_view.py::test_attached_queued_cancel_settles_without_entering_service \
+            Tests/UI/test_model_installed_view.py::test_finalizing_disables_cancel_before_promotion \
+            Tests/UI/test_model_installed_view.py::test_activation_failure_keeps_installed_row_and_offers_activate \
+            Tests/UI/test_model_installed_view.py::test_import_failure_logs_only_stable_category_and_never_selected_path \
+            Tests/UI/test_model_installed_view.py::test_real_import_lease_timeout_offers_busy_retry_without_publication \
+            Tests/UI/test_model_installed_view.py::test_import_lane_disables_every_lifecycle_action_at_80_columns \
+            --timeout=60 \
+            -q

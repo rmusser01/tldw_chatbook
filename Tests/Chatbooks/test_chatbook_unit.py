@@ -170,6 +170,7 @@ class TestChatbookCreator:
             "character_id": 123,
         }
         mock_db.get_messages_for_conversation.return_value = []
+        mock_db.execute_query.return_value.fetchall.return_value = []
         mock_conversation_service = Mock()
         mock_conversation_service.get_messages_with_context.return_value = []
 

@@ -17,10 +17,15 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Any, Callable, Literal, Protocol, cast
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_history_budget import (
+    ProviderContinuationSidecar,
+    provider_continuation_owner_groups,
+)
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -38,7 +43,9 @@ from .agent_models import (
     AgentConfig,
     AgentDefinition,
     AgentStep,
+    ContinuationEventContext,
     ModelTurn,
+    ProviderContinuationEvent,
     RunOutcome,
     SkillFileBindings,
     ToolCall,
@@ -54,6 +61,12 @@ from .agent_models import (
     # the FUNCTION under a distinct local name avoids `spawn` accidentally
     # invoking the parameter's value (None/str) instead.
     definition_fingerprint as compute_definition_fingerprint,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationOwnerGroup,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .fleet_coordinator import FleetCoordinator, FleetHandle
@@ -260,10 +273,7 @@ def _coerce_max_live_subagents(value) -> int:
             parsed = int(float(text))
         except (TypeError, ValueError, OverflowError):
             # OverflowError: float("inf") parses but does not convert.
-            logger.warning(
-                f"[agents] {MAX_LIVE_SUBAGENTS_KEY}={value!r} is not a "
-                f"number; using {DEFAULT_MAX_LIVE_SUBAGENTS}"
-            )
+            logger.warning("invalid max_live_subagents setting; using default")
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
 
@@ -293,16 +303,10 @@ def _coerce_child_max_wall_seconds(value) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not a "
-            f"number; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not numeric; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     if not math.isfinite(parsed):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not "
-            f"finite; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not finite; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     return parsed
 
@@ -330,10 +334,7 @@ def _coerce_subagents_outlive_turn(value) -> bool:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    logger.warning(
-        f"[agents] {SUBAGENTS_OUTLIVE_TURN_KEY}={value!r} is not a boolean; "
-        f"using {DEFAULT_SUBAGENTS_OUTLIVE_TURN}"
-    )
+    logger.warning("subagents_outlive_turn is not boolean; using default")
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
 
 
@@ -593,6 +594,12 @@ class AgentService:
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
         on_child_settled: Callable[[str | None, str], None] | None = None,
+        persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
+        | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        prepare_provider_continuation_request: bool = False,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -768,6 +775,11 @@ class AgentService:
         # else noticing. The Console bridge's fan-out additionally
         # isolates its consumers from EACH OTHER (see `FleetDrainFanout`).
         self._on_child_settled = on_child_settled
+        self.persist_provider_continuation = persist_provider_continuation
+        self.expand_provider_continuation = expand_provider_continuation
+        self.prepare_provider_continuation_request = bool(
+            prepare_provider_continuation_request
+        )
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -789,6 +801,8 @@ class AgentService:
         api_endpoint: str,
         runtime_schemas: list,
         log_active: bool = False,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        continuation_owner_key: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
@@ -844,6 +858,9 @@ class AgentService:
             # see `bound_history_for_send`'s docstring. A no-op (returns
             # `raw_payload` unchanged) whenever `evict_enabled` is False.
             raw_payload = [{"role": "system", "content": system_content}] + messages
+            gateway_prepares_continuation = bool(
+                continuation_groups and self.prepare_provider_continuation_request
+            )
             payload = bound_history_for_send(
                 raw_payload,
                 model=config.model,
@@ -851,7 +868,23 @@ class AgentService:
                 native=native,
                 enabled=evict_enabled,
                 min_recent_rounds=min_recent_rounds,
+                continuation_groups=(
+                    () if gateway_prepares_continuation else continuation_groups
+                ),
+                continuation_owner_key=continuation_owner_key or "id",
             )
+            if (
+                continuation_owner_key is not None
+                and not gateway_prepares_continuation
+            ):
+                payload = [
+                    {
+                        key: value
+                        for key, value in message.items()
+                        if key != continuation_owner_key
+                    }
+                    for message in payload
+                ]
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -1039,9 +1072,7 @@ class AgentService:
         except Exception:  # noqa: BLE001 — a UI-side failure must not take
             # down the cancellation path; the card's own approval timeout
             # remains the backstop.
-            logger.opt(exception=True).warning(
-                f"could not revoke pending approvals for run {run_id}"
-            )
+            logger.warning("could not revoke pending approvals")
 
     def _drain_fleet_handles(
         self, fleet: FleetCoordinator, handle_ids: list[str]
@@ -1225,8 +1256,7 @@ class AgentService:
         survivors = self._surviving_handles(fleet, mine, should_cancel)
         if survivors:
             logger.info(
-                f"{len(survivors)} sub-agent(s) outliving their turn: "
-                f"{', '.join(sorted(survivors))}"
+                "{} sub-agents are outliving their turn", len(survivors)
             )
         # Everything else settles exactly as it always has. With no
         # survivors this holds `mine` itself, in the same order, and every
@@ -1270,10 +1300,7 @@ class AgentService:
             handle = fleet.get(handle_id)
             if handle is None:  # pragma: no cover — never forgotten
                 continue
-            logger.warning(
-                f"abandoning wedged sub-agent {handle.handle_id} "
-                f"(run {handle.run_id}) at end of turn"
-            )
+            logger.warning("abandoning wedged sub-agent at end of turn")
             fleet.finish(
                 handle.handle_id,
                 RUN_CANCELLED,
@@ -1293,10 +1320,7 @@ class AgentService:
                 self.db.set_status(handle.run_id, RUN_CANCELLED)
             except Exception:  # noqa: BLE001 — a DB failure here must not
                 # take down a turn that has already produced its answer.
-                logger.opt(exception=True).warning(
-                    f"could not mark abandoned sub-agent run "
-                    f"{handle.run_id} cancelled"
-                )
+                logger.warning("could not mark abandoned sub-agent run cancelled")
 
     def _persist(self, run_id: str, outcome: RunOutcome) -> None:
         stamp = _now_iso()
@@ -1324,6 +1348,14 @@ class AgentService:
         definition_fingerprint: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
+        continuation_owner_message_id: str | None = None,
+        continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
+        continuation_agent_kind: Literal["primary", "subagent", "fleet"] | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        resume_provider_continuation: bool = False,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -1381,9 +1413,7 @@ class AgentService:
             try:
                 on_run_id(run_id)
             except Exception:  # noqa: BLE001 — bookkeeping is not load-bearing
-                logger.opt(exception=True).warning(
-                    f"on_run_id hook raised for run {run_id}; continuing"
-                )
+                logger.warning("on_run_id hook raised; continuing")
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
         if agent_kind == AGENT_KIND_PRIMARY:
@@ -1765,6 +1795,7 @@ class AgentService:
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
                 ),
+                continuation_durability=continuation_durability,
                 # PR3a-1 Task 3: THIS run tree's writer, captured here on
                 # the PARENT's thread rather than looked up later from the
                 # child's. A child that outlives the turn (Task 2) may not
@@ -1849,6 +1880,7 @@ class AgentService:
             # and the end-of-turn settle both set it to unwind stragglers
             # without cancelling the parent.
             child_cancel = threading.Event()
+            child_kwargs["continuation_agent_kind"] = "fleet"
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
 
@@ -1915,9 +1947,7 @@ class AgentService:
                     # be a trivial bug. Same containment rule as
                     # `_call_with_timeout._runner`.
                     error_text = f"sub-agent failed: {exc}"
-                    logger.opt(exception=True).warning(
-                        f"sub-agent thread for handle {handle.handle_id} raised"
-                    )
+                    logger.warning("sub-agent thread raised")
                 finally:
                     fleet.finish(
                         handle.handle_id,
@@ -1956,9 +1986,8 @@ class AgentService:
                         try:
                             self.db.set_status(child_run_id, status)
                         except Exception:  # noqa: BLE001
-                            logger.opt(exception=True).warning(
-                                "could not persist terminal status for "
-                                f"sub-agent run {child_run_id}"
+                            logger.warning(
+                                "could not persist terminal status for sub-agent run"
                             )
                     # PR3a-2 Task 2: the settle signal, LAST -- after
                     # `fleet.finish` and after the terminal-status
@@ -2010,10 +2039,7 @@ class AgentService:
                 # No child was created, so this spawn costs no slot --
                 # same rule as the cap refusal above.
                 sub_agent_spawns -= 1
-                logger.opt(exception=True).warning(
-                    f"could not start sub-agent thread for handle "
-                    f"{handle.handle_id}"
-                )
+                logger.warning("could not start sub-agent thread")
                 return ToolResult(
                     ok=False,
                     error=f"could not start sub-agent: {exc}",
@@ -2750,7 +2776,12 @@ class AgentService:
 
         deps = LoopDeps(
             call_model=self._make_call_model(
-                config, api_endpoint, runtime_schemas, log_active
+                config,
+                api_endpoint,
+                runtime_schemas,
+                log_active,
+                continuation_groups,
+                continuation_owner_key,
             ),
             invoke_tool=invoke_tool,
             spawn=spawn,
@@ -2816,7 +2847,23 @@ class AgentService:
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
             on_record=on_record,
+            continuation_context=ContinuationEventContext(
+                owner_message_id=continuation_owner_message_id,
+                run_id=run_id,
+                agent_kind=(
+                    continuation_agent_kind
+                    if continuation_agent_kind is not None
+                    else cast(
+                        Literal["primary", "subagent"],
+                        agent_kind,
+                    )
+                ),
+                durability=continuation_durability,
+            ),
         )
+        if self.persist_provider_continuation is not None:
+            deps.persist_provider_continuation = self.persist_provider_continuation
+        deps.expand_provider_continuation = self.expand_provider_continuation
         try:
             # PR2a Task 7: bind THIS run as the dispatching run for the
             # whole loop, on the loop's own thread.
@@ -2846,8 +2893,25 @@ class AgentService:
             # Nested inline sub-agent runs unwind LIFO (`use_run_id`
             # resets in its own `finally`), and a threaded child simply
             # sets its own value on its own thread.
+            continuation_kwargs: dict[str, Any] = {}
+            if restore_provider_continuation is not None:
+                continuation_kwargs["restore_provider_continuation"] = (
+                    restore_provider_continuation
+                )
+            if restore_provider_target is not None:
+                continuation_kwargs["restore_provider_target"] = (
+                    restore_provider_target
+                )
+            if resume_provider_continuation:
+                continuation_kwargs["resume_provider_continuation"] = True
             with use_run_id(run_id):
-                outcome = run_agent_loop(config, messages, active, deps)
+                outcome = run_agent_loop(
+                    config,
+                    messages,
+                    active,
+                    deps,
+                    **continuation_kwargs,
+                )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 
@@ -2879,6 +2943,14 @@ class AgentService:
         should_cancel: Callable[[], bool] = lambda: False,
         supersede_run_id: str | None = None,
         assistant_message_id: str | None = None,
+        continuation_owner_message_id: str | None = None,
+        continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -2910,6 +2982,23 @@ class AgentService:
                 persisted id via ``AgentRunsDB.set_run_assistant_message_id``
                 once the reply completes (that later write is what resume's
                 marker anchoring reads).
+            continuation_owner_message_id: Preallocated assistant owner for
+                provider-continuation events. Falls back to
+                ``assistant_message_id`` when omitted.
+            continuation_durability: Whether continuation must persist or is
+                explicitly non-resumable in memory.
+            restore_provider_continuation: Already-validated canonical state
+                to load without automatic execution.
+            restore_provider_target: Exact frozen provider resolution required
+                to validate an explicit restore.
+            resume_provider_continuation: Explicitly resume pending restored
+                calls through fresh review when ``True``.
+            continuation_sidecar: Canonical private history associated with
+                visible assistant owner IDs. Never added to provider messages.
+            continuation_target: Frozen provider resolution used to validate
+                private history before token accounting.
+            continuation_owner_key: Private key carrying owner IDs through
+                agent history bounding; stripped before provider dispatch.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -2956,6 +3045,23 @@ class AgentService:
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        sidecar = tuple(continuation_sidecar)
+        if sidecar and (continuation_target is None or not continuation_owner_key):
+            raise ValueError(
+                "continuation target and owner key are required for private history"
+            )
+        if sidecar and continuation_target is not None and (
+            continuation_target.provider,
+            continuation_target.model,
+        ) != (provider_config_key(api_endpoint), config.model):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        continuation_groups = (
+            provider_continuation_owner_groups(sidecar, target=continuation_target)
+            if sidecar and continuation_target is not None
+            else ()
+        )
         # Per run tree, not per service instance -- see "Run-log contract"
         # above. `_injected_run_log_writer` is `None` for every caller that
         # didn't pass one to the constructor (i.e. every production caller
@@ -3016,6 +3122,17 @@ class AgentService:
             task=None,
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
+            continuation_owner_message_id=(
+                continuation_owner_message_id
+                if continuation_owner_message_id is not None
+                else assistant_message_id
+            ),
+            continuation_durability=continuation_durability,
+            restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
+            resume_provider_continuation=resume_provider_continuation,
+            continuation_groups=continuation_groups,
+            continuation_owner_key=continuation_owner_key,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a
@@ -3035,9 +3152,8 @@ class AgentService:
             # settling children, it must not cost this turn its manifest or
             # leak the run-log writer's file descriptor. The two calls
             # below are the run tree's only cleanup.
-            logger.opt(exception=True).error(
-                "settling sub-agents at end of turn failed; finalizing the "
-                "run anyway"
+            logger.error(
+                "settling sub-agents at end of turn failed; finalizing the run anyway"
             )
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run

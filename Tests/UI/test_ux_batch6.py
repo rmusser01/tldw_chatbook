@@ -15,6 +15,7 @@ async def test_queue_filter_narrows_rows_and_detail_follows_visible() -> None:
         WorkbenchTestAppWithService,
     )
     from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+        QUEUE_FILTER_DEBOUNCE_SECONDS,
         SchedulesWorkbench,
     )
 
@@ -25,7 +26,9 @@ async def test_queue_filter_narrows_rows_and_detail_follows_visible() -> None:
         assert len(screen._visible_tasks) == len(screen._tasks)
 
         screen.query_one("#scheduling-queue-filter", Input).value = "no-such-task"
-        await pilot.pause()
+        # Debounced (task-15476): the queue table only rebuilds once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(QUEUE_FILTER_DEBOUNCE_SECONDS + 0.1)
         assert screen._visible_tasks == []
         empty = str(
             screen.query_one("#scheduling-task-detail-empty-state", Static).render()
@@ -33,7 +36,7 @@ async def test_queue_filter_narrows_rows_and_detail_follows_visible() -> None:
         assert "No tasks match" in empty
 
         screen.query_one("#scheduling-queue-filter", Input).value = ""
-        await pilot.pause()
+        await pilot.pause(QUEUE_FILTER_DEBOUNCE_SECONDS + 0.1)
         assert len(screen._visible_tasks) == len(screen._tasks)
 
 

@@ -231,7 +231,9 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
             or "Open Settings" in text
             or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         )
-        assert "Inspector" in text
+        inspector_button = console.query_one("#console-inspector-rail-open", Button)
+        assert inspector_button.label == "Inspect"
+        assert inspector_button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio

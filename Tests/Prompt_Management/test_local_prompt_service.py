@@ -1,6 +1,16 @@
 import pytest
 
 from tldw_chatbook.Prompt_Management.local_prompt_service import LocalPromptService
+from tldw_chatbook.Prompt_Management.prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    PromptDeleteReceiptEntry,
+    PromptRestoreResultEntry,
+)
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService as ScopeLocalPromptService,
+)
 
 
 class FakePromptDB:
@@ -95,6 +105,141 @@ class FakePromptDB:
             "version": expected_version + 1,
             "deleted": 0,
         }
+
+
+class FakeAtomicPromptDB:
+    def __init__(self):
+        self.calls = []
+        self.deleted_result = PromptBatchDeleteResult(
+            entries=(PromptDeleteReceiptEntry(7, "Seven", "prompt", 4),)
+        )
+        self.restored_result = PromptBatchRestoreResult(
+            entries=(PromptRestoreResultEntry(7, 5),)
+        )
+
+    def soft_delete_prompts(self, targets):
+        self.calls.append(("delete", targets))
+        return self.deleted_result
+
+    def restore_deleted_prompts(self, targets):
+        self.calls.append(("restore", targets))
+        return self.restored_result
+
+
+class PromptBatchTargetSubclass(PromptBatchTarget):
+    pass
+
+
+def _forged_prompt_batch_target(local_id, expected_version) -> PromptBatchTarget:
+    target = object.__new__(PromptBatchTarget)
+    object.__setattr__(target, "local_id", local_id)
+    object.__setattr__(target, "expected_version", expected_version)
+    return target
+
+
+INVALID_LOCAL_PROMPT_BATCH_TARGETS = [
+    ([], TypeError, "targets"),
+    ((), ValueError, "non-empty"),
+    ((object(),), TypeError, "targets"),
+    ((PromptBatchTargetSubclass(7, 3),), TypeError, "targets"),
+    (
+        (PromptBatchTarget(7, 3), PromptBatchTarget(7, 4)),
+        ValueError,
+        "unique local IDs",
+    ),
+    ((_forged_prompt_batch_target(True, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(0, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(-1, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(2**63, 1),), ValueError, "local_id"),
+    ((_forged_prompt_batch_target(1, False),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 0),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, -1),), ValueError, "expected_version"),
+    ((_forged_prompt_batch_target(1, 2**63),), ValueError, "expected_version"),
+]
+
+
+@pytest.mark.parametrize("method_name", ["delete_prompts", "restore_deleted_prompts"])
+@pytest.mark.parametrize(
+    ("targets", "error_type", "message"), INVALID_LOCAL_PROMPT_BATCH_TARGETS
+)
+def test_local_prompt_batch_methods_validate_before_database_call(
+    method_name, targets, error_type, message
+):
+    database = FakeAtomicPromptDB()
+    service = ScopeLocalPromptService(database)
+
+    with pytest.raises(error_type, match=message):
+        getattr(service, method_name)(targets=targets)
+
+    assert database.calls == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "operation", "result_attribute"),
+    [
+        ("delete_prompts", "delete", "deleted_result"),
+        ("restore_deleted_prompts", "restore", "restored_result"),
+    ],
+)
+def test_local_prompt_batch_methods_pass_exact_canonical_targets_to_database(
+    method_name, operation, result_attribute
+):
+    database = FakeAtomicPromptDB()
+    service = ScopeLocalPromptService(database)
+    first = PromptBatchTarget(7, 3)
+    second = PromptBatchTarget(9, 2)
+    canonical = (first, second)
+
+    result = getattr(service, method_name)(targets=canonical)
+
+    assert result is getattr(database, result_attribute)
+    assert database.calls[0][0] == operation
+    assert database.calls[0][1] is canonical
+
+    database.calls.clear()
+    result = getattr(service, method_name)(targets=(second, first))
+
+    assert result is getattr(database, result_attribute)
+    assert database.calls == [(operation, canonical)]
+
+
+def test_local_prompt_batch_methods_are_sync_keyword_only_typed_pass_throughs():
+    import inspect
+    from typing import get_type_hints
+
+    database = FakeAtomicPromptDB()
+    service = ScopeLocalPromptService(database)
+    targets = (PromptBatchTarget(7, 3),)
+
+    assert not inspect.iscoroutinefunction(ScopeLocalPromptService.delete_prompts)
+    assert not inspect.iscoroutinefunction(
+        ScopeLocalPromptService.restore_deleted_prompts
+    )
+    for method_name, result_type in (
+        ("delete_prompts", PromptBatchDeleteResult),
+        ("restore_deleted_prompts", PromptBatchRestoreResult),
+    ):
+        method = getattr(ScopeLocalPromptService, method_name)
+        signature = inspect.signature(method)
+        assert signature.parameters["targets"].kind is inspect.Parameter.KEYWORD_ONLY
+        hints = get_type_hints(method)
+        assert hints["targets"] == tuple[PromptBatchTarget, ...]
+        assert hints["return"] is result_type
+
+    with pytest.raises(TypeError):
+        service.delete_prompts(targets)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        service.restore_deleted_prompts(targets)  # type: ignore[misc]
+
+    deleted = service.delete_prompts(targets=targets)
+    restored = service.restore_deleted_prompts(targets=targets)
+
+    assert deleted is database.deleted_result
+    assert restored is database.restored_result
+    assert database.calls[0][0] == "delete"
+    assert database.calls[0][1] is targets
+    assert database.calls[1][0] == "restore"
+    assert database.calls[1][1] is targets
 
 
 class FakePromptInterop:

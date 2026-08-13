@@ -41,7 +41,11 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
     build_intro_lines,
     build_web_scope_note,
+    format_ingest_progress_line,
     library_ingest_retry_label,
+)
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
 )
 
 
@@ -514,6 +518,12 @@ class LibraryIngestQueuePanel(Vertical):
             # markup then leaves the first escape's backslash literal --
             # the live "\[web_security]" receipt (task-3312 #2).
             row_classes = "library-ingest-row"
+            has_progress_line = row.state in (
+                IngestJobState.PARSING,
+                IngestJobState.WRITING,
+            ) or bool(row.progress)
+            if has_progress_line:
+                row_classes += " library-ingest-row-with-progress"
             # (task-2230 a11y) Severity gets a colour IN ADDITION to the
             # glyph+word it already carries -- failed and done rows were
             # byte-identical in colour, so scanning a tall queue for the
@@ -549,21 +559,12 @@ class LibraryIngestQueuePanel(Vertical):
                 classes=row_classes,
                 markup=False,
             )
-            if row.progress:
-                progress_line = row.progress.get("message") if row.progress else ""
-                # (task-2016) The row line above already carries the terminal
-                # state ("✓ done · …"); repeating it here read as stuttering.
-                # Active states keep the prefix -- their progress message is
-                # stage detail, not an outcome.
-                terminal = row.state in (
-                    IngestJobState.DONE,
-                    IngestJobState.FAILED,
-                    IngestJobState.CANCELLED,
-                )
+            if has_progress_line and row.state is not None:
+                progress = row.progress
+                if progress is None and row.state is IngestJobState.WRITING:
+                    progress = {"phase": "writing"}
                 yield Static(
-                    progress_line
-                    if terminal
-                    else f"{row.state.value} {progress_line}",
+                    format_ingest_progress_line(progress, state=row.state),
                     id=f"library-ingest-progress-{row.job_id}",
                     classes="library-ingest-progress",
                     markup=False,
@@ -987,8 +988,7 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
 #: actually overflows -- a mid-sentence clip must never be the only signal.
 INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
 
-
-class LibraryIngestCanvas(VerticalScroll):
+class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

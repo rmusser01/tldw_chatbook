@@ -12,7 +12,14 @@ from textual.widgets import Static, Label, Input, TextArea, Button, Switch, Data
 from textual.reactive import reactive
 from textual import on
 from textual.message import Message
+from textual.timer import Timer
 from textual.validation import Length
+
+#: Debounce for the entries search `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). A settled
+#: search clears and rebuilds the whole entries `DataTable`, which should
+#: not happen on every keystroke (task-15476).
+SEARCH_DEBOUNCE_SECONDS = 0.2
 
 
 logger = logger.bind(module="CCPDictionaryEditorWidget")
@@ -408,6 +415,7 @@ class CCPDictionaryEditorWidget(Container):
         self._search_input: Optional[Input] = None
         self._stats_entries: Optional[Static] = None
         self._stats_size: Optional[Static] = None
+        self._search_debounce_timer: Optional[Timer] = None
 
         logger.debug("CCPDictionaryEditorWidget initialized")
 
@@ -847,14 +855,27 @@ class CCPDictionaryEditorWidget(Container):
 
     @on(Input.Changed, "#ccp-dictionary-search")
     async def handle_search_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
+        """Handle search input changes (debounced -- task-15476)."""
         self.search_filter = event.value
-        self._update_entries_table(event.value)
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            SEARCH_DEBOUNCE_SECONDS, self._apply_search_debounced
+        )
+
+    def _apply_search_debounced(self) -> None:
+        self._search_debounce_timer = None
+        self._update_entries_table(self.search_filter)
 
     @on(Button.Pressed, "#clear-search-btn")
     async def handle_clear_search(self, event: Button.Pressed) -> None:
         """Handle clear search button press."""
         event.stop()
+        # A pending debounced search would otherwise still fire ~0.2s later
+        # and re-render the (already-cleared) table a second time.
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
         if self._search_input:
             self._search_input.value = ""
         self.search_filter = ""

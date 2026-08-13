@@ -32,6 +32,8 @@ from tldw_chatbook.Library.library_notes_sync_state import (
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 _COMPACT_SYNC_DIRECTION_LABELS = {
@@ -71,7 +73,7 @@ class LibraryNotePresentationState:
     transfer_running: bool = False
 
 
-class LibraryNotesCanvas(Vertical):
+class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library notes canvas: the list view, or the note editor.
 
     Attributes:
@@ -164,6 +166,22 @@ class LibraryNotesCanvas(Vertical):
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
+
+    def _after_recompose(self) -> None:
+        """Re-run the post-compose wiring ``on_mount`` does.
+
+        ``on_mount`` fires once, when the canvas itself mounts -- a
+        ``refresh(recompose=True)`` remounts this widget's CHILDREN without
+        re-firing it, so ``sync_state``'s recompose would otherwise leave the
+        editor's stable subtree (populated by ``apply_session_state``) and the
+        compact label rewrites showing compose-time defaults.
+
+        Implemented as ``PostRecomposeCallback``'s hook rather than a
+        ``recompose()`` override so it runs BEFORE any queued follow-up
+        (task-15457 review round 1, minor 5): with the override form, a
+        ``then=`` that focused a control saw its pre-compact label.
+        """
+        self._apply_post_compose_state()
 
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
@@ -784,9 +802,30 @@ class LibraryNotesCanvas(Vertical):
 
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
+        self._apply_post_compose_state()
+
+    def _apply_post_compose_state(self) -> None:
+        """Post-compose wiring shared by ``on_mount`` and ``_after_recompose``.
+
+        Gated on the MOUNTED CHILDREN, not on ``self.mode``. ``on_mount``
+        could trust the mode because it fires once, immediately after its own
+        compose. ``_after_recompose`` cannot: ``sync_state`` mutates the
+        fields and only SCHEDULES the rebuild, so a second ``sync_state``
+        landing while the first recompose is still awaiting ``mount_all``
+        leaves this hook reading the newer state against the older children.
+        Observed exactly that on the list -> loading -> editor row-press
+        sequence: ``mode`` was already "editor" with a presentation state set
+        while the mounted child was still ``#library-note-load-state``, and
+        ``apply_session_state``'s ``query_one("#library-note-title")`` raised
+        into the sync's whole-screen fallback. The newer state's own
+        recompose is already queued and applies it a moment later.
+        """
         self.apply_compact_presentation(self.compact)
-        if self.mode == "editor" and self.presentation_state is not None:
-            self.apply_session_state(self.presentation_state)
+        if self.mode != "editor" or self.presentation_state is None:
+            return
+        if not self.query("#library-note-title"):
+            return
+        self.apply_session_state(self.presentation_state)
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""

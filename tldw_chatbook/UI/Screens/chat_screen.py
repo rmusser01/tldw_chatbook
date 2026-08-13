@@ -73,10 +73,8 @@ from ..Console_Modules.prompt_queue import ConsolePromptDispatchStatus, ConsoleP
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
-from ..Console_Modules.transcript import (
-    ConsoleTranscriptRegion,
-    _ConsoleTranscriptReadingState,
-)
+from ..Console_Modules.provider_continuation_recovery import ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion
+from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
     _canonical_card_character_id,
@@ -683,6 +681,13 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # call to notice -- needs its own slow repaint timer. 10s keeps the
 # countdown's staleness bound well under the 300s cache TTL it is watching.
 CONSOLE_COST_TTL_TICK_SECONDS = 10.0
+# task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
+# used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
+# rewrite `ui_state.toml` synchronously on the event loop, per click. This
+# debounce coalesces a burst of toggles into one write, dispatched off the
+# loop (see `_flush_sidebar_state_after_debounce`); `on_unmount` force-flushes
+# so a toggle immediately followed by quit is never lost.
+SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS = 0.5
 # P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
 # the transcript inline-image row's `fit_image_cell_size` usage, sized
 # smaller for the rail's narrower column).
@@ -3285,12 +3290,28 @@ class ChatScreen(BaseAppScreen):
     # Reactive property for sidebar state persistence
     sidebar_state = reactive({}, layout=False)
 
+    #: task-15475: one-shot "the mount already did this visit's refreshes"
+    #: token. Textual posts ``ScreenResume`` when a screen is PUSHED, so
+    #: ``on_mount`` and the mount's own ``on_screen_resume`` both fire on the
+    #: first visit -- and both used to dispatch the (non-exclusive, so
+    #: uncancelled) skill-candidate worker and both used to sync task-resume
+    #: state. ``on_mount`` sets this; the very next resume consumes it and
+    #: skips. Every LATER resume still refreshes, which is the point: a skill
+    #: may have been installed, or an approval may have landed, while Console
+    #: was suspended.
+    #:
+    #: Class-level default so it is readable on a screen built by ``__new__``
+    #: (several Console tests construct one without running ``__init__``).
+    _console_mount_visit_refreshed: bool = False
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
         self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
+        self._console_status_chips_collapsed = False
+        self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
@@ -3616,6 +3637,11 @@ class ChatScreen(BaseAppScreen):
         self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
+        # task-15470: debounce state for `watch_sidebar_state` -- see
+        # `SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS`.
+        self._sidebar_state_save_timer: Any | None = None
+        self._sidebar_state_dirty = False
+        self._sidebar_state_persist_worker: Any | None = None
 
     # Sections `load_settings()` always injects into a disk-loaded config but
     # which Console test fakes never carry. Used to tell a real boot snapshot
@@ -8462,6 +8488,51 @@ class ChatScreen(BaseAppScreen):
             collapsed,
             reading_state,
         )
+
+    def _set_console_status_chips_collapsed(self, collapsed: bool) -> None:
+        """Synchronize screen-owned collapse state with the mounted status row."""
+        if self._console_setup_modal_blocking():
+            return
+        collapsed = bool(collapsed)
+        if self._console_status_chips_collapsed == collapsed:
+            return
+        try:
+            status_chips = self.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            )
+        except QueryError:
+            return
+        self._console_status_chips_collapsed = collapsed
+        self._console_status_chips_layout_revision += 1
+        revision = self._console_status_chips_layout_revision
+        status_chips.set_collapsed(collapsed)
+        status_chips.refresh(layout=True)
+        self.call_after_refresh(
+            self._finish_console_status_chips_layout_change,
+            revision,
+            collapsed,
+        )
+
+    def _finish_console_status_chips_layout_change(
+        self,
+        revision: int,
+        expected_collapsed: bool,
+    ) -> None:
+        """Focus the inverse control after the latest status-row transition."""
+        if (
+            revision != self._console_status_chips_layout_revision
+            or expected_collapsed != self._console_status_chips_collapsed
+        ):
+            return
+        target_id = (
+            "console-status-expand"
+            if expected_collapsed
+            else "console-status-collapse"
+        )
+        try:
+            self.query_one(f"#{target_id}", Button).focus()
+        except QueryError:
+            return
 
     def _finish_console_composer_layout_change(
         self,
@@ -14284,15 +14355,14 @@ class ChatScreen(BaseAppScreen):
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
-                # with a sharper edge here, since the surface is CACHED on
-                # the screen; full reasoning in `ConsoleTranscriptRegion.
-                # __init__`'s docstring. Sizing stays on this side: it
-                # describes this pane's place among its grid siblings
+                # Sizing stays here because it describes this pane among its siblings
                 # (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column = ConsoleTranscriptRegion(
                     session_surface_builder=(
                         lambda: self._ensure_console_session_surface()
                     ),
+                    recovery_message_builder=(lambda: self._ensure_console_chat_controller().provider_continuation_recovery_message()), recovery_replay_available_builder=(lambda: self._ensure_console_chat_controller().provider_continuation_replay_available()),
+                    on_recovery_action=(lambda action, message_id, version: self._ensure_console_chat_controller().recover_provider_continuation(action, message_id, version)),
                 )
                 main_column.styles.width = "13fr"
                 # TASK-2154.1 (LY-09): in single-pane mode the min-width
@@ -14371,7 +14441,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle, variant="quiet")
+                yield self._frame_console_region(right_handle)
             # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
             # flag below -- compose the cost chip correctly on the very
             # first frame rather than waiting for a post-mount sync call.
@@ -14386,6 +14456,7 @@ class ChatScreen(BaseAppScreen):
             yield ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
                 # F1 (final review): compose the chip correctly on the very
                 # first render instead of relying on a post-mount sync call
                 # that some code paths (screen recreation via
@@ -14545,6 +14616,9 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        # task-15475: claim this visit's refreshes; the ScreenResume Textual
+        # posts for this very mount consumes the token and skips its own copy.
+        self._console_mount_visit_refreshed = True
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toasts reporting the LAST Console instance's teardown.
@@ -14680,6 +14754,11 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        # task-15470: flush a pending debounced sidebar-state write FIRST,
+        # ahead of every other teardown step below -- several of those can
+        # raise, and a raised exception must not strand an unpersisted
+        # toggle-then-quit.
+        await self._flush_sidebar_state_now()
         registry = self._h3_image_edit_registry()
         store = self._console_chat_store
         if store is not None:
@@ -15679,6 +15758,8 @@ class ChatScreen(BaseAppScreen):
             transcript = None
 
         messages = self._native_console_messages()
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
         if transcript is not None:
             transcript.set_presentation_context(self._console_presentation_context())
             self._sync_console_citation_count_discovery(messages)
@@ -19851,6 +19932,18 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_composer_collapsed(False)
 
+    @on(Button.Pressed, "#console-status-collapse")
+    def handle_console_status_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(True)
+
+    @on(Button.Pressed, "#console-status-expand")
+    def handle_console_status_expand(self, event: Button.Pressed) -> None:
+        """Expand the Console status row."""
+        event.stop()
+        self._set_console_status_chips_collapsed(False)
+
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
@@ -21694,6 +21787,13 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # task-15475: consume the mount's one-shot token. On the FIRST visit
+        # this resume is the mount's own, and on_mount already dispatched the
+        # skill-candidate worker and scheduled the task-resume sync; running
+        # them again here just doubled the work. Consumed (not merely read),
+        # so every subsequent resume refreshes normally.
+        mount_already_refreshed = self._console_mount_visit_refreshed
+        self._console_mount_visit_refreshed = False
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via
@@ -21703,7 +21803,8 @@ class ChatScreen(BaseAppScreen):
         # stale block and the modal could stick even after setup completed
         # elsewhere.
         self._sync_console_transcript_guidance()
-        self.sync_task_resume_state()
+        if not mount_already_refreshed:
+            self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
         # Delayed exactly like the `on_mount` consumption below, to give the
         # native composer a chance to finish mounting on first navigation to
@@ -21726,7 +21827,8 @@ class ChatScreen(BaseAppScreen):
             and not self._consume_pending_console_identity_refresh()
         ):
             self._dispatch_active_console_roleplay_refresh()
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
+        if not mount_already_refreshed:
+            self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
@@ -22306,8 +22408,100 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def watch_sidebar_state(self, new_state: dict) -> None:
-        """Auto-save when sidebar state changes."""
-        self._save_sidebar_state()
+        """Debounce persistence when sidebar state changes.
+
+        task-15470: this used to call `_save_sidebar_state()` directly --
+        synchronous open+parse+rewrite of `ui_state.toml` on the event loop,
+        once per `Collapsible.Toggled`. Now it only marks the state dirty and
+        (re)arms one debounce timer; a burst of toggles collapses into a
+        single write, dispatched off the loop by
+        `_flush_sidebar_state_after_debounce`. `on_unmount` force-flushes any
+        pending write so a toggle immediately followed by quit is not lost.
+        """
+        self._schedule_sidebar_state_save()
+
+    def _schedule_sidebar_state_save(self) -> None:
+        """Mark the sidebar state dirty and (re)arm the debounce timer.
+
+        The single scheduling point -- `watch_sidebar_state` and any direct
+        caller that mutates `ui_state.collapsible_states` without going
+        through the reactive (e.g. a bulk reset that may reassign an
+        already-`{}` `sidebar_state`, which the reactive would then treat as
+        a no-op and never call the watcher for) both route through here so
+        a pending write is unconditionally scheduled.
+        """
+        self._sidebar_state_dirty = True
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+        self._sidebar_state_save_timer = self.set_timer(
+            SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS,
+            self._flush_sidebar_state_after_debounce,
+        )
+
+    def _flush_sidebar_state_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._sidebar_state_save_timer = None
+        self._sidebar_state_persist_worker = self.run_worker(
+            self._persist_sidebar_state_off_loop(),
+            exclusive=True,
+            group="sidebar-state-persist",
+        )
+
+    async def _persist_sidebar_state_off_loop(self) -> None:
+        """Write `ui_state.toml` on a worker thread, off the event loop.
+
+        Snapshots `self.ui_state` here, on the main thread, before handing
+        the write to `to_thread` -- a further toggle can still arrive and
+        mutate `collapsible_states` while this write is in flight, and it
+        must not race the worker thread's read of that same dict.
+
+        Clears `_sidebar_state_dirty` immediately after taking the
+        snapshot, NOT after the write completes (review round,
+        task-15470): the awaited `to_thread` call below yields to the
+        event loop, and a further toggle can land while this write is
+        still in flight. Clearing dirty only after the write finished
+        would blindly stamp it False again on completion -- clobbering
+        the True a mid-flight toggle had just set -- so a quit landing
+        before that toggle's own new debounce timer fires would see
+        `dirty=False` and lose it. Clearing right here instead means the
+        dirty flag always answers "is there a toggle newer than the
+        snapshot this worker is holding", which a mid-flight toggle
+        correctly flips back to True.
+        """
+        snapshot = self._sidebar_state_snapshot()
+        self._sidebar_state_dirty = False
+        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+
+    async def _flush_sidebar_state_now(self) -> None:
+        """Force-flush a pending sidebar-state write (unmount/quit path).
+
+        Cancels any pending debounce timer and writes off the loop via
+        `to_thread` so the screen never unmounts with an unpersisted toggle
+        -- the AC #2 flush-on-quit guarantee. If a debounced write is
+        already in flight (the timer fired moments before quit), this waits
+        for it rather than dispatching a second writer against the same
+        file -- `_write_sidebar_state_snapshot` does an unlocked
+        read-modify-write of `ui_state.toml`, so two concurrent writers
+        could interleave.
+        """
+        if self._sidebar_state_save_timer is not None:
+            self._sidebar_state_save_timer.stop()
+            self._sidebar_state_save_timer = None
+        worker = self._sidebar_state_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error("Pending sidebar-state write failed: {}", type(error).__name__)
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: a toggle can land
+            # while THIS await was in flight, re-dirtying the state after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._sidebar_state_dirty:
+            snapshot = self._sidebar_state_snapshot()
+            await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
+            self._sidebar_state_dirty = False
 
     def _load_sidebar_state(self) -> None:
         """Load sidebar state from config file."""
@@ -22340,8 +22534,27 @@ class ChatScreen(BaseAppScreen):
             logger.error(f"Failed to load sidebar state: {e}")
             self.sidebar_state = {}
 
-    def _save_sidebar_state(self) -> None:
-        """Save sidebar state to config file."""
+    def _sidebar_state_snapshot(self) -> Dict[str, Any]:
+        """Copy the sidebar-persisted fields off `self.ui_state`.
+
+        `collapsible_states` is a plain mutable dict; taking this copy on
+        the caller's thread (always the main/event-loop thread -- see
+        `_persist_sidebar_state_off_loop`) before handing the write to a
+        worker thread means the worker never reads `self.ui_state` directly,
+        so a toggle arriving while that write is in flight cannot race it.
+        """
+        return {
+            "collapsible_states": dict(self.ui_state.collapsible_states),
+            "search_query": self.ui_state.sidebar_search_query,
+            "last_active_section": self.ui_state.last_active_section,
+        }
+
+    def _write_sidebar_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Write a pre-captured sidebar-state snapshot to `ui_state.toml`.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.ui_state`.
+        """
         config_path = _get_effective_config_path().parent / "ui_state.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -22354,21 +22567,28 @@ class ChatScreen(BaseAppScreen):
                 data = {}
 
             # Update sidebar section
-            data["sidebar"] = {
-                "collapsible_states": dict(self.ui_state.collapsible_states),
-                "search_query": self.ui_state.sidebar_search_query,
-                "last_active_section": self.ui_state.last_active_section,
-            }
+            data["sidebar"] = snapshot
 
             # Save back to file
             with open(config_path, "w") as f:
                 toml.dump(data, f)
 
             logger.debug(
-                f"Saved sidebar state with {len(self.ui_state.collapsible_states)} collapsibles"
+                f"Saved sidebar state with {len(snapshot['collapsible_states'])} collapsibles"
             )
         except Exception as e:
             logger.error(f"Failed to save sidebar state: {e}")
+
+    def _save_sidebar_state(self) -> None:
+        """Save sidebar state to config file, synchronously, on this thread.
+
+        Convenience wrapper around `_sidebar_state_snapshot` +
+        `_write_sidebar_state_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`) or does not care (a
+        direct test call). Callers on the event loop that must NOT block it
+        should go through `watch_sidebar_state`'s debounce instead.
+        """
+        self._write_sidebar_state_snapshot(self._sidebar_state_snapshot())
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""
@@ -22483,7 +22703,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     collapsible.collapsed = True
 
-            self._save_sidebar_state()
+            self._schedule_sidebar_state_save()
             logger.info("Reset sidebar to default state")
             self.notify("Settings reset to defaults", severity="success")
         except Exception as e:

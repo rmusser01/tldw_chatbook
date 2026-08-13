@@ -120,6 +120,7 @@ import re
 import uuid
 
 from loguru import logger
+from loguru import logger as loguru_logger
 from textual.widgets import Select
 
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
@@ -896,9 +897,9 @@ class ConsoleSessionController:
         except Exception:
             close_flow.close()
             self._closing_session_requests.discard(session_id)
-            logger.opt(exception=True).warning(
-                "Could not start Console session close flow for {}", session_id
-            )
+            # TASK-15103: raw logger — the ledgered contract for this event
+            # carries no bound fields, including the file-level module bind.
+            loguru_logger.warning("Could not start Console session close flow")
 
     def _session_close_impact(
         self, session_id: str

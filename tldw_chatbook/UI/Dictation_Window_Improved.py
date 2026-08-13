@@ -6,6 +6,7 @@ Improved dictation interface with privacy settings and better error handling.
 from typing import List, Dict, Any
 from pathlib import Path
 from datetime import datetime
+import asyncio
 import time
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
@@ -25,11 +26,26 @@ from textual.binding import Binding
 from loguru import logger
 
 # Local imports
-from ..config import get_cli_setting, get_user_data_dir, save_setting_to_cli_config
+from ..config import (
+    get_cli_setting,
+    get_user_data_dir,
+    save_settings_to_cli_config,
+)
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
 from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
+
+
+# task-15470: `_persist_settings` used to write straight to config.toml --
+# 6-9 sequential `save_setting_to_cli_config` calls, each its own full
+# read+atomic-rewrite+cache-reload cycle -- and the buffer-duration input
+# fired it on every keystroke that happened to parse. This debounce
+# coalesces a burst of edits (a typed duration, several switch flips) into
+# one batched write, dispatched off the event loop; `on_unmount` flushes any
+# pending write so an edit immediately followed by navigating away or
+# quitting is not lost.
+DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS = 0.6
 
 
 def dictation_export_directory() -> Path:
@@ -198,6 +214,12 @@ class ImprovedDictationWindow(Widget):
 
         # Settings
         self.settings = self._load_settings()
+
+        # task-15470: debounce state for `_persist_settings` -- see
+        # `DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS`.
+        self._settings_save_timer = None
+        self._settings_dirty = False
+        self._settings_persist_worker = None
 
         # Start time tracking
         self._start_time = None
@@ -468,15 +490,93 @@ class ImprovedDictationWindow(Widget):
         self._settings_are_mounting = False
 
     def _persist_settings(self) -> None:
-        """Save settings unless the controls are still mounting.
+        """Schedule a debounced settings save unless controls are mounting.
 
         The single gate. Handlers call this rather than `_save_settings`
         directly, so a new handler cannot reintroduce the write-on-open by
-        forgetting to check.
+        forgetting to check. task-15470: this used to call `_save_settings()`
+        directly and synchronously -- 6-9 sequential config.toml
+        read-rewrite-reload cycles on the event loop, and the
+        buffer-duration input called it once per parsing keystroke. It now
+        only marks settings dirty and (re)arms a debounce timer; the actual
+        write is one batched atomic mutation, dispatched off the loop by
+        `_flush_settings_after_debounce`. `on_unmount` force-flushes any
+        pending write.
         """
         if getattr(self, "_settings_are_mounting", False):
             return
-        self._save_settings()
+        self._settings_dirty = True
+        if self._settings_save_timer is not None:
+            self._settings_save_timer.stop()
+        self._settings_save_timer = self.set_timer(
+            DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS,
+            self._flush_settings_after_debounce,
+        )
+
+    def _flush_settings_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._settings_save_timer = None
+        self._settings_persist_worker = self.run_worker(
+            self._persist_settings_off_loop(),
+            exclusive=True,
+            group="dictation-settings-persist",
+        )
+
+    async def _persist_settings_off_loop(self) -> None:
+        """Write settings on a worker thread, off the event loop.
+
+        Snapshots `self.settings` here, on the main thread, before handing
+        the write to `to_thread` -- a further keystroke/switch can still
+        arrive and mutate `self.settings` while this write is in flight, and
+        it must not race the worker thread's read of that same dict.
+
+        Clears `_settings_dirty` immediately after taking the snapshot, NOT
+        after the write completes (review round, task-15470): the awaited
+        `to_thread` call below yields to the event loop, and a further edit
+        can land while this write is still in flight. Clearing dirty only
+        after the write finished would blindly stamp it False again on
+        completion -- clobbering the True a mid-flight edit had just set --
+        so a quit landing before that edit's own new debounce timer fires
+        would see `dirty=False` and lose it (reproduced: "edit 2 LOST").
+        Clearing right here instead means the dirty flag always answers
+        "is there an edit newer than the snapshot this worker is holding",
+        which a mid-flight edit correctly flips back to True.
+        """
+        snapshot = self._settings_snapshot()
+        self._settings_dirty = False
+        await asyncio.to_thread(self._write_settings_snapshot, snapshot)
+
+    async def on_unmount(self) -> None:
+        """Flush a pending debounced settings write.
+
+        Fires both when this view is switched away from (`STTS_Window`'s
+        `content_container.remove_children()`) and when the app quits while
+        the Dictation view is mounted -- Textual's `App._shutdown` prunes
+        every mounted descendant, this widget included. If a debounced
+        write is already in flight, waits for it rather than dispatching a
+        second writer against the same config file.
+        """
+        if self._settings_save_timer is not None:
+            self._settings_save_timer.stop()
+            self._settings_save_timer = None
+        worker = self._settings_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error(
+                    "Pending dictation settings write failed: {}",
+                    type(error).__name__,
+                )
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: an edit can land
+            # while THIS await was in flight, re-dirtying settings after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._settings_dirty:
+            snapshot = self._settings_snapshot()
+            await asyncio.to_thread(self._write_settings_snapshot, snapshot)
+            self._settings_dirty = False
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handle switch changes."""
@@ -762,22 +862,57 @@ Performance Tips:
             settings["language"] = "en"
         return settings
 
-    def _save_settings(self):
-        """Save dictation settings."""
-        save_setting_to_cli_config("dictation", "provider", self.settings["provider"])
-        save_setting_to_cli_config("dictation", "model", self.settings.get("model"))
-        save_setting_to_cli_config("dictation", "language", self.settings["language"])
-        save_setting_to_cli_config(
-            "dictation", "punctuation", self.settings["punctuation"]
-        )
-        save_setting_to_cli_config("dictation", "commands", self.settings["commands"])
-        save_setting_to_cli_config(
-            "dictation", "buffer_duration_ms", self.settings["buffer_duration_ms"]
-        )
+    def _settings_snapshot(self) -> Dict[str, Any]:
+        """Copy the persisted fields off `self.settings`.
 
-        # Save privacy settings
-        for key, value in self.settings["privacy"].items():
-            save_setting_to_cli_config("dictation.privacy", key, value)
+        `self.settings` is a plain mutable dict; taking this copy on the
+        caller's thread (always the main/event-loop thread -- see
+        `_persist_settings_off_loop`) before handing the write to a worker
+        thread means the worker never reads `self.settings` directly, so a
+        further keystroke/switch arriving while that write is in flight
+        cannot race it.
+        """
+        return {
+            "dictation": {
+                "provider": self.settings["provider"],
+                "model": self.settings.get("model"),
+                "language": self.settings["language"],
+                "punctuation": self.settings["punctuation"],
+                "commands": self.settings["commands"],
+                "buffer_duration_ms": self.settings["buffer_duration_ms"],
+            },
+            "dictation.privacy": dict(self.settings["privacy"]),
+        }
+
+    def _write_settings_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Persist a pre-captured settings snapshot with one atomic write.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.settings`. `save_settings_to_cli_config`
+        applies every section/key in `snapshot` under a single config-file
+        lock, atomic replace, and cache reload -- the 6-9 sequential
+        `save_setting_to_cli_config` calls this replaced each did all three
+        independently. Guarded broadly: this now also runs inside a
+        `run_worker` coroutine (`_persist_settings_off_loop`), where an
+        uncaught exception is fatal to the whole app by default
+        (`exit_on_error=True`) -- a config-write hiccup must not crash the
+        session.
+        """
+        try:
+            save_settings_to_cli_config(snapshot)
+        except Exception:
+            logger.error("Failed to persist dictation settings")
+
+    def _save_settings(self):
+        """Save dictation settings, synchronously, on this thread.
+
+        Convenience wrapper around `_settings_snapshot` +
+        `_write_settings_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`). A caller on the event
+        loop that must not block it should go through `_persist_settings`'s
+        debounce instead.
+        """
+        self._write_settings_snapshot(self._settings_snapshot())
 
     def _update_stats(self):
         """Update statistics display."""

@@ -168,5 +168,12 @@ def parse_native_tool_calls(message: dict | None) -> tuple[ToolCall, ...]:
                 parsed = None
             if isinstance(parsed, dict):
                 args = parsed
-        calls.append(ToolCall(name=name, args=args, call_id=str(raw.get("id") or "")))
+        calls.append(
+            ToolCall(
+                name=name,
+                args=args,
+                call_id=str(raw.get("id") or ""),
+                raw_arguments=raw_args if isinstance(raw_args, str) else "",
+            )
+        )
     return tuple(calls)

@@ -9,6 +9,27 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A schema-version label does not make a synthetic database historical
+
+**TASK-15705/TASK-15707, 2026-08-12.** Raising ChaChaNotes from v35 to v36
+first broke migration tests that had either stamped a tiny hand-written database
+with the then-current version or pinned ``_CURRENT_SCHEMA_VERSION`` while using
+the evolving bootstrap SQL. The former skipped migration with required tables
+missing; the latter silently included columns that did not exist at the claimed
+historical version. Focused tests for the new v36 migration passed, but the full
+DB suite exposed both fixture classes: current-version fixtures failed during
+startup maintenance, while an incomplete v24 fixture failed only after reaching
+a much later migration.
+
+**What to do.** A migration fixture must prove the historical preconditions that
+matter to the migration under test: schema version, required tables/columns, and
+the absence of fields being introduced. When later code needs a complete current
+database with one malformed record, create a real current database and alter only
+that record or table; do not label a partial schema as current. After every schema
+bump, run the complete DB migration suite, not only the new migration module.
+
+---
+
 ## A "slow-accept listener" does not delay TCP connect() — it delays accept()
 
 **TASK-15473, 2026-08-11.** Writing an evidence test that the event loop stays
@@ -2775,8 +2796,15 @@ test using SQLite or injected fakes.
 loopback self-pipe from application egress *before* async fixtures are created (or use a
 guarding layer that does not intercept the runtime's wakeup channel). Do not paper over
 the issue by marking broad UI suites `allow_network`: that restores the exact application
-escape the guard exists to detect. Until the shared harness is corrected, record the
-scoped guard workaround with focused-test evidence and keep live/external clients stubbed.
+escape the guard exists to detect. TASK-15458 replaced the temporary family-set workaround
+with ADR-058's thread-local, dynamic `socketpair()` exemption: only the calling thread is
+permitted while the captured real socketpair call is active, and `finally` restores nested
+depth on success or error. Literal Windows commands
+`python -m pytest Tests/test_network_guard.py -q`,
+`python -m pytest Tests/Library/test_library_media_content.py -q`, and their combined form
+passed without changing `_INET_FAMILIES`; focused tests also proved same-thread direct
+egress stays blocked and recorded after an exception, while concurrent-thread egress stays
+blocked and recorded during socketpair. Keep live/external clients stubbed.
 
 ---
 
@@ -3359,3 +3387,416 @@ piped through `tail` are the pipe's, not pytest's. A gate passes only on
 a READ, nonzero passed-count that matches the expected number; "no tests
 ran", a count you didn't read, and a summary too fast to be real are all
 the same verdict.
+## A truncated pytest diff is not the diff (task-15512)
+
+**Incident.** A failing `assert service.calls == [...]` printed its summary line
+as `assert [{'include_ci...tions'), ...}] == [{'include_ci...tions'), ...}]`,
+followed by one `At index 0 diff:` line that pytest itself had cut mid-value. I
+read the visible fragment as a *scope* change and wrote that into the task file
+as the diagnosis. It was wrong: the actual delta was `top_k` (5 vs 15), which
+sat past the truncation point. The wrong diagnosis then travelled -- into a task
+another person would have picked up, pointing them at "a search silently
+widening its scope", which is a much more alarming and entirely fictional bug.
+
+**Rule.** When a collection assertion fails, do not diagnose from the summary
+line. Re-run that single test and read the full comparison, or print the two
+values. The `...` in pytest's output is not an ellipsis for your benefit -- it
+is hiding the part you need.
+
+## Fixing a crash is how you find out what it was hiding (task-15512)
+
+**Incident.** Three Settings tests failed with a timeout waiting for a toast. The
+cause was a stdlib-logging call written in loguru's `{}` style, which raises
+`TypeError` when the record is formatted; `_pytest.logging.LogCaptureHandler.
+handleError` re-raises deliberately, so the Textual save worker died mid-save.
+Fixing the log call made ONE of the three pass -- and the other two then failed
+on their real assertion, which was a genuine product bug (pressing Save marks
+untouched fields dirty-and-empty, and one of them aborts the save).
+
+**Rule.** A crash in a code path masks every assertion downstream of it. After
+fixing one, re-run and expect NEW failures rather than green; treat "same count
+of failures, different reasons" as progress. This is the third time in this
+programme that repairing a run-killing defect exposed defects nobody had counted
+(see the hang-class sweep and the harness-config work).
+
+**Corollary on severity.** The same log bug behaves differently in the two
+environments: production stdlib logging *swallows* the formatting error and
+carries on, so nothing was broken for users -- only the warning was lost. It was
+tempting, and I did briefly claim, that a failing save in tests meant a failing
+save in the product. Check which layer makes a failure fatal before assigning it
+user impact.
+## A DOM swap moved into a worker is invisible to `pilot.pause()` (task-15461, 2026-08-11)
+
+**The trap.** `Pilot.pause(delay)` is `await self._wait_for_screen()` then
+`await asyncio.sleep(delay)`. `_wait_for_screen` drains the **message pump** — it posts a
+callback to every widget on the screen and waits for them all to come back. It knows
+nothing about Textual **workers**. So a UI update scheduled with `call_next` is covered
+by every `pilot.pause()` in the suite; the identical update scheduled with `run_worker`
+is covered only by whatever wall-clock `delay` the test happened to pass.
+
+**What happened.** Replacing Watchlists' whole-screen `refresh(recompose=True)` on a tab
+click with a region-scoped swap also moved the swap from a `call_next` callback (which is
+what `refresh(recompose=True)` is, internally: `_recompose_required = True;
+call_next(self._check_recompose)`) onto the screen's existing surface-refresh drain, which
+ran as `run_worker(..., group="wc_surface_refresh")`. Nothing about the swap's *duration*
+changed — instrumented at ~250 ms for the Artifacts pane before and after — but the
+suite's shared helper opens a section with `pilot.pause(0.2)`, and 250 > 200. Eight tests
+in `test_watchlists_artifacts_pane.py` began failing with `NoMatches:
+#watchlists-artifacts-pane`, **passing in isolation and failing in a full-file run**,
+because the margin was machine load. Two more flipped between runs. It looked exactly
+like flakiness and was not: it was a deterministic ordering change, mis-read as noise
+because the symptom was load-dependent.
+
+Scheduling the drain with `call_next` fixed all ten and cost nothing else — it is also
+strictly safer than the worker it replaced, whose own comment explains that it needed a
+private worker group so the screen's several `run_worker(..., exclusive=True)` call sites
+could not cancel it mid-swap. A `call_next` callback cannot be cancelled by a worker at
+all.
+
+**What to do.** Before moving any DOM mutation onto a worker, ask what the tests (and the
+app's own idle handling) actually wait for. `run_worker` is for *work*; the mount/remove
+pair that lands its result belongs on the pump. And when a batch of tests starts failing
+together in a full run while passing alone, do not reach for "flaky" — check whether the
+change under review moved something out of what the harness waits on.
+
+## A region factory that reads state before its `await` loses whatever lands in the gap (task-15461, 2026-08-11)
+
+**The trap.** Textual's own `Widget.recompose` removes its children **first** and calls
+`compose()` afterwards, so it always reads widget state on the late side of the yield.
+Hand-rolled in-place swaps usually do the opposite — build the replacement first, so a
+factory that raises leaves the old content standing rather than an empty box — and that
+inversion opens a window: state read, `await remove()`, state changes, `await mount()`.
+
+**What happened.** `watch_active_section` dispatches the new section's loader and the
+region swap in the same breath. `WatchlistsWorkbench.refresh_region_content` calls the
+region factory (which reads `self._loaded_rules`) *before* its remove/mount awaits. The
+loader — an `AsyncMock` in the test, a fast local query in production — completed during
+the removal, wrote its rows to the screen, then looked for its pane and could not find it:
+the replacement existed but was not yet mounted. Result: an Alert-rules table that stayed
+empty over a `_loaded_rules` holding the row, with nothing left to correct it. The
+whole-screen recompose being replaced had never had the gap, purely because of Textual's
+ordering.
+
+**What to do.** When you replace a recompose with a hand-rolled swap, re-apply the state
+*after* the mount (`_reseed_active_section_pane`) rather than trusting the read that
+happened before it. Reactive assignments make the re-apply free when nothing moved, so
+the cost is a few lines and the failure mode it closes is silent.
+
+---
+
+## A pathname stat and an open-handle stat need not expose the same native identity field (TASK-2062.1, 2026-08-13)
+
+TASK-2062.1's local-GGUF admission passed on Linux and macOS but rejected an
+unchanged file on Windows. CPython 3.12's Windows pathname `stat` compatibility
+surface reports creation time through `st_ctime`, while `fstat` on the already
+opened descriptor retains the file's ChangeTime. Comparing the complete tuples
+made an unchanged pathname and its own open handle look different. The first
+two native Windows runs also exposed test-only POSIX assumptions before the
+real identity mismatch became visible.
+
+The correction compares only fields with shared pathname/descriptor semantics
+when proving the name still refers to the opened file on Windows, while keeping
+the descriptor-to-descriptor recheck strict, including ChangeTime. Tests mutate
+device, inode, mode, size, and mtime independently, and the exact three-OS lane
+runs the Windows reparse and replacement cases instead of accepting skips.
+
+**What to do.** For TOCTOU defenses, distinguish the two questions: whether a
+pathname still names the opened object, and whether the opened object changed
+after inspection. Do not assume every portable `stat_result` field has identical
+meaning across pathname and handle APIs. Preserve strict handle rechecks, test
+each stable identity field, and require native-platform evidence for filesystem
+security claims.
+## A whole-screen recompose is doing four things you did not ask it for
+
+**The trap.** Converting `refresh(recompose=True)` to a region-scoped rebuild looks
+like a pure narrowing: same content, fewer widgets. It is not. The recompose was also
+providing services the new path silently drops, and none of them fail loudly.
+
+**What happened.** Task-15475 (2026-08-11/13) converted four surfaces. Every one of
+these was caught by an EXISTING test, not by reading the diff:
+
+* **Mouse-capture release.** `BaseAppScreen.refresh`/`recompose` release
+  `App.mouse_captured` before and after the teardown (task-627): an `Input` has no
+  `_on_hide`, so a widget torn down while capturing leaves a dangling capture and
+  every mouse click app-wide is silently swallowed from then on. A region swap tears
+  widgets down too and got none of that. Now extracted to
+  `release_mouse_capture_for_teardown` / `sweep_stale_mouse_capture` and called by
+  both converted screens.
+* **Callback ordering.** Textual runs a screen's recompose BEFORE its
+  `call_after_refresh` callbacks, so "select the category, then focus a field in it"
+  worked by construction. A region rebuild driven from a worker (or from the region's
+  own `_check_recompose`) is a DIFFERENT pump with no ordering against the screen's
+  callback list: the Speech deep link ran against a pane that did not exist yet and
+  dropped its focus on the floor, leaving the user on `nav-home`. Follow-ups must hang
+  off the swap itself.
+* **Post-layout geometry.** Anything reading `virtual_size`/`container_size` (here an
+  inspector overflow indicator) must still run after a REFRESH; read inline at the end
+  of the swap it sees pre-layout zeros and renders the wrong state.
+* **The repaint short-circuit.** `Widget.refresh(recompose=True)` returns before
+  `_set_dirty`. Drop `recompose=True` and a plain reactive assignment now resolves
+  `self.app` — which raises `NoActiveAppError` in every bare-screen unit test that
+  sets that reactive. `repaint=False` restores the property honestly (the screen
+  renders nothing from the value; its children do).
+
+Also worth knowing: scoped is not automatically faster. Two separately-awaited region
+swaps each drove their own layout pass and measured 105 ms against the 69 ms the
+whole-screen recompose appeared to cost. Both numbers were wrong to compare — the Lab
+frame defers its body mount OUT of the recompose, so that 69 ms excluded the expensive
+half. Wrapping the swap in `self.batch()` (what `Widget.recompose` itself uses) took
+it to 88 ms, and the honest end-to-end measure — trigger to content actually on
+screen — was 325 ms before, 146 ms after.
+
+**What to do.** Before converting a recompose, list what it did besides re-render:
+grep the screen's `refresh`/`recompose` overrides, its `call_after_refresh` call
+sites, and any geometry reads. Port each explicitly. Measure trigger-to-content, never
+"time the two coroutines", and batch the swap.
+
+**Review round 1 added three more, all measured, none visible in the diff:**
+
+* **A "container" you empty may not be yours.** `remove_children()` on a frame region
+  is only safe if the region holds nothing but mode content. `#lab-rail` and
+  `#lab-inspector` each carry a frame-composed collapse header as their FIRST child —
+  which is precisely why `LabScreen._populate_regions` APPENDS with `mount_all` and
+  says so. The blanket removal destroyed both collapse buttons on the first click,
+  permanently (no keyboard binding, no recompose left to restore them). If the
+  existing code mounts with `mount_all` rather than replacing, that is a signal:
+  something else already lives there.
+* **Focus does not "stay put" when the widget under it is destroyed — it MOVES, to a
+  neighbour you did not choose.** Both conversions landed the user on a collapse
+  affordance one Space away from destroying their own context
+  (`settings-category-group-domain-defaults`, `lab-rail-collapse`). Capture the focus
+  token before a teardown and restore it by id, but defer the restore and yield to
+  the rebuilt subtree — a freshly mounted widget may have focused itself ON PURPOSE
+  (`ResultsGrid` does, so its advertised shortcuts work), and an eager restore wins
+  the FIFO race and silently kills that.
+* **`exclusive=True` is the wrong supersede primitive for a teardown.** It cancels the
+  in-flight worker, and the cancellation can land inside `remove_children` — leaving a
+  region emptied and never refilled when the superseding swap does not rebuild that
+  same region, and skipping the post-teardown capture sweep. A lock plus a revision
+  check supersedes just as firmly and lets the loser return before touching a widget.
+  Accumulate any per-call flags (`rail_dirty`) across superseded calls, or the
+  survivor silently drops the loser's work.
+
+And one about the evidence itself: **a test that asserts on the nearest visible text
+can be satisfied by a different code path.** Neutering the sync-rows region rebuild
+left all six evidence tests green, because the assertion read a summary `Static` that
+another path keeps current. Assert on the widgets ONLY the mechanism under test
+writes, then mutation-check by neutering that mechanism.
+
+## An absolute event-count pin records which side of a race the author's machine won (TASK-15458, 2026-08-13)
+
+**Incident.** Task-15458's perf pin asserted `markdown_updates ==
+[id(markdown_before)]` — "opening the media item parses the document exactly
+once". It was written and verified on Windows, where it passed. On macOS it
+failed 3/3 with `markdown_update_count=2`, and it had been red on `dev` from
+the moment it merged. The count was not flaky, and it was not a platform quirk
+of the test: it was reporting a real defect that the authoring machine happened
+to hide. Opening a media item issues two `refresh(recompose=True)` calls — the
+"Loading media…" one at click time, and one when the detail worker resolves.
+Textual's `recompose()` awaits child teardown BEFORE it calls `compose()`, so a
+worker landing inside that await gets picked up by the in-flight compose, and
+the worker's own recompose then parses the whole 49 KB / 2,000-line document a
+SECOND time. Windows lost that race the other way (both refreshes coalesced
+into one recompose), so the same production code produced 1 there and 2 here.
+A/B on the open click: 922/914/935 ms and 2 parses with the arrival recompose
+unconditional, 710/730/841 ms and 1 parse with an identity guard on the
+already-composed detail.
+
+**What to do.** An absolute count over a window that spans a scheduling race
+pins your machine's timing, not the contract. Two habits fix it. First, scope
+the count to the interaction the claim is about — the sibling test in the same
+file already did this (`parse_count_before_navigation = len(markdown_updates)`,
+then assert no growth across the click), and it was green on both platforms
+because the delta cannot absorb an unrelated race. Second, when you do want an
+absolute count, first make it deterministic in PRODUCTION (here: the guard),
+then pin it — a total that is only stable on one OS is evidence about the OS.
+And treat a count that differs from the notes' recorded value as a defect
+report until proven otherwise: the number was right, the code was wrong.
+## When a screen really is widget-bound, COUNT widgets — a wall-clock A/B can't resolve the change (task-15462, 2026-08-13)
+
+**What happened.** Profiling the Watchlists push turned up a genuine piece of waste: the
+screen's `region_layout` reactive defaults to "nothing collapsed" while the shipped
+first-run default collapses the RIGHT_RAIL, so every visit composes the expanded
+Inspector rail and `on_mount` immediately swaps it for the one-line collapsed header. A
+prototype removing the swap was measured against dev the obvious way — run the probe
+process on dev, then run it with the fix, compare medians. It reported **35% faster**.
+
+That number was an artifact. Re-run with the two arms interleaved *inside a single app
+run* and ABBA-ordered (so monotonic machine drift cancels instead of favouring whichever
+arm is measured second), the same change came out at **median delta −1 ms, faster in 6 of
+12 pairs**. Repeated identical configurations on this machine ranged **360–925 ms within
+one run** — the noise floor swallows anything under roughly 30%.
+
+The noise-free measurement had been available all along and agreed with the paired
+result: instrumenting the swap showed it discards **13 widgets** and mounts 1. A
+dose-response sweep (feed page 0/24/60/100 items → 86/170/260/344 widgets →
+200/218/244/342 ms) put the screen's cost at **~0.55 ms per widget**, so 13 widgets is
+5–10 ms of a ~450 ms push — 1–2%, exactly what the paired A/B failed to detect.
+
+**What to do.** Establish whether the screen is widget-bound *first* (survey + a
+dose-response sweep over something that varies the widget count). If it is, size every
+candidate lever by the widgets it removes and use wall clock only to confirm a prediction
+big enough to clear the noise floor. If you must A/B by wall clock, interleave the arms
+within one process and alternate their order; a fixed dev-then-fix ordering across
+processes measures drift as effect.
+
+This is the mirror of the defer-past-first-paint lesson, not a contradiction of it.
+There, widget count *over*-predicted, because Schedules and Console were sync/DB-bound and
+their hidden mass cost nothing to skip. Watchlists is genuinely widget-bound — 13 sqlite
+statements and ~10 ms of application code for a whole push, everything else Textual's
+per-widget CSS apply and mount. The rule is the same in both cases: find out what the
+screen is bound by before choosing what to count.
+
+---
+
+## A test's stimulus can rely on the exact inefficiency your fix removes (task-15459, 2026-08-13)
+
+**Incident.** task-15459 made `LibraryScreen._apply_local_source_snapshot` skip its
+`refresh(recompose=True)` when the incoming snapshot is byte-for-byte identical to
+what is already rendered — the point of the task, since a warm revisit's reconcile
+fetch confirming the app-scoped cache verbatim no longer needs to repaint. Two full
+background suite runs afterward reported 14 failures. `test_library_note_recompose_
+and_fifty_route_cycles_return_to_baseline` was one: its stress loop called
+`_apply_local_source_snapshot` five times with a `dict()`-copied but otherwise
+UNCHANGED snapshot, purely to force a recompose and verify a dirty note-editor
+session survives being torn down and rebuilt repeatedly. That loop's own assertion
+("Generic source-snapshot completion never recomposed the Notes workbench") is
+exactly the behavior the fix intentionally removed — the test's PASS depended on
+the inefficiency, not on anything the task changed being wrong.
+
+Reflexively "fixing" this by loosening the guard, or by deleting/skipping the test,
+would both have been mistakes: the guard is correct (measured 2 composes → 1 for a
+real warm revisit), and the test's underlying intent (repeated recomposes must not
+corrupt a dirty session) is still a real requirement worth pinning — its STIMULUS
+was just now inert. The fix was to vary a harmless field (the notes count) each
+loop iteration, restoring a genuine data change that still forces the recompose
+under the new contract, matching what a real background refresh would look like.
+
+Of the other 13 reported failures, mutation-bisection (temporarily reverting BOTH
+halves of the production diff to their pre-task behavior with `Edit`, confirming
+the SAME failure still reproduces, then restoring — never `git checkout --`, which
+discards uncommitted work) showed 9 were pre-existing (reproduced identically with
+the diff neutralized, mostly drift from an unrelated recent merge) and 4 were
+load/order flakiness that passed reliably in isolation. Zero were real regressions.
+
+**What to do.** When an optimization correctly removes redundant work and a test
+goes red, do not assume either "the test is now wrong, ignore it" or "my change
+broke something" — read what the test's assertion is actually FOR. If it names the
+mechanism you just changed ("never recomposed", "recompose count", "refresh was
+called"), check whether that mechanism was the test's STIMULUS (how it drove the
+scenario) or its OUTCOME (what it was actually verifying). A stimulus that no
+longer fires needs a new stimulus that still exercises the real requirement; an
+outcome assertion that no longer holds needs the assertion updated to the new
+contract. Across a batch of full-suite failures, mutation-bisect each one against
+your own diff before writing any of them off as "pre-existing" or accepting any as
+"caused by my change" — a batch this size will usually contain both, plus plain
+flakiness, and a single red run distinguishes none of them.
+
+---
+
+## An unchanged-skip guard is only as reliable as its least reliable compared field (task-15459, 2026-08-13)
+
+**Incident.** task-15459's `_apply_local_source_snapshot` compared an incoming
+snapshot against the currently-rendered one and skipped a recompose when they were
+equal — the flagship AC test asserted this held across a reconcile fetch that
+should have confirmed the cache verbatim. Review reproduced the test failing
+intermittently at exactly that assertion. Root cause: the flat comparison included
+`study_counts` (`study_decks`/`flashcards_due`/`quizzes`) and two rail badge
+counts (Prompts, Skills) — every one fetched by a `..._or_none` helper whose own
+docstring says it swallows ANY exception and degrades to `None`. Under thread-pool
+contention, two fetches of the SAME unchanged data could legitimately disagree on
+one of these fields (one call transiently raised, the other did not), making the
+guard fire a full recompose for a coin-flip on a decorative badge — "fails safe"
+(a spurious recompose, not a missed one) but non-deterministic, which is exactly
+as unacceptable for an "exactly once" acceptance criterion as failing unsafe.
+
+The first attempt at writing THIS test only asserted the guard's happy path — it
+never modeled a field that changes independently of the state a user would call
+"the data." A single flat `==` over a snapshot dict is only as trustworthy as its
+least reliable member field.
+
+**What to do.** Before folding several fields into one equality check that gates
+an expensive operation, audit each field's OWN fetch contract, not just its type.
+A field fetched by a helper that swallows exceptions and degrades to a sentinel
+(`None`, `""`, an empty collection) is not equivalent in reliability to a field
+whose fetch either succeeds or aborts the whole call — the former can flap between
+two fetches of otherwise-identical state, the latter cannot (barring the state
+genuinely changing). Split the comparison into domains — STRUCTURAL fields that
+must gate the expensive operation, and DECORATIVE/best-effort fields that should
+be patched through a cheaper path (an in-place widget update, a `None`-tolerant
+merge) instead of ever gating it. To prove the split actually closes the gap, do
+not just re-run the flaky test and hope: inject the exact transient exception
+deterministically (a fake service that raises on its Nth call, not the Mth) so the
+flap is reproducible on demand, and mutation-test the fix by temporarily re-
+merging the domains to confirm the ORIGINAL failure message comes back verbatim.
+
+---
+
+## A parent `on_mount()` cannot assume nested descendants are mounted (TASK-2702, 2026-08-13)
+
+**Incident.** Three Library Prompt-history tests repeatedly crashed while a
+`PromptBlockEditor` was being replaced during rapid recomposition. Its `on_mount()`
+queried `#prompt-editor-validation`, a grandchild inside the editor's status container,
+and raised `NoMatches`. Instrumentation at the exception showed the editor was attached
+and all three direct containers already existed, but their nested children did not. An
+unconditional `call_after_refresh` removed that race, then exposed the opposite defect:
+two ordinary-mount tests observed an empty footer because they legitimately inspected it
+before the deferred callback ran.
+
+**What to do.** A Textual parent's Mount event guarantees neither that every descendant
+message pump has finished mounting nor that consumers will wait through an extra refresh.
+Initialize synchronously when the required descendants are present; if `NoMatches` proves
+the nested-mount window is still open, defer that same initialization once. The deferred
+callback must no-op when its original widget has detached. Verify both paths: a rapid real
+recompose must kill the synchronous-only implementation, while an immediate normal-mount
+assertion must kill unconditional deferral. TASK-2702's final full Prompt-canvas run passed
+279 tests only after both boundaries were pinned together.
+
+## A full-suite sweep is a checkpointed pipeline, not a command (task-15211)
+
+**Incident.** Three attempts to run all of `Tests/UI` in one pytest invocation
+died at 25-32%, each time losing everything. The fourth attempt split the 503
+modules into 16 chunks, appended each chunk's summary and failures to a results
+file as it completed, and skipped already-recorded chunks on relaunch. It
+survived a hung chunk, an environment process-kill, and a TCC lockout, and
+finished: 10,811 passed, 117 attributed failures.
+
+**What the monoliths actually died of.** Not slowness: a product defect. The
+Lab/LLM screen's Ollama probe held two event-loop threads open, so pytest
+PRINTED ITS FINAL SUMMARY and then never exited -- zero CPU, main thread
+joining a non-daemon thread. A wrapper waiting on the child sees an eternal
+hang after a successful-looking run. Diagnosis that worked without root:
+compare `ps -o time` across an interval (zero accrual = hung, not slow), then
+`sample <pid>` for native thread stacks -- two threads parked in kevent were
+the loops that should have died with their screen.
+
+**Rules.** (1) Never run a >20-minute suite as one process; checkpoint per
+chunk and make relaunch skip recorded work. (2) "The log stopped growing" has
+two different causes -- a hung TEST (mid-run) and a hung EXIT (summary already
+printed); check for the summary line before assuming the former. (3) Keep the
+sweep's worktree frozen and ship fixes from another one; the sweep's chunk
+results stay comparable, and later chunks re-finding an already-fixed class is
+CONFIRMATION, not new work.
+## A permanent gate must read its immutable baseline from a PINNED revision, not the live file it exists to police (TASK-15103, 2026-08-11)
+
+**Incident.** TASK-15103's complete-history denominator — the thrice-reviewed
+proof that every diagnostic transition since the stored baseline was
+consumed exactly once — read that stored baseline from the live
+`production-diagnostic-inventory.json`. The gate's entire lifecycle ends
+with regenerating that exact file, so the first LEGITIMATE regeneration
+broke it: the stored-revision scan went hunting through all of dev history
+for post-repair populations that exist in no dev-reachable revision, and 10
+gate nodes fell over — first on a merge-conflict-markered historical blob's
+SyntaxError, which had nothing to do with the actual defect. The evidence
+was always available immutably: `incident.recorded_base` pins the dev
+revision whose committed manifest IS the stale baseline, byte-identical on
+all 19 owner rows. One read-from-`recorded_base:`-tree change fixed all 10.
+
+**Companion lesson from the same day.** The freeze-first plan this gate
+belonged to never converged against live dev: three boundary re-freezes in
+one day (17→18→19 owners), each invalidated by dev advancing while the
+evidence was being rebuilt, zero production repairs shipped. Inverting the
+order — repair to the frozen contracts first, regenerate and prove ONCE at
+the end — landed all 43 repairs plus the gate in one session, and the next
+dev advance (11 rows + a sink-topology change) was correctly surfaced as a
+NEW incident (task-15600) instead of another re-freeze of this one.

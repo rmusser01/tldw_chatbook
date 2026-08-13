@@ -22,6 +22,8 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_type_breakdown_line,
     build_warning_lines,
     clamp_chunk_size,
+    format_ingest_progress_line,
+    ingest_progress_action_signature,
     parse_keywords,
     short_ingest_error,
 )
@@ -1049,6 +1051,104 @@ def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
     assert form.chunk is True
     assert form.chunk_size == "1000"
     assert form.analyze is False
+
+
+@pytest.mark.parametrize(
+    ("progress", "state", "expected"),
+    [
+        (
+            {
+                "phase": "extracting",
+                "message": "Extracting page 21 of 50",
+                "percent": 42.0,
+            },
+            IngestJobState.PARSING,
+            "42% · Extracting page 21 of 50",
+        ),
+        (
+            {"phase": "transcribing"},
+            IngestJobState.PARSING,
+            "Transcribing audio",
+        ),
+        (None, IngestJobState.PARSING, "Preparing import"),
+        (
+            {"phase": "writing", "message": "Saving to Library"},
+            IngestJobState.WRITING,
+            "Saving to Library",
+        ),
+        (
+            {"message": "Imported report.txt"},
+            IngestJobState.DONE,
+            "Imported report.txt",
+        ),
+    ],
+)
+def test_format_ingest_progress_line(progress, state, expected):
+    """State prefixes or invented values would make the reserved detail lie."""
+    rendered = format_ingest_progress_line(progress, state=state)
+    assert rendered == expected
+    assert "Â·" not in rendered
+
+
+@pytest.mark.parametrize(
+    "percent",
+    [float("nan"), float("inf"), -0.1, 100.1],
+)
+def test_format_ingest_progress_line_omits_invalid_percentages(percent) -> None:
+    """Clamping invalid values would turn broken telemetry into false precision."""
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": percent},
+        state=IngestJobState.PARSING,
+    ) == "Extracting"
+
+
+def test_format_ingest_progress_line_does_not_round_incomplete_work_to_100() -> None:
+    """A fractional measurement below 100 must not look complete."""
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 99.5},
+        state=IngestJobState.PARSING,
+    ) == "99% · Extracting"
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 100.0},
+        state=IngestJobState.PARSING,
+    ) == "100% · Extracting"
+
+
+def test_format_ingest_progress_line_normalizes_and_bounds_message() -> None:
+    """An unbounded server message would flood the queue detail line."""
+    message = "Extracting\n" + ("x" * 200)
+
+    rendered = format_ingest_progress_line(
+        {"message": message}, state=IngestJobState.PARSING
+    )
+
+    assert rendered == "Extracting " + ("x" * 149)
+    assert "\n" not in rendered
+
+
+def test_format_ingest_progress_line_omits_enormous_integer_percent() -> None:
+    """Converting invalid giant telemetry to float must not crash formatting."""
+    assert format_ingest_progress_line(
+        {"phase": "extracting", "percent": 10**400},
+        state=IngestJobState.PARSING,
+    ) == "Extracting"
+
+
+@pytest.mark.parametrize(
+    ("progress", "expected"),
+    [
+        ({"phase": "transcribing"}, (True, False)),
+        ({"phase": "transcribing", "cancel_requested": True}, (False, True)),
+        ({"phase": "extracting"}, (False, False)),
+    ],
+)
+def test_ingest_progress_action_signature_uses_local_stt_progress_rules(
+    progress, expected
+) -> None:
+    """Drifting the shared predicate would make stable row updates miss actions."""
+    job = _job(state=IngestJobState.PARSING, progress=progress)
+
+    assert ingest_progress_action_signature(job) == expected
 
 
 # --- queue row origin (task-684.2) ------------------------------------------

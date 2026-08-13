@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+import toml
 from textual.widgets import Button
 from unittest.mock import MagicMock
 
+from tldw_chatbook.config import _get_effective_config_path, get_cli_setting
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -190,13 +192,16 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
         "audio_video": {"transcription_model": "small"},
     }
 
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_options`), which needs a
+    # running app to dispatch through `run_worker` -- this screen was never
+    # mounted. Patching that instance method (rather than the module-level
+    # `save_settings_to_cli_config` it wraps) keeps this test's own
+    # subject -- the batched shape of what the submit path decides to
+    # persist -- intact.
     batches: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda section_values: batches.append(
-            {s: dict(v) for s, v in section_values.items()}
-        )
-        or True,
+    screen._save_library_ingest_options = lambda section_values: (
+        batches.append({s: dict(v) for s, v in section_values.items()}) or True
     )
 
     screen._do_submit_ingest("/tmp/test.pdf")
@@ -287,13 +292,13 @@ def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
     }
     form.type_options = {g: dict(v) for g, v in submitted_options.items()}
 
+    # task-15470: see `test_do_submit_ingest_persists_options` for why this
+    # patches the `@work(thread=True)` instance method rather than the
+    # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda section_values: saved_sections.update(
-            {s: dict(v) for s, v in section_values.items()}
-        )
-        or True,
+    screen._save_library_ingest_options = lambda section_values: (
+        saved_sections.update({s: dict(v) for s, v in section_values.items()})
+        or True
     )
 
     screen._do_submit_ingest("/tmp/report.docx")
@@ -348,13 +353,13 @@ def test_task_3306_av_options_round_trip_persisted_config(monkeypatch) -> None:
     }
     form.type_options = {g: dict(v) for g, v in submitted.items()}
 
+    # task-15470: see `test_do_submit_ingest_persists_options` for why this
+    # patches the `@work(thread=True)` instance method rather than the
+    # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda section_values: saved_sections.update(
-            {s: dict(v) for s, v in section_values.items()}
-        )
-        or True,
+    screen._save_library_ingest_options = lambda section_values: (
+        saved_sections.update({s: dict(v) for s, v in section_values.items()})
+        or True
     )
 
     screen._do_submit_ingest("/tmp/talk.mp3")
@@ -694,10 +699,15 @@ def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
     screen.app_instance._resolve_ingest_backend = MagicMock(return_value="local")
     screen.refresh = MagicMock()
 
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_backend`), which needs a
+    # running app to dispatch through `run_worker` -- this screen was never
+    # mounted. Patching that instance method (rather than the module-level
+    # `save_setting_to_cli_config` it wraps) keeps this test's own subject
+    # -- which target the handler decides to persist -- intact.
     saved: list[tuple] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+    screen._save_library_ingest_backend = (
+        lambda target: saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
@@ -712,15 +722,45 @@ def test_backend_switch_returns_to_local(monkeypatch) -> None:
     screen.app_instance._resolve_ingest_backend = MagicMock(return_value="server")
     screen.refresh = MagicMock()
 
+    # task-15470: see the sibling test above for why this patches the
+    # `@work(thread=True)` instance method rather than the module-level
+    # config function it wraps.
     saved: list[tuple] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+    screen._save_library_ingest_backend = (
+        lambda target: saved.append(("library.ingest", "backend", target)) or True
     )
 
     screen.handle_library_ingest_backend_switch(MagicMock())
 
     assert saved == [("library.ingest", "backend", "local")]
+
+
+def test_save_library_ingest_backend_writes_the_real_dotted_section() -> None:
+    """task-15470 review round: the sibling tests above patch
+    `_save_library_ingest_backend` itself (unavoidable -- it is
+    `@work(thread=True)`, which needs a running app to dispatch through
+    `run_worker`, and none of these screens are mounted), so none of them
+    exercise the REAL method body -- specifically its literal
+    ``"library.ingest"``/``"backend"`` section/key strings, which a typo
+    there (e.g. ``"library.Ingest"``) would let every mocked test above
+    stay green through.
+
+    `@work` wraps with `functools.wraps`, so `.__wrapped__` is the
+    undecorated body -- calling it directly bypasses `run_worker` (and the
+    app it needs) entirely while still running the exact production code,
+    against the real (test-sandboxed, per the root conftest's autouse
+    profile isolation) `save_setting_to_cli_config`. This is the one
+    representative site the review round asked for; the same
+    `.__wrapped__` pattern already used for `_prepare_library_external_
+    submission` elsewhere in this test suite.
+    """
+    screen = _minimal_ingest_screen()
+
+    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server")
+
+    assert get_cli_setting("library.ingest", "backend", None) == "server"
+    on_disk = toml.load(_get_effective_config_path())
+    assert on_disk["library"]["ingest"]["backend"] == "server"
 
 
 def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
@@ -757,13 +797,13 @@ def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> Non
     }
     form.type_options = {g: dict(v) for g, v in submitted.items()}
 
+    # task-15470: see `test_do_submit_ingest_persists_options` for why this
+    # patches the `@work(thread=True)` instance method rather than the
+    # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda section_values: saved_sections.update(
-            {s: dict(v) for s, v in section_values.items()}
-        )
-        or True,
+    screen._save_library_ingest_options = lambda section_values: (
+        saved_sections.update({s: dict(v) for s, v in section_values.items()})
+        or True
     )
 
     screen._do_submit_ingest("/tmp/scan.png")

@@ -273,7 +273,7 @@ def inventory_rows(
             is_broken=False,
             is_unmanaged=True,
             provenance="Unmanaged — integrity unknown",
-            action_hint="Import is not available yet",
+            action_hint="Outside Chatbook · integrity unknown",
             error=None,
             size_bytes=item.size_bytes,
             installed_store_bytes=installed_bytes,

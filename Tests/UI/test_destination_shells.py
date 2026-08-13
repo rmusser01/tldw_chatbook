@@ -625,9 +625,21 @@ class StaticLibraryConversationScopeService:
 
     async def list_conversations(self, **kwargs):
         self.calls.append(kwargs)
+        query = str(kwargs.get("query") or "").casefold()
+        matching = [
+            record
+            for record in self.conversations
+            if not query or query in str(record.get("title") or "").casefold()
+        ]
+        offset = max(0, int(kwargs.get("offset", 0)))
+        limit = max(0, int(kwargs.get("limit", len(matching))))
+        page = matching[offset : offset + limit]
         return {
-            "items": list(self.conversations),
-            "pagination": {"total": len(self.conversations)},
+            "items": page,
+            "pagination": {
+                "total": len(matching),
+                "has_more": offset + len(page) < len(matching),
+            },
         }
 
 

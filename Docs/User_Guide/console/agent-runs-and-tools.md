@@ -101,6 +101,41 @@ touches another's. Cancelling that sub-agent (see
 cards; a sibling sub-agent's card, or the parent's, is left exactly as it
 was.
 
+### Interrupted provider tool runs — Resume, Take over, or Discard
+
+For a provider integration that has opted into exact tool continuation, Console
+checkpoints private state on the assistant reply that owns it. The checkpoint
+can include private model state, tool arguments, and the exact bounded result
+returned to the provider. It is not shown in the transcript, search, summaries,
+run logs, errors, or usage displays.
+
+Reopening, importing, or syncing a conversation never runs a tool. Instead, an
+interrupted card offers recovery actions:
+
+- **Resume** validates the original provider, model, API mode, and normalized
+  base URL, resolves the credential from your current Settings/environment,
+  and asks for fresh approval before any still-pending call runs. A rotated key
+  therefore does not require editing saved continuation data.
+- **Take over** is the corresponding explicit action for a checkpoint known to
+  have arrived from another device. Sync does not provide a distributed lock;
+  confirm the other device is no longer running the turn before taking over.
+- **Discard** never executes a tool. It removes the private checkpoint; a blank
+  assistant placeholder is removed, while already-visible assistant text is
+  kept as ordinary non-resumable history.
+
+A call saved as completed or failed is replayed as recorded and is never
+executed again. A call saved as executing is deliberately **ambiguous**: the
+side effect may have happened before the result was saved, so Resume is blocked
+to avoid repeating it. Discard the interrupted run and start a new turn after
+checking the external system.
+
+For local-first Sync v2, each checkpoint change first commits with the message
+and its local sync intent, then is projected idempotently into the durable
+encrypted outbox. A configured but unavailable or memory-only outbox blocks a
+new side effect; Console does not wait for remote acknowledgement. This is
+crash recovery, not an exactly-once guarantee across devices, and it makes no
+claim about a model provider's own retention or caching.
+
 ### Background & parked runs
 
 Tabs with unwatched activity carry a status marker, listed in F1 help:

@@ -344,10 +344,35 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     #: live `RegionLayout` and never written here: the layout has exactly one
     #: owner, and a pane that guessed would show `Restore` over a nine-row
     #: reader the moment the two drifted. A plain reactive, not
-    #: `recompose=True` -- every layout change rebuilds the whole workbench
-    #: (and therefore this pane) through the region factories anyway, so a
-    #: second recompose would be pure churn.
+    #: `recompose=True`: `watch_expanded` relabels the one button in place,
+    #: which is the whole visible difference (task-15461).
     expanded: reactive[bool] = reactive(False)
+
+    def watch_expanded(self, expanded: bool) -> None:
+        """Relabel the expand button in place -- never a reader recompose.
+
+        Until task-15461 this reactive needed no watcher: EVERY layout change
+        recomposed the whole workbench, so `_build_content_pane` rebuilt this
+        pane (button label included) from the fresh layout. Layout changes are
+        now scoped to the regions whose form actually moved, and soloing
+        CONTENT does not move CONTENT's own form -- it collapses ITEMS, the
+        sibling -- so this pane keeps its instance and the label is the one
+        thing left to repaint. Without this, pressing Expand left a button
+        still reading "Expand" over a reader that had already taken the whole
+        centre.
+
+        Args:
+            expanded: Whether CONTENT is now the only expanded centre region.
+        """
+        try:
+            self.query_one("#content-expand-button", Button).label = (
+                "Restore" if expanded else "Expand"
+            )
+        except NoMatches:
+            # Pre-mount seeding (`_build_content_pane`), or the empty state,
+            # which composes no action strip at all; `compose` reads the
+            # reactive itself.
+            pass
 
     #: The reader footer's "N of M" (TASK-3072 plan task 9).
     #:

@@ -28,6 +28,39 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
 
+    def test_graph_projection_fails_closed_when_cursor_shape_is_unavailable(self):
+        database = MagicMock()
+        database.execute_query.return_value.fetchall.return_value = MagicMock()
+
+        with pytest.raises(RuntimeError, match="graph projection unavailable"):
+            ChatbookCreator._conversation_graph_messages(database, "conversation-1")
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    def test_v2_export_fails_when_graph_projection_is_unavailable(
+        self, mock_database, chatbook_creator, tmp_path
+    ):
+        database = mock_database.return_value
+        timestamp = datetime.now().isoformat()
+        database.get_conversation_by_id.return_value = {
+            "id": "conversation-1",
+            "title": "Graph",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
+        }
+        database.execute_query.return_value.fetchall.return_value = MagicMock()
+        output = tmp_path / "must-not-exist.chatbook.zip"
+
+        success, _, _ = chatbook_creator.create_chatbook(
+            name="Graph",
+            description="Graph",
+            content_selections={ContentType.CONVERSATION: ["conversation-1"]},
+            output_path=output,
+        )
+
+        assert success is False
+        assert not output.exists()
+
     @pytest.fixture(autouse=True)
     def stub_citation_composition(self, monkeypatch):
         """Keep unrelated chatbook unit tests on their existing mocked DB seam."""
@@ -240,7 +273,7 @@ class TestChatbookCreator:
             manifest_data = json.loads(zf.read("manifest.json"))
             assert manifest_data["name"] == "Test Chatbook"
             assert manifest_data["description"] == "A test chatbook"
-            assert manifest_data["version"] == "1.0"
+            assert manifest_data["version"] == "2.0"
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
@@ -469,6 +502,9 @@ class TestChatbookCreator:
                 "timestamp": datetime.now().isoformat(),
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         # Mock note data
         mock_db_instance.get_note_by_id.return_value = {
@@ -628,6 +664,9 @@ class TestChatbookCreator:
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "incident_chatbook.zip"
 
@@ -728,6 +767,9 @@ class TestChatbookCreator:
                 "timestamp": timestamp,
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
         rag_store_path = (
             chatbook_creator.temp_dir.parent.parent
             / "tldw_chatbook_chat_rag_context.json"
@@ -848,6 +890,9 @@ class TestChatbookCreator:
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "unsafe_chatbook.zip"
 
@@ -919,6 +964,9 @@ class TestChatbookCreator:
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "large_citations.zip"
 
@@ -1131,7 +1179,9 @@ class TestChatbookCreator:
 
 
 @pytest.mark.unit
-def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch, tmp_path):
+def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(
+    monkeypatch, tmp_path
+):
     """The fallback must not die on the guard that protects it.
 
     Args:
@@ -1181,6 +1231,7 @@ def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch
     # Landed on the real directory, with no symlinked component left in it.
     assert creator.temp_dir.is_dir()
     assert not any(
-        part.is_symlink() for part in [creator.temp_dir, *creator.temp_dir.parents]
+        part.is_symlink()
+        for part in [creator.temp_dir, *creator.temp_dir.parents]
         if str(part).startswith(str(tmp_path))
     ), f"temp_dir still traverses a symlink: {creator.temp_dir}"

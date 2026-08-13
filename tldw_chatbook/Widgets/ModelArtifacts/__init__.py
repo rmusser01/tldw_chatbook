@@ -13,6 +13,11 @@ from .install_progress import (
     ModelInstallProgress,
     make_progress_callback,
 )
+from .local_gguf_import import (
+    LocalGGUFImportConsentModal,
+    LocalGGUFImportControls,
+    LocalGGUFImportRequested,
+)
 from .plan_panel import ModelPlanPanel
 
 __all__ = [
@@ -20,6 +25,9 @@ __all__ = [
     "DeletionRequested",
     "InstallProgressed",
     "InstallStatusChanged",
+    "LocalGGUFImportConsentModal",
+    "LocalGGUFImportControls",
+    "LocalGGUFImportRequested",
     "ModelActivationControls",
     "ModelInstallModal",
     "ModelInstallProgress",

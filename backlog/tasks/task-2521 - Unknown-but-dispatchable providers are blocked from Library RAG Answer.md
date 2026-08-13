@@ -1,5 +1,5 @@
 ---
-id: task-2521
+id: TASK-2521
 title: Unknown-but-dispatchable providers are blocked from Library RAG Answer
 status: Done
 assignee: []

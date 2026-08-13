@@ -423,9 +423,9 @@ def test_unknown_source_types_are_ignored_rather_than_crashing(
         if "unknown keyword-leg source type" in message
     ]
     assert dropped, "dropping a source type must leave a debug trace"
-    # Both offenders named, so the log identifies WHICH types were dropped
-    # rather than merely that something was.
-    assert "'notes'" in dropped[0] and "'prompts'" in dropped[0], dropped[0]
+    # TASK-15103: the trace is event-only — requested source types are
+    # caller-controlled strings, so the ADR-029 repair stopped echoing them.
+    assert "'notes'" not in dropped[0] and "'prompts'" not in dropped[0], dropped[0]
 
 
 def test_the_real_engine_refuses_a_selection_on_a_semantic_search(mixed_corpus):

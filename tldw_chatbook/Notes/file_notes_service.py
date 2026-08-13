@@ -608,9 +608,8 @@ class FileNotesService:
                     os.unlink(temporary_path)
                 except OSError as error:
                     logger.warning(
-                        "Could not remove File Notes export temporary '{}': {}",
-                        temporary_path,
-                        error,
+                        "Could not remove a File Notes export temporary: {}",
+                        type(error).__name__,
                     )
 
         self._record_session_change(SessionChange("created", destination_path))

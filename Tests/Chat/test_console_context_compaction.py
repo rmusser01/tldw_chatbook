@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_context_repository import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     ConsoleConversationUnit,
     PreparedConsoleRequest,
@@ -52,9 +53,15 @@ from tldw_chatbook.Chat.console_prepared_request import (
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
+    ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    continuation_owner_group,
+    parse_provider_continuation_json,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -378,6 +385,56 @@ def test_plan_selects_largest_oldest_span_and_adapts_output_cap() -> None:
     assert len(result.plan.selected_units) == 3
     assert 0 < result.plan.requested_output_cap <= 120
     assert result.plan.selected_units[0].messages[0].message_id == "u0"
+
+
+def test_plan_reconstruction_preserves_active_continuation_group() -> None:
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "gpt-test",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["PRIVATE-PLAN-CANARY"],
+                    "calls": [
+                        {
+                            "call_id": "call_plan",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    group = continuation_owner_group(
+        {"id": "active-owner", "role": "assistant", "content": ""}, checkpoint
+    )
+    semantic = replace(_semantic(), active_continuation_groups=(group,))
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=_durable_units(),
+        resolved_policy=_resolved(),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        prior_memory=None,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert planned.remaining_semantic.active_continuation_groups == (group,)
+    assert "PRIVATE-PLAN-CANARY" not in repr(planned.remaining_semantic)
 
 
 def test_iterative_plan_replaces_prior_memory_and_only_post_boundary_units() -> None:
@@ -721,8 +778,9 @@ async def test_compaction_diagnostics_are_structured_and_content_free() -> None:
     assert transcript_canary not in diagnostic_text
     assert prompt_canary not in diagnostic_text
     assert summary_canary not in diagnostic_text
-    assert events[-1]["extra"]["usage_total_tokens"] == 12
-    assert events[-1]["extra"]["status"] == "succeeded"
+    # TASK-15103: compaction diagnostics are event-only — no bound metadata
+    # survives the ADR-029 repair, so nothing private can ride along either.
+    assert all(record["extra"] == {} for record in events)
 
 
 @pytest.mark.asyncio
@@ -828,6 +886,7 @@ class _ControllerGateway(_Gateway):
     def __init__(self, *, context_window_tokens: int | None = 4_000) -> None:
         super().__init__()
         self.context_window_tokens = context_window_tokens
+        self._provider_gateway = ConsoleProviderGateway(environ={})
 
     async def resolve_for_send(self, _selection):
         return _resolution()
@@ -841,6 +900,19 @@ class _ControllerGateway(_Gateway):
         apply_safety_window=True,
         **_kwargs,
     ):
+        if _kwargs.get("continuation_sidecar") or isinstance(
+            messages, PreparedConsoleRequest
+        ) and any(
+            unit.continuation_groups for unit in messages.compactable
+        ):
+            return self._provider_gateway.prepare_chat_request(
+                resolution,
+                messages,
+                tools=tools,
+                context_window_override_tokens=self.context_window_tokens,
+                apply_safety_window=apply_safety_window,
+                **_kwargs,
+            )
         semantic = (
             messages
             if isinstance(messages, PreparedConsoleRequest)
@@ -942,6 +1014,85 @@ async def test_unknown_model_automatic_budget_does_not_block_unverified_send() -
     assert result is None
     assert gateway.calls == 0
     assert output
+
+
+@pytest.mark.asyncio
+async def test_memory_preflight_counts_and_preserves_private_owner_group() -> None:
+    controller, store, session, assistant, _gateway, provider_messages = (
+        _controller_preflight_fixture(
+            ContextCompactionMode.AUTOMATIC,
+            context_window_tokens=8_000,
+            overrides=ConsoleContextPolicyOverrides(
+                budget_mode=ContextBudgetMode.CUSTOM,
+                custom_budget_tokens=3_500,
+                compaction_mode=ContextCompactionMode.AUTOMATIC,
+                summary_max_tokens=100,
+            ),
+        )
+    )
+    owner = store.messages_for_session(session.id)[1]
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "gpt-test",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["PRIVATE-PREFLIGHT-CANARY " * 2_000],
+                    "calls": [
+                        {
+                            "call_id": "call-preflight",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    sidecar = (ProviderContinuationSidecar(owner.id, checkpoint),)
+    target = ContinuationRestoreTarget(
+        "deepseek", "gpt-test", "responses", "https://api.deepseek.com/v1"
+    )
+
+    baseline, baseline_result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+    assert baseline_result is None
+    assert any(row.get("_native_message_id") == owner.id for row in baseline)
+    assert _gateway.calls == 0
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=replace(
+            _resolution(),
+            provider="deepseek",
+            base_url="https://api.deepseek.com/v1",
+            continuation_protocol="responses",
+        ),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+        continuation_sidecar=sidecar,
+        continuation_target=target,
+    )
+
+    assert result is None
+    assert _gateway.calls == 1
+    assert not any(row.get("_native_message_id") == owner.id for row in output)
+    assert not any("answer-0" in str(row.get("content", "")) for row in output)
+    assert "PRIVATE-PREFLIGHT-CANARY" not in repr(output)
 
 
 @pytest.mark.asyncio
@@ -1115,9 +1266,7 @@ async def test_controller_preflight_routes_off_ask_and_automatic_once(
 
 
 @pytest.mark.asyncio
-async def test_controller_decision_diagnostic_reports_counts_and_provenance_only() -> (
-    None
-):
+async def test_controller_decision_diagnostic_is_event_only() -> None:
     controller, _store, session, assistant, _gateway, provider_messages = (
         _controller_preflight_fixture(ContextCompactionMode.OFF)
     )
@@ -1137,13 +1286,10 @@ async def test_controller_decision_diagnostic_reports_counts_and_provenance_only
     record = next(
         item for item in records if item["message"] == "console_context_policy_decision"
     )
-    extra = record["extra"]
-    assert extra["decision"] == "off"
-    assert extra["model_limit_source"] == "detected"
-    assert extra["total_input_tokens"] > 0
-    assert extra["conversation_tokens"] > 0
-    assert extra["compactable_unit_count"] == 2
-    assert "compaction_mode" in extra["conversation_override_fields"]
+    # TASK-15103: the decision diagnostic is event-only — the ADR-029 repair
+    # removed every bound field (conversation id, provider/model, token
+    # accounting), so nothing private can ride along.
+    assert record["extra"] == {}
     diagnostic_text = repr(record)
     assert "question-0" not in diagnostic_text
     assert "answer-0" not in diagnostic_text

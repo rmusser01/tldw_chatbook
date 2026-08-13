@@ -18,6 +18,12 @@ from ..runtime_policy.types import PolicyDeniedError
 if TYPE_CHECKING:
     from ..tldw_api import PromptCreateRequest, TLDWAPIClient
 from .prompt_artifact_codec import deserialize_definition
+from .prompt_batch_models import (
+    PromptBatchDeleteResult,
+    PromptBatchRestoreResult,
+    PromptBatchTarget,
+    validate_prompt_batch_targets,
+)
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
@@ -656,6 +662,26 @@ class LocalPromptService:
             prompt_identifier, expected_version=expected_version
         )
 
+    def delete_prompts(
+        self, *, targets: tuple[PromptBatchTarget, ...]
+    ) -> PromptBatchDeleteResult:
+        """Delete one strict local Prompt batch atomically.
+
+        Args:
+            targets: Validated Prompt IDs and expected active versions.
+
+        Returns:
+            The exact committed database receipt.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ConflictError: If any active Prompt target is missing or stale.
+            DatabaseError: If transaction ownership or persistence fails.
+        """
+        validated_targets = validate_prompt_batch_targets(targets)
+        return self.prompt_db.soft_delete_prompts(validated_targets)
+
     def restore_deleted_prompt(
         self, prompt_identifier: str | int, *, expected_version: int
     ) -> Any:
@@ -676,6 +702,26 @@ class LocalPromptService:
         return self.prompt_db.restore_deleted_prompt(
             prompt_identifier, expected_version=expected_version
         )
+
+    def restore_deleted_prompts(
+        self, *, targets: tuple[PromptBatchTarget, ...]
+    ) -> PromptBatchRestoreResult:
+        """Restore one strict local Prompt batch atomically.
+
+        Args:
+            targets: Validated Prompt IDs and exact tombstone versions.
+
+        Returns:
+            The exact committed database restore result.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If targets are empty, duplicated, or invalid.
+            ConflictError: If any Prompt tombstone is missing or stale.
+            DatabaseError: If recovery metadata or persistence is unavailable.
+        """
+        validated_targets = validate_prompt_batch_targets(targets)
+        return self.prompt_db.restore_deleted_prompts(validated_targets)
 
     def record_prompt_usage(self, prompt_identifier: str | int) -> Any:
         if hasattr(self.prompt_db, "record_prompt_usage"):
@@ -1594,6 +1640,37 @@ class PromptScopeService:
             return True
         return bool(response)
 
+    async def delete_prompts(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        targets: tuple[PromptBatchTarget, ...],
+    ) -> PromptBatchDeleteResult:
+        """Delete one strict local Prompt batch in a single transaction.
+
+        Args:
+            mode: Backend selection, which must resolve to the local backend.
+            targets: Prompt IDs and exact active versions to delete.
+
+        Returns:
+            The exact committed local database receipt.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If mode, targets, or local capability are invalid.
+            PolicyDeniedError: If policy rejects local Prompt deletion.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError("Prompt batch delete is local-only.")
+        validated_targets = validate_prompt_batch_targets(targets)
+        self._enforce_policy(self._action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        delete_prompts = getattr(service, "delete_prompts", None)
+        if not callable(delete_prompts):
+            raise ValueError("Local Prompt batch delete is unavailable.")
+        return await self._maybe_await(delete_prompts(targets=validated_targets))
+
     async def restore_deleted_prompt(
         self,
         *,
@@ -1636,9 +1713,38 @@ class PromptScopeService:
                 expected_version=expected_version,
             )
         )
-        return self._normalize_prompt_record(
-            response, backend=normalized_mode.value
-        )
+        return self._normalize_prompt_record(response, backend=normalized_mode.value)
+
+    async def restore_deleted_prompts(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        targets: tuple[PromptBatchTarget, ...],
+    ) -> PromptBatchRestoreResult:
+        """Restore one strict local Prompt batch in a single transaction.
+
+        Args:
+            mode: Backend selection, which must resolve to the local backend.
+            targets: Prompt IDs and exact tombstone versions to restore.
+
+        Returns:
+            The exact committed local database restore result.
+
+        Raises:
+            TypeError: If the target container or entries have invalid types.
+            ValueError: If mode, targets, or local capability are invalid.
+            PolicyDeniedError: If policy rejects the local Prompt update.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError("Prompt batch restore is local-only.")
+        validated_targets = validate_prompt_batch_targets(targets)
+        self._enforce_policy(self._action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        restore_prompts = getattr(service, "restore_deleted_prompts", None)
+        if not callable(restore_prompts):
+            raise ValueError("Local Prompt batch restore is unavailable.")
+        return await self._maybe_await(restore_prompts(targets=validated_targets))
 
     async def record_prompt_usage(
         self,

@@ -522,6 +522,7 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
 # ---------------------------------------------------------------------------
 
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # noqa: E402
+    SEARCH_DEBOUNCE_SECONDS,
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
@@ -568,7 +569,9 @@ async def test_switcher_lists_recent_first_and_filters_on_typing():
         assert "Groq testing" in str(first.label)
         await pilot.click("#console-switcher-query")
         await pilot.press(*"refactor")
-        await pilot.pause()
+        # Debounced (task-15476): the result list only re-renders once the
+        # filter settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         first = app.screen.query_one("#console-switcher-result-0", Button)
         assert "API refactor plan" in str(first.label)
         assert not list(app.screen.query("#console-switcher-result-1"))
@@ -580,7 +583,9 @@ async def test_switcher_enter_activates_first_result():
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-switcher-query")
         await pilot.press(*"tides")
-        await pilot.pause()
+        # Debounced (task-15476): let the filter settle before Enter, or it
+        # would activate the still-unfiltered first result instead.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         await pilot.press("enter")
         await pilot.pause()
         assert isinstance(app.result, ConsoleSwitcherChoice)
@@ -654,7 +659,9 @@ async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches()
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-switcher-query")
         await pilot.press(*"zzzz")
-        await pilot.pause()
+        # Debounced (task-15476): the empty state only appears once the
+        # filter settles.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         assert list(app.screen.query("#console-switcher-empty"))
         await pilot.press("escape")
         await pilot.pause()
@@ -673,7 +680,9 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
         query_input = app.screen.query_one("#console-switcher-query", Input)
         query_input.value = "r"
         query_input.value = "refactor"
-        await pilot.pause()
+        # Debounced (task-15476): the second Input.Changed re-arms the timer
+        # and cancels the first, so only "refactor" is ever applied.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         first = app.screen.query_one("#console-switcher-result-0", Button)
         assert "API refactor plan" in str(first.label)
         assert not list(app.screen.query("#console-switcher-result-1"))

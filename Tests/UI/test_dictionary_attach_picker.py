@@ -5,6 +5,7 @@ from textual.app import App
 from textual.widgets import Input, ListView
 
 from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import (
+    SEARCH_DEBOUNCE_SECONDS,
     DictionaryAttachPicker,
 )
 
@@ -46,7 +47,9 @@ async def test_picker_search_filters():
         await pilot.pause()
         picker = app.screen
         picker.query_one("#dict-attach-search", Input).value = "noir"
-        await pilot.pause()
+        # Debounced (task-15476): the list only rebuilds once the filter
+        # settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         rows = picker.query_one("#dict-attach-list", ListView).children
         assert len(rows) == 1
         # select the only match, confirm
@@ -74,7 +77,9 @@ async def test_picker_stale_selection_after_filter_is_not_returned():
         await pilot.pause()
         # Narrow the list to the OTHER conversation only ("Lab notes").
         picker.query_one("#dict-attach-search", Input).value = "lab"
-        await pilot.pause()
+        # Debounced (task-15476): the list only rebuilds once the filter
+        # settles, not on every keystroke.
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.1)
         rows = picker.query_one("#dict-attach-list", ListView).children
         assert len(rows) == 1
         # Confirm WITHOUT re-selecting: no stale index should carry over.

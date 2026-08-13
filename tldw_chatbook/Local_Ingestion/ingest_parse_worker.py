@@ -3,7 +3,7 @@
 
 This module is the pool's target module: ``multiprocessing.get_context("spawn")``
 re-imports it fresh in every worker process, so **module scope here must
-import stdlib only**. Every actually-heavy import (``local_file_ingestion``
+import stdlib only, plus the stdlib-only progress contract**. Every actually-heavy import (``local_file_ingestion``
 and everything it pulls in for a given file type -- PDF/docling, ebook,
 audio/video transcription, LLM analysis, ...) is deferred into
 ``run_parse_job``'s function body. Importing this module must never pull in
@@ -80,6 +80,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .ingest_parse_progress import emit_parse_progress, install_parse_progress_sink
+
 
 def silence_ingest_worker_import_noise() -> None:
     """Pool ``initializer``: keep worker import noise off the parent's TTY.
@@ -113,6 +115,12 @@ def silence_ingest_worker_import_noise() -> None:
     # "WARNING:root:…" flood channel. A NullHandler keeps root non-empty
     # so neither auto-basicConfig nor lastResort fires.
     logging.getLogger().addHandler(logging.NullHandler())
+
+
+def initialize_ingest_parse_worker(progress_queue: Any | None = None) -> None:
+    """Initialize import-noise handling and the worker-local progress sink."""
+    silence_ingest_worker_import_noise()
+    install_parse_progress_sink(progress_queue)
 
 
 #: Max underlying exception-chain messages captured for the UI's
@@ -164,7 +172,11 @@ def classify_parse_failure(exc: Exception) -> bool:
     return str(exc).strip().startswith("Unsupported file type")
 
 
-def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
+def run_parse_job(
+    file_path: str,
+    options: Dict[str, Any],
+    progress_context: tuple[int, str] | None = None,
+) -> Dict[str, Any]:
     """Pool entry point: parse one file into a picklable, structured result.
 
     Top-level and spawn-safe -- this is the exact callable submitted to a
@@ -179,6 +191,8 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         file_path: Path to the file to parse.
         options: See the module docstring for the schema.
+        progress_context: Optional ``(generation, job_id)`` identity bound by
+            the parent process for best-effort progress telemetry.
 
     Returns:
         ``{"ok": True, "payload": <dict>}`` on success, where ``payload``
@@ -189,13 +203,35 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
         empty) and ``permanent`` is ``classify_parse_failure(exc)``.
     """
     try:
+        if progress_context is not None:
+            generation, job_id = progress_context
+
+            def progress_callback(phase, message, percent=None):
+                emit_parse_progress(
+                    generation,
+                    job_id,
+                    phase,
+                    message,
+                    percent,
+                )
+
+        else:
+            progress_callback = None
+
         # Deferred import: keeps this module's own import stdlib-only (see
         # module docstring) so a freshly spawned worker process doesn't pay
         # for local_file_ingestion's parse-chain imports just to register
         # this function as the pool's target.
         from .local_file_ingestion import parse_local_file_for_ingest
 
-        payload = parse_local_file_for_ingest(file_path, options)
+        if progress_callback is None:
+            payload = parse_local_file_for_ingest(file_path, options)
+        else:
+            payload = parse_local_file_for_ingest(
+                file_path,
+                options,
+                progress_callback=progress_callback,
+            )
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
         permanent = classify_parse_failure(exc)

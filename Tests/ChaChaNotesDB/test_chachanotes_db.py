@@ -253,6 +253,11 @@ class TestDBInitialization:
         conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
         # A V17 fixture also predates the V29->V30 local-only usage_json column.
         conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
+        # A V17 fixture predates the V33->V34 visual-compaction preference.
+        conn.execute(
+            "ALTER TABLE console_conversation_context_policy "
+            "DROP COLUMN compaction_representation"
+        )
         conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
         conn.execute(
             "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",

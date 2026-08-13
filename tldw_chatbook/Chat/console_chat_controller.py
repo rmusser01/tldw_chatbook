@@ -80,8 +80,13 @@ from tldw_chatbook.Chat.console_chat_store import (
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
+    ProviderContinuationSidecar,
     bound_messages_to_window,
     count_console_messages_tokens,
+    provider_continuation_owner_groups,
+)
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     CompactionAdmission,
@@ -111,8 +116,8 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleMemoryRecord,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
-    build_console_request,
     tagged_memory_message,
     tagged_visual_memory_message,
 )
@@ -123,6 +128,12 @@ from tldw_chatbook.Chat.console_visual_transcript import (
     resolve_effective_compaction_representation,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    validate_continuation_restore,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
@@ -295,6 +306,10 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
+    "Recover the interrupted tool run before sending a new message: "
+    "Resume or Discard it first."
+)
 
 # Private payload-row key threading a transcript message's native id from the
 # payload builder to the dispatch choke point, where `/rewind`
@@ -304,6 +319,41 @@ CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 # before the payload leaves the controller for a provider/agent, so no
 # provider ever sees it.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
+
+
+def _flatten_preflight_messages(
+    semantic: PreparedConsoleRequest,
+) -> list[dict[str, Any]]:
+    """Return visible rows while preserving private owner association."""
+    flattened: list[dict[str, Any]] = []
+    for message in semantic.flattened_messages():
+        row = dict(message)
+        owner_id = row.pop(CONTINUATION_OWNER_KEY, None)
+        if type(owner_id) is str:
+            row[NATIVE_MESSAGE_ID_KEY] = owner_id
+        flattened.append(row)
+    return flattened
+
+
+def _continuation_restore_target_for_resolution(
+    resolution: Any,
+) -> ContinuationRestoreTarget | None:
+    """Build an exact target only from explicitly pinned resolution fields."""
+    protocol = getattr(resolution, "continuation_protocol", None) or getattr(
+        resolution, "api_mode", None
+    )
+    base_url = normalize_generic_endpoint_for_compare(
+        getattr(resolution, "base_url", None)
+    )
+    model = getattr(resolution, "model", None)
+    if not protocol or not base_url.startswith(("http://", "https://")) or not model:
+        return None
+    return ContinuationRestoreTarget(
+        provider=provider_config_key(str(getattr(resolution, "provider", ""))),
+        model=str(model),
+        protocol=str(protocol),
+        api_base_url=base_url,
+    )
 
 
 def _normalize_world_info_history(
@@ -1331,6 +1381,7 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._provider_continuation_recovery_sessions: set[str] = set()
         self._stop_requested = False
         #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
         #: (unlike ``_stop_requested``, which every run's own lifecycle
@@ -2320,7 +2371,7 @@ class ConsoleChatController:
             try:
                 handles = snapshot(self._agent_conversation_id(session.id))
             except Exception:  # noqa: BLE001 -- never block a navigation
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "fleet survivor count failed for a session; treated as idle"
                 )
                 continue
@@ -2379,6 +2430,11 @@ class ConsoleChatController:
             A human-readable refusal message if the send must be blocked
             right now, otherwise ``None`` when the send is allowed.
         """
+        interrupted = self.store.interrupted_provider_continuation_message(session_id)
+        if interrupted is not None and not self.provider_continuation_owner_is_live(
+            interrupted.id
+        ):
+            return PROVIDER_CONTINUATION_RECOVERY_REQUIRED
         if self.prompt_queue_coordinator.controls_generation(session_id):
             return (
                 "Queued messages control the next turn. "
@@ -2402,6 +2458,236 @@ class ConsoleChatController:
             f"{busy_count} {agent_noun} already running "
             f"({', '.join(titles)}{suffix}). "
             "Wait for one to finish or interrupt it."
+        )
+
+    async def recover_provider_continuation(
+        self,
+        action: str,
+        message_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Perform one explicit, optimistic recovery action."""
+        if action not in {"resume", "take_over", "discard"}:
+            return False
+        try:
+            message = self.store.get_message(message_id)
+            checkpoint = message.provider_continuation
+            session_id = self.store.session_id_for_message(message_id)
+        except KeyError:
+            return False
+        if self.provider_continuation_owner_is_live(message_id):
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "This tool run is still active. Wait for it to finish or Stop it before recovery.",
+            )
+            return False
+        if session_id in self._provider_continuation_recovery_sessions:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "A recovery action is already running. Wait for it to finish.",
+            )
+            return False
+        self._provider_continuation_recovery_sessions.add(session_id)
+        try:
+            if not self._provider_continuation_recovery_target_is_current(
+                session_id=session_id,
+                message_id=message.id,
+                expected_message_version=expected_message_version,
+            ):
+                return False
+            if action == "discard":
+                try:
+                    return self.store.discard_provider_continuation(
+                        message_id,
+                        expected_message_version=expected_message_version,
+                    )
+                except Exception:
+                    return False
+            return await self._resume_provider_continuation(
+                action=action,
+                message=message,
+                checkpoint=checkpoint,
+                session_id=session_id,
+                expected_message_version=expected_message_version,
+            )
+        finally:
+            self._provider_continuation_recovery_sessions.discard(session_id)
+
+    async def _resume_provider_continuation(
+        self,
+        *,
+        action: str,
+        message: ConsoleChatMessage,
+        checkpoint: ProviderContinuationCheckpoint | None,
+        session_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Validate and execute one serialized Resume or Take over action."""
+        if (
+            checkpoint is None
+            or checkpoint.state != "active"
+            or message.provider_continuation_message_version != expected_message_version
+            or (message.provider_continuation_remote and action != "take_over")
+            or (not message.provider_continuation_remote and action != "resume")
+            or any(
+                call.state == "executing"
+                for round_ in checkpoint.rounds
+                for call in round_.calls
+            )
+        ):
+            return False
+        translator = getattr(
+            self.provider_gateway, "expand_provider_continuation", None
+        )
+        if not callable(translator) or self._agent_bridge is None:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Continuation replay support is not enabled for this provider integration. "
+                "Enable or configure it, or Discard the interrupted run.",
+            )
+            return False
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection_for_session(session_id)
+        )
+        if not self._provider_continuation_recovery_target_is_current(
+            session_id=session_id,
+            message_id=message.id,
+            expected_message_version=expected_message_version,
+        ):
+            return False
+        if not getattr(resolution, "ready", False):
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Provider credentials are not ready. Fix Settings, then retry.",
+            )
+            return False
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Pinned provider settings are incomplete. Restore those settings or Discard.",
+            )
+            return False
+        try:
+            validate_continuation_restore(checkpoint, target)
+        except Exception:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Pinned provider settings no longer match. Restore those settings or Discard.",
+            )
+            return False
+        prior_sidecar, prior_target = (
+            self._provider_continuation_resume_history_for_resolution(
+                session_id,
+                resolution,
+                before_message_id=message.id,
+            )
+        )
+        recovery_task = asyncio.current_task()
+        try:
+            await self._run_agent_reply(
+                resolution=resolution,
+                provider_messages=self._provider_messages_for_session(
+                    session_id,
+                    before_message_id=message.id,
+                    annotate_ids=bool(prior_sidecar),
+                ),
+                assistant_message_id=message.id,
+                prepare_retry=False,
+                variant_mode=False,
+                restore_provider_continuation=checkpoint,
+                restore_provider_target=target,
+                expand_provider_continuation=translator,
+                resume_provider_continuation=True,
+                continuation_sidecar=prior_sidecar,
+                continuation_history_target=prior_target,
+                turn_context=self.resolve_turn_execution_context(session_id),
+            )
+        finally:
+            if (
+                self._active_stream_tasks.get(session_id) is recovery_task
+                and self._active_assistant_message_ids.get(session_id) == message.id
+            ):
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
+                self._stop_requested = False
+        try:
+            current = self.store.get_message(message.id)
+        except KeyError:
+            return False
+        current_checkpoint = current.provider_continuation
+        if current_checkpoint is None or current_checkpoint.state != "active":
+            return True
+        status = self.run_state_for(session_id).status
+        if status is ConsoleRunStatus.STOPPED:
+            warning = (
+                "Recovery stopped before the interrupted run completed. "
+                "Resume again or Discard it."
+            )
+        elif status is ConsoleRunStatus.FAILED:
+            warning = (
+                "Recovery failed before the interrupted run completed. "
+                "Check provider settings and retry, or Discard it."
+            )
+        else:
+            warning = (
+                "Recovery did not complete the interrupted run. "
+                "Retry when the provider is ready, or Discard it."
+            )
+        self.store.set_provider_continuation_warning(message.id, warning)
+        return False
+
+    def provider_continuation_owner_is_live(self, message_id: str) -> bool:
+        """Return whether the exact continuation owner still belongs to a live run."""
+        try:
+            session_id = self.store.session_id_for_message(message_id)
+        except KeyError:
+            return False
+        return (
+            self._active_assistant_message_ids.get(session_id) == message_id
+            and not self.run_state_for(session_id).is_send_allowed
+        )
+
+    def _provider_continuation_recovery_target_is_current(
+        self,
+        *,
+        session_id: str,
+        message_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Fail closed unless the requested owner is active and durably current."""
+        current = self.store.interrupted_provider_continuation_message(session_id)
+        if (
+            current is None
+            or current.id != message_id
+            or current.provider_continuation_message_version != expected_message_version
+            or current.persisted_message_id is None
+        ):
+            return False
+        version_reader = getattr(self.store.persistence, "get_message_version", None)
+        if not callable(version_reader):
+            return False
+        try:
+            return (
+                version_reader(current.persisted_message_id) == expected_message_version
+            )
+        except Exception:
+            return False
+
+    def provider_continuation_recovery_message(
+        self,
+    ) -> ConsoleChatMessage | None:
+        """Return the recoverable owner, excluding this controller's live run."""
+        message = self.store.provider_continuation_recovery_message()
+        if message is None or self.provider_continuation_owner_is_live(message.id):
+            return None
+        return message
+
+    def provider_continuation_replay_available(self) -> bool:
+        """Return whether the selected gateway exposes a replay translator."""
+        return self._agent_bridge is not None and callable(
+            getattr(self.provider_gateway, "expand_provider_continuation", None)
         )
 
     @property
@@ -2981,10 +3267,17 @@ class ConsoleChatController:
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
+        # task-15511: the clear-below compares EFFECTIVE selections, so the
+        # model term is what would actually run -- `explicit or configured`
+        # (the exact resolution `_build_console_turn_execution_context` and
+        # the send path use). `configured_model` alone is DERIVED state: it
+        # resolves late (e.g. once a provider key exists) and can flip on a
+        # routine resync with nothing user-visible changing. Comparing it
+        # separately made that churn look like a settings change and wiped a
+        # COMPLETED run state seconds after the run finished.
         previous_selection = (
             self.provider,
-            self.model,
-            self.configured_model,
+            self.model or self.configured_model,
             self.base_url,
             self.temperature,
             self.top_p,
@@ -3023,8 +3316,7 @@ class ConsoleChatController:
         self.system_prompt = selection.system_prompt
         current_selection = (
             self.provider,
-            self.model,
-            self.configured_model,
+            self.model or self.configured_model,
             self.base_url,
             self.temperature,
             self.top_p,
@@ -4538,9 +4830,7 @@ class ConsoleChatController:
                 self._clear_pending_approval_if_round_is_current(round_id, session_id)
             except Exception:  # noqa: BLE001 -- a UI clear must never
                 # break the cancellation path that called us.
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during revocation"
-                )
+                logger.debug("Failed to marshal approval clear during revocation")
         for request_id, session_id in script_revoked:
             if session_id is not None:
                 self.discard_pending_round(session_id, request_id)
@@ -4549,14 +4839,10 @@ class ConsoleChatController:
                     request_id, session_id
                 )
             except Exception:  # noqa: BLE001 -- as above.
-                logger.opt(exception=True).debug(
-                    "Failed to clear skill-script confirm during revocation"
-                )
+                logger.debug("Failed to clear skill-script confirm during revocation")
         total = len(revoked) + len(script_revoked)
         if total:
-            logger.info(
-                f"revoked {total} pending approval round(s) for cancelled run {run_id}"
-            )
+            logger.info("Revoked pending approval rounds for cancelled run")
         return total
 
     def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
@@ -8106,6 +8392,14 @@ class ConsoleChatController:
             global_overrides=global_overrides,
             conversation_overrides=overrides,
         ).compaction_representation
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    session_id, resolution
+                )
+            )
+        except ContinuationConflictError:
+            return False, PROVIDER_CONTINUATION_RECOVERY_REQUIRED
         _messages, blocked_result = await self._apply_conversation_memory_preflight(
             session_id=session_id,
             resolution=resolution,
@@ -8116,6 +8410,8 @@ class ConsoleChatController:
             agent_tools_enabled=False,
             force_compaction=True,
             manual_action=True,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
         )
         if blocked_result is not None:
             return False, blocked_result.visible_copy
@@ -8201,6 +8497,8 @@ class ConsoleChatController:
         agent_tools_enabled: bool,
         force_compaction: bool = False,
         manual_action: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call."""
 
@@ -8262,16 +8560,26 @@ class ConsoleChatController:
                     tools = list(preview())
                 except Exception:
                     tools = []
-        semantic = build_console_request(
-            retained_messages,
-            memory=memory_rows,
-            tools=tools,
-        )
         prepared_before = prepare(
             resolution,
-            semantic,
+            retained_messages,
+            tools=tools,
             apply_safety_window=False,
+            continuation_target=continuation_target,
+            continuation_sidecar=continuation_sidecar,
+            continuation_owner_key=(
+                NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+            ),
         )
+        semantic = prepared_before.semantic
+        if memory_rows:
+            semantic = replace(semantic, memory=memory_rows)
+            prepared_before = prepare(
+                resolution,
+                semantic,
+                apply_safety_window=False,
+                continuation_target=continuation_target,
+            )
         capacity = prepared_before.capacity
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
@@ -8298,6 +8606,7 @@ class ConsoleChatController:
                 resolution,
                 request,
                 apply_safety_window=False,
+                continuation_target=continuation_target,
             )
 
         units = compactable_units_after(
@@ -8316,41 +8625,9 @@ class ConsoleChatController:
         )
         if force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
-        logger.bind(
-            conversation_id=conversation_id,
-            provider=resolution.provider,
-            model=resolution.model or "",
-            decision=decision.value,
-            forced=force_compaction,
-            model_limit_source=capacity.limit_source,
-            model_context_window_tokens=capacity.context_window_tokens,
-            effective_input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
-            effective_conversation_budget_tokens=(
-                resolved.effective_conversation_budget_tokens
-            ),
-            total_input_tokens=prepared_before.accounting.total_input_tokens,
-            conversation_tokens=(
-                prepared_before.accounting.memory_tokens
-                + prepared_before.accounting.compactable_tokens
-            ),
-            mandatory_tokens=mandatory_tokens,
-            compactable_unit_count=len(units),
-            active_memory_revision=(memory.revision if memory is not None else None),
-            memory_source=(memory.source_kind if memory is not None else None),
-            conversation_override_fields=tuple(
-                sorted(owner.context_policy_overrides.to_dict())
-            ),
-            global_override_fields=tuple(
-                sorted(global_overrides.to_dict())
-                if global_overrides is not None
-                else ()
-            ),
-            validation_error_codes=tuple(
-                "context_policy_validation_error" for _ in resolved.validation_errors
-            ),
-        ).info("console_context_policy_decision")
+        logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
-            return [dict(row) for row in semantic.flattened_messages()], None
+            return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
             result = blocked(
                 (
@@ -8371,12 +8648,12 @@ class ConsoleChatController:
             # an admission failure.  Block only when the immutable prepared
             # request proves that the effective input ceiling is exceeded.
             if not prepared_before.known_overflow:
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             if (
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             if decision is CompactionDecision.NON_COMPACTABLE:
                 limiting_reason = (
                     "No older complete conversation turns are available to compact."
@@ -8444,16 +8721,8 @@ class ConsoleChatController:
                 except Exception:
                     visual_fallback_reason = "local_visual_render_failed"
             if visual_plan is not None and visual_plan.plan is not None:
-                logger.bind(
-                    conversation_id=conversation_id,
-                    requested_representation=requested_representation.value,
-                    effective_representation=effective_representation.value,
-                    page_count=visual_plan.plan.artifact.page_count,
-                    renderer_version=visual_plan.plan.artifact.renderer_version,
-                ).info("console_visual_compaction_prepared")
-                return [
-                    dict(row) for row in visual_plan.plan.semantic.flattened_messages()
-                ], None
+                logger.info("console_visual_compaction_prepared")
+                return _flatten_preflight_messages(visual_plan.plan.semantic), None
             effective_representation = ContextCompactionRepresentation.TEXT_SUMMARY
             if visual_fallback_reason is None:
                 visual_fallback_reason = (
@@ -8463,12 +8732,7 @@ class ConsoleChatController:
                 )
 
         if visual_fallback_reason is not None:
-            logger.bind(
-                conversation_id=conversation_id,
-                requested_representation=requested_representation.value,
-                effective_representation=effective_representation.value,
-                fallback_reason=visual_fallback_reason,
-            ).info("console_visual_compaction_fell_back_to_text")
+            logger.info("console_visual_compaction_fell_back_to_text")
 
         prompt = CompactionPromptSnapshot(
             get_internal_prompt("console.rewind_summarize")
@@ -8500,7 +8764,7 @@ class ConsoleChatController:
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
-                return [dict(row) for row in semantic.flattened_messages()], None
+                return _flatten_preflight_messages(semantic), None
             result = blocked(
                 (
                     "Conversation compaction could not reach the configured "
@@ -8542,7 +8806,6 @@ class ConsoleChatController:
             )
             if effective_representation is ContextCompactionRepresentation.HYBRID:
                 hybrid_visual_added = False
-                hybrid_fallback_reason = "hybrid_visual_does_not_fit"
                 try:
                     image_limit = max_history_images(
                         resolution.provider, resolution.model or ""
@@ -8569,6 +8832,9 @@ class ConsoleChatController:
                             mandatory=planned.plan.remaining_semantic.mandatory,
                             compactable=planned.plan.remaining_semantic.compactable,
                             active_request=planned.plan.remaining_semantic.active_request,
+                            active_continuation_groups=(
+                                planned.plan.remaining_semantic.active_continuation_groups
+                            ),
                             tools=planned.plan.remaining_semantic.tools,
                         )
                         hybrid_prepared = prepare_main(hybrid_semantic)
@@ -8584,30 +8850,26 @@ class ConsoleChatController:
                             memory_rows_after += (visual_row,)
                             hybrid_visual_added = True
                 except Exception:
-                    hybrid_fallback_reason = "hybrid_visual_render_failed"
+                    pass
                 if not hybrid_visual_added:
-                    logger.bind(
-                        conversation_id=conversation_id,
-                        requested_representation=requested_representation.value,
-                        effective_representation=(
-                            ContextCompactionRepresentation.TEXT_SUMMARY.value
-                        ),
-                        fallback_reason=hybrid_fallback_reason,
-                    ).info("console_visual_compaction_fell_back_to_text")
+                    logger.info("console_visual_compaction_fell_back_to_text")
             after = PreparedConsoleRequest(
                 system=planned.plan.remaining_semantic.system,
                 memory=memory_rows_after,
                 mandatory=planned.plan.remaining_semantic.mandatory,
                 compactable=planned.plan.remaining_semantic.compactable,
                 active_request=planned.plan.remaining_semantic.active_request,
+                active_continuation_groups=(
+                    planned.plan.remaining_semantic.active_continuation_groups
+                ),
                 tools=planned.plan.remaining_semantic.tools,
             )
-            return [dict(row) for row in after.flattened_messages()], None
+            return _flatten_preflight_messages(after), None
         if (
             resolved.policy.failure_behavior
             is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
         ):
-            return [dict(row) for row in semantic.flattened_messages()], None
+            return _flatten_preflight_messages(semantic), None
         result = blocked(
             (
                 "Conversation compaction did not complete; the provider request "
@@ -8676,6 +8938,18 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(owner_id)
         elif turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    owner_id, resolution
+                )
+            )
+        except ContinuationConflictError:
+            return self._block_context_preflight(
+                session_id=owner_id,
+                assistant_message_id=assistant_message_id,
+                visible_copy=PROVIDER_CONTINUATION_RECOVERY_REQUIRED,
+            )
         # A character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -8767,6 +9041,8 @@ class ConsoleChatController:
                     and not prefill
                     and not force_plain
                 ),
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
             )
             if context_block is not None:
                 return context_block
@@ -8808,10 +9084,21 @@ class ConsoleChatController:
         # `_run_agent_reply`), so no provider/gateway/agent ever sees the key.
         # Rebuild fresh row dicts rather than mutating in place, since transforms
         # can leave earlier rows aliased to freshly-built builder dicts.
-        provider_messages = [
-            {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+        selected_owner_ids = {
+            row.get(NATIVE_MESSAGE_ID_KEY)
             for row in provider_messages
-        ]
+            if type(row.get(NATIVE_MESSAGE_ID_KEY)) is str
+        }
+        continuation_sidecar = tuple(
+            item
+            for item in continuation_sidecar
+            if item.owner_message_id in selected_owner_ids
+        )
+        if not continuation_sidecar:
+            provider_messages = [
+                {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+                for row in provider_messages
+            ]
         if bound is not None and bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
@@ -8851,6 +9138,8 @@ class ConsoleChatController:
                     citation_repair_session=citation_repair_session,
                     stream_signals=stream_signals,
                     turn_context=turn_context,
+                    continuation_sidecar=continuation_sidecar,
+                    continuation_history_target=continuation_target,
                 )
             return await self._run_direct_provider_reply(
                 resolution=resolution,
@@ -8862,6 +9151,8 @@ class ConsoleChatController:
                 prefill_from_one_shot=prefill_from_one_shot,
                 citation_repair_session=citation_repair_session,
                 stream_signals=stream_signals,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
             )
         finally:
             if (
@@ -9262,6 +9553,8 @@ class ConsoleChatController:
         prefill_from_one_shot: bool,
         citation_repair_session: ConsoleCitationRepairSession | None,
         stream_signals: ConsoleProviderStreamSignals | None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -9287,7 +9580,15 @@ class ConsoleChatController:
         dispatch_request: Any = provider_messages
         prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
         if callable(prepare_request):
-            dispatch_request = prepare_request(resolution, provider_messages)
+            dispatch_request = prepare_request(
+                resolution,
+                provider_messages,
+                continuation_target=continuation_target,
+                continuation_sidecar=continuation_sidecar,
+                continuation_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
+            )
             dropped_messages = int(
                 getattr(dispatch_request, "dropped_messages", 0) or 0
             )
@@ -9806,6 +10107,14 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_history_target: ContinuationRestoreTarget | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -10001,7 +10310,11 @@ class ConsoleChatController:
                 session_id=session_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
-                model=turn_context.effective_model or "",
+                model=(
+                    getattr(resolution, "model", None)
+                    or turn_context.effective_model
+                    or ""
+                ),
                 session_system_prompt=session_system_prompt,
                 agent_messages=agent_messages,
                 should_cancel=should_cancel,
@@ -10046,6 +10359,15 @@ class ConsoleChatController:
                 # tool for real). Run-keyed, so a live sibling child --
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
+                restore_provider_continuation=restore_provider_continuation,
+                restore_provider_target=restore_provider_target,
+                expand_provider_continuation=expand_provider_continuation,
+                resume_provider_continuation=resume_provider_continuation,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_history_target,
+                continuation_owner_key=(
+                    NATIVE_MESSAGE_ID_KEY if continuation_sidecar else None
+                ),
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
@@ -10871,6 +11193,84 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    def _provider_continuation_sidecar_for_session(
+        self, session_id: str
+    ) -> tuple[ProviderContinuationSidecar, ...]:
+        """Capture private checkpoints for assistant owners on the active path."""
+        active_ids = set(self.store.active_path_message_ids(session_id))
+        return tuple(
+            ProviderContinuationSidecar(message.id, message.provider_continuation)
+            for message in self.store.messages_for_session(session_id)
+            if message.id in active_ids
+            and message.role is ConsoleMessageRole.ASSISTANT
+            and isinstance(
+                message.provider_continuation, ProviderContinuationCheckpoint
+            )
+        )
+
+    def _provider_continuation_history_for_resolution(
+        self, session_id: str, resolution: Any
+    ) -> tuple[
+        tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
+    ]:
+        """Select only complete private groups matching this frozen send."""
+        sidecar = self._provider_continuation_sidecar_for_session(session_id)
+        if not sidecar:
+            return (), None
+        if any(item.checkpoint.state != "complete" for item in sidecar):
+            raise ContinuationConflictError(
+                "Active continuation requires explicit recovery."
+            )
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            return (), None
+        owner_ids = {
+            group.owner_message_id
+            for group in provider_continuation_owner_groups(sidecar, target=target)
+        }
+        return (
+            tuple(item for item in sidecar if item.owner_message_id in owner_ids),
+            target,
+        )
+
+    def _provider_continuation_resume_history_for_resolution(
+        self,
+        session_id: str,
+        resolution: Any,
+        *,
+        before_message_id: str,
+    ) -> tuple[
+        tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
+    ]:
+        """Select policy-retained completed history before an active owner."""
+        target = _continuation_restore_target_for_resolution(resolution)
+        if target is None:
+            return (), None
+        keep_all = target.provider == "moonshot" and target.model == "kimi-k3"
+        keep_tool_history = target.provider == "deepseek"
+        if not keep_all and not keep_tool_history:
+            return (), None
+
+        retained: list[ProviderContinuationSidecar] = []
+        active_ids = set(self.store.active_path_message_ids(session_id))
+        for message in self.store.messages_for_session(session_id):
+            if message.id == before_message_id:
+                break
+            checkpoint = message.provider_continuation
+            if (
+                message.id not in active_ids
+                or message.role is not ConsoleMessageRole.ASSISTANT
+                or not isinstance(checkpoint, ProviderContinuationCheckpoint)
+                or checkpoint.state != "complete"
+            ):
+                continue
+            sidecar = ProviderContinuationSidecar(message.id, checkpoint)
+            if not provider_continuation_owner_groups((sidecar,), target=target):
+                continue
+            if keep_all or any(round_.calls for round_ in checkpoint.rounds):
+                retained.append(sidecar)
+        return (tuple(retained), target) if retained else ((), None)
+
     def _provider_messages_through_message(
         self,
         session_id: str,
@@ -11416,6 +11816,17 @@ class ConsoleChatController:
             ``ConsoleSubmitResult`` carrying the refusal copy.
         """
         target_id = session_id if session_id else (self.store.active_session_id or "")
+        if self.store.interrupted_provider_continuation_message(target_id) is not None:
+            visible_copy = PROVIDER_CONTINUATION_RECOVERY_REQUIRED
+            if append_row and any(
+                session.id == target_id for session in self.store.sessions()
+            ):
+                self.store.append_message(
+                    target_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=visible_copy,
+                )
+            return ConsoleSubmitResult(False, False, visible_copy)
         if self.prompt_queue_coordinator.authorizes(
             queue_authorization, target_id
         ) and self.run_state_for(target_id).status in {

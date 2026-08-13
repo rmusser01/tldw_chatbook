@@ -96,6 +96,13 @@ per keystroke → **15458**. Warm visits compose 2–3× → **15459**.
 **15460**. Section click = 2+ whole-screen rebuilds; tree click = 4 recomposes; z/Z/[/] rebuilds all
 four regions → **15461**. Heaviest never-profiled screen → **15462** (profile first — the
 defer-past-first-paint series proved hidden-widget weight predicts nothing when sync/DB-bound).
+**15462 is now done and this line's numbers are superseded** — see its Investigation Notes. After
+15460/15461/15463/15464, live push is **0.50 s, not 0.89 s** (−44%); the screen is widget-bound, only
+**3% of its tree is hidden** (no deferral possible), and one whole push runs **13 loop-thread sqlite
+statements / ~10 ms of application code**. With an empty feed the screen pushes in 200 ms — the median
+of every other screen — so its entire excess is the 224 widgets of the 100-item article feed
+(`_ArticleRow`/`_DayHeader` each wrap a `Static`). `compose`'s inline `resolve_latest_follow_item()`,
+flagged above, measures 0.1–0.3 ms and is retired as a concern.
 SubscriptionsDB rebuilt per op + scheduler due-checks run sqlite + `ET.fromstring` inline on the loop,
 enabled by default on any tab → **15463**. Items feed selects `content` for list rows and sorts the whole
 table on a computed datetime → **15464**.
@@ -149,3 +156,31 @@ self-assignment can never fire → **15479**. Dead schedulers/DB modules that lo
 The checked-out venv's editable install currently resolves `tldw_chatbook` to
 `.worktrees/task-2512-mcp-unified` — not the main checkout, and not the CWD. Any probe or
 `python -c` import must assert `tldw_chatbook.__file__` and pin `PYTHONPATH` to the intended tree.
+
+## Follow-ups filed (2026-08-13)
+
+Residuals, review-round findings, and pre-existing red tests surfaced while closing out
+task-15450 - task-15481, each verified live against dev before filing (one candidate
+from the original sweep, RAG top_k config-isolation, turned out already resolved by
+task-15512's test fix and was not filed; the chat_screen size-ratchet breach is already
+tracked as task-3070).
+
+- **task-15764** — Watchlists: move `URLMonitor`'s HTML extraction + difflib work off the event loop (the piece task-15463 deliberately left out).
+- **task-15765** — Repair the v17-to-v18 ChaChaNotes migration fixture broken by v35-to-v36's `note_folders` table (supersedes the stale "V33->V34 compaction_representation" framing, which task-15730 already fixed).
+- **task-15766** — Batch of 7 pre-existing red tests found as asides (library_collections_panel, TTS Protocol-isinstance, console coalescing flake, rail_sections, citation-sources test double, console chip-swap TypeError, QwenCloud test-dict drift).
+- **task-15767** — File Notes back-navigation (`test_action_library_notes_files_back_returns_to_database`) broke when task-15503's destructive-reload confirm shipped.
+- **task-15768** — Media hub local-mode reading-highlight CRUD is `AttributeError` end to end (naming mismatch found by task-15467).
+- **task-15769** — Character JSON backup export crashes on any image-bearing card (found by task-15474).
+- **task-15770** — Watchlists unread-badge count still scans instead of using task-15464's `effective_date` index.
+- **task-15771** — Sweep non-callable `reactive([])`/`reactive({})` defaults shared by identity across widget instances (proven instance: `character_voice_widget`, found by task-15479).
+- **task-15772** — STTS Select widgets (import-source, audiobook provider/format) compose `options=` backwards, so set-value calls silently fail.
+- **task-15773** — `ChapterEditorWidget`/`Select` mount race under high-volume DataTable population (dodged, not fixed, by task-15478).
+- **task-15774** — Library media viewer search status/nav controls sit below the fold at 80x24 (task-15458's macOS re-verification).
+- **task-15775** — Watchlists screen's `region_layout` reactive default disagrees with the shipped first-run default, composing then discarding the Inspector rail every visit.
+- **task-15776** — Watchlists: collapse `_ArticleRow`/`_DayHeader` into one self-rendering widget (the one lever task-15462's profiling handed over, ~15-18% of a push).
+- **task-15777** — Console transcript: unbounded reveal on a far jump, and a scroll-back reachability ceiling at the low prune watermark (task-15455's residuals).
+- **task-15778** — Watchlists: batch the cold Read-tab region swap and drop `_build_detail_pane`'s pre-mount seeding recompose (task-15461's residuals #1/#4).
+- **task-15779** — Watchlists artifacts pane: briefing selection destroys the briefings `DataTable` and its keyboard focus (task-15461's residual #3).
+- **task-15780** — Verify-then-retire `CCPDictionaryEditorWidget`/`CCPPromptEditorWidget` (zero production callers; the CCP `__init__` docstring already says the chrome was retired).
+- **task-15781** — Verify-then-trim `NotesSyncService`'s `SyncProfile` CRUD surface (zero production callers beyond `sync_folder`).
+- **task-15782** — Repair `test_options_persist_to_config`'s stale hardcoded expectation (found by task-15470, unmasked once its `run_worker` crash fix stopped swallowing it).

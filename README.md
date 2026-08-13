@@ -258,6 +258,9 @@ The screen shell is organized around a **master shell** of primary destinations 
 - **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, MLX-LM, ONNX Runtime, Custom OpenAI-compatible endpoints
 - **Streaming responses** with real-time display
 - **Full conversation management**: Save, load, edit, fork conversations
+- **Durable tool continuation foundation**: provider integrations can opt in to
+  checkpoint an interrupted tool run on its exact assistant branch, then offer
+  explicit Resume or Discard recovery without re-running completed tools
 - **Model capability detection**: Vision support, tool calling, etc.
 - **Custom tokenizer support** for accurate token counting
 - **Chat Tabs**: Multiple concurrent chat sessions (enable with `enable_chat_tabs = true` in config)

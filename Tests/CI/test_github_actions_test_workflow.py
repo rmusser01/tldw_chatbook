@@ -22,6 +22,13 @@ def _all_tests_job_block() -> str:
     return workflow[start:end]
 
 
+def _core_tests_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  core-tests:")
+    end = workflow.index("  artifact-lease-spike:", start)
+    return workflow[start:end]
+
+
 def _nightly_deep_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  nightly-deep:")
@@ -124,6 +131,22 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
+
+
+def test_jobs_running_architecture_tests_fetch_pinned_history() -> None:
+    """Keep immutable architecture baselines available in every full test job.
+
+    The Wave 6 inventory reads a pinned source blob with ``git show``. GitHub's
+    default depth-one checkout does not contain that historical commit.
+    """
+    for block in (
+        _core_tests_job_block(),
+        _all_tests_job_block(),
+        _nightly_deep_job_block(),
+    ):
+        checkout_start = block.index("    - uses: actions/checkout@v4")
+        checkout_end = block.index("\n    - name:", checkout_start)
+        assert "fetch-depth: 0" in block[checkout_start:checkout_end]
 
 
 def test_ci_exercises_mcp_against_minimum_textual() -> None:

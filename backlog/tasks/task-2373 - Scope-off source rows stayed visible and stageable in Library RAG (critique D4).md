@@ -1,5 +1,5 @@
 ---
-id: task-2373
+id: TASK-2373
 title: Scope-off source rows stayed visible and stageable in Library RAG (critique D4)
 status: Done
 assignee:

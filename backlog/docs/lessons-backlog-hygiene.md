@@ -280,6 +280,88 @@ sessions spanning many hours each. That single command would have caught both.
 The board is not a lock. Treat a claim as documentation, and the PR list as the
 actual source of truth about who is building what.
 
+**Third instance: TASK-15455, 2026-08-11 — same day, same task, neither session
+ran the command.** The Console transcript windowing task was implemented twice
+in parallel: `codex/console-transcript-windowing` (PR #1538, merged 13:26) and
+`task/15455-windowed-mount` (PR #1556, closed unmerged). Both sessions worked
+for hours; both wrote their own pin suites, probes, and lessons entries; neither
+ran `gh pr list --search "15455"` before designing or during the build. The
+duplication was found only when the second PR was opened against a dev that
+already contained the first.
+
+The cost is measurable this time: the merged-first rule stood, and the second
+implementation's ~1,500 lines became a ~250-line reconciliation delta — roughly
+one full task cycle spent twice, plus a third cycle to port. What survived was
+only what the second session's REVIEW round had found (a prune/hydration
+oscillation the merged build genuinely had, a reading-state restore gap, the
+config kill switch); every line of its actual windowing mechanism was thrown
+away because the merged design was equivalent or better.
+
+Two notes for the next time this happens. First, the reconciliation is worth
+doing properly rather than abandoning: the second implementation's review had
+found a real infinite-churn defect in the merged one, which no amount of "we
+merged first" makes untrue. Second, the porting brief that starts a
+reconciliation is written by someone who has read neither implementation
+closely — verify every "the incumbent is missing X" claim against the incumbent
+at YOUR head before porting X. One of the four items in this reconciliation's
+brief (selection into windowed-out history) was already implemented and
+working; porting it blind would have duplicated a mechanism inside a PR whose
+whole purpose was undoing duplication.
+### Fourth instance: TASK-15457, 2026-08-12/13 — found only when the rebase would not apply
+
+**Two complete implementations of TASK-15457 ("Library: convert per-click
+whole-screen recomposes to canvas-scoped sync") existed simultaneously, and
+neither session knew.** Codex's landed on `dev` as `976dbafcb`
+("perf(library): scope frequent updates to canvases") on 2026-08-12 and marked
+the task **Done**; the other ran 2026-08-11→13 on
+`task/15457-library-recompose`, through two review rounds, and was discovered
+only when the coordinator tried to merge it and dev had moved.
+
+Both wrote a file at the SAME path, `Tests/UI/test_library_canvas_scoped_sync.py`
+(441 lines vs 687), and both edited the same task file. The duplication was
+invisible to every check either session ran: tests passed on both sides, the
+task file on the branch still said `In Progress` because dev's `Done` was on a
+commit the branch predated, and `git status` was clean.
+
+**What made this one different from 595/596: the duplicate WON on scope, and
+the survivor was the defects.** Dev's implementation converted more sites (143
+→ 102 vs 152 → 132) and moved the list→editor loading views into their owning
+canvases. So all eight conversion slices were dropped as superseded. What
+survived was the part the other implementation lacked — four defects that
+reproduced RED against dev's own code: an unmirrored `_selected_media_id` (the
+media chooser opened a filtered-out item), focus escaping the canvas on every
+converted site, a dropped compact-mode scroll offset, and unarmed editors on
+the row→editor transition. **Roughly 1,200 lines of implementation reduced to
+~190 lines of portable delta.**
+
+**The specific check that would have caught it, and why the published one did
+not.** The 595/596 lesson prescribes `gh pr list --search "<id>"` before
+designing and periodically during a long build. That still would not have
+fired here: `976dbafcb` reached dev as part of a batch whose PR title names
+neither the task id nor the Library screen. The check that works for a task
+this long-running is against **dev itself**, not the PR list:
+
+```bash
+git log origin/dev --oneline -S "task-15457" -- backlog/tasks/ | head   # task file touched?
+git log origin/dev --oneline -- "Tests/**/*canvas_scoped_sync*"          # my test path claimed?
+git fetch -q origin && git log --oneline $(git merge-base origin/dev HEAD)..origin/dev -- <the files I am editing>
+```
+
+Run the third one before every review round, not just at merge. A task whose
+work spans days will outlive any snapshot of dev taken at its start.
+
+**Related trap this surfaced:** a parallel implementation can carry the same
+defects yours does. Do not assume the version that reached dev first is the
+correct one — the four defects above shipped `Done`, and one of them (the notes
+footer) *appeared* fine only because an unrelated per-refresh mechanism masked
+it, which a non-discriminating test then "confirmed". Probe by disabling the
+mechanism you think is responsible before claiming it is.
+
+**Note for whoever merges this:** the third-instance block for this lesson
+(TASK-15455) is on `dev` but was NOT in this branch's rebase base
+(`74c8cf7043`), so this entry appends to the TASK-595/596 section instead. If
+both land, renumber the instances so the sequence reads 1-2-3-4.
+
 ---
 
 ## A duplicate ID on dev may be a resurrected ghost — check for a renumbered twin BEFORE renumbering

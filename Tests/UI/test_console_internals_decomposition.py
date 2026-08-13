@@ -3154,12 +3154,14 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             assert border.left[0] == "solid", f"{selector} missing left frame"
 
         right_handle = console.query_one("#console-inspector-rail-handle")
-        assert right_handle.has_class("console-frame-quiet")
+        assert right_handle.has_class("console-frame-solid")
+        assert right_handle.region.width == 11
+        assert right_handle.content_region.width == 9
         handle_border = right_handle.styles.border
-        assert handle_border.top[0] in {"", "none"}
-        assert handle_border.right[0] in {"", "none"}
-        assert handle_border.bottom[0] in {"", "none"}
-        assert handle_border.left[0] in {"", "none"}
+        assert handle_border.top[0] == "solid"
+        assert handle_border.right[0] == "solid"
+        assert handle_border.bottom[0] == "solid"
+        assert handle_border.left[0] == "solid"
 
         transcript_border = console.query_one(
             "#console-transcript-region"

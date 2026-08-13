@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+import tldw_chatbook
 from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -42,6 +46,29 @@ class _HandleHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield self._handle
+
+
+class _StyledHandleHarness(_HandleHarness):
+    """Handle harness using the same generated stylesheet as production."""
+
+    CSS_PATH = str(
+        Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+    )
+
+
+def _assert_region_contains(container, child) -> None:
+    assert container.x <= child.x
+    assert container.y <= child.y
+    assert child.right <= container.right
+    assert child.bottom <= container.bottom
+
+
+def _assert_solid_frame(handle: DestinationRailHandle) -> None:
+    border = handle.styles.border
+    assert border.top[0] == "solid"
+    assert border.right[0] == "solid"
+    assert border.bottom[0] == "solid"
+    assert border.left[0] == "solid"
 
 
 @pytest.mark.asyncio
@@ -195,6 +222,98 @@ def _console_handle(**overrides) -> ConsoleRailHandle:
 
 
 @pytest.mark.asyncio
+async def test_console_handles_share_full_height_solid_frame_with_real_css():
+    measured: dict[str, tuple[int, int, int, object, object]] = {}
+
+    for side in ("left", "right"):
+        handle = _console_handle(side=side)
+        app = _StyledHandleHarness(frame_console_region(handle))
+        async with app.run_test(size=(40, 20)) as pilot:
+            await pilot.pause()
+            button = app.query_one("#console-rail-open", Button)
+
+            assert handle.region.height == 20
+            assert handle.styles.background.a > 0
+            _assert_solid_frame(handle)
+            assert button.styles.content_align_horizontal == "center"
+            assert button.styles.content_align_vertical == "middle"
+            _assert_region_contains(handle.content_region, button.region)
+            if side == "right":
+                assert handle.has_class("console-inspector-rail-handle")
+            measured[side] = (
+                handle.region.height,
+                handle.region.width,
+                handle.content_region.width,
+                handle.styles.background,
+                handle.styles.border,
+            )
+
+    left = measured["left"]
+    right = measured["right"]
+    assert left[0] == right[0] == 20
+    assert left[1] == 13
+    assert right[1] == 11
+    assert right[2] == 9
+    assert right[3] == left[3]
+    assert right[4] == left[4]
+
+
+@pytest.mark.asyncio
+async def test_unbadged_console_inspector_button_fills_framed_content_height():
+    handle = _console_handle(side="right")
+    app = _StyledHandleHarness(frame_console_region(handle))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#console-rail-open", Button)
+
+        assert not app.query("#console-rail-badge")
+        assert button.region.height == handle.content_region.height
+        _assert_region_contains(handle.content_region, button.region)
+
+
+@pytest.mark.asyncio
+async def test_badged_console_inspector_reserves_exact_contained_badge_row():
+    handle = _console_handle(side="right", badge="3 approvals")
+    app = _StyledHandleHarness(frame_console_region(handle))
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        button = app.query_one("#console-rail-open", Button)
+        badge = app.query_one("#console-rail-badge", Static)
+
+        assert str(badge.renderable) == "3 appr"
+        assert button.region.bottom <= badge.region.y
+        assert (
+            button.region.height == handle.content_region.height - badge.region.height
+        )
+        _assert_region_contains(handle.content_region, button.region)
+        _assert_region_contains(handle.content_region, badge.region)
+
+
+@pytest.mark.asyncio
+async def test_shared_right_destination_handle_keeps_compact_transparent_chrome():
+    handle = DestinationRailHandle(
+        label="Catalog",
+        button_id="lab-rail-open",
+        badge_id="lab-rail-badge",
+        side="right",
+    )
+    app = _StyledHandleHarness(handle)
+
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        border = handle.styles.border
+
+        assert handle.region.height <= 6
+        assert handle.styles.background.a == 0
+        assert border.top[0] in {"", "none"}
+        assert border.right[0] in {"", "none"}
+        assert border.bottom[0] in {"", "none"}
+        assert border.left[0] in {"", "none"}
+
+
+@pytest.mark.asyncio
 async def test_console_handle_is_a_destination_rail_handle():
     assert issubclass(ConsoleRailHandle, DestinationRailHandle)
 
@@ -227,13 +346,13 @@ async def test_console_handle_abbreviates_right_side_badges(badge, expected):
 
 
 @pytest.mark.asyncio
-async def test_console_handle_renames_the_inspector_label_on_the_right():
+async def test_console_handle_abbreviates_the_inspector_label_on_the_right():
     app = _HandleHarness(
         _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
     )
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#console-rail-open", Button).label) == "Inspector"
+        assert str(app.query_one("#console-rail-open", Button).label) == "Inspect"
 
 
 @pytest.mark.asyncio

@@ -3941,11 +3941,19 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
     forwarded MouseDown whose dispatch is still pending on the widget's
     pump when the enclosing screen's teardown begins.
 
-    Fixed by a post-``super().recompose()`` sweep in
-    ``BaseAppScreen.recompose()``: once the ENTIRE recompose (removal AND
-    remount) has finished, any still-captured widget that is NOT
-    ``is_attached`` is by definition stale (nothing legitimately captured
-    during remount would already be detached) and is released again.
+    Fixed by a post-teardown sweep (``BaseAppScreen.sweep_stale_mouse_
+    capture``, called by ``recompose()`` and by the region-scoped swaps):
+    once the ENTIRE teardown (removal AND remount) has finished, any
+    still-captured widget that is NOT ``is_attached`` is by definition stale
+    (nothing legitimately captured during remount would already be detached)
+    and is released again.
+
+    task-15475: the victim is taken from the DETAIL PANE, not the category
+    rail. A category switch no longer recomposes the screen -- it rebuilds
+    the detail and inspector panes -- so the rail's search Input is no longer
+    torn down by one, and a capture on a widget that stays mounted is not
+    stale at all (its own MouseUp releases it). The hazard this test exists
+    for lives wherever the teardown actually happens, which is here.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -3953,7 +3961,7 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
-        victim = screen.query_one("#settings-category-search", Input)
+        victim = screen.query_one("#settings-detail-pane").query(Input).first()
 
         # Schedule the recompose first (screen next-callback), then queue a
         # capture-inducing message on the VICTIM's own pump -- modelling a

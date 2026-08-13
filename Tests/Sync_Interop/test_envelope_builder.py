@@ -2,8 +2,41 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from tldw_chatbook.Chat.provider_continuation import ContinuationValidationError
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+
+def _provider_continuation_json(*, canary: str = "private reasoning") -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k2",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [canary],
+                    "calls": [
+                        {
+                            "call_id": "call-1",
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        },
+        indent=2,
+    )
 
 
 def test_note_body_goes_into_encrypted_payload_without_plaintext_leak() -> None:
@@ -98,6 +131,135 @@ def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> Non
         "content": "private regenerated answer",
         "role": "assistant",
     }
+
+
+def test_chat_message_delete_is_a_clear_tombstone_with_exact_version() -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    envelope = builder.build_chat_message_delete(
+        conversation_id="conversation-1",
+        message_id="message-2",
+        entity_version=7,
+    )
+
+    assert envelope.domain == "chat"
+    assert envelope.operation == "delete"
+    assert envelope.stable_key == "conversation-1:message-2"
+    assert envelope.entity_version == 7
+    assert envelope.payload_clear == {"deleted": True}
+    assert envelope.routing_metadata == {
+        "conversation_id": "conversation-1",
+        "entity_kind": "message",
+    }
+    assert envelope.payload_hash == canonical_payload_hash({"deleted": True})
+
+
+def test_chat_message_canonicalizes_continuation_inside_encrypted_payload() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    canary = "SYNC-CONTINUATION-PRIVATE-CANARY"
+
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="variant-message-1",
+        role="assistant",
+        content="visible answer",
+        variant_turn_id="turn-1",
+        variant_index=1,
+        provider_continuation_json=_provider_continuation_json(canary=canary),
+    )
+
+    serialized = envelope.model_dump_json()
+    payload = decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key)
+    assert canary not in serialized
+    assert "provider_continuation_json" not in envelope.routing_metadata
+    assert "provider_continuation_json" not in envelope.payload_clear
+    assert payload["content"] == "visible answer"
+    assert payload["role"] == "assistant"
+    assert json.loads(payload["provider_continuation_json"])["rounds"][0][
+        "reasoning_blocks"
+    ] == [canary]
+    assert "\n" not in payload["provider_continuation_json"]
+
+
+@pytest.mark.parametrize("private_value", [None, ""])
+def test_chat_message_omits_empty_continuation_for_legacy_compatibility(
+    private_value: str | None,
+) -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="visible answer",
+        provider_continuation_json=private_value,
+    )
+
+    assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "content": "visible answer",
+        "role": "assistant",
+    }
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        pytest.param(False, id="bool-false"),
+        pytest.param(0, id="integer-zero"),
+        pytest.param({}, id="empty-object"),
+        pytest.param([], id="empty-list"),
+    ],
+)
+def test_chat_message_rejects_present_falsey_invalid_continuation(
+    private_value: object,
+) -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    with pytest.raises(ContinuationValidationError) as caught:
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="visible answer",
+            provider_continuation_json=private_value,  # type: ignore[arg-type]
+        )
+
+    assert str(caught.value) == "Invalid continuation data."
+
+
+def test_chat_message_rejects_invalid_continuation_without_private_error_text() -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+    canary = "INVALID-PRIVATE-CANARY"
+
+    with pytest.raises(ContinuationValidationError) as caught:
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="visible answer",
+            provider_continuation_json=canary,
+        )
+
+    assert canary not in str(caught.value)
+    assert canary not in repr(caught.value)
 
 
 def test_workspace_source_ref_add_remove_maps_to_link_unlink() -> None:

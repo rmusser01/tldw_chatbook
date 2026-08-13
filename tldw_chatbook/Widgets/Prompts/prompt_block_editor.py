@@ -579,7 +579,10 @@ class PromptBlockEditor(Vertical):
 
     def on_mount(self) -> None:
         self._set_responsive(self.size.width or self.app.size.width)
-        self._sync_footer()
+        try:
+            self._sync_footer()
+        except NoMatches:
+            self.call_after_refresh(self._sync_footer)
 
     def on_resize(self, event: events.Resize) -> None:
         self._set_responsive(event.size.width)
@@ -733,6 +736,8 @@ class PromptBlockEditor(Vertical):
                 user.value = True
 
     def _sync_footer(self) -> None:
+        if not self.is_attached:
+            return
         issue_count = len(self._state.issues)
         validation = self.query_one("#prompt-editor-validation", Static)
         if issue_count:

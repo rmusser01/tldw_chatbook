@@ -421,25 +421,44 @@ class TestResolveRrfK:
 
         assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
 
-    @pytest.mark.parametrize("bad", ["oops", -7])
-    def test_an_invalid_value_is_named_in_the_warning(self, bad):
-        """Falling back quietly would hide a real misconfiguration.
+    def test_an_unparseable_value_warns_without_echoing_it(self):
+        """Falling back must leave a trace, but not the value itself.
 
-        The value the user actually wrote must appear in the log line --
-        "falling back to 5" alone leaves nothing to grep for when a TOML
-        pipeline's `rrf_k` is a typo.
+        TASK-15103 (ADR-029): a hand-edited config value is user-controlled
+        and unbounded, so the warning is a fixed event — greppable by its
+        text, with the offending value kept out of the persistent log.
         """
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
 
         messages = []
         sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
         try:
-            assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
+            assert resolve_rrf_k("oops") == DEFAULT_HYBRID_RRF_K
         finally:
             logger.remove(sink_id)
 
-        assert any(str(bad) in message for message in messages), (
-            f"the rejected value {bad!r} must appear in the warning: {messages}"
+        assert any("Invalid rrf_k; using shipped default" in m for m in messages), (
+            f"the fixed fallback event must be logged: {messages}"
+        )
+        assert not any("oops" in m for m in messages), (
+            f"the rejected value must not be echoed: {messages}"
+        )
+
+    def test_a_negative_value_is_still_named_in_the_warning(self):
+        """The negative-k message survives TASK-15103 review: by the time it
+        fires the value has already parsed to a bounded int, so naming it is
+        safe and keeps the misconfiguration greppable."""
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
+        messages = []
+        sink_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            assert resolve_rrf_k(-7) == DEFAULT_HYBRID_RRF_K
+        finally:
+            logger.remove(sink_id)
+
+        assert any("-7" in message for message in messages), (
+            f"the rejected value -7 must appear in the warning: {messages}"
         )
 
     @pytest.mark.parametrize("bad", ["1e309", float("inf"), float("-inf")])
@@ -457,7 +476,7 @@ class TestResolveRrfK:
 
         assert resolve_rrf_k(bad) == DEFAULT_HYBRID_RRF_K
 
-    def test_overflow_range_value_is_named_in_the_warning(self):
+    def test_overflow_range_value_warns_without_echoing_it(self):
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
 
         messages = []
@@ -467,8 +486,9 @@ class TestResolveRrfK:
         finally:
             logger.remove(sink_id)
 
-        assert any("inf" in message for message in messages), (
-            f"an overflow-range rrf_k must be named in the warning: {messages}"
+        # TASK-15103: fixed event only — the overflow value is not echoed.
+        assert any("Invalid rrf_k; using shipped default" in m for m in messages), (
+            f"the fixed fallback event must be logged: {messages}"
         )
 
 

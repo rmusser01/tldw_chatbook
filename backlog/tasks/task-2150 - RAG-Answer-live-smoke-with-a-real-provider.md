@@ -1,5 +1,5 @@
 ---
-id: task-2150
+id: TASK-2150
 title: RAG Answer live smoke with a real provider
 status: Done
 assignee:

@@ -728,6 +728,8 @@ class TestMigrationBackfill:
             DROP TRIGGER IF EXISTS conversation_dictionary_index_ad;
             DROP TABLE IF EXISTS conversation_dictionary_attachments;
             DROP TABLE IF EXISTS conversation_dictionary_unresolved;
+            DROP TABLE IF EXISTS note_folder_memberships;
+            DROP TABLE IF EXISTS note_folders;
             UPDATE db_schema_version SET version = 34
              WHERE schema_name = 'rag_char_chat_schema';
             """
@@ -743,7 +745,7 @@ class TestMigrationBackfill:
                     "SELECT version FROM db_schema_version WHERE schema_name = ?",
                     ("rag_char_chat_schema",),
                 ).fetchone()["version"]
-                == 35
+                == 36
             )
             assert [
                 tuple(row)

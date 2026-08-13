@@ -67,11 +67,16 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
     ConsoleProviderGateway,
     ConsoleProviderStreamSignals,
     ProviderToolCalls,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
@@ -1240,10 +1245,7 @@ class _ModelCallLifeline:
             self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
         if self._thread.is_alive():
-            logger.warning(
-                f"model-call loop '{self._name}' did not stop within "
-                f"{_LOOP_THREAD_JOIN_SECONDS}s; leaving it to the daemon thread"
-            )
+            logger.warning("model-call loop did not stop within its bounded join")
         else:
             self.loop.close()
 
@@ -1418,6 +1420,9 @@ class _StreamingModelAdapter:
         should_cancel,
         loop,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -1426,6 +1431,9 @@ class _StreamingModelAdapter:
         self._should_cancel = should_cancel
         self._loop = loop
         self._provider_stream_signals = provider_stream_signals
+        self._continuation_sidecar = tuple(continuation_sidecar)
+        self._continuation_target = continuation_target
+        self._continuation_owner_key = continuation_owner_key
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -1561,11 +1569,23 @@ class _StreamingModelAdapter:
             # is always None. The real gateway and any fake built against
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
+            dispatch_messages = messages_payload
             stream_kwargs = {"tools": tools} if tools is not None else {}
+            prepare_request = getattr(self._gateway, "prepare_chat_request", None)
+            if self._continuation_sidecar and callable(prepare_request):
+                dispatch_messages = prepare_request(
+                    self._resolution,
+                    messages_payload,
+                    tools=tools,
+                    continuation_target=self._continuation_target,
+                    continuation_sidecar=self._continuation_sidecar,
+                    continuation_owner_key=self._continuation_owner_key,
+                )
+                stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
             async for chunk in self._gateway.stream_chat(
-                self._resolution, messages_payload, **stream_kwargs
+                self._resolution, dispatch_messages, **stream_kwargs
             ):
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
@@ -1821,19 +1841,6 @@ class _CollisionFilteredMCPProvider:
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         return self._provider.invoke(tool_id, args)
-
-
-def _truncate_log_value(value: Any, *, max_len: int = 200) -> str:
-    """Return a safe, bounded string representation for logging.
-
-    Tool arguments and results may contain secrets or very large payloads;
-    this helper truncates the string form so log lines stay readable and do
-    not dump sensitive data into logs.
-    """
-    text = str(value)
-    if len(text) > max_len:
-        return f"{text[: max_len - 3]}..."
-    return text
 
 
 def _non_colliding_mcp_names(
@@ -2497,6 +2504,15 @@ class ConsoleAgentBridge:
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
         native_tools_enabled: bool | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -2911,6 +2927,9 @@ class ConsoleAgentBridge:
             should_cancel=should_cancel,
             loop=turn_lifeline.loop,
             provider_stream_signals=provider_stream_signals,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
+            continuation_owner_key=continuation_owner_key,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -3020,26 +3039,23 @@ class ConsoleAgentBridge:
                         ),
                         tool_diff=tool_diff,
                     )
-            # Diagnostic logging for every tool call and result. The actual
-            # tool invocation lives inside AgentService, so we observe it
-            # through the step stream it emits.
+            # Content-free operational logging for tool outcomes. The actual
+            # invocation lives inside AgentService, so this intentionally
+            # records no arguments, results, summaries, or provider ids.
             if step.kind == STEP_TOOL_RESULT:
                 logger.debug(
                     "agent tool call: agent_kind={agent_kind} tool={tool_name} "
-                    "args={args} result={result} step={step_index}",
+                    "outcome=completed step={step_index}",
                     agent_kind=agent_kind,
                     tool_name=step.tool_name,
-                    args=_truncate_log_value(step.args),
-                    result=_truncate_log_value(step.result),
                     step_index=step.index,
                 )
             elif step.kind == STEP_ERROR:
                 logger.warning(
                     "agent step error: agent_kind={agent_kind} tool={tool_name} "
-                    "summary={summary} step={step_index}",
+                    "outcome=error step={step_index}",
                     agent_kind=agent_kind,
                     tool_name=step.tool_name,
-                    summary=step.summary,
                     step_index=step.index,
                 )
             self._publish_live(
@@ -3153,6 +3169,14 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
             revoke_approvals=revoke_approvals,
+            persist_provider_continuation=(
+                self._store.persist_provider_continuation_event
+            ),
+            expand_provider_continuation=expand_provider_continuation,
+            prepare_provider_continuation_request=bool(
+                continuation_sidecar
+                and callable(getattr(self._gateway, "prepare_chat_request", None))
+            ),
             # PR3a-1 Task 1: every fleet child gets its own model-call
             # lifeline, entered on the child's own thread and torn down
             # when the CHILD finishes -- never when this turn does.
@@ -3269,6 +3293,18 @@ class ConsoleAgentBridge:
                 ),
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
+                continuation_owner_message_id=assistant_message_id,
+                continuation_durability=(
+                    "ephemeral"
+                    if self._store.session_is_ephemeral(session_id)
+                    else "persistent"
+                ),
+                restore_provider_continuation=restore_provider_continuation,
+                restore_provider_target=restore_provider_target,
+                resume_provider_continuation=resume_provider_continuation,
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
+                continuation_owner_key=continuation_owner_key,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling
@@ -3700,9 +3736,7 @@ class ConsoleAgentBridge:
             if not still_live:
                 self._close_post_turn_change_window(conversation_id)
         except Exception:  # noqa: BLE001 -- tracking never breaks a reply
-            logger.opt(exception=True).warning(
-                "change_review: could not open the post-turn window"
-            )
+            logger.warning("change_review: could not open the post-turn window")
 
     def _note_successor_turn(self, conversation_id: str, handle: Any) -> None:
         """Tell an open survivor window where it must stop (Task 6c).
@@ -3775,7 +3809,7 @@ class ConsoleAgentBridge:
                 kind=CHANGE_KIND_SUBAGENT_POST_TURN,
             )
         except Exception:  # noqa: BLE001 -- never break a child's teardown
-            logger.opt(exception=True).warning(
+            logger.warning(
                 "change_review: post-turn window failed; a survivor's "
                 "changes are untracked"
             )

@@ -44,9 +44,26 @@ CITATION_MIGRATION_PATH = (
 CHARACTER_AUTHORITY_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql"
 )
+CONSOLE_CONTEXT_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql"
+)
+VISUAL_COMPACTION_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql"
+)
+DICTIONARY_ATTACHMENTS_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v34_to_v35_conversation_dictionary_attachments.sql"
+)
+NOTE_FOLDER_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql"
+)
 RUNTIME_MIGRATION_PATHS = {
     CITATION_MIGRATION_PATH,
     CHARACTER_AUTHORITY_MIGRATION_PATH,
+    CONSOLE_CONTEXT_MIGRATION_PATH,
+    VISUAL_COMPACTION_MIGRATION_PATH,
+    DICTIONARY_ATTACHMENTS_MIGRATION_PATH,
+    NOTE_FOLDER_MIGRATION_PATH,
 }
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",
@@ -661,6 +678,45 @@ for module_name, loaded_path in loaded_package_paths:
 print(package_root)
 """
 
+INSTALLED_MIGRATION_PROBE = r"""
+from pathlib import Path
+import os
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+
+import tldw_chatbook
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Utils.path_validation import validate_path
+
+package_file = Path(tldw_chatbook.__file__).resolve(strict=True)
+assert package_file.is_relative_to(expected_target), (package_file, expected_target)
+
+home_path = Path(os.environ["HOME"]).resolve(strict=True)
+migration_path = validate_path("installed-migration-probe.sqlite", home_path)
+current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+assert current_schema_version == 36
+CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
+try:
+    legacy_db = CharactersRAGDB(migration_path, client_id="installed-probe-v35")
+    assert legacy_db._get_db_version(legacy_db.get_connection()) == 35
+    legacy_db.close_connection()
+finally:
+    CharactersRAGDB._CURRENT_SCHEMA_VERSION = current_schema_version
+
+upgraded_db = CharactersRAGDB(migration_path, client_id="installed-probe-v36")
+upgraded_connection = upgraded_db.get_connection()
+assert upgraded_db._get_db_version(upgraded_connection) == 36
+installed_tables = {
+    row[0]
+    for row in upgraded_connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"
+    )
+}
+assert {"note_folders", "note_folder_memberships"} <= installed_tables
+upgraded_db.close_connection()
+print("installed-wheel-v35-to-v36-ok")
+"""
+
 
 class BuiltDistributions(NamedTuple):
     source_root: Path
@@ -1045,6 +1101,39 @@ def test_built_artifacts_match_distribution_contract(
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
     }
+
+
+def test_installed_wheel_migrates_v35_database_to_v36(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel(built_distributions, target)
+    env = _private_child_env(
+        state_root,
+        target,
+        built_distributions.source_root,
+    )
+
+    result = _run_child(
+        [sys.executable, "-c", INSTALLED_MIGRATION_PROBE],
+        run_root,
+        env,
+    )
+
+    assert "installed-wheel-v35-to-v36-ok" in result.stdout
+
+
+def test_installed_migration_probe_validates_environment_derived_path() -> None:
+    assert (
+        "from tldw_chatbook.Utils.path_validation import validate_path"
+        in INSTALLED_MIGRATION_PROBE
+    )
+    assert "migration_path = validate_path(" in INSTALLED_MIGRATION_PROBE
 
 
 def test_release_checker_accepts_fresh_artifacts(

@@ -7,13 +7,14 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 import logging
 import os
 from pathlib import Path
 import re
 import tomllib
+from typing import Any
 
 from rich.cells import cell_len
 from rich.markup import escape as escape_markup
@@ -1860,6 +1861,41 @@ class RagProfileSwitchConfirmModal(ModalScreen[str]):
         self.dismiss("save")
 
 
+class SettingsRegion(Vertical):
+    """A Settings region that can be rebuilt without recomposing the screen.
+
+    task-15475. Textual only regenerates a widget's children from ITS OWN
+    ``compose()`` -- a plain ``Vertical`` yielded inline from the screen's
+    ``compose_content`` has none, so recomposing it directly would just wipe
+    it (the exact reason ``_refresh_settings_workspaces_pane`` used to force a
+    whole-screen recompose instead). Giving the region a ``compose()`` that
+    calls back into the screen is what makes a region-scoped rebuild possible.
+
+    The builder is a bound method of the owning screen: the screen outlives
+    its regions (a region rebuild never replaces the screen), and a screen
+    recompose mints fresh regions bound to the fresh screen, so it cannot go
+    stale.
+
+    Still a ``Vertical`` subclass, so every ``Vertical`` /
+    ``.destination-workbench-pane`` CSS rule that styled these panes keeps
+    matching (Textual type selectors match base classes too).
+    """
+
+    def __init__(self, builder: Callable[[], ComposeResult], **kwargs: Any) -> None:
+        """Store the screen-side builder for this region's children.
+
+        Args:
+            builder: Zero-argument callable yielding the region's children.
+            **kwargs: Forwarded to ``Vertical`` (id, classes, ...).
+        """
+        super().__init__(**kwargs)
+        self._builder = builder
+
+    def compose(self) -> ComposeResult:
+        """Yield this region's children from the screen's builder."""
+        yield from self._builder()
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
@@ -1960,10 +1996,42 @@ class SettingsScreen(BaseAppScreen):
         }
     )
 
-    active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
+    # task-15475: none of these three is `recompose=True` any more. Each used
+    # to rebuild the WHOLE screen -- nav bar, footer, category rail, mode
+    # strip -- to repaint content that lives in one or two regions. They now
+    # drive region-scoped rebuilds through their watchers (see
+    # `watch_active_category` and `_sync_overview_sync_widgets`).
+    # `repaint=False`: the screen itself renders nothing from these values --
+    # its children do, and the watchers below repaint exactly those. It also
+    # keeps a pre-mount assignment (`restore_state`, and the bare-screen unit
+    # tests) from reaching `Widget._set_dirty`, which resolves `self.app` and
+    # raises `NoActiveAppError` off a running app. `recompose=True` used to
+    # mask that by short-circuiting before the repaint.
+    active_category = reactive(
+        SettingsCategoryId.OVERVIEW.value, repaint=False, layout=False
+    )
     category_search_query = reactive("")
-    server_sync_workspace_handoff_rows = reactive((), recompose=True)
-    manual_sync_rows = reactive((), recompose=True)
+    server_sync_workspace_handoff_rows = reactive((), repaint=False, layout=False)
+    manual_sync_rows = reactive((), repaint=False, layout=False)
+
+    #: task-15475: one-shot "the mount already queued this visit's sync-rows
+    #: refresh" token, set in `on_mount` and consumed by the mount's own
+    #: `on_screen_resume`. Class-level default so it is readable on a screen
+    #: built by `__new__` (several Settings tests construct one without
+    #: running `__init__`).
+    _settings_mount_visit_refreshed: bool = False
+
+    #: task-15475: True from the moment a category switch schedules its pane
+    #: swap until that swap finishes. `_after_category_panes` queues follow-up
+    #: work behind it (see that method for the ordering this preserves).
+    #: Class-level defaults for the same `__new__` fixtures. The queue starts
+    #: as None, never `[]`: a mutable class attribute would be SHARED by every
+    #: Settings screen ever built.
+    _category_pane_swap_pending: bool = False
+    _pending_pane_swap_callbacks: "list | None" = None
+    #: Bumped per switch; a swap whose revision is stale no-ops instead of
+    #: being cancelled mid-teardown (see `_swap_category_panes`).
+    _category_swap_revision: int = 0
     # Deliberately NOT recompose=True (Qodo review of PR #1125): a recompose
     # here remounts the theme editor on the FIRST real user edit, discarding
     # the in-progress input and leaving the flag stale-True against a clean
@@ -2112,10 +2180,13 @@ class SettingsScreen(BaseAppScreen):
         # task-1369 (review): monotonic token so a cancelled/stale run
         # worker's finally cannot clear the flag of a newer confirmed run.
         self._manual_sync_run_token = 0
-        # task-1369 (review): the sync-rows reactives are recompose=True, so
-        # every row change rebuilds the Overview Collapsibles; persist their
-        # expanded/collapsed state across recomposes instead of snapping
-        # back to collapsed while the user is watching a run.
+        # task-1369 (review): a row change used to rebuild the Overview
+        # Collapsibles (the sync-rows reactives were recompose=True), so their
+        # expanded/collapsed state is persisted here rather than snapping back
+        # to collapsed while the user is watching a run. Since task-15475 the
+        # rows have their own region and the Collapsibles are not rebuilt at
+        # all -- but this still carries the state across a CATEGORY switch,
+        # which does rebuild the detail pane.
         self._overview_sync_details_collapsed = True
         self._overview_ownership_details_collapsed = True
         self._navigation_provider: str | None = None
@@ -2153,9 +2224,17 @@ class SettingsScreen(BaseAppScreen):
         #: navigation-away via _clear_navigation_provider_context.
         self._pending_navigation_focus_selector: str | None = None
         #: One-shot category focus intent (task-1338): set when a category
-        #: switch triggers a recompose; consumed by recompose() after the
-        #: fresh children mount so focus survives the rebuild.
+        #: switch tears the detail pane down; consumed by
+        #: `_swap_category_panes` once the fresh children are mounted, so
+        #: focus survives the rebuild. (`recompose()` still consumes it too,
+        #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        #: task-15475: per-instance queue for `_after_category_panes` (the
+        #: class attribute is None precisely so this is never shared).
+        self._pending_pane_swap_callbacks: list[tuple[Callable[..., object], tuple]] = []
+        #: Serializes category-pane swaps so a superseded one never interrupts
+        #: a teardown -- it loses the revision check and returns untouched.
+        self._category_swap_lock = asyncio.Lock()
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -2253,11 +2332,13 @@ class SettingsScreen(BaseAppScreen):
         # None = not yet synced; _sync_responsive_workbench() applies the
         # compact classes on first call (on_mount) and on every resize.
         self._workbench_compact: bool | None = None
-        # set_reactive, NOT plain assignment: assigning a recompose=True
-        # reactive here fires refresh(recompose=True) on the not-yet-mounted
-        # screen; the flag survives into mount and forces a full recompose of
-        # the JUST-composed screen -- a wasted startup recompose (task-290
-        # timeline: REFRESH pre-mount -> COMPOSE -> phantom re-COMPOSE).
+        # set_reactive, NOT plain assignment: a plain assignment fires the
+        # watcher on a not-yet-mounted screen. That used to schedule a full
+        # recompose that survived into mount and re-composed the JUST-composed
+        # screen (task-290 timeline: REFRESH pre-mount -> COMPOSE -> phantom
+        # re-COMPOSE); since task-15475 the watcher is region-scoped and
+        # self-guards on `is_mounted`, but seeding without firing it at all
+        # remains the correct, cheapest thing to do here.
         self.set_reactive(
             SettingsScreen.server_sync_workspace_handoff_rows,
             self._server_sync_workspace_handoff_loading_rows(),
@@ -2325,9 +2406,11 @@ class SettingsScreen(BaseAppScreen):
     def _register_footer_shortcuts(self) -> None:
         """Register Settings shortcuts via BaseAppScreen's persisting API.
 
-        Persistence matters here: this screen's `recompose=True` reactives
-        (`active_category`, the sync-row tuples) replace the footer widget on
-        every category switch; the registration must survive that.
+        Persistence matters here: a screen-level recompose replaces the footer
+        widget, so the registration must survive one. (Since task-15475 a
+        category switch no longer causes one -- the footer widget now simply
+        survives -- but the persisted registration is still what re-seeds it
+        after any whole-screen rebuild.)
 
         Task 6 (541 AC6): the rendered set is category-aware -- LIBRARY_RAG
         additionally advertises the a/c/b profile-workflow accelerators.
@@ -2392,14 +2475,220 @@ class SettingsScreen(BaseAppScreen):
         self._register_footer_shortcuts()
 
     def watch_active_category(self) -> None:
-        """Re-advertise the honest hint set on every category switch.
+        """Re-advertise the honest hint set, then repaint the two category panes.
 
         ADR-031 rule 4 (task-1340): the footer teaches only the keys that
         work in the ACTIVE category, so switching categories re-registers.
         Safe pre-mount: the persisting API stores the registration and the
         footer is seeded from it when compose() yields the widget.
+
+        task-15475: this reactive is no longer ``recompose=True``. The rail,
+        the mode line and the focus-help line are patched in place here (they
+        are three widgets, not a screen), and the detail and inspector panes
+        -- the only regions that render the category's content -- are rebuilt
+        by a worker. Pre-mount assignments (``restore_state`` sets this before
+        the screen mounts) are a no-op: ``compose_content`` reads
+        ``active_category`` fresh, so the first paint is already correct.
         """
         self._register_footer_shortcuts()
+        self._sync_category_chrome()
+        # `is_running`, not `is_mounted`: a bare `SettingsScreen(app)` built in
+        # a unit test reports mounted but has no active app, and `run_worker`
+        # goes through `self.app` (this is the same guard `BaseAppScreen.
+        # refresh` uses for its own recompose path).
+        if getattr(self, "is_running", False):
+            # Same protection the whole-screen recompose gave: a widget about
+            # to be torn down must not be left holding the mouse capture (an
+            # `Input` mid-click has no `_on_hide` to release it, and a stale
+            # capture silently swallows every click app-wide -- task-627).
+            self.release_mouse_capture_for_teardown()
+            self._category_pane_swap_pending = True
+            self._category_swap_revision += 1
+            self.run_worker(
+                self._swap_category_panes(revision=self._category_swap_revision),
+                group="settings-category-panes",
+                # NOT exclusive: cancelling an in-flight swap can land inside
+                # `recompose()`'s removal and strand a pane emptied but never
+                # refilled, and it skips the post-teardown mouse-capture
+                # sweep. A lock plus a revision check supersedes just as
+                # firmly without ever interrupting a teardown.
+                exclusive=False,
+                exit_on_error=False,
+            )
+
+    def _sync_category_chrome(self) -> None:
+        """Patch the three category-dependent widgets outside the two panes.
+
+        The category rail is not rebuilt any more, so the active marker and
+        the per-button label (which carries the active glyph and the unsaved-
+        changes marker) are written onto the surviving buttons, using the same
+        rules ``_render_category_buttons`` applies at compose time.
+        """
+        if not getattr(self, "is_mounted", False):
+            return
+        self._set_static_text(
+            "#settings-category-label", self._mode_line_text(self._active_summary())
+        )
+        for summary in self._category_summaries():
+            try:
+                button = self.query_one(
+                    f"#settings-category-{summary.category.value}", Button
+                )
+            except QueryError:
+                continue
+            is_active = summary.category.value == self.active_category
+            button.set_class(is_active, "settings-active-section")
+            button.label = self._category_button_label(summary, is_active=is_active)
+        # The focus-help line described a control in the category being left;
+        # the whole-screen recompose used to clear it by construction.
+        self._set_static_text("#settings-focus-help", "")
+
+    async def _swap_category_panes(self, *, revision: int) -> None:
+        """Rebuild the detail and inspector panes for the active category.
+
+        Batched (the same lock-plus-``batch_update`` ``Widget.recompose``
+        uses) so the two rebuilds drive one layout pass rather than two, and
+        serialized by ``_category_swap_lock`` with a revision check so a
+        superseded swap no-ops BEFORE touching a widget instead of being
+        cancelled mid-teardown.
+
+        This is also where the category-switch follow-ups run. They cannot use
+        ``screen.call_after_refresh``: a REGION's recompose is serviced by that
+        region's own message pump, while the screen's callback list is
+        serviced by the screen's, and nothing orders the two -- a follow-up
+        queued on the screen fires against the OLD children or after they are
+        gone. Hanging them off the end of this coroutine, which awaits the
+        rebuilds, restores the ordering the whole-screen recompose gave for
+        free.
+
+        Focus: a SAME-category rebuild (Workspaces row click, show-archived
+        toggle, `_refresh_settings_workspaces_pane`) destroys the control the
+        user is standing on, and Textual's ``_reset_focus`` then lands them on
+        the rail's Domain Defaults GROUP TOGGLE -- where the next Space
+        collapses the group. Pane control ids are stable across a same-category
+        rebuild, so the identity is captured and restored, mirroring
+        ``SpeechTTSSettingsPanel._replace_card_bodies``. A genuine category
+        CHANGE keeps the old behaviour instead (``_pending_category_focus_
+        value`` -> the new rail button), since the old category's ids are
+        meaningless in the new one.
+
+        Args:
+            revision: The switch this swap belongs to; a stale one returns
+                without touching anything.
+
+        Returns:
+            None.
+        """
+        async with self._category_swap_lock:
+            if revision != self._category_swap_revision:
+                # Superseded while queued -- the newest swap owns the work,
+                # the pending flag, and the queued follow-ups.
+                return
+            try:
+                if not getattr(self, "is_mounted", False):
+                    return
+                focus_id = self._focused_id_in_category_panes()
+                self.release_mouse_capture_for_teardown()
+                async with self.batch():
+                    for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
+                        try:
+                            pane = self.query_one(pane_id, SettingsRegion)
+                        except QueryError:
+                            # Screen torn down (navigated away) mid-swap.
+                            continue
+                        await pane.recompose()
+                # A MouseDown already queued on a child's pump can capture that
+                # child DURING the removal drain, after the release above.
+                self.sweep_stale_mouse_capture()
+                if not getattr(self, "is_mounted", False):
+                    return
+                category_value = self._pending_category_focus_value
+                if category_value is not None:
+                    self._pending_category_focus_value = None
+                    self._focus_category(category_value)
+                elif focus_id:
+                    self._restore_category_pane_focus(focus_id)
+                self._drain_pane_swap_callbacks()
+                # After a REFRESH, not inline: the hint compares the inspector
+                # body's virtual and container heights, and the pane it belongs
+                # to was remounted a moment ago -- read synchronously here the
+                # geometry is still the pre-layout zero and the hint stays
+                # hidden over an overflowing body (task-1623's exact defect).
+                self.call_after_refresh(self._update_inspector_overflow_hint)
+            finally:
+                # Token-compared: only the swap that still owns the revision
+                # may clear the flag. A superseded one clearing it would send
+                # the winner's own follow-ups into a queue nothing drains.
+                if revision == self._category_swap_revision:
+                    self._category_pane_swap_pending = False
+
+    def _focused_id_in_category_panes(self) -> str | None:
+        """The focused widget's id, if this swap is about to destroy it.
+
+        Returns:
+            The id to restore afterwards, or None when focus is outside the
+            two rebuilt panes or on a widget with no id to find it by.
+        """
+        focused = self.app.focused if getattr(self, "is_running", False) else None
+        if focused is None or focused.screen is not self or not focused.id:
+            return None
+        for ancestor in focused.ancestors_with_self:
+            if getattr(ancestor, "id", None) in (
+                "settings-detail-pane",
+                "settings-impact-pane",
+            ):
+                return focused.id
+        return None
+
+    def _restore_category_pane_focus(self, focus_id: str) -> None:
+        """Re-focus ``focus_id`` if the rebuilt panes still contain it."""
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            # No counterpart in the rebuilt pane (a different category, or a
+            # control this state does not render) -- leave focus alone.
+            pass
+
+    def _after_category_panes(self, callback: Callable[..., object], *args) -> None:
+        """Run ``callback`` once the new category's panes are on screen.
+
+        The replacement for ``call_after_refresh`` at the handful of call
+        sites that fire immediately after ``_select_category`` and then touch
+        the new category's widgets (deep links, field-targeted search).
+
+        Textual ran a screen's recompose BEFORE its ``call_after_refresh``
+        callbacks, so those callers were guaranteed the new pane. A
+        pane-scoped rebuild runs in a worker on a different pump and finishes
+        AFTER them: the deep-link callback found no panel and silently
+        dropped its focus, leaving the user on ``nav-home`` (caught by
+        ``test_bounded_speech_settings_deep_link_restores_provider_without_
+        action``). Queuing here restores both the guarantee and the order --
+        the category-focus restore runs first, then these, so a deep link's
+        field focus still wins over the rail button exactly as before.
+
+        Args:
+            callback: Zero-or-more-argument callable to run.
+            *args: Positional arguments for ``callback``.
+
+        Returns:
+            None.
+        """
+        if not self._category_pane_swap_pending:
+            self.call_after_refresh(callback, *args)
+            return
+        if self._pending_pane_swap_callbacks is None:
+            self._pending_pane_swap_callbacks = []
+        self._pending_pane_swap_callbacks.append((callback, args))
+
+    def _drain_pane_swap_callbacks(self) -> None:
+        """Run (and clear) everything queued behind the pane swap."""
+        callbacks = self._pending_pane_swap_callbacks or []
+        self._pending_pane_swap_callbacks = []
+        for callback, args in callbacks:
+            try:
+                callback(*args)
+            except Exception:
+                logger.debug("Settings post-pane-swap callback failed.")
 
     def action_show_workbench_help(self) -> None:
         """F1 help: list the ACTIVE category's working shortcuts (task-1340).
@@ -2432,7 +2721,12 @@ class SettingsScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
-        self._queue_sync_rows_refresh()
+        # task-15475: claim this visit's sync-rows refresh -- but only if one
+        # actually started. Textual posts ScreenResume when a screen is
+        # PUSHED, so the mount's OWN resume follows immediately and used to
+        # run a second full manual-sync preview (a real DB/service round trip)
+        # for the same visit.
+        self._settings_mount_visit_refreshed = self._queue_sync_rows_refresh()
         # Task 4 (SP3): covers restored state (`restore_state` can set
         # `active_category` to LIBRARY_RAG before this screen is even
         # mounted) -- `_select_category` alone only covers a later in-session
@@ -2473,12 +2767,20 @@ class SettingsScreen(BaseAppScreen):
                 continue
 
     def on_screen_resume(self) -> None:
+        # task-15475: consume the mount's one-shot token. On the first visit
+        # this resume IS the mount's own and on_mount already queued the
+        # refresh. Consumed, not latched: every later resume refreshes again,
+        # which is the whole point of refreshing on resume (the sync state may
+        # have moved while Settings was suspended).
+        mount_already_refreshed = self._settings_mount_visit_refreshed
+        self._settings_mount_visit_refreshed = False
         if self._manual_sync_run_in_flight:
             # task-1369: a manual sync run is in flight; the resume refresh
             # would overwrite the "running" rows the confirm callback just
             # set. The run worker applies the result rows itself.
             return
-        self._queue_sync_rows_refresh()
+        if not mount_already_refreshed:
+            self._queue_sync_rows_refresh()
         self._maybe_refresh_rag_index_status_on_show()
         self._maybe_refresh_workspaces_pane_on_show()
 
@@ -2496,10 +2798,20 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.WORKSPACES:
             self._refresh_settings_workspaces_pane()
 
-    def _queue_sync_rows_refresh(self) -> None:
+    def _queue_sync_rows_refresh(self) -> bool:
+        """Start the combined sync-rows refresh, if the screen can run one.
+
+        Returns:
+            bool: Whether a refresh was actually dispatched. ``on_mount``
+            records this as its visit token (task-15475): a mount that was too
+            early to dispatch (``is_mounted`` still ``False`` -- which happens,
+            depending on how the screen was pushed) must NOT suppress the
+            resume that follows it, or the rows never load at all.
+        """
         if not getattr(self, "is_mounted", False):
-            return
+            return False
         self._refresh_sync_rows()
+        return True
 
     @staticmethod
     def _server_sync_workspace_handoff_loading_rows() -> tuple[tuple[str, str], ...]:
@@ -3616,9 +3928,7 @@ class SettingsScreen(BaseAppScreen):
             The new (post-toggle) enabled value.
         """
         next_value = not self._remote_images_enabled()
-        save_settings_to_cli_config(
-            {"chat.images": {"render_remote_images": next_value}}
-        )
+        self._persist_remote_images_toggle(next_value)
         app_config = getattr(self.app_instance, "app_config", None)
         if isinstance(app_config, dict):
             raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
@@ -3632,6 +3942,27 @@ class SettingsScreen(BaseAppScreen):
             ):
                 chat_section["images"]["render_remote_images"] = next_value
         return next_value
+
+    @work(thread=True)
+    def _persist_remote_images_toggle(self, next_value: bool) -> None:
+        """Write the render_remote_images preference off the event loop.
+
+        task-15470: this was a synchronous ``save_settings_to_cli_config``
+        call straight in a Button.Pressed handler -- a full config.toml
+        read+atomic-rewrite+cache-reload per click. The in-memory
+        ``app_config`` update in ``_toggle_remote_images`` (which the
+        transcript gate reads live) stays synchronous; only the disk write
+        moves to a worker. Guarded broadly: an uncaught exception in a
+        ``@work(thread=True)`` worker is fatal to the app by default
+        (``exit_on_error=True``), so a config-write hiccup must not crash
+        the whole session.
+        """
+        try:
+            save_settings_to_cli_config(
+                {"chat.images": {"render_remote_images": next_value}}
+            )
+        except Exception:
+            logger.warning("Failed to persist render_remote_images.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -5181,7 +5512,7 @@ class SettingsScreen(BaseAppScreen):
                     self._stage_speech_tts_navigation_target(speech_target)
             self._select_category(category_values[0], restore_focus=True)
             if speech_target is not None:
-                self.call_after_refresh(self._apply_speech_tts_navigation_context)
+                self._after_category_panes(self._apply_speech_tts_navigation_context)
             # task-1715: if the query named a field, land ON the field --
             # focusing it also fires its inspector guidance.
             opened = SettingsCategoryId(category_values[0])
@@ -5195,7 +5526,7 @@ class SettingsScreen(BaseAppScreen):
                     except QueryError:
                         pass
 
-                self.call_after_refresh(_focus_matched_field)
+                self._after_category_panes(_focus_matched_field)
             # task-1712: the filter has done its job -- clear it so the
             # rail returns to the full category map. Residue used to prune
             # the rail to the last search's matches for the rest of the
@@ -6674,12 +7005,16 @@ class SettingsScreen(BaseAppScreen):
         handoff_rows: tuple[tuple[str, str], ...],
         manual_rows: tuple[tuple[str, str], ...],
     ) -> None:
-        """Apply both row sets in one hop, preserving focus across the
-        recompose they trigger.
+        """Apply both row sets in one hop.
 
-        The recompose replaces every child, dropping whatever the user (or a
-        route-targeted navigation like ``_apply_navigation_provider_context``)
-        had focused -- restore it by id once the fresh children mount.
+        Historically these were ``recompose=True`` reactives and this method
+        existed to carry focus across the whole-screen rebuild they caused --
+        it dropped whatever the user (or a route-targeted navigation like
+        ``_apply_navigation_provider_context``) had focused. task-15475 scoped
+        the update to the rows' own region, and every widget in it is a
+        non-focusable ``Static``, so there is nothing left to drop. The
+        follow-up call is kept: it also re-evaluates the inspector's fold
+        indicator, and its focus half is a self-guarding no-op now.
         """
         changed = (
             handoff_rows != self.server_sync_workspace_handoff_rows
@@ -6700,10 +7035,10 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
 
     def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
-        # task-1716 (critique r4): the sync-rows recompose mints a fresh,
-        # hidden fold indicator AFTER on_mount's evaluation ran -- Overview
-        # (the only category whose pane recomposes on these rows) showed a
-        # mid-sentence inspector cut with no indicator.
+        # task-1716 (critique r4): a sync-rows change re-flows the Overview
+        # detail pane, so the inspector's fold indicator has to be re-judged
+        # against the new content height -- Overview showed a mid-sentence
+        # inspector cut with no indicator.
         self.call_after_refresh(self._update_inspector_overflow_hint)
         pending = self._pending_navigation_focus_selector
         self._pending_navigation_focus_selector = None
@@ -8434,15 +8769,22 @@ class SettingsScreen(BaseAppScreen):
             return
         select_value = self._provider_select_value_for_provider(provider)
         uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
+        # task-15740: the `_syncing_*` flags alone cannot guard these
+        # assignments -- `Changed` is a POSTED message, delivered after the
+        # `finally` has dropped the flag, so every programmatic repopulation
+        # was arriving at the handlers as a user edit. `prevent()` stops the
+        # message at the source; the flags stay for the synchronous path.
         self._syncing_provider_selection = True
         try:
-            provider_select.value = select_value
+            with provider_select.prevent(Select.Changed):
+                provider_select.value = select_value
         finally:
             self._syncing_provider_selection = False
         self._syncing_provider_manual = True
         try:
             manual_input.disabled = not uses_manual_entry
-            manual_input.value = provider if uses_manual_entry else ""
+            with manual_input.prevent(Input.Changed):
+                manual_input.value = provider if uses_manual_entry else ""
             manual_row.set_class(
                 not uses_manual_entry, "settings-provider-manual-hidden"
             )
@@ -8470,7 +8812,10 @@ class SettingsScreen(BaseAppScreen):
         if selector.value != display_value:
             self._syncing_provider_api_mode = True
             try:
-                selector.value = display_value
+                # task-15740: see `_sync_provider_selection_widgets` -- the
+                # flag misses the posted message.
+                with selector.prevent(Select.Changed):
+                    selector.value = display_value
             finally:
                 self._syncing_provider_api_mode = False
         guidance.update(
@@ -8623,7 +8968,11 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_credential_env_var = True
         try:
             if credential_input is not None:
-                credential_input.value = self._provider_credential_env_var(provider)
+                # task-15740: the flag misses the posted message; this echo
+                # staged the new provider's env var against the old
+                # provider's original.
+                with credential_input.prevent(Input.Changed):
+                    credential_input.value = self._provider_credential_env_var(provider)
                 credential_input.placeholder = self._provider_credential_placeholder(
                     provider
                 )
@@ -8683,23 +9032,25 @@ class SettingsScreen(BaseAppScreen):
                     except QueryError:
                         continue
                     select.disabled = not supported
-                    if draft_key == "model_profile_streaming":
-                        select.value = (
-                            self._streaming_select_value(value)
-                            if supported
-                            else Select.NULL
-                        )
-                    else:
-                        select.value = (
-                            self._select_option_value(
-                                value,
-                                CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ],
+                    # task-15740: prevent the posted echo the flag misses.
+                    with select.prevent(Select.Changed):
+                        if draft_key == "model_profile_streaming":
+                            select.value = (
+                                self._streaming_select_value(value)
+                                if supported
+                                else Select.NULL
                             )
-                            if supported
-                            else Select.NULL
-                        )
+                        else:
+                            select.value = (
+                                self._select_option_value(
+                                    value,
+                                    CLOSED_ENUM_SELECT_OPTIONS[
+                                        PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                                    ],
+                                )
+                                if supported
+                                else Select.NULL
+                            )
                 else:
                     try:
                         widget = self.query_one(selector, Input)
@@ -8709,7 +9060,11 @@ class SettingsScreen(BaseAppScreen):
                     widget.placeholder = self._model_profile_input_placeholder(
                         provider, draft_key
                     )
-                    widget.value = self._profile_input_value(value) if supported else ""
+                    # task-15740: prevent the posted echo the flag misses.
+                    with widget.prevent(Input.Changed):
+                        widget.value = (
+                            self._profile_input_value(value) if supported else ""
+                        )
                 # task-189: gated rows are hidden (not rendered as disabled
                 # placeholder noise); the disclosure shows one summary line.
                 try:
@@ -8728,11 +9083,20 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_context_window = True
         try:
             try:
-                self.query_one(
+                context_input = self.query_one(
                     "#settings-model-context-window", Input
-                ).value = self._profile_input_value(value)
+                )
             except QueryError:
                 pass
+            else:
+                # task-15740: THE defect behind "Model context window must be
+                # a positive whole number" refusing a provider switch's save:
+                # this repopulation (often to "") arrived at the handler after
+                # the flag dropped and was staged as a user edit against the
+                # OLD model's loaded value -- dirty-and-empty, which the save
+                # guard then refused.
+                with context_input.prevent(Input.Changed):
+                    context_input.value = self._profile_input_value(value)
         finally:
             self._syncing_provider_context_window = False
         self._set_static_text(
@@ -9404,7 +9768,28 @@ class SettingsScreen(BaseAppScreen):
             load_settings()
         ):
             return
-        save_settings_to_cli_config(section_values)
+        self._persist_model_catalog_section_values(section_values)
+
+    @work(thread=True)
+    def _persist_model_catalog_section_values(
+        self, section_values: dict[str, dict[str, object]]
+    ) -> None:
+        """Write ``[model_catalog]`` off the event loop.
+
+        task-15470: ``#settings-model-catalog-stale-hours`` is bound to
+        ``Input.Changed`` -- this used to call ``save_settings_to_cli_
+        config`` (a full config.toml read+atomic-rewrite+cache-reload)
+        synchronously on the event loop once per keystroke that parses as a
+        valid, changed value (every digit of a multi-digit number). The
+        no-op guard above (cheap: reads the cached settings, no I/O) stays
+        synchronous; only the actual write is deferred. Guarded broadly: an
+        uncaught exception in a ``@work(thread=True)`` worker is fatal to
+        the app by default (``exit_on_error=True``).
+        """
+        try:
+            save_settings_to_cli_config(section_values)
+        except Exception:
+            logger.warning("Failed to persist model_catalog settings.")
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
@@ -10403,6 +10788,53 @@ class SettingsScreen(BaseAppScreen):
         pending = rows.get("Pending outgoing", "unknown")
         return f"{status}; pending outgoing: {pending}"
 
+    def _compose_manual_sync_rows(self) -> ComposeResult:
+        """Yield the manual-sync detail rows (task-15475's own region)."""
+        for label, value in self.manual_sync_rows:
+            yield self._detail_row(label, value)
+
+    def _compose_server_sync_handoff_rows(self) -> ComposeResult:
+        """Yield the server/sync/workspace/handoff detail rows."""
+        for label, value in self.server_sync_workspace_handoff_rows:
+            yield self._detail_row(label, value)
+
+    def watch_manual_sync_rows(self) -> None:
+        """Repaint the sync rows in place (task-15475)."""
+        self._sync_overview_sync_widgets()
+
+    def watch_server_sync_workspace_handoff_rows(self) -> None:
+        """Repaint the handoff rows in place (task-15475)."""
+        self._sync_overview_sync_widgets()
+
+    def _sync_overview_sync_widgets(self) -> None:
+        """Push the current sync rows into the mounted Overview widgets.
+
+        Replaces a screen-level ``recompose=True`` on both row reactives. The
+        Overview front door's one-line summary is a ``Static.update``; the two
+        row lists rebuild their own containers. Every one of those widgets is
+        a non-focusable ``Static``, so unlike the recompose this cannot drop
+        the user's focus or scroll position -- including on the "Sync preview"
+        and "Run manual sync" buttons that sit right beside them and used to
+        be destroyed twice per press.
+
+        A no-op on every category but Overview: nothing else renders them.
+        """
+        if not getattr(self, "is_mounted", False):
+            return
+        self._set_static_text(
+            "#settings-overview-sync-summary",
+            f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
+        )
+        for region_id in (
+            "#settings-overview-manual-sync-rows",
+            "#settings-overview-handoff-rows",
+        ):
+            try:
+                region = self.query_one(region_id, SettingsRegion)
+            except QueryError:
+                continue
+            region.refresh(recompose=True)
+
     def _render_overview_detail(self) -> ComposeResult:
         # task-1369: the landing card leads with four primary status rows,
         # each with an Open-category affordance (the sync row carries the
@@ -10474,10 +10906,19 @@ class SettingsScreen(BaseAppScreen):
                     "Preview pending Notes/Chat changes before anything is sent to a server.",
                     classes="settings-help-copy",
                 )
-                for label, value in self.manual_sync_rows:
-                    yield self._detail_row(label, value)
-                for label, value in self.server_sync_workspace_handoff_rows:
-                    yield self._detail_row(label, value)
+                # task-15475: own containers so a sync-rows refresh rebuilds
+                # ELEVEN Statics instead of the whole screen. Containers, not
+                # per-row `Static.update` patches, because the row sets are not
+                # fixed: a run result renames "Manual sync preview" to "Manual
+                # sync result" and can append conflict/recovery rows.
+                yield SettingsRegion(
+                    self._compose_manual_sync_rows,
+                    id="settings-overview-manual-sync-rows",
+                )
+                yield SettingsRegion(
+                    self._compose_server_sync_handoff_rows,
+                    id="settings-overview-handoff-rows",
+                )
                 with Horizontal(classes="settings-action-row"):
                     yield Button(
                         "Switch Source / Server",
@@ -13112,13 +13553,14 @@ class SettingsScreen(BaseAppScreen):
         """Re-render the Workspaces category via the screen's existing
         category-recompose path (task 9).
 
-        `active_category` is a `recompose=True` reactive that already
-        drives every category switch (`_select_category`); forcing it here
-        with `mutate_reactive` reuses that same, already-proven path
-        instead of recomposing a bespoke nested container (Textual only
-        regenerates a widget's children from ITS OWN `compose()` -- a
-        generic `Vertical` yielded inline here has none, so recomposing it
-        directly would just wipe it). `_render_workspaces_detail` reads
+        `active_category`'s watcher already drives every category switch
+        (`_select_category`); forcing it here with `mutate_reactive` reuses
+        that same, already-proven path. Since task-15475 that path rebuilds
+        the two category panes rather than the whole screen -- the panes are
+        `SettingsRegion`s precisely so they CAN be rebuilt on their own
+        (Textual only regenerates a widget's children from ITS OWN
+        `compose()`, which a generic inline `Vertical` does not have).
+        `_render_workspaces_detail` reads
         the registry plus the plain `_settings_selected_workspace_id` /
         `_settings_show_archived_workspaces` attributes fresh on every
         call, so there is no separate watcher-populated cache that could
@@ -14233,32 +14675,23 @@ class SettingsScreen(BaseAppScreen):
                     ):
                         yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
-                detail_pane_container = (
-                    Vertical
-                    if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
-                    else VerticalScroll
-                )
-                detail_pane = Vertical(
+                # task-15475: the two category-dependent panes are
+                # `SettingsRegion`s so a category switch can rebuild THEM
+                # rather than the whole screen (which also rebuilt the nav
+                # bar, the footer, the rail and the mode strip -- none of
+                # which read the category's content).
+                detail_pane = SettingsRegion(
+                    self._compose_detail_pane_region,
                     id="settings-detail-pane",
                     classes="destination-workbench-pane" + pane_class_suffix,
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
                 detail_pane.styles.height = "100%"
-                with detail_pane:
-                    # task-1716 (critique r4): ONE pinned State banner --
-                    # previously each category composed its own inside the
-                    # scrollable content, so the persistence badge (the
-                    # save-contract carrier) scrolled away mid-task (RAG
-                    # showed no State line at all in evidence).
-                    yield self._render_category_state_banner(active_summary.category)
-                    detail_body = detail_pane_container(id="settings-detail-pane-body")
-                    detail_body.styles.height = "1fr"
-                    detail_body.styles.scrollbar_size_vertical = 1
-                    with detail_body:
-                        yield from self._render_detail_pane()
+                yield detail_pane
                 yield self._column_divider("settings-detail-impact-divider")
-                impact_pane = Vertical(
+                impact_pane = SettingsRegion(
+                    self._compose_impact_pane_region,
                     id="settings-impact-pane",
                     classes="destination-workbench-pane ds-inspector"
                     + pane_class_suffix,
@@ -14268,28 +14701,7 @@ class SettingsScreen(BaseAppScreen):
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
                 impact_pane.styles.height = "100%"
-                with impact_pane:
-                    yield from self._render_impact_pane_header()
-                    impact_body = VerticalScroll(id="settings-impact-pane-body")
-                    # Inline styles, not CSS: the app-tier bundle outranks
-                    # screen CSS and a 100%-height default would collapse
-                    # inside the auto-flow wrapper (same guard as the image
-                    # viewer modal).
-                    impact_body.styles.height = "1fr"
-                    impact_body.styles.scrollbar_size_vertical = 1
-                    with impact_body:
-                        yield from self._render_impact_pane_body()
-                    # task-1623: reserved fold-indicator row -- 8 of 26
-                    # critique captures ended the inspector mid-sentence
-                    # with nothing saying more content exists.
-                    overflow_hint = Static(
-                        "▼ more — scroll the inspector",
-                        id="settings-impact-overflow-hint",
-                    )
-                    overflow_hint.styles.height = 1
-                    overflow_hint.styles.color = "gray"
-                    overflow_hint.display = False
-                    yield overflow_hint
+                yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
             yield Static(
@@ -14298,6 +14710,53 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-focus-help",
                 markup=False,
             )
+
+    def _compose_detail_pane_region(self) -> ComposeResult:
+        """Yield the detail pane's children for the ACTIVE category.
+
+        Read fresh from ``self.active_category`` on every call (including the
+        region-scoped rebuilds a category switch now drives), so the pane can
+        never render a stale category.
+        """
+        active_summary = self._active_summary()
+        detail_pane_container = (
+            Vertical
+            if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
+            else VerticalScroll
+        )
+        # task-1716 (critique r4): ONE pinned State banner -- previously each
+        # category composed its own inside the scrollable content, so the
+        # persistence badge (the save-contract carrier) scrolled away mid-task
+        # (RAG showed no State line at all in evidence).
+        yield self._render_category_state_banner(active_summary.category)
+        detail_body = detail_pane_container(id="settings-detail-pane-body")
+        detail_body.styles.height = "1fr"
+        detail_body.styles.scrollbar_size_vertical = 1
+        with detail_body:
+            yield from self._render_detail_pane()
+
+    def _compose_impact_pane_region(self) -> ComposeResult:
+        """Yield the inspector pane's children for the ACTIVE category."""
+        yield from self._render_impact_pane_header()
+        impact_body = VerticalScroll(id="settings-impact-pane-body")
+        # Inline styles, not CSS: the app-tier bundle outranks screen CSS and
+        # a 100%-height default would collapse inside the auto-flow wrapper
+        # (same guard as the image viewer modal).
+        impact_body.styles.height = "1fr"
+        impact_body.styles.scrollbar_size_vertical = 1
+        with impact_body:
+            yield from self._render_impact_pane_body()
+        # task-1623: reserved fold-indicator row -- 8 of 26 critique captures
+        # ended the inspector mid-sentence with nothing saying more content
+        # exists.
+        overflow_hint = Static(
+            "▼ more — scroll the inspector",
+            id="settings-impact-overflow-hint",
+        )
+        overflow_hint.styles.height = 1
+        overflow_hint.styles.color = "gray"
+        overflow_hint.display = False
+        yield overflow_hint
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -14423,7 +14882,7 @@ class SettingsScreen(BaseAppScreen):
                 self._speech_tts_navigation_target = None
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
-            self.call_after_refresh(self._apply_speech_tts_navigation_context)
+            self._after_category_panes(self._apply_speech_tts_navigation_context)
             return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._clear_navigation_provider_context()
@@ -14449,7 +14908,7 @@ class SettingsScreen(BaseAppScreen):
         self._navigation_model = model
         self._navigation_field = field
         self._select_category(category_value, restore_focus=True)
-        self.call_after_refresh(
+        self._after_category_panes(
             self._apply_navigation_provider_context, provider, model, field
         )
 
@@ -14526,7 +14985,13 @@ class SettingsScreen(BaseAppScreen):
         try:
             self._syncing_provider_model_value = True
             try:
-                self.query_one("#settings-model-value", Input).value = model_value
+                model_input = self.query_one("#settings-model-value", Input)
+                # task-15673/15740: the flag misses the posted message; the
+                # echo staged the nav model as an edit, marking the category
+                # dirty so this method's own unsaved-changes guard refused
+                # the NEXT navigation apply.
+                with model_input.prevent(Input.Changed):
+                    model_input.value = model_value
             finally:
                 self._syncing_provider_model_value = False
         except QueryError:
@@ -14733,19 +15198,29 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_raw_section_cache = None
         if restore_focus:
             if category_changed:
-                # The recompose from assigning active_category destroys the
-                # focused widget; _select_category's call_after_refresh restore
-                # races that recompose (task-1338: focus ended up <none>), so
-                # record an intent consumed by recompose() after the fresh
-                # children mount.
+                # The pane swap from assigning active_category destroys the
+                # focused widget; a call_after_refresh restore races it
+                # (task-1338: focus ended up <none>), so record an intent the
+                # swap consumes after the fresh children mount.
                 self._pending_category_focus_value = category_value
             else:
                 self.call_after_refresh(self._focus_category, category_value)
-        # task-1623: the recompose minted a fresh (hidden) fold indicator;
-        # re-evaluate it against the new category's inspector content.
-        self.call_after_refresh(self._update_inspector_overflow_hint)
+        if not category_changed:
+            # task-1623: re-evaluate the fold indicator against the inspector's
+            # content. Only on the no-switch path: a real switch runs a pane
+            # swap, and that queues its own evaluation AFTERWARDS. Queuing one
+            # here too would fire first, against the pane the swap has not
+            # rebuilt yet -- pre-swap geometry, and a wasted pass.
+            self.call_after_refresh(self._update_inspector_overflow_hint)
 
     async def recompose(self) -> None:
+        """Restore a pending category focus after a WHOLE-screen rebuild.
+
+        No longer the category-switch path (task-15475 made that a pane swap,
+        which consumes the same intent itself) -- kept because any remaining
+        screen-level `refresh(recompose=True)` still destroys the rail button
+        the intent names.
+        """
         await super().recompose()
         category_value = self._pending_category_focus_value
         if category_value is None:
@@ -15882,7 +16357,10 @@ class SettingsScreen(BaseAppScreen):
                     severity="warning",
                 )
 
-        self.call_after_refresh(_focus_summary_prompt)
+        # After the panes, not after the next refresh: the Internal Prompts
+        # panel this reaches for is built by the detail pane's own rebuild
+        # (task-15475), which finishes later than a screen callback would.
+        self._after_category_panes(_focus_summary_prompt)
 
     @on(Input.Changed, "#settings-console-default-user-display-name")
     def handle_console_default_user_display_name_changed(
@@ -16930,7 +17408,13 @@ class SettingsScreen(BaseAppScreen):
         if endpoint_input is not None:
             self._syncing_provider_endpoint = True
             try:
-                endpoint_input.value = self._provider_endpoint_value(staged_provider)
+                # task-15740: the flag misses the posted message; the echo
+                # staged the new provider's endpoint (often "") against the
+                # old provider's original -- the exact stale-endpoint save
+                # test_settings_provider_switch_does_not_save_stale_endpoint
+                # pins against.
+                with endpoint_input.prevent(Input.Changed):
+                    endpoint_input.value = self._provider_endpoint_value(staged_provider)
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(
                     staged_provider
                 )
@@ -16943,11 +17427,15 @@ class SettingsScreen(BaseAppScreen):
         if provider_changed:
             self._stage_provider_value("model", provider_default_model or None)
             try:
-                self.query_one(
-                    "#settings-model-value", Input
-                ).value = provider_default_model
+                default_model_input = self.query_one("#settings-model-value", Input)
             except QueryError:
                 pass
+            else:
+                # task-15740: the model is staged explicitly one line up; the
+                # unguarded echo re-staged it a second time through the
+                # handler. Same class as the flagged sites, no flag at all.
+                with default_model_input.prevent(Input.Changed):
+                    default_model_input.value = provider_default_model
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._reset_provider_model_discovery_state()
@@ -17047,9 +17535,12 @@ class SettingsScreen(BaseAppScreen):
         self._stage_provider_value("model_context_window_reset", True)
         self._syncing_provider_context_window = True
         try:
-            self.query_one("#settings-model-context-window", Input).value = str(
-                detected
-            )
+            context_input = self.query_one("#settings-model-context-window", Input)
+            # task-15740: with the echo prevented at the source, the handler's
+            # reset-echo tolerance is belt-and-braces rather than the only
+            # thing keeping a reset from turning back into an override.
+            with context_input.prevent(Input.Changed):
+                context_input.value = str(detected)
         finally:
             self._syncing_provider_context_window = False
         event.button.disabled = True
@@ -17068,6 +17559,19 @@ class SettingsScreen(BaseAppScreen):
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_endpoint:
             self._update_provider_dynamic_widgets()
+            return
+        # task-15673: a freshly MOUNTED Input posts Changed for its
+        # compose-time initial value (verified against Textual directly), so a
+        # navigation preselect's recompose delivers the nav provider's
+        # endpoint here as if the user typed it -- staged against the OLD
+        # provider's loaded original, that dirt made the deferred
+        # _apply_navigation_provider_context refuse to apply the nav model.
+        # Same nav-echo tolerance handle_model_value_changed already has.
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_endpoint_value(self._navigation_provider)
+        ):
             return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -17133,6 +17637,14 @@ class SettingsScreen(BaseAppScreen):
     def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_credential_env_var:
             self._update_provider_dynamic_widgets()
+            return
+        # task-15673: see handle_provider_endpoint_changed -- the nav
+        # recompose's mount echo must not stage as a user edit.
+        if (
+            self._navigation_provider
+            and event.value.strip()
+            == self._provider_credential_env_var(self._navigation_provider)
+        ):
             return
         self._stage_provider_value("credential_env_var", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -18337,9 +18849,12 @@ class SettingsScreen(BaseAppScreen):
                 provider = str(values["provider"])
                 self._syncing_provider_selection = True
                 try:
-                    self.query_one(
-                        "#settings-provider-value", Select
-                    ).value = self._provider_select_value_for_provider(provider)
+                    revert_select = self.query_one("#settings-provider-value", Select)
+                    # task-15740: prevent the posted echo the flag misses.
+                    with revert_select.prevent(Select.Changed):
+                        revert_select.value = (
+                            self._provider_select_value_for_provider(provider)
+                        )
                 finally:
                     self._syncing_provider_selection = False
                 self._sync_provider_manual_widget(provider)
@@ -18617,7 +19132,7 @@ class SettingsScreen(BaseAppScreen):
                     except Exception as exc:
                         logger.warning(
                             "Console identity refresh hook failed after settings save "
-                            "(screen_type={}, generation={}, error_type={}).",
+                            "(screen_type=%s, generation=%s, error_type=%s).",
                             type(screen).__name__,
                             generation,
                             type(exc).__name__,

@@ -6,8 +6,11 @@ This module provides functions to process and store various file types (PDFs, do
 e-books, etc.) without going through the UI, leveraging existing processing capabilities.
 """
 
+import math
 import time
+from collections.abc import Mapping
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -42,6 +45,61 @@ process_ebook = None
 process_image = None
 LocalAudioProcessor = None
 LocalVideoProcessor = None
+
+
+def _report_ingest_progress(
+    progress_callback: Callable[[str, str, float | None], None] | None,
+    phase: str,
+    message: str,
+    percent: float | None = None,
+) -> None:
+    """Report non-authoritative parse telemetry without affecting parsing."""
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(phase, message, percent)
+    except Exception:
+        return
+
+
+def _measured_transcription_percent(metadata: object) -> float | None:
+    """Return progress only for a finite, bounded measured ratio."""
+    if not isinstance(metadata, Mapping):
+        return None
+
+    try:
+        for current_key, total_key in (
+            ("current_time", "total_time"),
+            ("chunk", "total_chunks"),
+            ("current", "total"),
+        ):
+            if current_key not in metadata or total_key not in metadata:
+                continue
+            current_value = metadata[current_key]
+            total_value = metadata[total_key]
+            if (
+                isinstance(current_value, bool)
+                or isinstance(total_value, bool)
+                or not isinstance(current_value, Real)
+                or not isinstance(total_value, Real)
+            ):
+                return None
+            current = float(current_value)
+            total = float(total_value)
+            if (
+                not math.isfinite(current)
+                or not math.isfinite(total)
+                or total <= 0.0
+                or current < 0.0
+                or current > total
+            ):
+                return None
+            return (current / total) * 100.0
+    except Exception:
+        # Provider metadata is non-authoritative telemetry and may be a custom
+        # Mapping; hostile lookup/conversion behavior must not affect parsing.
+        return None
+    return None
 
 
 def _ensure_process_pdf():
@@ -733,6 +791,7 @@ def parse_local_file_for_ingest(
     options: Dict[str, Any],
     *,
     transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
+    progress_callback: Callable[[str, str, float | None], None] | None = None,
 ) -> Dict[str, Any]:
     """
     Parse a local file into a picklable payload, performing no database I/O.
@@ -780,6 +839,9 @@ def parse_local_file_for_ingest(
             for the analysis call), ``chunk_options``, ``metadata`` --
             the first group mirroring ``ingest_local_file``'s keyword
             arguments of the same names.
+        progress_callback: Optional best-effort callback receiving a controlled
+            phase, user-facing message, and truthful stage percentage when one
+            is observable.
 
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
@@ -821,6 +883,11 @@ def parse_local_file_for_ingest(
             see identical error text regardless of whether the failure
             originated during parsing or persistence).
     """
+    _report_ingest_progress(
+        progress_callback,
+        "inspecting",
+        "Inspecting source",
+    )
     raw_source = str(file_path)
     is_url = _is_http_url(raw_source)
     if is_url:
@@ -927,11 +994,24 @@ def parse_local_file_for_ingest(
         }
     )
 
+    def transcription_progress(
+        _percent: float,
+        message: str,
+        data: Any = None,
+    ) -> None:
+        _report_ingest_progress(
+            progress_callback,
+            "transcribing",
+            str(message or "Transcribing audio"),
+            _measured_transcription_percent(data),
+        )
+
     try:
         logger.info(f"Ingesting {file_type} file: {file_path}")
 
         # Process based on file type
         if file_type == "pdf":
+            _report_ingest_progress(progress_callback, "processing", "Processing PDF")
             result = _ensure_process_pdf()(
                 file_input=str(file_path),
                 filename=file_path.name,
@@ -959,6 +1039,11 @@ def parse_local_file_for_ingest(
             )
 
         elif file_type == "document":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing document",
+            )
             result = _ensure_process_document()(
                 file_path=str(file_path),
                 title_override=title,
@@ -978,6 +1063,11 @@ def parse_local_file_for_ingest(
             )
 
         elif file_type == "ebook":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing ebook",
+            )
             result = _ensure_process_ebook()(
                 file_path=str(file_path),
                 method=options.get("extraction_method"),
@@ -998,6 +1088,11 @@ def parse_local_file_for_ingest(
             )
 
         elif file_type == "image":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing image",
+            )
             # (task-3307, ship ruling in task-3310) The imported CONTENT is
             # the OCR text -- there is no other text in an image -- so the
             # OCR toggle defaults on (mirroring ``process_image``'s own
@@ -1042,6 +1137,11 @@ def parse_local_file_for_ingest(
                 result["chunks"] = []
 
         elif file_type == "audio":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing audio",
+            )
             # Initialize audio processor. media_db is intentionally None:
             # this function performs no database I/O (see docstring). A
             # real media_db here would make the processor write a degraded
@@ -1122,6 +1222,11 @@ def parse_local_file_for_ingest(
                 ),
                 custom_title=title,
                 author=author,
+                **(
+                    {"transcription_progress_callback": transcription_progress}
+                    if progress_callback is not None
+                    else {}
+                ),
             )
 
             # Extract first (and only) result
@@ -1160,6 +1265,11 @@ def parse_local_file_for_ingest(
                 raise FileIngestionError("Audio processing returned no results")
 
         elif file_type == "video":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing video",
+            )
             # Initialize video processor. media_db is intentionally None --
             # see the matching comment in the 'audio' branch above.
             video_processor_class = _ensure_local_video_processor()
@@ -1233,6 +1343,11 @@ def parse_local_file_for_ingest(
                 ),
                 custom_title=title,
                 author=author,
+                **(
+                    {"transcription_progress_callback": transcription_progress}
+                    if progress_callback is not None
+                    else {}
+                ),
             )
 
             # Extract first (and only) result
@@ -1275,6 +1390,11 @@ def parse_local_file_for_ingest(
             raise FileIngestionError("XML file processing is not yet implemented")
 
         elif file_type == "plaintext":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing text file",
+            )
             # (task-3301) Decoded per the form's Encoding selection; chunks
             # and analysis are produced in the shared text-type tail below --
             # the old "chunking will be handled by the database" comment
@@ -1295,6 +1415,11 @@ def parse_local_file_for_ingest(
             }
 
         elif file_type == "html":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing HTML file",
+            )
             # For HTML files, we'll extract text content
             from bs4 import BeautifulSoup
 
@@ -1326,6 +1451,11 @@ def parse_local_file_for_ingest(
             }
 
         elif file_type == "article":
+            _report_ingest_progress(
+                progress_callback,
+                "processing",
+                "Processing web article",
+            )
             from .web_article_ingestion import extract_article_for_ingest
 
             result = extract_article_for_ingest(raw_source, options)
@@ -1395,6 +1525,11 @@ def parse_local_file_for_ingest(
             # per-media ``chunk_method`` is deliberately NOT consulted
             # here, because its methods size in different units
             # (sentences/paragraphs) than the form promises.
+            _report_ingest_progress(
+                progress_callback,
+                "chunking",
+                "Chunking extracted text",
+            )
             chunks, chunk_warnings = _chunk_text_for_ingest(
                 content,
                 chunk_options.get("method") or "words",
@@ -1419,6 +1554,11 @@ def parse_local_file_for_ingest(
             # ``[analysis_defaults]`` call shape (F1+F10); the credential
             # gate mirrors the processors' (F8). A failure is a warning on
             # the payload plus a done-row annotation, never a failed job.
+            _report_ingest_progress(
+                progress_callback,
+                "analyzing",
+                "Analyzing extracted text",
+            )
             analysis_text, tail_failure = _run_chat_analysis(
                 api_name=api_name,
                 api_key=api_key,

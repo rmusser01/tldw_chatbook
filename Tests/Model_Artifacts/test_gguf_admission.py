@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import io
 import os
+import stat
 import struct
 import unicodedata
 from pathlib import Path
@@ -39,6 +40,7 @@ from tldw_chatbook.Model_Artifacts import gguf_admission as gguf
 _ADMISSION_NONRELATIVE_IMPORT_ROOTS = frozenset(
     {
         "__future__",
+        "contextlib",
         "dataclasses",
         "os",
         "pathlib",
@@ -1003,7 +1005,7 @@ def test_inspect_gguf_accepts_pinned_transcribe_cpp_architecture(
     assert metadata.architecture == architecture
 
 
-@pytest.mark.parametrize("architecture", ["cohere", "granite", "qwen3-asr", "llama"])
+@pytest.mark.parametrize("architecture", ["cohere", "granite", "llama"])
 def test_inspect_gguf_rejects_near_miss_architecture_with_typed_error(
     architecture: str,
 ):
@@ -1011,6 +1013,215 @@ def test_inspect_gguf_rejects_near_miss_architecture_with_typed_error(
 
     with pytest.raises(gguf.GGUFArchitectureError, match="transcribe.cpp 0.1.3"):
         gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+
+def test_generic_structure_accepts_llama_without_weakening_transcribe_policy():
+    payload = make_gguf(architecture="llama", name="Local LLM", file_type=7)
+
+    metadata = gguf.inspect_gguf_structure(
+        io.BytesIO(payload),
+        file_size=len(payload),
+    )
+
+    assert metadata.architecture == "llama"
+    assert metadata.model_name == "Local LLM"
+    with pytest.raises(gguf.GGUFArchitectureError):
+        gguf.inspect_gguf(io.BytesIO(payload), file_size=len(payload))
+
+    malformed = make_gguf(architecture="../private")
+    with pytest.raises(gguf.GGUFArchitectureError, match="identifier"):
+        gguf.inspect_gguf_structure(
+            io.BytesIO(malformed),
+            file_size=len(malformed),
+        )
+
+
+def test_open_local_gguf_rejects_symlink(tmp_path: Path):
+    target = tmp_path / "model.gguf"
+    target.write_bytes(make_gguf(architecture="llama"))
+    link = tmp_path / "link.gguf"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+
+    with pytest.raises(gguf.GGUFPathError, match="regular file"):
+        with gguf.open_local_gguf(link):
+            pytest.fail("symlink must not open")
+
+
+def test_open_local_gguf_recheck_detects_same_path_replacement(tmp_path: Path):
+    source = tmp_path / "model.gguf"
+    replacement = tmp_path / "replacement.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="first"))
+    replacement.write_bytes(make_gguf(architecture="llama", name="second"))
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        with gguf.open_local_gguf(source) as opened:
+            source.unlink()
+            replacement.rename(source)
+            opened.recheck()
+
+
+def test_open_local_gguf_result_redacts_selected_path(tmp_path: Path):
+    source = tmp_path / "private-model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+
+    with gguf.open_local_gguf(source) as opened:
+        assert str(source) not in repr(opened)
+
+
+def test_open_local_gguf_recheck_maps_post_open_lstat_failure_to_identity_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "private-model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    real_lstat = gguf.os.lstat
+    calls = 0
+
+    def fail_during_recheck(path: str | Path) -> os.stat_result:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("name vanished")
+        return real_lstat(path)
+
+    monkeypatch.setattr(gguf.os, "lstat", fail_during_recheck)
+
+    with gguf.open_local_gguf(source) as opened:
+        with pytest.raises(gguf.GGUFPathError, match="identity could not be verified"):
+            opened.recheck()
+
+
+def test_open_local_gguf_preserves_caller_oserror(tmp_path: Path):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    destination_error = OSError("destination is full")
+
+    with pytest.raises(OSError) as raised:
+        with gguf.open_local_gguf(source):
+            raise destination_error
+
+    assert raised.value is destination_error
+
+
+def test_open_local_gguf_rejects_windows_reparse_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    actual = os.lstat(source)
+
+    class ReparsePointInfo:
+        st_dev = actual.st_dev
+        st_ino = actual.st_ino
+        st_mode = actual.st_mode
+        st_size = actual.st_size
+        st_mtime_ns = actual.st_mtime_ns
+        st_ctime_ns = actual.st_ctime_ns
+        st_file_attributes = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+    monkeypatch.setattr(gguf.os, "lstat", lambda path: ReparsePointInfo())
+    monkeypatch.setattr(
+        gguf.stat,
+        "FILE_ATTRIBUTE_REPARSE_POINT",
+        ReparsePointInfo.st_file_attributes,
+        raising=False,
+    )
+
+    with pytest.raises(gguf.GGUFPathError, match="regular file"):
+        with gguf.open_local_gguf(source):
+            pytest.fail("reparse point must not open")
+
+
+def test_open_local_gguf_accepts_windows_path_birthtime_without_weakening_fstat_recheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    real_lstat = gguf.os.lstat
+    real_fstat = gguf.os.fstat
+
+    class WindowsPathInfo:
+        def __init__(self, actual: os.stat_result):
+            self.st_dev = actual.st_dev
+            self.st_ino = actual.st_ino
+            self.st_mode = actual.st_mode
+            self.st_size = actual.st_size
+            self.st_mtime_ns = actual.st_mtime_ns
+            self.st_ctime_ns = actual.st_ctime_ns + 1
+            self.st_file_attributes = getattr(actual, "st_file_attributes", 0)
+
+    class ChangedDescriptorInfo(WindowsPathInfo):
+        def __init__(self, actual: os.stat_result):
+            super().__init__(actual)
+            self.st_ctime_ns = actual.st_ctime_ns + 1
+
+    monkeypatch.setattr(gguf.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        gguf.os,
+        "lstat",
+        lambda path: WindowsPathInfo(real_lstat(path)),
+    )
+
+    with gguf.open_local_gguf(source) as opened:
+        assert opened.identity.changed_ns == real_fstat(opened.descriptor).st_ctime_ns
+
+        monkeypatch.setattr(
+            gguf.os,
+            "fstat",
+            lambda descriptor: ChangedDescriptorInfo(real_fstat(descriptor)),
+        )
+        with pytest.raises(gguf.GGUFSourceChangedError):
+            opened.recheck()
+        monkeypatch.setattr(gguf.os, "fstat", real_fstat)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns"),
+)
+def test_open_local_gguf_windows_path_comparison_rejects_stable_field_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    actual = gguf.os.lstat(source)
+
+    class ChangedPathInfo:
+        st_dev = actual.st_dev
+        st_ino = actual.st_ino
+        st_mode = actual.st_mode
+        st_size = actual.st_size
+        st_mtime_ns = actual.st_mtime_ns
+        st_ctime_ns = actual.st_ctime_ns + 1
+        st_file_attributes = getattr(actual, "st_file_attributes", 0)
+
+    setattr(ChangedPathInfo, field, getattr(ChangedPathInfo, field) + 1)
+    monkeypatch.setattr(gguf.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(gguf.os, "lstat", lambda path: ChangedPathInfo())
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        with gguf.open_local_gguf(source):
+            pytest.fail("changed path identity must not open")
+
+
+def test_validate_local_gguf_structure_accepts_generic_llm_without_wheel_policy(
+    tmp_path: Path,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="Local LLM"))
+
+    inspected = gguf.validate_local_gguf_structure(source)
+
+    assert inspected.metadata.architecture == "llama"
+    assert inspected.metadata.model_name == "Local LLM"
+    assert inspected.source_identity.inode == os.lstat(source).st_ino
 
 
 def test_transcribe_cpp_wheel_target_declaration_is_exact():
@@ -1283,7 +1494,7 @@ def test_validate_local_gguf_inspects_same_open_descriptor_and_closes_it(
     selected = tmp_path / "chosen.gguf"
     selected.write_bytes(make_gguf(tensors=(TensorFixture(data=b"x" * (64 * 1024)),)))
     real_open = gguf.os.open
-    real_inspect = gguf.inspect_gguf
+    real_inspect = gguf.inspect_gguf_structure
     opened: list[int] = []
     inspected: list[int] = []
 
@@ -1301,7 +1512,7 @@ def test_validate_local_gguf_inspects_same_open_descriptor_and_closes_it(
         return metadata
 
     monkeypatch.setattr(gguf.os, "open", capture_open)
-    monkeypatch.setattr(gguf, "inspect_gguf", inspect)
+    monkeypatch.setattr(gguf, "inspect_gguf_structure", inspect)
 
     gguf.validate_local_gguf(selected)
 
@@ -1361,7 +1572,7 @@ def test_validate_local_gguf_source_change_wins_when_inspection_also_fails(
         nonlocal calls
         calls += 1
         info = real_fstat(descriptor)
-        if calls < 2:
+        if calls < 3:
             return info
         values = list(info)
         values[6] = info.st_size + 1
@@ -1372,7 +1583,7 @@ def test_validate_local_gguf_source_change_wins_when_inspection_also_fails(
         raise gguf.GGUFParseError("malformed test fixture")
 
     monkeypatch.setattr(gguf.os, "fstat", changing_fstat)
-    monkeypatch.setattr(gguf, "inspect_gguf", malformed)
+    monkeypatch.setattr(gguf, "inspect_gguf_structure", malformed)
 
     with pytest.raises(gguf.GGUFSourceChangedError):
         gguf.validate_local_gguf(selected)
@@ -1396,7 +1607,7 @@ def test_validate_local_gguf_preserves_parser_error_and_closes_descriptor(
         inspected.append(handle.fileno())
         raise parser_error
 
-    monkeypatch.setattr(gguf, "inspect_gguf", malformed)
+    monkeypatch.setattr(gguf, "inspect_gguf_structure", malformed)
 
     with pytest.raises(gguf.GGUFParseError) as raised:
         gguf.validate_local_gguf(selected)

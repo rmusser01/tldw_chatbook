@@ -1475,7 +1475,9 @@ async def test_console_registers_footer_workbench_shortcuts():
         # reserved key Console does NOT cover (Ctrl+Q) still gets its
         # generic global hint.
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
+            # task-15512: "/ queue" was added by 14cc326e4 (visible prompt
+            # queue); the shortcut genuinely does both now.
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | "
             "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette | "
             "Ctrl+Q quit"
         )

@@ -16,6 +16,10 @@ recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
 include tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql
 include tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql
+include tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql
+include tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql
+include tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql
+include tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
 

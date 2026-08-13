@@ -165,6 +165,7 @@ class LLMScreen(LabScreen):
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
+        self._local_gguf_import_active = False
         self._external_selection_generation = 0
         self._external_selection_token: tuple[int, int] | None = None
         self._external_scope_id: str | None = None
@@ -448,7 +449,7 @@ class LLMScreen(LabScreen):
         return None
 
     def _install_in_progress(self) -> bool:
-        """Return whether a curated or remote install is in ANY phase.
+        """Return whether any managed-model acquisition owns the host.
 
         TASK-1914 fix round 2: the concurrency guard in ``_curated_
         install_requested``/``_remote_install_requested`` used to check
@@ -477,7 +478,17 @@ class LLMScreen(LabScreen):
         Returns:
             Whether an install (either kind) is currently in progress.
         """
-        return self._model_install_kind is not None
+        return self._model_install_kind is not None or getattr(
+            self, "_local_gguf_import_active", False
+        )
+
+    def _can_start_local_gguf_import(self) -> bool:
+        """Return whether Installed may reserve the shared host lane."""
+        return not self._install_in_progress()
+
+    def _set_local_gguf_import_active(self, active: bool) -> None:
+        """Retain Installed ownership across picker, consent, and worker phases."""
+        self._local_gguf_import_active = active
 
     # -- External Parakeet roots: screen-owned picker and workers -------
 
@@ -788,7 +799,8 @@ class LLMScreen(LabScreen):
             message, is_error = format_external_parakeet_recovery(exc.code)
             if is_error:
                 logger.warning(
-                    "External Parakeet verification failed; error_type={}",
+                    "External Parakeet verification rejected the selected source; "
+                    "error_type={}",
                     type(exc).__name__,
                 )
             self.app.call_from_thread(
@@ -802,7 +814,7 @@ class LLMScreen(LabScreen):
             return
         except Exception as exc:
             logger.warning(
-                "External Parakeet verification failed; error_type={}",
+                "External Parakeet verification failed unexpectedly; error_type={}",
                 type(exc).__name__,
             )
             self.app.call_from_thread(
@@ -1480,11 +1492,9 @@ class LLMScreen(LabScreen):
             )
         except Exception as exc:
             artifact_id = getattr(reference, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model preflight failed for {}@{}/{}",
-                artifact_id,
-                getattr(reference, "revision", "unknown"),
-                getattr(reference, "variant", "unknown"),
+            logger.error(
+                "Curated model preflight failed; error_type={}",
+                type(exc).__name__,
             )
             self.app.call_from_thread(
                 self._apply_curated_preflight_result,
@@ -1582,11 +1592,9 @@ class LLMScreen(LabScreen):
         except Exception as exc:
             root = getattr(report, "root", None)
             artifact_id = getattr(root, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model installation failed for {}@{}/{}",
-                artifact_id,
-                getattr(root, "revision", "unknown"),
-                getattr(root, "variant", "unknown"),
+            logger.error(
+                "Curated model installation failed; error_type={}",
+                type(exc).__name__,
             )
             app.call_from_thread(
                 self._apply_curated_provision_result,
@@ -1692,7 +1700,9 @@ class LLMScreen(LabScreen):
         if view is not None:
             view.cancel_pending_install()
 
-    def _deliver_curated(self, message: InstallProgressed | InstallStatusChanged) -> None:
+    def _deliver_curated(
+        self, message: InstallProgressed | InstallStatusChanged
+    ) -> None:
         """Post one install-lifecycle message so it bubbles through ``LLMManagementWindow``.
 
         Despite the name (kept for the existing call sites and tests that
@@ -1862,13 +1872,9 @@ class LLMScreen(LabScreen):
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            reference = getattr(artifact, "reference", None)
-            artifact_id = getattr(reference, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model preflight failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model preflight failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -2001,18 +2007,16 @@ class LLMScreen(LabScreen):
             )
             return
         try:
-            asyncio.run(self._provision_remote(report, catalog))  # policy-exception: worker-thread loop
+            asyncio.run(
+                self._provision_remote(report, catalog)
+            )  # policy-exception: worker-thread loop
         except Exception as exc:
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            root = getattr(report, "root", None)
-            artifact_id = getattr(root, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model installation failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model installation failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -2120,7 +2124,12 @@ class LLMScreen(LabScreen):
             The ``LLMManagementWindow``, mounted after first paint because
             composing its nine views costs 488-787 ms.
         """
-        self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
+        self.llm_window = LLMManagementWindow(
+            self.app_instance,
+            can_start_import=self._can_start_local_gguf_import,
+            on_import_lane_changed=self._set_local_gguf_import_active,
+            classes="window",
+        )
         self.llm_window.styles.height = "1fr"
         return self.llm_window
 
@@ -2233,7 +2242,9 @@ class LLMScreen(LabScreen):
             active_view: The window's current view key.
         """
         for row in self.query(f".{LAB_RAIL_ROW_CLASS}").results(Button):
-            row.set_class(getattr(row, "lab_view_key", None) == active_view, "is-active")
+            row.set_class(
+                getattr(row, "lab_view_key", None) == active_view, "is-active"
+            )
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

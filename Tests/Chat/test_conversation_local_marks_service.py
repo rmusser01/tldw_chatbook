@@ -79,6 +79,11 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
     # A V16 fixture also predates the V29->V30 local-only usage_json column.
     conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
+    # A V16 fixture predates the V33->V34 visual-compaction preference.
+    conn.execute(
+        "ALTER TABLE console_conversation_context_policy "
+        "DROP COLUMN compaction_representation"
+    )
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
     # A V16 fixture must not retain citation tables introduced at V26->V27.
     for table in (

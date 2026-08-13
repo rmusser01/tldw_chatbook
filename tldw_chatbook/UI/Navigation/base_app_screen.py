@@ -159,25 +159,45 @@ class BaseAppScreen(Screen):
         interaction has since legitimately captured (which must be left
         alone).
         """
-        if self.is_running:
+        self.release_mouse_capture_for_teardown()
+        await super().recompose()
+        self.sweep_stale_mouse_capture()
+
+    def release_mouse_capture_for_teardown(self) -> None:
+        """Release any mouse capture before removing widgets.
+
+        Extracted from ``recompose`` (task-15475) so a screen that tears
+        widgets down WITHOUT a screen recompose -- a region-scoped swap, which
+        several screens now do instead of rebuilding themselves -- gets the
+        same protection. The captured widget is not identified first: any
+        teardown can orphan it, and ``Input`` has no ``_on_hide`` to release
+        the mouse on removal, so the release stays unconditional exactly as
+        ``recompose``'s own reasoning above requires.
+        """
+        if not self.is_running:
+            return
+        try:
+            self.app.capture_mouse(None)
+        except Exception:
+            logger.debug("Mouse-capture release before teardown skipped.")
+
+    def sweep_stale_mouse_capture(self) -> None:
+        """Drop a capture left pointing at a no-longer-attached widget.
+
+        The other half of ``release_mouse_capture_for_teardown``: a MouseDown
+        already queued on a child's own pump can capture that child DURING the
+        removal drain, after the pre-teardown release has run. ``is_attached``
+        distinguishes that stale case from a capture a later, unrelated
+        interaction legitimately holds (which must be left alone).
+        """
+        if not self.is_running:
+            return
+        captured = self.app.mouse_captured
+        if captured is not None and not captured.is_attached:
             try:
                 self.app.capture_mouse(None)
             except Exception:
-                logger.debug(
-                    "Mouse-capture release before recompose teardown skipped.",
-                    exc_info=True,
-                )
-        await super().recompose()
-        if self.is_running:
-            captured = self.app.mouse_captured
-            if captured is not None and not captured.is_attached:
-                try:
-                    self.app.capture_mouse(None)
-                except Exception:
-                    logger.debug(
-                        "Stale post-recompose mouse-capture sweep skipped.",
-                        exc_info=True,
-                    )
+                logger.debug("Stale post-teardown mouse-capture sweep skipped.")
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""

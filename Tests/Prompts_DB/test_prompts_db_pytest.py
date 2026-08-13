@@ -729,6 +729,9 @@ def _set_prompt_timestamps(db, prompt_id, last_modified):
         "UPDATE Prompts SET last_modified = ?, version = version + 1 WHERE id = ?",
         (last_modified, prompt_id),
     )
+    # Seed helpers must not leak an ambient transaction into public mutations,
+    # which own their BEGIN IMMEDIATE and durable commit boundary.
+    db.get_connection().commit()
 
 
 def _seed_library_prompt(
@@ -769,6 +772,7 @@ def test_library_prompts_page_lists_active_with_stable_order(in_memory_db):
         db, name="Third", last_modified="2026-01-02 00:00:00"
     )
     deleted_id, _ = _seed_library_prompt(db, name="Deleted")
+    assert db.get_connection().in_transaction is False
     db.soft_delete_prompt(deleted_id)
 
     page_one = db.list_library_prompts_page(limit=2, offset=0)

@@ -1294,18 +1294,27 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
     Sources, the whole create-form draft).
 
     So every workbench rebuild silently reset the user's view to "all items,
-    nothing selected, empty search box". `region_layout` is
-    `recompose=True`, so ANY collapse/expand -- `z`, `[`, `]`, a chevron
-    click -- rebuilds every region and constructs a brand new `ItemsPane`;
-    that is the deterministic trigger used here. The reported route was
+    nothing selected, empty search box". The reported route was
     "Mark unread", whose `refresh=True` ends in `_refresh_overview_data()`
     setting `overview_data` (`reactive(recompose=True)`): same rebuild, but
     it only fires when the overview counts actually change value, which is
     why it is not what this test drives.
+
+    task-15461 changed the deterministic trigger, not the contract. A rail
+    toggle used to rebuild every region (`region_layout` was
+    `recompose=True`), so `[` was the cheapest way to force a fresh
+    `ArticleListPane`; layout changes are now scoped to the regions whose
+    form actually moved, so `[` deliberately leaves ITEMS' pane instance
+    alone -- which is what
+    `test_a_rail_toggle_rebuilds_only_the_toggled_region` pins. Collapsing
+    and re-expanding ITEMS itself is the trigger that still genuinely
+    reconstructs the pane, and it exercises the same `_build_detail_pane`
+    seeding this test is about.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1322,13 +1331,20 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
         pane.select_and_reveal(open_item)
         await pilot.pause(0.5)
 
-        # A rail toggle -- nothing to do with Items at all.
-        screen.action_toggle_left_rail()
+        # Collapse ITEMS and expand it again: the region's form really
+        # changes, so `_build_detail_pane` runs and a brand new
+        # `ArticleListPane` is what the user is left looking at.
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
+        await pilot.pause(0.5)
+        screen.focused_region = Region.ITEMS
+        screen.action_toggle_region()
         await pilot.pause(0.5)
 
         rebuilt = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert rebuilt is not pane, (
-            "the precondition: the rail toggle really did rebuild the pane"
+            "the precondition: collapsing and re-expanding ITEMS really did "
+            "rebuild the pane"
         )
         assert rebuilt.status_filter == "unread", "the status filter must survive"
         assert rebuilt.search_query == "Nav item", "the search box must survive"

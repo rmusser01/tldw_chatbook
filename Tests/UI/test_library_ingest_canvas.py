@@ -27,6 +27,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.UI.background_signals import wait_for_background_signal
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -49,6 +50,7 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
+    LibraryIngestQueuePanel,
     _summarise_option,
 )
 
@@ -74,6 +76,27 @@ class _CanvasHost(App):
                 external_status=self._external_status,
             )
         yield LibraryIngestCanvas(self._state, **kwargs)
+
+
+class _QueuePanelHost(App):
+    """Mount only the real queue panel with the shipped app stylesheet."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def __init__(self, state: LibraryIngestCanvasState) -> None:
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield LibraryIngestQueuePanel(
+            self._state,
+            id="library-ingest-queue-panel",
+        )
 
 
 class _MessageRecordingHost(App):
@@ -814,23 +837,65 @@ async def test_type_group_number_input_renders_with_value_and_placeholder():
 
 
 @pytest.mark.asyncio
-async def test_progress_line_renders_when_present():
-    """A parsing job with structured progress shows a progress line."""
+async def test_parsing_row_reserves_progress_line_before_first_worker_tick():
+    """Removing the active-row reservation makes the first tick shift the queue."""
     job = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/report.txt",
         state=IngestJobState.PARSING,
-        progress={"message": "Extracting text…"},
+        progress=None,
     )
     state = build_library_ingest_state((job,), form=_default_form())
-    app = _CanvasHost(state)
+    app = _QueuePanelHost(state)
     async with app.run_test() as pilot:
         progress = pilot.app.query_one(
             "#library-ingest-progress-ingest-job-1", Static
         )
-        text = str(progress.renderable)
-        assert "parsing" in text
-        assert "Extracting text…" in text
+        assert progress.display is True
+        assert str(progress.renderable) == "Preparing import"
+
+
+@pytest.mark.asyncio
+async def test_writing_row_reserves_saving_line_without_progress_payload():
+    """A defensive payload gap must not collapse the WRITING reservation."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.WRITING,
+        progress=None,
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _QueuePanelHost(state)
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        assert progress.display is True
+        assert str(progress.renderable) == "Saving to Library"
+
+
+@pytest.mark.asyncio
+async def test_progress_line_uses_formatter_without_repeating_state():
+    """Bypassing the formatter repeats ``parsing`` and loses truthful percent copy."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.PARSING,
+        progress={
+            "phase": "extracting",
+            "message": "Extracting page 2 of 5",
+            "percent": 40.0,
+        },
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _QueuePanelHost(state)
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        rendered = str(progress.renderable)
+        assert rendered == "40% · Extracting page 2 of 5"
+        assert "Â·" not in rendered
 
 
 @pytest.mark.asyncio
@@ -845,6 +910,68 @@ async def test_progress_line_absent_when_not_present():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         assert len(pilot.app.query("#library-ingest-progress-ingest-job-1")) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (72, 18)])
+async def test_progress_detail_paints_below_row_without_obscuring_actions_or_neighbor(
+    size,
+):
+    """The final compositor keeps dim telemetry in normal and constrained layouts."""
+    parsing = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/interview.wav",
+        state=IngestJobState.PARSING,
+        progress={
+            "phase": "transcribing",
+            "message": "Transcribing speaker one of two",
+            "percent": 25.0,
+        },
+    )
+    queued = LibraryIngestJob(
+        job_id="ingest-job-2",
+        source_path="/tmp/neighbor.txt",
+        state=IngestJobState.QUEUED,
+    )
+    state = build_library_ingest_state(
+        (parsing, queued),
+        form=_default_form(),
+    )
+    app = _QueuePanelHost(state)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        row = pilot.app.query_one("#library-ingest-row-0", Static)
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        actions = pilot.app.query_one(".library-ingest-row-actions")
+        neighbor = pilot.app.query_one("#library-ingest-row-1", Static)
+        counts = pilot.app.query_one("#library-ingest-queue-counts", Static)
+
+        assert row.region.bottom <= progress.region.y
+        assert progress.region.bottom <= actions.region.y
+        assert actions.region.bottom <= neighbor.region.y
+        assert progress.styles.color == counts.styles.color
+        assert progress.styles.color != row.styles.color
+
+        compositor = pilot.app.screen._compositor
+        for widget in (row, progress, actions, neighbor):
+            assert widget in compositor.visible_widgets
+        strips = compositor.render_strips()
+
+        def painted_text(widget) -> str:
+            return "\n".join(
+                strips[y].text
+                for y in range(widget.region.y, widget.region.bottom)
+            )
+
+        assert "parsing" in painted_text(row)
+        assert "25%" in painted_text(progress)
+        assert "Transcribing speaker" in painted_text(progress)
+        assert "Cancel" in painted_text(actions)
+        assert "queued" in painted_text(neighbor)
+        assert "neighbor.txt" in painted_text(neighbor)
 
 
 @pytest.mark.asyncio
@@ -1712,11 +1839,16 @@ def test_external_prepare_retains_before_enqueue(
         "tldw_chatbook.UI.Screens.library_screen.get_current_worker",
         lambda: SimpleNamespace(is_cancelled=False),
     )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda values: saved_settings.append(values),
-    )
     screen = object.__new__(LibraryScreen)
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_options`), which needs a real
+    # running app to dispatch through `run_worker` -- `fake_app` above is a
+    # bare `SimpleNamespace` stand-in for sequencing, not a mounted app, and
+    # has no `_thread_id`. Patching the instance method (rather than the
+    # module-level `save_settings_to_cli_config` it wraps) keeps this
+    # test's own subject -- that sensitive/internal fields are stripped
+    # before persisting -- intact.
+    screen._save_library_ingest_options = lambda values: saved_settings.append(values)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2017,13 +2149,18 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()
 
-    def save_backend(_section: str, _key: str, target: str) -> None:
+    def save_backend(target: str) -> None:
         backend["value"] = target
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        save_backend,
-    )
+    # task-15470: the actual persistence call moved into a
+    # `@work(thread=True)` instance method (`_save_library_ingest_backend`),
+    # which needs a running app to dispatch through `run_worker` -- this
+    # bare, unmounted screen has none. Patching the instance method itself
+    # (rather than the module-level `save_setting_to_cli_config`) keeps this
+    # test's actual subject -- cancellation/fencing of the external hash
+    # worker -- decoupled from how the backend choice eventually reaches
+    # disk, which has its own coverage.
+    screen._save_library_ingest_backend = save_backend
     LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
     generation, scope_id, *_rest = (
         screen._prepare_library_external_submission.call_args.args
@@ -2077,10 +2214,14 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        MagicMock(),
-    )
+    # task-15470: the actual persistence call moved into a
+    # `@work(thread=True)` instance method (`_save_library_ingest_options`),
+    # which needs a running app to dispatch through `run_worker` -- this
+    # bare, unmounted screen has none. Patching the instance method itself
+    # keeps this test's actual subject -- cancellation/fencing of the
+    # external hash worker -- decoupled from how reset options eventually
+    # reach disk, which has its own coverage.
+    screen._save_library_ingest_options = MagicMock()
 
     LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
     generation, scope_id, *_rest = (
@@ -2148,7 +2289,11 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
             _vad_only_report(tmp_path),
         )
     )
-    await entered.wait()
+    await wait_for_background_signal(
+        entered,
+        task,
+        what="the external VAD provision entering the underlying install",
+    )
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
@@ -577,6 +578,17 @@ class ConsoleChatMessage:
     # field is that machine consumers (reseed, exports, summaries) read it
     # instead of string-matching UI copy in ``content``.
     metadata: "MessageMetadata | None" = None
+    # Private provider state owned by this exact assistant generation. It is
+    # deliberately excluded from repr/render content while remaining part of
+    # ordinary dataclass equality/copy semantics.
+    provider_continuation: "ProviderContinuationCheckpoint | None" = field(
+        default=None,
+        repr=False,
+    )
+    # Safe restore/display facts kept separate from the private checkpoint.
+    provider_continuation_warning: str | None = None
+    provider_continuation_remote: bool = False
+    provider_continuation_message_version: int | None = None
     # task-3401.4: structured facts about a generated VIDEO (slug name,
     # prompt/backend/seed/shape) -- the tombstone card's payload after the
     # ephemeral bytes are gone (ADR-044). Persisted as a namespaced key in

@@ -11,11 +11,18 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, Button, Label, Input, ListView, ListItem, Markdown
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from loguru import logger
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
+
+#: Debounce for the keyword search `Input` -- mirrors the picker/filter
+#: family's 0.2 s shape (`console_prompt_picker_modal.py`). A settled
+#: search clears and re-appends every matching `ListItem`, which should
+#: not happen on every keystroke (task-15476).
+KEYWORD_SEARCH_DEBOUNCE_SECONDS = 0.2
 
 RENAME_KEYWORD_DISABLED_TOOLTIP = "Select exactly one keyword or tag before renaming."
 MERGE_KEYWORDS_DISABLED_TOOLTIP = "Select at least two keywords or tags before merging."
@@ -131,6 +138,7 @@ class CollectionsTagWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.all_keywords: List[Dict[str, Any]] = []
+        self._search_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI structure."""
@@ -260,8 +268,16 @@ class CollectionsTagWindow(Container):
 
     @on(Input.Changed, "#keyword-search-input")
     def handle_search_change(self, event: Input.Changed) -> None:
-        """Handle keyword search input changes."""
+        """Handle keyword search input changes (debounced -- task-15476)."""
         self.keyword_search = event.value
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            KEYWORD_SEARCH_DEBOUNCE_SECONDS, self._apply_keyword_search_debounced
+        )
+
+    def _apply_keyword_search_debounced(self) -> None:
+        self._search_debounce_timer = None
         self.refresh_keyword_list()
 
     @on(ListView.Selected, "#keyword-list")

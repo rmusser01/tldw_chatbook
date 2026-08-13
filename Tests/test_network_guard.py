@@ -12,6 +12,7 @@ explicit opt-in works.
 from __future__ import annotations
 
 import socket
+import sys
 import threading
 
 import pytest
@@ -117,6 +118,7 @@ def test_a_swallowed_block_still_fails_the_test() -> None:
     assert recorded[0][1] == "127.0.0.1:8080"
 
 
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="AF_UNIX unavailable")
 def test_unix_domain_sockets_are_not_blocked(tmp_path, monkeypatch) -> None:
     """AF_UNIX is local IPC used by system libraries, not network egress."""
     # Bound by a RELATIVE name from inside tmp_path: macOS caps sun_path at
@@ -179,3 +181,164 @@ def test_denial_is_restored_after_an_opted_in_test() -> None:
     with pytest.raises(network_guard.BlockedNetworkAccess):
         socket.create_connection(("127.0.0.1", 8080), timeout=1)
     _drain_expecting()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows socketpair fallback")
+def test_guarded_socketpair_exchanges_data_without_weakening_family_denial() -> None:
+    """Catch a socketpair bootstrap path that requires clearing guarded families."""
+    protected_families = network_guard._INET_FAMILIES
+
+    left, right = socket.socketpair()
+    try:
+        left.sendall(b"x")
+        assert right.recv(1) == b"x"
+    finally:
+        left.close()
+        right.close()
+
+    assert network_guard._INET_FAMILIES is protected_families
+    assert network_guard.blocked_attempts() == ()
+
+
+def test_socketpair_exemption_does_not_escape_to_another_thread(monkeypatch) -> None:
+    """Catch a process-global socketpair exemption that leaks concurrent egress."""
+    entered = threading.Event()
+    release = threading.Event()
+    worker_errors: list[BaseException] = []
+    real_socketpair = getattr(network_guard, "_real_socketpair", socket.socketpair)
+
+    def held_socketpair(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        entered.set()
+        assert release.wait(timeout=5), "test did not release held socketpair"
+        return real_socketpair(*args, **kwargs)
+
+    monkeypatch.setattr(network_guard, "_real_socketpair", held_socketpair, raising=False)
+
+    def run_socketpair() -> None:
+        try:
+            left, right = socket.socketpair()
+            left.close()
+            right.close()
+        except BaseException as exc:  # pragma: no cover - assertion aid
+            worker_errors.append(exc)
+
+    worker = threading.Thread(target=run_socketpair)
+    worker.start()
+    try:
+        assert entered.wait(timeout=5), "guarded socketpair did not enter wrapper"
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            with pytest.raises(network_guard.BlockedNetworkAccess):
+                client.connect(("127.0.0.1", 8080))
+        finally:
+            client.close()
+        assert ("socket.connect", "127.0.0.1:8080") in _drain_expecting()
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert not worker_errors
+
+
+def test_socketpair_exception_restores_network_denial(monkeypatch) -> None:
+    """Catch an exception path that leaves the dynamic socketpair exemption set."""
+    class SocketpairFailure(RuntimeError):
+        pass
+
+    def raising_socketpair(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise SocketpairFailure("socketpair failed")
+
+    monkeypatch.setattr(
+        network_guard, "_real_socketpair", raising_socketpair, raising=False
+    )
+    with pytest.raises(SocketpairFailure, match="socketpair failed"):
+        socket.socketpair()
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(network_guard.BlockedNetworkAccess):
+            client.connect(("127.0.0.1", 8080))
+    finally:
+        client.close()
+    assert ("socket.connect", "127.0.0.1:8080") in _drain_expecting()
+
+
+def test_nested_socketpair_restores_outer_dynamic_exemption(monkeypatch) -> None:
+    """Catch nested socketpair cleanup that resets rather than restores depth."""
+    inner_pair = (object(), object())
+    outer_pair = (object(), object())
+    calls = 0
+    permitted_connects: list[tuple[str, int]] = []
+
+    def fake_connect(_sock, address):  # noqa: ANN001
+        permitted_connects.append(address)
+        return None
+
+    def recursive_socketpair(*args, **kwargs):  # noqa: ANN002, ANN003
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return inner_pair
+
+        assert socket.socketpair(*args, **kwargs) == inner_pair
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            client.connect(("127.0.0.1", 8080))
+        finally:
+            client.close()
+        return outer_pair
+
+    monkeypatch.setattr(network_guard, "_real_connect", fake_connect)
+    monkeypatch.setattr(network_guard, "_real_socketpair", recursive_socketpair)
+
+    assert socket.socketpair() == outer_pair
+    assert permitted_connects == [("127.0.0.1", 8080)]
+    assert network_guard.blocked_attempts() == ()
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(network_guard.BlockedNetworkAccess):
+            client.connect(("127.0.0.1", 8080))
+    finally:
+        client.close()
+    assert ("socket.connect", "127.0.0.1:8080") in _drain_expecting()
+
+
+def test_create_connection_is_exempt_only_inside_socketpair_scope(monkeypatch) -> None:
+    """Catch create_connection omitting or leaking its socketpair exemption."""
+    connection_sentinel = object()
+    socketpair_sentinels = (object(), object())
+    calls: list[tuple[tuple[str, int], tuple[object, ...], dict[str, object]]] = []
+
+    def fake_create_connection(address, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append((address, args, kwargs))
+        return connection_sentinel
+
+    def fake_socketpair(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        result = socket.create_connection(("127.0.0.1", 8080), timeout=1)
+        assert result is connection_sentinel
+        assert network_guard.blocked_attempts() == ()
+        return socketpair_sentinels
+
+    monkeypatch.setattr(
+        network_guard, "_real_create_connection", fake_create_connection
+    )
+    monkeypatch.setattr(network_guard, "_real_socketpair", fake_socketpair)
+
+    assert socket.socketpair() == socketpair_sentinels
+    assert calls == [(("127.0.0.1", 8080), (), {"timeout": 1})]
+    assert network_guard.blocked_attempts() == ()
+
+    with pytest.raises(network_guard.BlockedNetworkAccess):
+        socket.create_connection(("127.0.0.1", 8080), timeout=1)
+    assert ("socket.create_connection", "127.0.0.1:8080") in _drain_expecting()
+
+
+def test_repeated_install_keeps_one_guarded_socketpair_wrapper() -> None:
+    """Catch repeated installation stacking socketpair wrappers."""
+    wrapper = socket.socketpair
+    network_guard.install()
+
+    assert socket.socketpair is wrapper
+    assert socket.socketpair is network_guard._guarded_socketpair

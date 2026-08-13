@@ -29,10 +29,13 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryMediaTrashCanvas(RecomposeCaptureGuard, Vertical):
+class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library media Trash list with per-item restore.
 
     Attributes:

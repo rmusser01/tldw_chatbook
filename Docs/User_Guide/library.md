@@ -148,6 +148,12 @@ on-screen. Escape (or the **Database** link) returns to the notes list — see
 | **Import…** | The full import flow: path or URL, pre-flight check, per-type options, queue — see [Import & export](library/import-and-export.md). |
 | **Export** | The "Export bundle (.zip)" canvas: package local content into a portable file — see [Import & export](library/import-and-export.md). Disabled in server mode. |
 
+While a Local import is running, its queue row shows the parser's current stage.
+A percentage appears only when the parser has a real bounded total; stages without
+one intentionally show text alone. **Saving to Library** means parsing has handed
+the result to the writer. These stage updates are best-effort and transient, so an
+import may skip intermediate updates and does not resume from an earlier percentage.
+
 ### Details
 
 Collapsed by default; click anywhere on the **Details** header — the label

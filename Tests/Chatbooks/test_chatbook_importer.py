@@ -2,6 +2,7 @@
 # Unit tests for chatbook importer
 
 import pytest
+import io
 import json
 import os
 import zipfile
@@ -182,6 +183,110 @@ class TestChatbookImporter:
             "manifest": 0o600,
             "note": 0o600,
         }
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("members", "limits"),
+        [
+            ({"a": b"x", "b": b"x"}, {"_MAX_ARCHIVE_MEMBERS": 1}),
+            ({"a": b"xx"}, {"_MAX_ARCHIVE_MEMBER_BYTES": 1}),
+            (
+                {"a": b"xx", "b": b"xx"},
+                {"_MAX_ARCHIVE_TOTAL_BYTES": 3},
+            ),
+            (
+                {"a": b"x" * 1_000},
+                {"_MAX_ARCHIVE_COMPRESSION_RATIO": 2},
+            ),
+        ],
+    )
+    def test_preview_rejects_archive_resource_limits_before_extraction(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+        members,
+        limits,
+    ):
+        archive_path = tmp_path / "bounded.zip"
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        for name, value in limits.items():
+            monkeypatch.setattr(importer_module, name, value)
+
+        manifest, error = chatbook_importer.preview_chatbook(archive_path)
+
+        assert manifest is None
+        assert (
+            error
+            == "Error previewing chatbook: Chatbook archive exceeds safety limits."
+        )
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    def test_extraction_counts_actual_member_bytes_and_cleans_up(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+    ):
+        archive_path = tmp_path / "dishonest.zip"
+        archive_path.write_bytes(b"fake")
+        member = zipfile.ZipInfo("manifest.json")
+        member.file_size = 1
+        member.compress_size = 1
+
+        class FakeArchive:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def infolist():
+                return [member]
+
+            @staticmethod
+            def open(*_args, **_kwargs):
+                return io.BytesIO(b"xx")
+
+        monkeypatch.setattr(importer_module.zipfile, "ZipFile", FakeArchive)
+
+        manifest, error = chatbook_importer.preview_chatbook(archive_path)
+
+        assert manifest is None
+        assert (
+            error
+            == "Error previewing chatbook: Chatbook archive exceeds safety limits."
+        )
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
+
+    def test_archive_limit_import_fails_before_database_writes(
+        self,
+        chatbook_importer,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        archive_path = tmp_path / "too-many.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("manifest.json", "{}")
+            archive.writestr("extra", "x")
+        monkeypatch.setattr(importer_module, "_MAX_ARCHIVE_MEMBERS", 1)
+
+        success, error = chatbook_importer.import_chatbook(archive_path)
+
+        assert success is False
+        assert error == "Fatal error: Chatbook archive exceeds safety limits."
+        with sqlite3.connect(temp_db_paths["ChaChaNotes"]) as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+                == 0
+            )
         assert list(chatbook_importer.temp_dir.iterdir()) == []
 
     @pytest.fixture

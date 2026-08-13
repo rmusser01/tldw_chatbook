@@ -52,6 +52,15 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-053](053-mcp-unified-standalone-runtime-boundary.md) | Accepted | Replace FastMCP with the public `mcp-unified` strict stdio runtime while preserving Chatbook's standalone catalog, in-app Library boundary, permission policy, and bounded canonical mappings. |
 | [ADR-054](054-deterministic-visual-transcript-compaction.md) | Accepted | Keep visual transcript pages deterministic, on-device, request-scoped, exactly accounted, capability-gated, and safely recoverable through text compaction. |
 | [ADR-055](055-library-destructive-action-reversibility-rule.md) | Accepted | One reversibility rule for Library destructive actions: soft deletes owe a receipt + Undo with Trash as the durable story, hard deletes state permanence, draft discards confirm without receipts, and blank-note GC is the guarded named exception. |
+| [ADR-056](056-context-use-visual-compaction-evaluation.md) | Accepted | Evaluate visual transcript compaction by using image history as context for downstream answers rather than requiring full transcript OCR. |
+| [ADR-057](057-portable-chatbook-prompt-records.md) | Accepted | Add versioned portable Prompt records inside the existing Chatbook 1.0 Prompt content seam. |
+| [ADR-058](058-thread-scoped-test-socketpair-exemption.md) | Accepted | Permit only same-thread connections made dynamically inside the real socketpair implementation while preserving the test network guard's process-wide default denial. |
+| [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md) | Accepted | Use hierarchical ownership-aware Database Note folders plus device-private, journaled multi-root sync with explicit conflicts, deletion review, process coordination, and opaque server claims. |
+| [ADR-060](060-notes-sync-round-trip-and-interoperability-constraints.md) | Accepted | Amend Notes lasting sync with single-binding ownership, representation-safe file writes, composite journaling, explicit Sync-v2 and backup boundaries, and per-mutation server fencing. |
+| [ADR-061](061-library-ingest-parse-progress-channel.md) | Accepted | Carry local parse progress over a bounded, non-blocking, generation-fenced process channel while lifecycle results remain authoritative. |
+| [ADR-062](062-hosted-chat-completions-provider-boundary.md) | Superseded by ADR-063 | Original hosted Chat wire decision with ephemeral-only reasoning continuation. |
+| [ADR-063](063-hosted-provider-wire-and-durable-tool-continuation.md) | Accepted | Keep hosted Chat wire mechanics neutral and persist private provider continuation with message-owned sync, conflict, export, and model-specific replay semantics. |
+| [ADR-064](064-deepseek-dual-api-provider-boundary.md) | Accepted | Treat DeepSeek Chat Completions and Responses as two strict modes of one provider with stateless explicit history and durable reasoning/tool continuation. |
 
 ## Historical Decision Material
 

@@ -587,6 +587,26 @@ def _no_local_server_probes(
 
     monkeypatch.setattr(local_server_discovery, "_get_models_payload", _no_endpoint)
 
+    # task-15211 (sweep catch): the Models/Lab screen has its own parallel
+    # chokepoint -- `llm_screen._probe_local_server`, a real TCP connect to
+    # 127.0.0.1:11434, scheduled from a 3s interval AND a deferred-mount
+    # one-shot. The one-shot flushes while `run_test` is tearing down, so
+    # widget-lifetime cancellation cannot fully close it: seven Lab/LLM
+    # tests hit the network guard AT TEARDOWN, and the probe (plus lab
+    # status polling) is the prime suspect for a full-suite chunk whose
+    # pytest printed its summary and then never exited. Same shape, same
+    # remedy, same opt-out marker as `_get_models_payload` above. The
+    # production caller resolves this at call time via a local import, so
+    # the module-attribute patch covers it; the probe's own unit test
+    # (`test_llm_screen_ollama_probe_nonblocking`) binds the real function
+    # by name at import and is deliberately unaffected.
+    from tldw_chatbook.UI.Screens import llm_screen
+
+    async def _no_ollama(host="127.0.0.1", port=11434):
+        return False
+
+    monkeypatch.setattr(llm_screen, "_probe_local_server", _no_ollama)
+
 
 @pytest.fixture(autouse=True)
 def _console_gateway_http_client_is_offline(

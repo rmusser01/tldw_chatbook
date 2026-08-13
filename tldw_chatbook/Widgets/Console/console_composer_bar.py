@@ -4610,8 +4610,8 @@ class ConsoleComposerBar(Horizontal):
         disabled-reason strip), then the fixed-width action row holding
         ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
         display-toggled ``Stop``/``✕`` controls. The collapsed presentation
-        is a one-row status line with ``Stop`` (while a run is active) and
-        ``Expand ▴``. Both presentations are always mounted;
+        is a one-row line with ``Expand ▴``, status, and ``Stop`` (while a
+        run is active). Both presentations are always mounted;
         ``set_collapsed`` display-toggles between them so editor state
         survives without remounting.
 
@@ -4832,6 +4832,13 @@ class ConsoleComposerBar(Horizontal):
         )
         collapsed.styles.display = "block" if self._collapsed else "none"
         with collapsed:
+            yield self._bounded_button(
+                "Expand ▴",
+                width=12,
+                id="console-composer-expand",
+                classes="destination-action-button console-composer-toggle",
+                tooltip="Expand composer and return to the draft.",
+            )
             yield Static(
                 self._collapsed_status_text(),
                 id="console-composer-collapsed-status",
@@ -4848,10 +4855,3 @@ class ConsoleComposerBar(Horizontal):
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop
-            yield self._bounded_button(
-                "Expand ▴",
-                width=12,
-                id="console-composer-expand",
-                classes="destination-action-button console-composer-toggle",
-                tooltip="Expand composer and return to the draft.",
-            )

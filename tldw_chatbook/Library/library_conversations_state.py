@@ -48,6 +48,12 @@ class LibraryConversationsCanvasState:
     query: str
     select_mode: bool = False
     selected_count: int = 0
+    range_copy: str = ""
+    page_copy: str = ""
+    previous_disabled: bool = True
+    next_disabled: bool = True
+    loading: bool = False
+    error_copy: str = ""
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,13 @@ def build_library_conversations_state(
     query: str = "",
     selected_id: str = "",
     now: datetime | None = None,
-    limit: int = 75,
+    page: int = 1,
+    page_size: int = 20,
+    total_count: int | None = None,
+    total_known: bool = True,
+    has_more: bool = False,
+    loading: bool = False,
+    error_copy: str = "",
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryConversationsCanvasState:
@@ -132,12 +144,19 @@ def build_library_conversations_state(
 
     Args:
         records: Conversation records from the screen's conversation service.
-            Tolerated to have missing/None fields.
-        query: Case-insensitive substring filter applied to titles.
+            This is one already-filtered, already-paged result. Records with
+            missing/None fields are tolerated.
+        query: Submitted query used for display copy.
         selected_id: Requested selected conversation id; falls back to the
-            first displayed row when absent from the filtered/limited rows.
+            first displayed row when absent from the supplied page.
         now: Reference time for relative age labels; defaults to current UTC time.
-        limit: Maximum number of rows to display after sorting and filtering.
+        page: One-based page number.
+        page_size: Maximum service page size.
+        total_count: Total matching records when known.
+        total_known: Whether total_count is authoritative.
+        has_more: Whether the service reports a subsequent page.
+        loading: Whether a page request is in flight.
+        error_copy: Recoverable page-load error copy.
 
     Returns:
         Immutable canvas state: rows, status/empty copy, selection, and
@@ -145,6 +164,14 @@ def build_library_conversations_state(
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
     normalized_query = str(query or "").strip()
+    resolved_page_size = max(1, int(page_size))
+    requested_page = max(1, int(page))
+    resolved_total_known = total_known and total_count is not None
+    known_total = max(0, int(total_count or 0))
+    page_count = max(1, (known_total + resolved_page_size - 1) // resolved_page_size)
+    resolved_page = (
+        min(requested_page, page_count) if resolved_total_known else requested_page
+    )
 
     entries: list[_ConversationEntry] = []
     for record in records:
@@ -164,20 +191,12 @@ def build_library_conversations_state(
             )
         )
 
-    if normalized_query:
-        lowered_query = normalized_query.lower()
-        entries = [entry for entry in entries if lowered_query in entry.title.lower()]
-
     entries.sort(key=_sort_key)
 
-    limited_entries = entries[: max(0, limit)]
-
     resolved_selected_id = str(selected_id or "")
-    displayed_ids = {entry.conversation_id for entry in limited_entries}
+    displayed_ids = {entry.conversation_id for entry in entries}
     if resolved_selected_id not in displayed_ids:
-        resolved_selected_id = (
-            limited_entries[0].conversation_id if limited_entries else ""
-        )
+        resolved_selected_id = entries[0].conversation_id if entries else ""
 
     rows = tuple(
         LibraryConversationRow(
@@ -190,29 +209,45 @@ def build_library_conversations_state(
             selected=entry.conversation_id == resolved_selected_id,
             checked=entry.conversation_id in selected_ids,
         )
-        for entry in limited_entries
+        for entry in entries
     )
     selected_count = sum(1 for r in rows if r.checked)
 
-    if normalized_query:
-        # match_count is from the filtered-but-unlimited entries list, not the limited rows
-        match_count = len(entries)
+    normalized_error_copy = str(error_copy or "")
+    if normalized_error_copy:
+        status_copy = normalized_error_copy
+    elif loading:
+        status_copy = "Loading conversations…"
+    elif normalized_query:
+        match_count = known_total if resolved_total_known else len(entries)
         suffix = "match" if match_count == 1 else "matches"
         status_copy = f"{match_count} {suffix} for '{normalized_query}'"
     else:
         status_copy = ""
 
-    if rows:
+    if normalized_error_copy or loading or rows:
         empty_copy = ""
     elif normalized_query:
         empty_copy = f"No conversations match '{normalized_query}'."
     else:
         empty_copy = LIBRARY_CONVERSATIONS_EMPTY_COPY
 
+    start = (resolved_page - 1) * resolved_page_size + 1 if entries else 0
+    end = (resolved_page - 1) * resolved_page_size + len(entries) if entries else 0
+    if resolved_total_known:
+        range_copy = f"{start}-{end} of {known_total}" if entries else f"0 of {known_total}"
+        page_copy = f"Page {resolved_page} of {page_count}"
+    else:
+        range_copy = f"{start}-{end}" if entries else "0"
+        page_copy = f"Page {resolved_page}"
+
+    previous_disabled = loading or resolved_page == 1
+    next_disabled = loading or not has_more
+
     selected_entry = next(
         (
             entry
-            for entry in limited_entries
+            for entry in entries
             if entry.conversation_id == resolved_selected_id
         ),
         None,
@@ -239,6 +274,12 @@ def build_library_conversations_state(
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
         query=normalized_query,
+        range_copy=range_copy,
+        page_copy=page_copy,
+        previous_disabled=previous_disabled,
+        next_disabled=next_disabled,
         select_mode=select_mode,
         selected_count=selected_count,
+        loading=loading,
+        error_copy=normalized_error_copy,
     )

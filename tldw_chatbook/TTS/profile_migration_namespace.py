@@ -14,7 +14,7 @@ from pathlib import Path
 from tldw_chatbook.Utils import private_paths
 
 
-_LIBC = ctypes.CDLL(None, use_errno=True)
+_LIBC = None if sys.platform == "win32" else ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
 
 
