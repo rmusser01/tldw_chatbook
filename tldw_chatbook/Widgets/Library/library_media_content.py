@@ -16,7 +16,17 @@ from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 def build_raw_content_renderable(
     content: str, query: str, match_index: int
 ) -> Text | str:
-    """Build raw text content, safely highlighting matching source lines."""
+    """Build raw text content with matching source lines highlighted.
+
+    Args:
+        content: Source text to display.
+        query: Case-insensitive search text to highlight.
+        match_index: Zero-based index of the active matching line.
+
+    Returns:
+        Highlighted Rich text when a match is active; otherwise, the source
+        text or its empty-state message.
+    """
     display_content = content or "No stored content."
     normalized_query = query.strip()
     if not normalized_query or not content:
@@ -78,7 +88,17 @@ class LibraryMediaContentBody(VerticalScroll):
         yield self._raw_widget
 
     async def sync_mode(self, mode: str) -> None:
-        """Show the latest requested view, mounting each view at most once."""
+        """Show the requested view while mounting each view at most once.
+
+        Args:
+            mode: Requested content mode, either ``"raw"`` or ``"rendered"``.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If ``mode`` is not a supported content mode.
+        """
         self._desired_mode = self._normalize_mode(mode)
         async with self._mount_lock:
             await self._ensure_mode_mounted(self._desired_mode)
@@ -90,7 +110,15 @@ class LibraryMediaContentBody(VerticalScroll):
                 self._markdown_widget.display = desired == "rendered"
 
     def sync_search(self, query: str, match_index: int) -> None:
-        """Refresh mounted Raw content while retaining the rendered view."""
+        """Refresh mounted Raw content while retaining the rendered view.
+
+        Args:
+            query: Case-insensitive search text to highlight.
+            match_index: Zero-based index of the active matching line.
+
+        Returns:
+            None.
+        """
         self._query = query
         self._match_index = match_index
         if self._raw_widget is not None:
@@ -193,7 +221,17 @@ class LibraryMediaContentSearchControls(Vertical):
         matches: tuple[int, ...],
         match_index: int,
     ) -> None:
-        """Synchronize query data and recompose only across active-state changes."""
+        """Synchronize query data, recomposing only when activity changes.
+
+        Args:
+            is_markdown: Whether the content supports a rendered Markdown view.
+            query: Submitted content-search query.
+            matches: Source-line indexes matching ``query``.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
         was_active = bool(self.query)
         self.is_markdown = is_markdown
         self.query = query
@@ -216,7 +254,15 @@ class LibraryMediaContentSearchControls(Vertical):
     def sync_match_index(
         self, *, matches: tuple[int, ...], match_index: int
     ) -> None:
-        """Synchronize a navigation update without rebuilding controls."""
+        """Synchronize match navigation without rebuilding controls.
+
+        Args:
+            matches: Source-line indexes matching the active query.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
         self.matches = matches
         self.match_index = match_index
         self.query_one("#library-media-content-search-status", Static).update(

@@ -283,7 +283,16 @@ class LibraryMediaViewer(Vertical):
     def sync_query_state(
         self, *, query: str, matches: tuple[int, ...], match_index: int
     ) -> None:
-        """Synchronize a submitted query without rebuilding the viewer."""
+        """Synchronize a submitted query without rebuilding the viewer.
+
+        Args:
+            query: Submitted content-search query.
+            matches: Source-line indexes matching ``query``.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
         self.content_query = query
         self.content_match_index = match_index
         self.query_one(
@@ -302,7 +311,15 @@ class LibraryMediaViewer(Vertical):
     def sync_match_index(
         self, *, matches: tuple[int, ...], match_index: int
     ) -> None:
-        """Synchronize match navigation without rebuilding viewer children."""
+        """Synchronize match navigation without rebuilding viewer children.
+
+        Args:
+            matches: Source-line indexes matching the active query.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
         self.content_match_index = match_index
         self.query_one(
             "#library-media-content-search-controls",
@@ -313,7 +330,17 @@ class LibraryMediaViewer(Vertical):
         ).sync_search(self.content_query, match_index)
 
     async def sync_mode(self, mode: str) -> None:
-        """Synchronize toggle state and reuse the persistent content views."""
+        """Synchronize toggle state and reuse the persistent content views.
+
+        Args:
+            mode: Requested content mode, either ``"raw"`` or ``"rendered"``.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If ``mode`` is not a supported content mode.
+        """
         self.content_mode = mode
         rendered_selected = mode == "rendered"
         rendered_button = self.query_one(
