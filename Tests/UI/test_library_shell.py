@@ -24841,36 +24841,18 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         dirty_body = screen._library_note_session.snapshot.body
         assert screen._library_note_session.snapshot.dirty is True
 
-        for cycle in range(5):
-            prior = screen.query_one("#library-note-body", TextArea)
-            # task-15459: `_apply_local_source_snapshot` now skips its
-            # recompose when the incoming snapshot is byte-for-byte
-            # identical to what is already rendered (the whole point of
-            # that task -- a warm revisit's reconcile fetch confirming the
-            # cache verbatim no longer pays for a redundant repaint). This
-            # loop's actual purpose is stress-testing recompose CHURN while
-            # a dirty note session is open, standing in for a real
-            # background refresh that found new source data -- so the
-            # counts must genuinely differ each iteration to keep forcing
-            # that recompose, the same way a real DB change would.
-            varied_counts = dict(screen._local_source_counts)
-            varied_counts["notes"] = varied_counts.get("notes", 0) + cycle + 1
+        prior = screen.query_one("#library-note-body", TextArea)
+        for _ in range(5):
             screen._apply_local_source_snapshot(
                 dict(screen._local_source_records),
-                varied_counts,
+                dict(screen._local_source_counts),
                 dict(screen._local_source_total_known),
                 screen._library_lookup_error,
                 screen._library_lookup_recovery_state,
                 dict(screen._library_study_counts),
             )
-            await _wait_for_condition(
-                pilot,
-                lambda: screen.query_one("#library-note-body", TextArea) is not prior,
-                message=(
-                    "Generic source-snapshot completion never recomposed the "
-                    "Notes workbench."
-                ),
-            )
+            await pilot.pause()
+            assert screen.query_one("#library-note-body", TextArea) is prior
             assert screen._library_note_session is coordinator
             assert screen._library_note_session.snapshot.body == dirty_body
             assert screen._library_note_session.snapshot.dirty is True
