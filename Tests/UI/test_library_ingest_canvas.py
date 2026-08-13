@@ -1049,9 +1049,19 @@ async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scro
         canvas.scroll_to(y=2, animate=False, force=True, immediate=True)
         start_region = start.region
         scroll_y = canvas.scroll_y
+        compositor = screen._compositor
+        strips = compositor.render_strips()
+        painted_start = "\n".join(
+            strips[y].text[start_region.x : start_region.right]
+            for y in range(start_region.y, start_region.bottom)
+        )
         assert screen.focused is path_input
         assert path_input.cursor_position == 3
         assert scroll_y == 2
+        assert start in compositor.visible_widgets
+        assert start_region.width > 0
+        assert start_region.height > 0
+        assert "Start import" in painted_start
 
         screen._library_ingest_start_consent = _LibraryIngestStartConsent(
             fingerprint="active-test",
