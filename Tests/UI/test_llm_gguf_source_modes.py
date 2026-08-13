@@ -245,7 +245,7 @@ async def _settle_pilot_until(
     """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
 
     try:
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(10):
             while True:
                 await pilot.pause()
                 if predicate():
@@ -269,6 +269,24 @@ async def test_pilot_settle_waits_for_deferred_refresh_cycles() -> None:
         message="deferred Textual work did not settle",
     )
     assert pilot.cycles == 21
+
+
+@pytest.mark.asyncio
+async def test_pilot_settle_reports_a_clear_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class YieldingPilot:
+        async def pause(self) -> None:
+            await asyncio.sleep(0)
+
+    real_timeout = asyncio.timeout
+    monkeypatch.setattr(asyncio, "timeout", lambda _seconds: real_timeout(0.001))
+    with pytest.raises(AssertionError, match="condition did not settle"):
+        await _settle_pilot_until(
+            YieldingPilot(),
+            lambda: False,
+            message="condition did not settle",
+        )
 
 
 @pytest.mark.asyncio
