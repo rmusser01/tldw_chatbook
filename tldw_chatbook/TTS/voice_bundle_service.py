@@ -1251,7 +1251,18 @@ class TTSVoiceBundlePortabilityService:
     async def inspect(
         self, source: Path | str | os.PathLike[str]
     ) -> TTSVoiceBundleReview:
-        """Copy and validate one unchanged hostile source into a safe review."""
+        """Copy and validate one unchanged hostile source into a safe review.
+
+        Args:
+            source: User-selected bundle path to copy and inspect.
+
+        Returns:
+            Sanitized review facts plus opaque commit authority.
+
+        Raises:
+            TTSVoiceBundleError: The source or bundle fails bounded validation.
+            asyncio.CancelledError: The inspection caller is cancelled.
+        """
 
         outcome = await self._inspect_outcome(source)
         del source

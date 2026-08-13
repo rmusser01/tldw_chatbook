@@ -2005,6 +2005,7 @@ def open_canonical_profile_migration_destination(
             _PROFILE_MIGRATION_BOUNDARY_OWNER,
             selected,
             must_exist=True,
+            expected_identity=file_identity,
             timeout=0,
         )
         connection.row_factory = sqlite3.Row

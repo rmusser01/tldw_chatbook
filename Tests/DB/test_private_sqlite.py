@@ -495,6 +495,48 @@ def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
         )
 
 
+def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    retained = tmp_path / "retained.sqlite3"
+    replacement = tmp_path / "replacement.sqlite3"
+    sqlite3.connect(replacement).close()
+    replacement.chmod(0o600)
+    real_prepare = private_sqlite._prepare_artifact
+    real_sqlite_connect = private_sqlite.sqlite3.connect
+    sqlite_opens: list[object] = []
+
+    def substitute_after_prepare(
+        selected: Path,
+        **kwargs: object,
+    ) -> bool:
+        prepared = real_prepare(selected, **kwargs)
+        if selected == target:
+            target.rename(retained)
+            replacement.rename(target)
+        return prepared
+
+    def record_sqlite_open(database: object, *args: object, **kwargs: object):
+        sqlite_opens.append(database)
+        return real_sqlite_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(private_sqlite, "_prepare_artifact", substitute_after_prepare)
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", record_sqlite_open)
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_canonical_profile_migration_destination(
+            target,
+            schema_version=0,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert retained.exists()
+    assert target.exists()
+    assert sqlite_opens == []
+
+
 def test_canonical_migration_candidate_pins_exact_file_through_migration(
     tmp_path: Path,
 ) -> None:
