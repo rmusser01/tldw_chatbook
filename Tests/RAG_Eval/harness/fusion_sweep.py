@@ -58,8 +58,9 @@ type except prompts. `keyword_leg_census` therefore calls the engine's
 `_keyword_search` directly, once per golden query, and counts the queries
 whose target lands in the leg's own top-k. That is the number the spec's
 decision rule maximizes: the control (pre-arc `and`) scores 20 over the 53
-non-negative queries, and the shipped `and_stopword_trim` construction the
-rule picked scores 21.
+non-negative queries, TASK-15400's winner `and_stopword_trim` scores 21, and
+the construction shipped since 2026-08-13 (`and_then_prefix`, by owner
+ruling over the rule's tie-break — see `SearchConfig`) scores 23.
 
 *The control row self-checks before anything else runs — and it is not a
 cache alarm.* Be precise about what that check can and cannot see, because
@@ -69,8 +70,8 @@ does — `rag_service.py:1240/:1334`), so a stale cache cannot move the census
 in either direction. What the control row actually catches is **census-method
 drift**: the counting method, the corpus or the golden set having moved out
 from under the control's 20, and — via `_validate_constructions` beside it —
-a construction VOCABULARY drift that would silently degrade rows 2-4 to the
-control and report all four censuses equal.
+a construction VOCABULARY drift that would silently degrade every non-control
+row to the control and report all six censuses equal.
 
 What protects the SCORED passes from a shared cache is different and lives
 elsewhere: Task 1 put the construction in the hybrid cache key, and this
@@ -124,6 +125,7 @@ __all__ = [
     "CONTROL_NAME",
     "DEFAULT_K",
     "FTS_MATCH_OR_FORM",
+    "FTS_MATCH_PREFIX_FORM",
     "HYBRID_MODE",
     "LEVER_PRECEDENCE",
     "NEAR_PROBE_DISTANCE",
@@ -140,6 +142,7 @@ __all__ = [
     "StrategyReport",
     "SweepReport",
     "WARN_BAND",
+    "WIDENING_FORMS",
     "combined_strategy",
     "format_construction_matrix",
     "format_matrix",
@@ -147,6 +150,7 @@ __all__ = [
     "fts_only_beats_vector_rank",
     "keyword_leg_census",
     "lever_rank",
+    "lost_census_queries",
     "near_probe_expression",
     "negative_composition",
     "prefix_probe_expression",
@@ -354,10 +358,12 @@ ALPHA_COMBO_STRATEGIES: tuple[Strategy, ...] = (
 
 #: The construction sweep's control row — the arc's BEFORE state, named
 #: after the construction rather than "control" so the table reads as what
-#: it is. This was the SHIPPED construction when the sweep ran; since
-#: TASK-15400 landed (2026-08-12) the shipped default is
-#: `and_stopword_trim` and this row is the pre-arc baseline every other row
-#: is read against. It must NOT be re-pointed at the new default: doing so
+#: it is. This was the SHIPPED construction when the sweep ran; the default
+#: has since moved twice (TASK-15400 to `and_stopword_trim`, 2026-08-12;
+#: TASK-15700 to `and_then_prefix`, 2026-08-13), and this row is the pre-arc
+#: baseline every other row is read against under BOTH matrices — which is
+#: exactly why it is pinned to a construction rather than to "whatever
+#: ships". It must NOT be re-pointed at the current default: doing so
 #: would delete the baseline the matrix is compared to and silently collapse
 #: rows 1 and 2 into one measurement.
 CONSTRUCTION_CONTROL_NAME = "and"
@@ -386,13 +392,43 @@ SHIPPED_CONTROL_CENSUS = 20
 #: composition is recorded per row and read beside the construction column.
 FTS_MATCH_OR_FORM = "or"
 
-#: The four pre-registered candidates, at the SHIPPED fusion parameters
+#: The same, for the PREFIX form TASK-15700's two new rows can run
+#: (`rag_service.FTS_MATCH_PREFIX`; pinned equal by
+#: `test_the_prefix_form_stamp_is_the_engines_own_constant`).
+FTS_MATCH_PREFIX_FORM = "prefix"
+
+#: The forms that WIDEN a query beyond the implicit AND over its own tokens
+#: — what the negative composition counts (TASK-15700 extends it from the OR
+#: form alone to any of these, which is what "count any non-primary form"
+#: means with the vocabulary the engine actually stamps).
+#:
+#: Read this list beside the CONSTRUCTION column, never alone. The AND form
+#: is the primary of every construction that can run it, so it is never here;
+#: but a widening form is a FALLBACK's under `and_then_or`/`and_then_prefix`
+#: and a PRIMARY's under `or`/`prefix` — same stamp, opposite meaning for the
+#: tie-break. Counting the form (and saying so) is what keeps the number
+#: honest under both; deriving "non-primary" per row would need the engine's
+#: table here and would silently read 0 for the two widening-primary rows,
+#: exactly where the noise cost is highest.
+WIDENING_FORMS = (FTS_MATCH_OR_FORM, FTS_MATCH_PREFIX_FORM)
+
+#: The pre-registered candidates, at the SHIPPED fusion parameters
 #: (`SearchConfig`'s own defaults: rrf_k 5, pool x2, alpha 0.7 — pinned
 #: against that class rather than copied from the spec's prose). Holding
 #: fusion fixed is what makes the census column attributable to the
 #: construction alone; a row that also moved rrf_k would confound the two
 #: arcs' levers in one number. Names stay <= 10 characters — the matrix
 #: column width is the dataclass's own stated rule.
+#:
+#: FOUR rows for TASK-15400, plus TWO for TASK-15700's re-run under the
+#: form-tiered merge. The first four keep their exact meaning — same names,
+#: same constructions, same fusion parameters, control still first — because
+#: the re-run is read against the same baseline (`SHIPPED_CONTROL_CENSUS`
+#: stays 20). The new rows are the spec's promotion of the 15400 sweep's
+#: report-only prefix probe (`prefix`, the best of the two probes at 3
+#: rescues) and its composition with the AND primary (`and_pfx`), which is
+#: the row that matters if `and_or` STILL loses the vector-blind fixture
+#: under the fixed merge.
 CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
     Strategy("and", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
              fts_match_construction="and"),
@@ -402,6 +438,10 @@ CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
              fts_match_construction="or"),
     Strategy("and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
              fts_match_construction="and_then_or"),
+    Strategy("prefix", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="prefix"),
+    Strategy("and_pfx", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+             fts_match_construction="and_then_prefix"),
 )
 
 #: The token distance the NEAR probe asks for. FTS5's default is also 10;
@@ -544,10 +584,15 @@ class NegativeComposition:
 
     Attributes:
         queries: Negative queries measured.
-        fallback_rows: FTS-only rows inside the top-k carrying the OR form.
-            Under `and_then_or` these ARE fallback rows; under `or` they are
-            that construction's primaries — the construction column
-            disambiguates, which is why this counts the FORM and says so.
+        fallback_rows: FTS-only rows inside the top-k carrying a WIDENING
+            form — the OR form or (TASK-15700) the prefix form,
+            `WIDENING_FORMS`. Under `and_then_or`/`and_then_prefix` these ARE
+            fallback rows; under `or`/`prefix` they are that construction's
+            primaries — the construction column disambiguates, which is why
+            this counts the FORM and says so. The name is kept from
+            TASK-15400 because the report column and every reader's mental
+            model are attached to it; what it counts widened, not what it
+            means.
         fts_only_rows: All FTS-only rows inside the top-k, whatever form
             matched them. The denominator `fallback_rows` is read against.
     """
@@ -1021,7 +1066,7 @@ def keyword_leg_census(
     The call is the ASYNC keyed path, driven through ``runtime.run``. The
     sync cache twins (`simple_cache.py`'s `get_sync`/`set_sync`) render the
     ``and`` key for every construction, so a census that ever reached them
-    would report one number four times — the exact shape of the failure the
+    would report one number six times — the exact shape of the failure the
     control-row self-check exists to catch.
 
     Note for a future editor: do NOT turn this into a rank-ORDER assertion
@@ -1091,7 +1136,7 @@ def negative_composition(
     k: int = DEFAULT_K,
     source_types: Sequence[str] = SOURCE_TYPES,
 ) -> NegativeComposition:
-    """Count the keyword leg's rows inside hybrid top-k for the negatives.
+    """Count the keyword leg's WIDENED rows inside hybrid top-k for negatives.
 
     Re-runs each negative through the seam the scored pass just ran, so the
     search cache serves it (same query, same top_k, same key) and the rows
@@ -1129,7 +1174,7 @@ def negative_composition(
             form = (
                 provenance.get("fts_match") if isinstance(provenance, Mapping) else None
             )
-            if form == FTS_MATCH_OR_FORM:
+            if form in WIDENING_FORMS:
                 fallback_rows += 1
     return NegativeComposition(
         queries=len(negatives),
@@ -1292,12 +1337,12 @@ def _validate_constructions(strategies: Sequence[Strategy]) -> None:
     The engine resolves an unrecognized `fts_match_construction` to the
     shipped ``and`` with ONE warning per service instance
     (`_resolved_fts_match_construction`) — a deliberate fail-safe for
-    production that is a silent flattener for a sweep: rows 2-4 would each
-    measure the control, all four censuses would read 20, the control's own
-    self-check would PASS, and the table would report "the construction makes
+    production that is a silent flattener for a sweep: every non-control row
+    would measure the control, all six censuses would read 20, the control's
+    own self-check would PASS, and the table would report "the construction makes
     no difference". That is the 4110 failure through a different door, so the
     vocabulary is checked against the engine's own tuple rather than trusted
-    as four string literals.
+    as six string literals.
 
     Args:
         strategies: The matrix about to run.
@@ -1353,6 +1398,58 @@ def rescued_zero_row_queries(
     found = set(entry.census.hit_queries)
     return tuple(
         query_id for query_id in control.zero_row_queries if query_id in found
+    )
+
+
+def lost_census_queries(
+    entry: StrategyReport, control: LegCensus
+) -> tuple[str, ...]:
+    """Which of the CONTROL's census hits this row's leg no longer answers.
+
+    Control-relative, NOT shipped-relative: the baseline is the pre-arc
+    ``and`` control row's census, so this is a row's cost against the
+    15400-era baseline the whole table is calibrated to. For a row's cost
+    against a specific candidate default (e.g. the shipped
+    ``and_stopword_trim``), pass THAT row's census as ``control`` — the
+    function is baseline-agnostic; only the matrix's printed column fixes
+    the baseline to the control row.
+
+    THE COLUMN THE 15400 MATRIX DID NOT HAVE, and the one a widening row
+    has to be read against (TASK-15700 review). Every other number on the
+    table is blind to a self-inflicted loss:
+
+    * `census` is NET — three gains and three losses render as "no change".
+    * `resc` is gains-ONLY, and says so in its own docstring.
+    * `zero` counts legs that returned NOTHING, so a leg that returned ten
+      rows without the target is invisible to it.
+
+    The loss is not hypothetical. A widening form is a superset at the MATCH
+    level but NOT at the RETURNED-ROW level: each sub-leg's SQL is
+    bm25-ordered and LIMITED, so the widened rows compete for that sub-leg's
+    own slots before the merge is ever consulted. Measured during review —
+    12 prefix-competitor documents plus one exact-match document, query
+    "wombat log" at top_k=5 — `and_stopword_trim` finds the exact document
+    and `prefix` returns five rows with it ABSENT: self-displacement inside
+    ONE sub-leg, which the tiered merge cannot protect against because there
+    is only one tier involved.
+
+    Computed from the ids, exactly like `rescued_zero_row_queries` and for
+    the same reason: a row that gains three and loses one must not report as
+    "+2 and nothing lost".
+
+    Args:
+        entry: A row of an instrumented sweep.
+        control: The control row's census.
+
+    Returns:
+        The lost query ids, in the control's hit order; empty when the row
+        carries no census.
+    """
+    if entry.census is None:
+        return ()
+    found = set(entry.census.hit_queries)
+    return tuple(
+        query_id for query_id in control.hit_queries if query_id not in found
     )
 
 
@@ -1420,8 +1517,8 @@ def run_fusion_sweep(
         control_name: Which row the report's `control()` resolves to. The
             construction matrix names its control after the PRE-ARC
             construction (`and`, the arc's BEFORE state) rather than
-            "control" — it is not the shipped construction, which is
-            `and_stopword_trim`.
+            "control" — it is deliberately NOT whichever construction
+            currently ships (`and_then_prefix` since 2026-08-13).
         instrument: Record TASK-15400's per-row instrumentation (the
             keyword-leg census and the negative composition). Off for the
             fusion matrix, which never measured either.
@@ -1820,16 +1917,43 @@ def format_construction_matrix(report: SweepReport) -> str:
         "candidates per leg, so a query can be a census miss and still have "
         "its target inside the fused pool. 'resc' = how many of the CONTROL's "
         "zero-row queries this row's leg now answers (the number a probe's "
-        "count is comparable with); 'zero' = queries the leg returned nothing "
-        "for, negatives included."
+        "count is comparable with); 'lost' = how many of the CONTROL's census "
+        "hits this row's leg NO LONGER answers; 'zero' = queries the leg "
+        "returned nothing for, negatives included."
+    )
+    lines.append(
+        "'lost' (like 'resc') is measured against the PRE-ARC CONTROL row, "
+        "not against whichever construction ships: for the cost of row X "
+        "versus a candidate default Y, diff the two rows' own hit_queries "
+        "(call lost_census_queries with Y's census as the baseline) — "
+        "reading X's 'lost' cell as its cost versus the shipped row "
+        "misstates it whenever the shipped row itself moved."
+    )
+    lines.append(
+        "'lost' is not derivable from the other columns and is the one to "
+        "read before crediting a widening row: 'census' is NET (three gains "
+        "and three losses render as no change), 'resc' is gains-only, and "
+        "'zero' only catches legs that returned NOTHING. A widening form is "
+        "a superset at the MATCH level but NOT at the returned-row level — "
+        "each sub-leg's query is bm25-ordered and LIMITED, so widened rows "
+        "compete for that sub-leg's own slots BEFORE the merge is consulted "
+        "(measured: 12 prefix-competitor docs + 1 exact-match doc, 'wombat "
+        "log' at top_k=5 — `and_stopword_trim` finds the exact doc, `prefix` "
+        "returns 5 rows without it). Hard constraint (a) is therefore NOT "
+        "structurally safe for a widening-PRIMARY row (`or`, `prefix`): it "
+        "can lose the vector-blind fixture's own keyword row inside one "
+        "sub-leg, where tiering has nothing to tier. `and_then_prefix` and "
+        "`and_then_or` are safe on that axis by construction — a non-empty "
+        "primary is never widened."
     )
     lines.append("")
 
     header = (
-        f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'zero':>6}"
+        f"{'row':<10}{'construction':>19}{'census':>8}{'resc':>6}{'lost':>6}"
+        f"{'zero':>6}"
         f"{'P@k':>8}{'R@k':>8}{'MRR':>8}{'NDCG':>8}{'docs':>6}"
         f"{'rescue':>8}{'rank':>6}{'mech':>11}"
-        f"{'neg-or':>8}{'neg-fts':>8}{'secs':>7}"
+        f"{'neg-wide':>10}{'neg-fts':>8}{'secs':>7}"
     )
     lines.append(header)
     lines.append("-" * len(header))
@@ -1843,10 +1967,16 @@ def format_construction_matrix(report: SweepReport) -> str:
             if control.census is None or census is None
             else len(rescued_zero_row_queries(entry, control.census))
         )
+        lost = (
+            "-"
+            if control.census is None or census is None
+            else len(lost_census_queries(entry, control.census))
+        )
         lines.append(
             f"{strategy.name:<10}{strategy.fts_match_construction:>19}"
             f"{('-' if census is None else census.hits):>8}"
             f"{rescues:>6}"
+            f"{lost:>6}"
             f"{('-' if census is None else len(census.zero_row_queries)):>6}"
             f"{_cell(overall.get('precision'))}{_cell(overall.get('recall'))}"
             f"{_cell(overall.get('mrr'))}{_cell(overall.get('ndcg'))}"
@@ -1854,16 +1984,33 @@ def format_construction_matrix(report: SweepReport) -> str:
             f"{('yes' if entry.rescue.present else 'NO'):>8}"
             f"{(entry.rescue.rank if entry.rescue.rank is not None else '-'):>6}"
             f"{entry.rescue.mechanism:>11}"
-            f"{('-' if negatives is None else negatives.fallback_rows):>8}"
+            f"{('-' if negatives is None else negatives.fallback_rows):>10}"
             f"{('-' if negatives is None else negatives.fts_only_rows):>8}"
             f"{(0.0 if entry.elapsed_s is None else entry.elapsed_s):>7.1f}"
         )
     lines.append(
-        "'neg-or' = FTS-only rows carrying the OR form inside hybrid top-k "
-        "across the negatives ('neg-fts' = all FTS-only rows there). Under "
-        "`and_then_or` those OR rows are fallbacks; under `or` they are that "
-        "construction's primaries — the construction column disambiguates. "
-        "Recorded for the tie-break (fewer is better), never gated."
+        f"'neg-wide' = FTS-only rows carrying a WIDENING form "
+        f"({'/'.join(WIDENING_FORMS)}) inside hybrid top-k across the "
+        "negatives ('neg-fts' = all FTS-only rows there). RENAMED from "
+        "TASK-15400's 'neg-or', and its vocabulary GREW: that column counted "
+        "the OR form alone, this one counts any widening form."
+    )
+    lines.append(
+        "READ neg-wide AGAINST THE CONSTRUCTION COLUMN, and do not tie-break "
+        "across the two kinds of row. Under `and_then_or`/`and_then_prefix` "
+        "these rows are fallbacks — the leg widened only where it found "
+        "nothing. Under `or`/`prefix` the widening form IS the primary, so "
+        "EVERY keyword row carries the widening stamp and neg-wide == "
+        "neg-fts by construction, not by measurement: the column then says "
+        "'this leg returned rows' rather than 'this leg added noise', and "
+        "the fewer-is-better tie-break cannot rank such a row against a "
+        "fallback row at all."
+    )
+    lines.append(
+        "The rename does NOT move the 15400 four rows' numbers: no "
+        "construction outside the two prefix-bearing ones can stamp the "
+        "prefix form, so those four rows count exactly what they counted "
+        "before. Recorded for the tie-break (fewer is better), never gated."
     )
     lines.append(
         "'rescue' is hard constraint (a): the vector-blind fixture must keep "

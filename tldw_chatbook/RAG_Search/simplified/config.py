@@ -438,43 +438,98 @@ class SearchConfig:
     # point the keyword leg at a specific file (e.g. tests).
     prompts_db_path: Optional[Path] = None
     # How the keyword (FTS5) leg joins a query's tokens into its MATCH
-    # expression (TASK-15400). One of the four candidates the arc's spec
-    # pre-registers, resolved at USE time by
+    # expression (TASK-15400, extended by TASK-15700). One of the six
+    # candidates the two arcs' specs pre-register, resolved at USE time by
     # `rag_service.RAGService._fts5_match_expressions`:
     #
     #   "and"                -- the PRE-15400 construction: implicit AND over
     #                           EVERY token (a document must contain every
     #                           word the user typed).
-    #   "and_stopword_trim"  -- THE SHIPPED DEFAULT since 2026-08-11: AND over
-    #                           the content tokens only, falling back to the
-    #                           full AND when trimming empties the query.
+    #   "and_stopword_trim"  -- AND over the content tokens only, falling back
+    #                           to the full AND when trimming empties the
+    #                           query. THE SHIPPED DEFAULT 2026-08-11 ->
+    #                           2026-08-13.
     #   "or"                 -- OR over the content tokens.
     #   "and_then_or"        -- AND first; on a ZERO-row sub-leg result,
     #                           that sub-leg re-runs as the content-token
     #                           OR (a non-empty AND is never widened).
+    #   "prefix"             -- the content tokens as PREFIX terms, implicitly
+    #                           ANDed (`"tok"*`). Widens as the PRIMARY form.
+    #   "and_then_prefix"    -- THE SHIPPED DEFAULT since 2026-08-13: AND
+    #                           first; on a ZERO-row sub-leg result, that
+    #                           sub-leg re-runs as the content-token PREFIX
+    #                           form (a non-empty AND is never widened).
     #
-    # The default is `and_stopword_trim` because TASK-15400's sweep MEASURED
-    # it as the winner under the arc's pre-registered rule (Task 3's matrix,
-    # 2026-08-11, sweep row `and_trim`): keyword-leg census 20 -> 21 of 53
-    # non-negative golden queries, hybrid prompt/recall 0.000 -> 0.200, and
-    # NO gated cell down anywhere in any of the three modes (plain and
-    # semantic are byte-identical to `and`; only hybrid can move). It also
-    # issues zero extra FTS queries. The two OR-bearing candidates scored a
-    # far bigger census (28 / 29) and were DISQUALIFIED -- see
-    # `RAGService._escape_fts5_query` for the mechanism.
+    # THE DECISION RECORD FOR THIS DEFAULT (TASK-15700 Task 4, 2026-08-13).
+    # Two sentences, and the second is NOT the first's conclusion:
     #
-    # Deliberately NOT wired to TOML/user config: this arc measured the four
-    # candidates against the golden set and ships the winner as the default,
-    # rather than handing users an unmeasured knob (spec: "the construction
-    # choice is NOT a config knob in this arc"). It is a field rather than a
-    # constant only so the sweep can vary it on a live SearchConfig -- which
-    # is exactly why it also joins the cache key (`simple_cache._make_key`);
-    # a runtime-variable retrieval parameter outside the key is how TASK-4110's
+    # (1) WHAT THE RULE PRODUCED. The arc's pre-registered rule was applied
+    # VERBATIM to the six-row re-run matrix (Task 3, 2026-08-13): the
+    # census-maximal row `and_then_or` (29) was DISQUALIFIED on hard
+    # constraint (b) -- 8 gated cells past 0.02, 5 of them past the 0.05 fail
+    # band; `or` failed (a) and (b); the qualifying set was
+    # {`and_stopword_trim` 21, `prefix` 23, `and_then_prefix` 23}, so max
+    # census 23 TIED `prefix` against `and_then_prefix`. The two were verified
+    # MEASUREMENT-IDENTICAL on every captured axis -- all 105 gated cells
+    # unmoved, all 60 per-query hybrid top-10s and all 60 keyword-leg top-10s
+    # identical, the same rescued queries, `lost` 0 both ways. The rule's
+    # tie-break (fewest extra FTS statements, MEASURED at 240 vs 460 over the
+    # 60-query golden set) therefore selected **`prefix`**.
+    #
+    # (2) THE OWNER RULED `and_then_prefix` SHIPS INSTEAD. The standing
+    # stability-over-quick-wins ruling was applied to a dimension the
+    # tie-break PREDATES: structural immunity to intra-sub-leg
+    # self-displacement. `prefix` widens as the PRIMARY form, so its widened
+    # rows compete for their own sub-leg's bm25-ordered, LIMITED slots BEFORE
+    # the merge is consulted, and the tiered merge can protect nothing there
+    # (measured synthetically: 12 prefix-competitor docs + 1 exact-match doc,
+    # "wombat log" at top_k=5 -- the trimmed AND finds the exact doc, `prefix`
+    # returns 5 rows without it). `and_then_prefix` cannot reach that shape: a
+    # NON-EMPTY AND primary is never widened, and the widening rows are
+    # confined to tier 2 of the sub-leg merge. The measured price is 220 extra
+    # SQLite statements over the 60-query set (460 vs 240; 92% of sub-legs
+    # fall back on the 172-document eval corpus -- an upper bound that
+    # shrinks as a corpus densifies), wall time indistinguishable, and ZERO
+    # measured retrieval difference.
+    #
+    # So `and_then_prefix` is NOT the rule's own output and must never be
+    # described as such: the rule produced `prefix`, and the owner overrode
+    # the tie-break between two measurement-identical qualifiers.
+    #
+    # What the flip buys is LEG-LEVEL: keyword-leg census 21 -> 23 of the 53
+    # non-negative golden queries (+`kw-quillon-mast`, +`kw-thimble-relay`),
+    # zero-row queries 39 -> 36 of 60. NO gated cell moves in any mode (0 of
+    # 105), because both new census hits are queries the vector leg already
+    # ranks highly -- the gain is what matters when the vector leg is blind,
+    # absent or scoped away.
+    #
+    # NOT A SUPERSET BY CONSTRUCTION -- read this before claiming one. This
+    # construction's PRIMARY is the FULL AND (`_escape_fts5_query`, every
+    # token INCLUDING stopwords), not the trimmed AND the outgoing default
+    # ran. Where a sub-leg's full AND returns rows, the fallback never fires,
+    # so `and_stopword_trim`'s trim-only hits are not sought there. That
+    # nothing was lost is a MEASURED fact on this corpus (Task 3's `lost` = 0
+    # against both the control and the shipped row), never a structural
+    # guarantee. `pm-vendor-chaser` illustrates it: the outgoing default
+    # reached it by TRIMMING, this one reaches it by the PREFIX FALLBACK --
+    # one query, two mechanisms, which is why the gated prompt cell (0.200)
+    # does not move across the flip.
+    #
+    # Deliberately NOT wired to TOML/user config: both arcs measured their
+    # candidates against the golden set and ship a default, rather than
+    # handing users an unmeasured knob (spec: "the construction choice is NOT
+    # a config knob in this arc"). It is a field rather than a constant only
+    # so the sweep can vary it on a live SearchConfig -- which is exactly why
+    # it also joins the cache key (`simple_cache._make_key`); a
+    # runtime-variable retrieval parameter outside the key is how TASK-4110's
     # sweep would have reported "the parameter doesn't matter". A consequence
-    # of the flip: the default now renders a `fts:and_stopword_trim` key part
-    # where the pre-arc default rendered none, so cached pre-flip results are
-    # never re-read under the new construction (they are keyed apart, not
-    # invalidated in place).
+    # of BOTH flips, unchanged in kind: the cache key is VALUE-keyed on this
+    # field, so the default now renders a `fts:and_then_prefix` key part where
+    # it rendered `fts:and_stopword_trim` before 2026-08-13 and nothing at all
+    # pre-15400. Entries cached under a previous construction are keyed APART
+    # from the new one rather than invalidated in place -- correct by
+    # construction, at the cost of a one-time run of cold misses after the
+    # upgrade, which is pre-existing semantics and not new to this flip.
     #
     # That guarantee holds for the ASYNC cache path only. `SimpleRAGCache`'s
     # SYNC twins (`_sync_get_impl`/`_sync_put_impl`) never pass this
@@ -492,7 +547,13 @@ class SearchConfig:
     # An unrecognized value warns once and behaves as "and" (fail-safe to the
     # PRE-ARC behaviour, which is the one every escaping/pushdown pin still
     # describes), matching how `hybrid_alpha`/`rrf_k` degrade.
-    fts_match_construction: str = "and_stopword_trim"
+    #
+    # TASK-15700 (2026-08-13) added the last TWO values -- `prefix` and
+    # `and_then_prefix` -- for its re-run of the sweep under the form-tiered
+    # sub-leg merge, and the re-run was NOT null: it moved this default, by
+    # the decision recorded above (the rule's winner `prefix`, overridden to
+    # `and_then_prefix` by owner ruling).
+    fts_match_construction: str = "and_then_prefix"
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False

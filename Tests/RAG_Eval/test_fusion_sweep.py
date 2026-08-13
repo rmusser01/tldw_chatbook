@@ -148,7 +148,9 @@ def test_the_fusion_strategy_matrix_over_the_real_fixtures(tmp_path, capsys):
 
 
 def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
-    """TASK-15400's MEASUREMENT: four MATCH constructions, one runtime.
+    """TASK-15400's MEASUREMENT, re-run under TASK-15700's tiered merge: SIX
+    MATCH constructions (the 15400 four, plus `prefix` and `and_pfx`), one
+    runtime.
 
     Same shape as the fusion matrix above and the same refusal to pin a
     winner — the census decides, under the rule the spec pre-registered, and

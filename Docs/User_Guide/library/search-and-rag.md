@@ -119,14 +119,25 @@ follows whichever **search mode** your active RAG profile
   saved prompts, so a prompt reaches hybrid results through the keyword leg
   alone. In practice that means prompts answer *keyword-shaped* queries —
   the words you type have to appear in the prompt's name or body.
-  **Common function words are the one exception (2026-08-12):** the keyword
-  leg drops them ("the", "a", "for", "about", "of", …) before requiring the
-  rest, so "saved prompt for chasing a supplier **about** a late order"
-  finds a prompt whose text never contains "about". Every *content* word you
-  type must still appear, so a long natural-language question that would
-  find a note by meaning will still usually not find a prompt — the change
-  buys you the small words, not the phrasing. If a prompt you know exists is
-  not coming back, drop to the distinctive nouns from its name or body.
+  **Two things soften that, and it is worth knowing which is which
+  (2026-08-13).** The keyword leg first asks for **every** word you typed,
+  function words included. When a source comes back with nothing, it asks a
+  second time — dropping the common function words ("the", "a", "for",
+  "about", "of", …) *and* treating each remaining word as the **start** of a
+  word rather than the whole of it. So "saved prompt for chasing a supplier
+  **about** a late order" finds a prompt whose text never contains "about",
+  and "watchlist **brief**" now finds a page that only ever says
+  "briefing". **The widening goes one way only:** typing `briefings` will
+  not find "briefing", and every *content* word you type must still match
+  something — as a whole word or as the beginning of one. A long
+  natural-language question that would find a note by meaning can therefore
+  still miss a prompt. If a prompt you know exists is not coming back, drop
+  to the distinctive nouns from its name or body, and prefer the shorter
+  form of a word to the longer one.
+
+  (This is the whole keyword leg's behaviour, not a prompts-only rule — it
+  is just that prompts have no vector leg to cover for it, so prompts are
+  where you notice.)
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
@@ -594,6 +605,50 @@ under those two profiles — `"saved" "prompt" "for" "chasing" "a" "supplier"
 "Saved prompt: chasing a late order" row. Note that the plain **Search** mode
 of the same screen is a different code path (the Library's four-seam keyword
 search) and is unchanged by this: it still requires every typed word.*
+
+*Verified against fix/rag-merge-interleave @ db73f0953 — 2026-08-13
+(TASK-15700, the prefix-fallback change in "Prompts are keyword-only" above).
+**Scratch profile** with its own `[paths] data_dir`, `HOME`/`XDG_*` all
+redirected, the model cache read-only and `HF_HUB_OFFLINE=1`; isolation
+confirmed at the running PID (`lsof`: **0** handles under the real profile,
+64 under the scratch) and the real `config.toml` byte-identical before and
+after. The library was built through the app's own paths — **36 of this
+repo's User Guide pages written with `add_note` and indexed with
+`index_entries`** — and the app listed them as "Notes (36)", offered them as
+a selected source, and started a run after the mode control was switched to
+"mode: Search ⇄ ✓ RAG Answer". **What was NOT verified:** that run did not
+finish. The first RAG Answer query on a fresh profile sat on "searching ·
+Notes…" at ~98% CPU for **eleven minutes** without rendering an Evidence row
+— the same stall the 2026-08-12 check hit at four minutes, now filed as
+TASK-15810 (a CPU sample puts the spin inside the Python interpreter, not in
+model loading, so the old "the embedding stack came up" attribution above is
+not established). No Evidence row was seen on screen. **What the claims DO
+rest on:** the same app-written notes and the same app-written vector index,
+through the engine's own hybrid search, two arms one config value apart:*
+
+- *"how do I schedule a watchlist brief" — the shipped `and_then_prefix`
+  builds `'"how" "do" "I" "schedule" "a" "watchlist" "brief"'` and, that
+  returning nothing, `'"schedule"* "watchlist"* "brief"*'`: the keyword leg
+  returns **1 row**, `watchlists.md`, stamped `prefix`. The previous default
+  builds `'"schedule" "watchlist" "brief"'` and its leg returns **0 rows** —
+  the page says "briefing", never "brief". Fused, the page's score rises
+  0.1167 → **0.1667** (it becomes a keyword+vector row); its rank does not
+  move, because the vector leg already had it first.*
+- *"what does the anyone brief do" — a query whose target the vector leg
+  misses entirely. Shipped: `watchlists.md` sits in the fused list at **rank
+  7 of 13**. Previous default: **absent**, 12 rows. That pair of lists is
+  the arc's claim.*
+- *Control, "how do I change the color theme and appearance": both arms
+  return the **same 15 rows, same order, same scores**, and the keyword leg
+  answers from its AND primary under both — the change does not touch a
+  query whose words are all present.*
+
+*Honest bound on all three: on a 36-page library of real documentation the
+vector leg answers nearly everything, so the shipped construction's gain
+shows up as a keyword row and a score rather than as a reordering. That is
+exactly what the harness predicted (0 of 105 gated metrics moved); the gain
+is leg-level and matters where the vector leg is blind, absent or scoped
+away.*
 
 - ***Depth follows the profile, both ways.*** On the shipped default
   profile the Evidence heading read **"Evidence · top 15 per source"** and

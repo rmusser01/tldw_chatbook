@@ -2525,6 +2525,40 @@ docstring can assert a stale number while never naming the constant that used
 to produce it — that is exactly what lets it survive a symbol-only grep, and
 exactly why an inline-literal arrow chain needs a human reading the prose, not
 a tool, to catch on the first pass.
+
+**The same class again, one level up: a stale VOCABULARY, and a sweep that
+stopped one file short — twice in one review round (TASK-15700,
+2026-08-13).** The keyword leg's default MATCH construction moved
+`and_stopword_trim -> and_then_prefix`. The implementer swept and corrected
+the affected prose; the review then found **two Importants that were both
+twins of corrections already made elsewhere** — `_is_fts5_stopword`'s
+docstring still said the list runs on every default search (the module
+comment 3,380 lines above had already been rewritten to say the opposite),
+and a test's property (b) still called the all-primary case "EVERY sub-leg
+under the shipped `and_stopword_trim`" (the production docstring one
+directory away had already been fixed). Re-sweeping the full RAG scope
+mechanically then found **two more sites the review had not listed**. And a
+third shape survived all of that into the closing task: the phrase "this
+SPARSE **49-document** corpus", copied from a pre-P2ab README paragraph into
+**three** newly written files (`config.py`, `rag_service.py`, a test
+docstring) — a corpus that has held **172** documents since 2026-08-11, so
+the number qualifying the arc's own headline cost figure was wrong in every
+place the arc itself had written it.
+
+Two additions to the rule above, both cheap:
+
+- **Sweep for the VALUE *and* the VOCABULARY.** A retuned enum-like value
+  (`and_stopword_trim`) leaves the same debris a retuned number does, plus a
+  second kind: prose that describes what the old value DID ("drops function
+  words", "never runs a second query") without naming it. Grep the old
+  identifier, then grep the old behaviour's distinctive phrases.
+- **Fix by re-sweeping the whole scope, never by patching the flagged
+  lines.** Every finding in this incident was a *class* with more members
+  than the reviewer listed; patching the reported line and stopping is what
+  produced the twins. After the last edit, re-run the grep over the full
+  scope and read every surviving hit aloud as a claim about today — the four
+  that survived here were all correct historical statements, and knowing
+  that is the difference between a clean sweep and an unfinished one.
 ## A gate with several conditions can close for the WRONG one — open the others or the test pins nothing (TASK-14911, 2026-08-11)
 
 **Incident.** `start_enabled` on the Library ingest canvas is a conjunction:
@@ -3800,3 +3834,60 @@ order — repair to the frozen contracts first, regenerate and prove ONCE at
 the end — landed all 43 repairs plus the gate in one session, and the next
 dev advance (11 rows + a sink-topology change) was correctly surfaced as a
 NEW incident (task-15600) instead of another re-freeze of this one.
+
+**Postscript (TASK-15700, 2026-08-13): both halves of that forecast held,
+and the row still did not ship.** The merge fix restored `and_then_or`'s
+rescue **at exactly slot 10**, and scoped recall went 0.429 -> 1.000 — so
+the mechanism was correctly identified and its counterfactual correctly
+measured. The row was then disqualified on a *different* constraint (no
+gated cell down > 0.02), by a mechanism one level further out again: tier 2
+confines fallback rows inside the keyword LEG, but tier 2 still enters
+FUSION, where a fallback row carrying a vector rank becomes a MERGED row
+that outscores any fts-only row. The corollary to carry: **fixing the
+composition level the last defect lived at buys you exactly that level.**
+Before claiming a fix unblocks a candidate, ask what the NEXT composition
+step does with the rows you just re-ordered.
+
+---
+
+## A pre-registered rule the owner then overrides must be recorded as TWO facts, never one (TASK-15700, 2026-08-13)
+
+**Incident.** The keyword-leg arc re-ran TASK-15400's construction sweep
+under a decision rule registered **before** the run (max leg census subject
+to three hard constraints; ties broken by fewest extra FTS statements, then
+smallest code delta). The rule ran to completion and produced a winner:
+`prefix`, on a tie-break measured at 240 vs 460 SQLite statements over the
+60 golden queries. But by then the arc's own reviews had **measured** a
+failure shape the tie-break predates — a construction that widens as the
+PRIMARY self-displaces inside one sub-leg's bm25-ordered, LIMITED result
+set, where the new tiered merge can protect nothing — and the tied
+runner-up (`and_then_prefix`) is immune to it by construction while being
+measurement-identical on every captured axis. The owner's standing
+stability-over-quick-wins ruling cut against the tie-break, and
+`and_then_prefix` shipped.
+
+**The two tempting ways to write that down are both dishonest.** Editing
+the rule after seeing its output ("fewest statements — *unless* the row is
+structurally unsafe") retroactively makes the sweep unfalsifiable: a rule
+amended to fit its own result never rejected anything. Recording only the
+shipped value is worse in a quieter way — a later reader assumes the
+measurement chose it. That second failure nearly shipped here: the backlog
+record read "WINNER under the rule = `prefix`" and said nothing about what
+actually shipped, so the one file neither the implementation nor its review
+touched was the file that told the wrong story.
+
+**What to do.** When a standing judgement overrides a pre-registered rule,
+keep both facts and keep them adjacent, at **every** site that records the
+outcome — config comment, the function's own docstring, the test names, the
+task record, the PR body: (1) the rule was applied verbatim and produced X,
+with the deciding number; (2) the owner ruled Y ships instead, on this
+named dimension, at this measured price. Rename any pin whose name asserts
+the wrong provenance — `test_the_shipped_default_is_the_sweeps_winner`
+became `..._is_the_owner_ruled_construction` precisely because the old name
+was a false claim that would have stayed green forever. And police the
+*evidence*, not just the value: the census pin added in the same task states
+in its own docstring that the census is the number **both** qualifiers score
+and is therefore **not** evidence for the ruling — the ruling's evidence is
+structural and its price is statements, neither of which a census can see.
+A number that cannot see the decision must never be cited as its
+justification.

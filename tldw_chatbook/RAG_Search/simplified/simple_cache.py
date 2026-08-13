@@ -243,9 +243,13 @@ class SimpleRAGCache:
                 before this parameter existed stays byte-identical. Since
                 TASK-15400 shipped ``and_stopword_trim`` as the default
                 (2026-08-11) that is no longer the key a DEFAULT search
-                renders -- it carries ``fts:and_stopword_trim`` -- which is
-                the point: entries cached under the old construction are
-                keyed apart from the new one rather than served to it.
+                renders, and TASK-15700 moved it again (2026-08-13) to
+                ``and_then_prefix``, so today a default search carries
+                ``fts:and_then_prefix``. That is the point: this key is
+                VALUE-keyed on the construction, so entries cached under any
+                previous one are keyed apart rather than served to the new
+                one. The cost is a one-time run of cold misses after each
+                such flip, which is the correct trade and not new to either.
 
         Returns:
             A unique cache key

@@ -26,7 +26,11 @@ than assumed, in whichever direction it reads. It has since read a THIRD way
 keyword leg's MATCH construction and hybrid now answers one of the five
 golden prompt queries (recall 0.000 → 0.200); the test's docstring carries
 all three states and the pin asserts the split, one hit and four misses,
-rather than a direction.
+rather than a direction. TASK-15700's Task 4 (2026-08-13) then moved the
+default again, to `and_then_prefix`, WITHOUT moving this cell — a fourth
+state in which only the mechanism behind the single hit changed (trim →
+prefix fallback). That is recorded in the test's docstring too, because a
+pin whose number holds for a new reason is the easiest kind to misread.
 
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`.
@@ -98,13 +102,22 @@ def test_the_probe_rejects_a_fixture_todays_pipeline_answers(tmp_path, capsys):
 PROMPT_REACHABILITY_QUERY = "shift log summary supervisor"
 PROMPT_REACHABILITY_SLUG = "prompt-shift-summary"
 
-#: The ONE prompt golden query the shipped construction now answers
-#: (TASK-15400 Task 4, 2026-08-11, sweep row `and_trim`). Its query is
-#: "saved prompt for chasing a supplier about a late order"; the full AND
-#: over every token could not be satisfied, and the content-token AND can
-#: (`_FTS5_STOPWORDS`' own comment records it as blocked solely by "about").
-#: This single id IS the gated `prompt` cell: 1 of 5 = recall 0.200.
-STOPWORD_TRIM_RESCUED_PROMPT_ID = "pm-vendor-chaser"
+#: The ONE prompt golden query the shipped construction answers. Its query
+#: is "saved prompt for chasing a supplier about a late order"; the full AND
+#: over every token cannot be satisfied (`_FTS5_STOPWORDS`' own comment
+#: records it as blocked solely by "about"). This single id IS the gated
+#: `prompt` cell: 1 of 5 = recall 0.200.
+#:
+#: RENAMED 2026-08-13 (TASK-15700 Task 4) from
+#: `STOPWORD_TRIM_RESCUED_PROMPT_ID`, because the MECHANISM changed under
+#: the new default even though the CELL did not. Under
+#: `and_stopword_trim` (2026-08-11 → 2026-08-13) it was rescued by the
+#: TRIM: the content-token AND satisfied what the full AND could not. Under
+#: the shipped `and_then_prefix` the primary IS the full AND, so it returns
+#: zero rows and the per-sub-leg PREFIX FALLBACK rescues it instead. One
+#: query, two mechanisms — which is exactly why this cell is unmoved across
+#: the flip, and why the old name would now assert a false attribution.
+RESCUED_PROMPT_ID = "pm-vendor-chaser"
 
 
 def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
@@ -154,7 +167,7 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     swept four MATCH constructions and shipped the winner:
     `SearchConfig.fts_match_construction` went from `"and"` to
     `"and_stopword_trim"`, so the leg ANDs the CONTENT tokens. That rescues
-    exactly `STOPWORD_TRIM_RESCUED_PROMPT_ID` — the category's gated cell
+    exactly `RESCUED_PROMPT_ID` — the category's gated cell
     moves recall 0.000 -> 0.200 (mrr 0.022, ndcg 0.060, precision 0.020),
     and it is the ONLY gated cell family that moves in any mode. So this
     test keeps its job in its third form: the four remaining misses are
@@ -168,6 +181,23 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     the sweep measured. semantic and
     plain are untouched by the construction (measured byte-identical across
     all four) and still miss all five for the two reasons above.
+
+    **FOURTH STATE — DISCLOSED (2026-08-13, TASK-15700 Task 4): the default
+    moved again and this cell did NOT.** TASK-15700 fixed the round-robin
+    merge the paragraph above blames, re-ran the sweep as SIX rows, and
+    shipped `"and_then_prefix"` — by OWNER RULING, not by the rule's own
+    output (the rule tied `prefix` and `and_then_prefix` at census 23 and
+    its tie-break selected `prefix`; the owner overrode it for structural
+    self-displacement immunity). **Nothing here flips**, and the reason is
+    worth stating because it is the trap: the gained census hits vs the
+    outgoing default are `kw-quillon-mast` and `kw-thimble-relay`, both in
+    the `keyword` category, so the prompt category still reads exactly one
+    hit of five. What DID change is this cell's MECHANISM — the new
+    default's PRIMARY is the FULL AND, which returns zero rows here, and the
+    per-sub-leg PREFIX FALLBACK is what now reaches `RESCUED_PROMPT_ID`.
+    Hence the constant's rename (see its comment): the assertion is
+    unchanged, its attribution is not. The residual bound tightens 39 → 36
+    of 60 zero-row queries, with the leg answering 23 of 53.
 
     **The reachability half is what keeps this from being indistinguishable
     from "B2 never shipped".** A keyword-shaped query for the same fixture,
@@ -268,9 +298,9 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     hybrid_hits = {
         result.query_id for result in results if not result.cell("hybrid").is_miss
     }
-    assert hybrid_hits == {STOPWORD_TRIM_RESCUED_PROMPT_ID}, (
+    assert hybrid_hits == {RESCUED_PROMPT_ID}, (
         f"hybrid answers {sorted(hybrid_hits)} of the prompt category, not "
-        f"just {STOPWORD_TRIM_RESCUED_PROMPT_ID!r}. With the denominator "
+        f"just {RESCUED_PROMPT_ID!r}. With the denominator "
         "pinned at 5 above, this set IS the committed prompt/recall 0.200. "
         "Re-run the construction sweep and re-stamp before moving this pin."
     )
@@ -278,7 +308,7 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
     for result in results:
         # The flip: this one id is a hybrid HIT under the shipped
         # `and_stopword_trim` and was a miss under the pre-arc `and`.
-        rescued = result.query_id == STOPWORD_TRIM_RESCUED_PROMPT_ID
+        rescued = result.query_id == RESCUED_PROMPT_ID
         for mode in ("semantic", "plain", "hybrid"):
             cell = result.cell(mode)
             assert cell is not None and cell.error is None, (
@@ -336,3 +366,141 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
             f"contribution: {fusion}"
         )
         assert fusion["fts_rank"] is not None
+
+
+#: The EXACT census hit-set the SHIPPED construction scores — all 23 ids,
+#: not a count and not a sample. A bare `== 23`, or a spot-check of the two
+#: gained ids, would both stay green if the leg swapped one hit for another;
+#: that silent-swap failure is precisely what the sweep's `lost` column
+#: exists to catch, and a set equality is the only assertion that catches it
+#: here. Derived from a real census run at the shipped default (TASK-15700
+#: Task 4), not transcribed from a report.
+SHIPPED_LEG_CENSUS_IDS = frozenset({
+    "kw-ashgrove-pump",
+    "kw-drayton-conveyor",
+    "kw-fennimore-changeover",
+    "kw-halcyon-ledger",
+    "kw-larkspur-turbine",
+    "kw-marlstone-kiln",
+    "kw-nimbus-rollback",
+    "kw-obsidian-spindle",
+    "kw-pellucid-gauge",
+    "kw-plant-maintenance-record",
+    "kw-quillon-mast",
+    "kw-thimble-relay",
+    "kw-verdigris-coating",
+    "kw-zephyr-asset-tag",
+    "kw-zephyr-flywheel",
+    "pm-vendor-chaser",
+    "sc-duty-board-notice",
+    "sc-intake-screen-survey",
+    "sc-meter-box-key",
+    "sc-pump-chamber-inspection",
+    "sc-sample-point-sign",
+    "sc-storm-overflow-record",
+    "sc-valve-pit-access",
+})
+SHIPPED_LEG_CENSUS = len(SHIPPED_LEG_CENSUS_IDS)
+SHIPPED_LEG_CENSUS_SCOREABLE = 53
+#: The residual bound AC#7 owns: golden queries the leg returns NOTHING for.
+SHIPPED_LEG_ZERO_ROW = 36
+#: Gained vs the construction that shipped 2026-08-11 -> 2026-08-13. A
+#: SUBSET of the set above, called out by name because these two ids are
+#: what the 2026-08-13 flip actually bought.
+PREFIX_FALLBACK_GAINED_IDS = frozenset({"kw-quillon-mast", "kw-thimble-relay"})
+#: The vector-blind fixture — hard constraint (a) at the LEG level, where
+#: the sweep measured it. Also a member of the set above.
+VECTOR_BLIND_FIXTURE_ID = "kw-plant-maintenance-record"
+
+
+def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
+    tmp_path, capsys
+):
+    """The keyword leg answers 23 of 53, and WHICH 23 — the flip's oracle.
+
+    DISCLOSED NEW PIN (2026-08-13, TASK-15700 Task 4). The arc's headline
+    number had no always-on defence: the census lives in the gated sweep
+    (`test_fusion_sweep.py`), which the standard gated run excludes, so a
+    default that silently reverted would have left every other pin green
+    except the two that assert the default's NAME. This pin asserts the
+    CONSEQUENCE instead, which is what the flip was actually for.
+
+    Read the value correctly: `and_then_prefix` ships by OWNER RULING, not
+    as the pre-registered rule's output. The rule tied it with `prefix` at
+    census 23 — measurement-identical on every captured axis — and its
+    tie-break (fewest extra FTS statements, 240 vs 460) selected `prefix`;
+    the owner overrode that for structural immunity to intra-sub-leg
+    self-displacement. So this census is the number BOTH qualifiers score,
+    and it is not evidence for the ruling — the ruling's evidence is
+    structural, and its price is statements, neither of which a census can
+    see.
+
+    Reverting the default to `and_stopword_trim` reds the hit-set assertion
+    FIRST, naming the construction it actually found and the exact ids that
+    went missing (`kw-quillon-mast`, `kw-thimble-relay`) — the ordering is
+    deliberate, because a bare "the default is not `and_then_prefix`" says
+    what changed without saying what it cost.
+    """
+    from Tests.RAG_Eval.harness.fusion_sweep import keyword_leg_census
+    from Tests.RAG_Eval.harness.goldenset import load_fixtures
+    from Tests.RAG_Eval.harness.ingest import build_eval_runtime
+
+    corpus, golden = load_fixtures()
+    runtime = build_eval_runtime(corpus, tmp_path)
+    try:
+        # Read off the runtime, NOT set here: this pin is about what the
+        # SHIPPED default does, so a construction assigned locally would
+        # make it green under any default at all.
+        construction = runtime.service.config.search.fts_match_construction
+        census = keyword_leg_census(runtime, golden, k=K)
+    finally:
+        runtime.close()
+
+    with capsys.disabled():
+        print(f"\nkeyword-leg census under {construction!r}: "
+              f"{census.hits}/{census.scoreable}, "
+              f"{len(census.zero_row_queries)} zero-row of {census.queries}")
+
+    # THE HIT-SET, asserted FIRST and as a set EQUALITY. Ordered ahead of
+    # the construction guard on purpose: a revert must red with the ids it
+    # COST, not merely with the name that changed. Set equality (not `<=`,
+    # not a count) is what closes the silent-swap hole — a leg that traded
+    # one hit for another keeps `census.hits == 23` and would sail past any
+    # weaker form of this assertion.
+    hit_set = set(census.hit_queries)
+    lost = SHIPPED_LEG_CENSUS_IDS - hit_set
+    gained = hit_set - SHIPPED_LEG_CENSUS_IDS
+    assert hit_set == SHIPPED_LEG_CENSUS_IDS, (
+        f"the keyword leg's census hit-set moved under {construction!r}: "
+        f"lost {sorted(lost) or '-'}, gained {sorted(gained) or '-'} "
+        f"({census.hits} hits, was {SHIPPED_LEG_CENSUS}). If the default "
+        "reverted, the two lost ids are what the 2026-08-13 flip bought; if "
+        "it did not, the leg changed under a fixed construction and the "
+        "sweep needs re-running."
+    )
+    # ...and only then the guard, which explains why the number above is
+    # meaningful at all.
+    assert construction == "and_then_prefix", (
+        f"the shipped default is {construction!r}; this census was measured "
+        "for `and_then_prefix` and means nothing under another construction"
+    )
+    assert (census.hits, census.scoreable) == (
+        SHIPPED_LEG_CENSUS,
+        SHIPPED_LEG_CENSUS_SCOREABLE,
+    ), f"census moved: {census.hits}/{census.scoreable}"
+    # The two ids the flip bought, named separately from the set above so a
+    # future edit to the set cannot quietly drop them without saying so.
+    assert PREFIX_FALLBACK_GAINED_IDS <= hit_set, (
+        "the leg lost one of the two ids the 2026-08-13 flip bought "
+        f"({sorted(PREFIX_FALLBACK_GAINED_IDS)})"
+    )
+    # The vector-blind fixture's own leg row — hard constraint (a) at the
+    # LEG level, where the sweep measured it.
+    assert VECTOR_BLIND_FIXTURE_ID in hit_set, (
+        "the vector-blind fixture left the keyword leg's top-10; its hybrid "
+        "rescue is the constraint that disqualified `or` outright"
+    )
+    assert len(census.zero_row_queries) == SHIPPED_LEG_ZERO_ROW, (
+        f"the residual zero-row bound moved to "
+        f"{len(census.zero_row_queries)} of {census.queries}"
+    )

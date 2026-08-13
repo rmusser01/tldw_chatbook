@@ -32,10 +32,12 @@ from Tests.RAG_Eval.harness.fusion_sweep import (
     CONTROL,
     CONTROL_NAME,
     FTS_MATCH_OR_FORM,
+    FTS_MATCH_PREFIX_FORM,
     LEVER_PRECEDENCE,
     NEAR_PROBE_DISTANCE,
     SHIPPED_CONTROL_CENSUS,
     WARN_BAND,
+    WIDENING_FORMS,
     LegCensus,
     NegativeComposition,
     Qualification,
@@ -930,9 +932,11 @@ def test_the_construction_round_trips_through_apply():
 
 
 def test_every_pre_15400_strategy_still_means_exactly_what_it_meant():
-    """The axis defaults to the pre-15400 construction (`and`), not the
-    shipped one (`and_stopword_trim`), so the fusion matrix that already ran
-    keeps measuring what it measured."""
+    """The axis defaults to the pre-15400 construction (`and`), not to
+    whichever construction currently ships (`and_stopword_trim` 2026-08-11 →
+    2026-08-13, `and_then_prefix` since), so the fusion matrix that already
+    ran keeps measuring what it measured. Written against the ROLE rather
+    than the name on purpose: this docstring has now been stale twice."""
     for strategy in (*BASE_STRATEGIES, *ALPHA_COMBO_STRATEGIES):
         assert strategy.fts_match_construction == "and", strategy.name
     # ...and one tuple, spelled out: the control is still the 4110 control.
@@ -973,14 +977,31 @@ def test_the_sweep_restores_the_construction_it_found(monkeypatch):
     )
 
 
-def test_the_construction_matrix_is_the_four_the_spec_pre_registered():
+def test_the_construction_matrix_is_the_six_the_specs_pre_registered():
+    """DISCLOSED (2026-08-13, TASK-15700 Task 2): four rows became SIX.
+
+    The 15400 spec pre-registered four; the 15700 spec adds two for the
+    re-run under the form-tiered merge (`prefix`, the promotion of the
+    report-only probe that rescued 3, and `and_pfx`, its composition with
+    the AND primary). The four original rows are asserted UNCHANGED —
+    position, name and construction — because the re-run is read against
+    the same control baseline; a row that quietly changed meaning would
+    make the two matrices incomparable.
+    """
     names = tuple(s.name for s in CONSTRUCTION_STRATEGIES)
-    assert names == ("and", "and_trim", "or", "and_or")
+    assert names == ("and", "and_trim", "or", "and_or", "prefix", "and_pfx")
     assert names[0] == CONSTRUCTION_CONTROL_NAME, "the control row must be first"
     assert all(len(name) <= 10 for name in names), "the matrix column is 10 wide"
     assert tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES) == (
         "and", "and_stopword_trim", "or", "and_then_or",
+        "prefix", "and_then_prefix",
     )
+    # The 15400 rows, still meaning exactly what they meant: same order, same
+    # constructions, appended to rather than rewritten.
+    assert names[:4] == ("and", "and_trim", "or", "and_or")
+    assert tuple(
+        s.fts_match_construction for s in CONSTRUCTION_STRATEGIES[:4]
+    ) == ("and", "and_stopword_trim", "or", "and_then_or")
     # The SHIPPED fusion parameters, held fixed: this arc measures the
     # construction, and a row that also moved rrf_k would confound the two.
     for strategy in CONSTRUCTION_STRATEGIES:
@@ -995,7 +1016,7 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
     DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
     `and_trim`): the construction was part of this equality — the control
     row's `"and"` WAS `SearchConfig`'s default. Task 4 shipped the sweep's
-    winner, so the engine now defaults to `"and_stopword_trim"` while the
+    winner, so the engine defaulted to `"and_stopword_trim"` while the
     control row deliberately stays `"and"`: the control column is the arc's
     BEFORE-state, the one `SHIPPED_CONTROL_CENSUS == 20` was measured
     against, and re-pointing it at the new default would delete the
@@ -1003,6 +1024,22 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
     into the same measurement). The fusion parameters still ride the
     engine's defaults — that half is what stops the matrix drifting off the
     configuration it claims to measure.
+
+    **DISCLOSED ORACLE FLIP #2 (2026-08-13, TASK-15700 Task 4): the engine's
+    default moved again, `"and_stopword_trim"` → `"and_then_prefix"`.** The
+    control row is UNCHANGED at `"and"` for exactly the reason above — it is
+    still the pre-arc BEFORE-state both matrices are read against. What
+    changed is only the right-hand side of the last assertion, and the
+    wording of why it holds: `and_then_prefix` is **not** the re-run's
+    computed winner. The pre-registered rule, applied verbatim, tied
+    `prefix` and `and_then_prefix` at census 23 (measurement-identical on
+    every captured axis) and its tie-break — fewest extra FTS statements,
+    240 vs 460 — selected `prefix`. The OWNER RULED `and_then_prefix` ships
+    instead, applying the standing stability-over-quick-wins ruling to a
+    dimension the tie-break predates (structural immunity to intra-sub-leg
+    self-displacement, at 220 extra statements and zero measured retrieval
+    difference). This assertion therefore pins an OWNER DECISION, not a
+    measured optimum — do not "correct" it back to the rule's output.
     """
     from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
 
@@ -1018,10 +1055,10 @@ def test_the_construction_rows_ride_the_engines_own_shipped_defaults():
         shipped.hybrid_alpha,
     )
     assert control.fts_match_construction == "and"
-    assert shipped.fts_match_construction == "and_stopword_trim", (
-        "the engine's default is no longer the winner Task 4 shipped; if it "
-        "moved again, the construction matrix needs re-running before this "
-        "control row means anything"
+    assert shipped.fts_match_construction == "and_then_prefix", (
+        "the engine's default is no longer the construction TASK-15700's "
+        "owner ruling shipped; if it moved again, the construction matrix "
+        "needs re-running before this control row means anything"
     )
     # ...and the winner the arc chose IS one of the swept rows, so the
     # shipped default is a construction this matrix actually measured.
@@ -1035,9 +1072,10 @@ def test_every_construction_row_names_a_construction_the_engine_KNOWS():
 
     The engine resolves an unknown `fts_match_construction` to the shipped
     `and` with one warning per service instance. A renamed value would leave
-    rows 2-4 each measuring the control: four censuses of 20, a control row
-    whose self-check passes, and a table saying "the construction makes no
-    difference" — TASK-4110's failure through a different door.
+    every non-control row measuring the control: six censuses of 20, a
+    control row whose self-check passes, and a table saying "the
+    construction makes no difference" — TASK-4110's failure through a
+    different door.
     """
     from tldw_chatbook.RAG_Search.simplified.rag_service import (
         FTS_MATCH_CONSTRUCTIONS,
@@ -1049,6 +1087,11 @@ def test_every_construction_row_names_a_construction_the_engine_KNOWS():
         "the matrix must sweep every construction the engine can be put in, "
         "or a candidate ships unmeasured"
     )
+    # ...and the gate the sweep itself runs accepts the shipped matrix. The
+    # membership assertions above are this function's premise; calling it is
+    # what proves the two new rows (TASK-15700) get past the guard rather
+    # than stopping the sweep on their first invocation.
+    fusion_sweep._validate_constructions(CONSTRUCTION_STRATEGIES)
 
 
 def test_a_construction_the_engine_does_not_know_stops_the_sweep(monkeypatch):
@@ -1077,6 +1120,62 @@ def test_the_or_form_stamp_is_the_engines_own_constant():
     from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_OR
 
     assert FTS_MATCH_OR_FORM == FTS_MATCH_OR
+
+
+def test_the_prefix_form_stamp_is_the_engines_own_constant():
+    """Same guarantee for TASK-15700's second widening form."""
+    from tldw_chatbook.RAG_Search.simplified.rag_service import FTS_MATCH_PREFIX
+
+    assert FTS_MATCH_PREFIX_FORM == FTS_MATCH_PREFIX
+
+
+def test_the_widening_forms_are_every_non_and_form_the_engine_can_stamp():
+    """The counter's vocabulary, derived from the ENGINE's own table.
+
+    `WIDENING_FORMS` is what the negative composition counts. A construction
+    that adds a THIRD widening form (or renames one) and does not appear
+    here would make the noise column read 0 for the row that produces the
+    most noise — the counter would be blind exactly where it is load-
+    bearing. `FTS_MATCH_FORMS_BY_CONSTRUCTION` is the engine's own statement
+    of every form the leg can stamp, so it is the oracle rather than a
+    second hand-maintained list.
+
+    The oracle is EVERY non-AND form in that table, primary or fallback —
+    not the fallback column alone. A widening form is a fallback's under
+    `and_then_or`/`and_then_prefix` and a PRIMARY's under `or`/`prefix`, and
+    it is noise in a negative's top-k either way; scoping the oracle to
+    fallbacks would red the day someone ships a widening construction that
+    has no fallback at all, which is precisely the shape this arc already
+    ships twice.
+    """
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_AND,
+        FTS_MATCH_FORMS_BY_CONSTRUCTION,
+    )
+
+    stampable = {
+        form
+        for forms in FTS_MATCH_FORMS_BY_CONSTRUCTION.values()
+        for form in forms
+        if form is not None
+    }
+    assert stampable - {FTS_MATCH_AND} == set(WIDENING_FORMS), (
+        f"engine non-AND forms {sorted(stampable - {FTS_MATCH_AND})} vs "
+        f"counted {sorted(WIDENING_FORMS)}"
+    )
+    # ...and the AND form is deliberately NOT one of them: it is some
+    # construction's primary everywhere it appears, so counting it would
+    # report the shipped default as pure noise.
+    assert FTS_MATCH_AND not in WIDENING_FORMS
+    # Every fallback form is still covered — the property the counter's
+    # original scoping was reaching for, now a consequence rather than the
+    # definition.
+    fallback_forms = {
+        fallback
+        for _primary, fallback in FTS_MATCH_FORMS_BY_CONSTRUCTION.values()
+        if fallback is not None
+    }
+    assert fallback_forms <= set(WIDENING_FORMS)
 
 
 # ---------------------------------------------------------------------------
@@ -1148,7 +1247,7 @@ def test_a_row_no_fixture_claims_is_not_a_census_hit():
 def test_the_census_drives_the_async_keyed_leg_and_never_a_sync_twin():
     """The handover from Task 1: `simple_cache.py`'s SYNC twins render the
     "and" key for EVERY construction, so a census that ever reached them
-    would report the same number four times."""
+    would report the same number six times."""
     service = FakeLegService(CENSUS_ROWS)
     keyword_leg_census(FakeLegRuntime(service), CENSUS_GOLDEN, k=K)
 
@@ -1179,24 +1278,51 @@ NEGATIVE_GOLDEN = (
 )
 
 
-def test_only_fts_only_rows_in_the_or_form_count_as_fallback_rows():
+def test_only_fts_only_rows_in_a_widening_form_count_as_fallback_rows():
+    """DISCLOSED (2026-08-13, TASK-15700 Task 2): the counted vocabulary grew.
+
+    It counted the OR form alone; it now counts any WIDENING form, which the
+    prefix row makes a live distinction rather than a hypothetical one. The
+    other two clauses are unchanged: an AND-form row is not noise, and a row
+    the vector leg also returned is not FTS-only.
+    """
     rows = [
-        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),   # counted
-        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),  # AND form
-        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),      # merged
-        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),   # vector
+        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),      # counted
+        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),     # AND form
+        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),         # merged
+        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),      # vector
+        hybrid_row("5", fts_rank=4, vector_rank=None, fts_match="prefix"),  # counted
     ]
     composition = negative_composition(
         FakeSeam(rows), FakeRuntime(), NEGATIVE_GOLDEN, K, ("media",)
     )
 
     assert isinstance(composition, NegativeComposition)
-    assert composition.fallback_rows == 1
-    assert composition.fts_only_rows == 2, (
+    assert composition.fallback_rows == 2
+    assert composition.fts_only_rows == 3, (
         "the denominator the fallback count is read against — how many rows "
         "the keyword leg put into these results at all"
     )
     assert composition.queries == 1
+
+
+def test_a_prefix_form_row_is_counted_under_both_prefix_constructions():
+    """The counter reads the FORM, and the construction column disambiguates.
+
+    Under `and_then_prefix` a prefix row IS a fallback; under `prefix` it is
+    that construction's primary. Both are noise in a negative's top-k and
+    both are counted — the number would be uninterpretable if the widest
+    candidate reported zero, which is exactly what a "count only fallbacks"
+    rule would produce for the row with the most to answer for.
+    """
+    rows = [hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="prefix")]
+
+    composition = negative_composition(
+        FakeSeam(rows), FakeRuntime(), NEGATIVE_GOLDEN, K, ("media",)
+    )
+
+    assert composition.fallback_rows == 1
+    assert composition.fts_only_rows == 1
 
 
 def test_the_negative_composition_only_looks_at_negative_queries():
@@ -1468,6 +1594,52 @@ def test_fts5_prefix_syntax_is_the_star_outside_the_quotes():
         db.close()
 
 
+def test_the_prefix_construction_builds_the_probes_own_expression():
+    """THE PROVENANCE PIN (TASK-15700): the row inherits the probe's lead.
+
+    The `prefix` matrix row exists because THIS probe rescued 3 of the 40
+    zero-row golden queries in the 15400 sweep — the only variant that
+    rescued anything. That lead transfers to the shipped construction only
+    if the construction sends the same expression: a different join (an OR
+    of prefixes rather than the probe's implicit AND), a different token set
+    (stopwords kept), or the star inside the quotes would each be a
+    DIFFERENT query, and the 3 rescues would be evidence for something the
+    engine does not do.
+
+    Checked over shapes that separate every one of those: multi-token
+    (join), a stopword-bearing query (token set), an all-stopword query
+    (the empty contract), a hostile token (quoting), and a single token
+    (where an OR join and an AND join coincide and would hide a difference).
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from tldw_chatbook.RAG_Search.simplified.rag_service import (
+        FTS_MATCH_CONSTRUCTION_PREFIX,
+        RAGService,
+    )
+
+    config = RAGConfig()
+    config.embedding.model = "mock"
+    config.embedding.device = "cpu"
+    config.vector_store.type = "memory"
+    config.vector_store.persist_directory = None
+    config.search.enable_cache = False
+    config.search.fts_match_construction = FTS_MATCH_CONSTRUCTION_PREFIX
+    service = RAGService(config)
+
+    for query in (
+        "the shift log",
+        "template building",
+        "notes about the vendor",
+        "what about the",
+        "templ-3",
+        'templates" OR "wombat',
+        "wombat",
+    ):
+        primary, fallback = service._fts5_match_expressions(query)
+        assert primary == prefix_probe_expression(RAGService, query), query
+        assert fallback is None, query
+
+
 def with_engine_tokenizer(service: FakeLegService) -> FakeLegService:
     """Lend the fake leg the ENGINE's real tokenizer, quoter and stopword test.
 
@@ -1538,6 +1710,162 @@ def test_a_rows_rescues_are_counted_over_the_controls_zero_row_queries():
         "a net delta would have said 2; the rescue count is what the probes "
         "are measured against"
     )
+
+
+def test_a_rows_losses_are_counted_over_the_controls_census_hits():
+    """THE COLUMN THE 15400 MATRIX DID NOT HAVE (TASK-15700 review).
+
+    A widening form is a superset at the MATCH level and NOT at the
+    RETURNED-ROW level: each sub-leg's SQL is bm25-ordered and LIMITED, so
+    the widened rows compete for that sub-leg's own slots before the merge
+    is consulted. Measured in review — 12 prefix-competitor documents plus
+    one exact-match document, "wombat log" at top_k=5 — `and_stopword_trim`
+    finds the exact document and `prefix` returns five rows without it.
+
+    Every other column is blind to that: `census` is NET, `resc` is
+    gains-only by its own docstring, and `zero` only counts legs that
+    returned nothing at all. This fixture is exactly that blind spot — three
+    gains and one loss, a net +3 census — and the loss must still be
+    reported as one.
+    """
+    control_census = LegCensus(
+        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
+        zero_row_queries=("c", "d", "e", "neg"), per_category={},
+    )
+    candidate = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[4],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=LegCensus(
+            k=K, hits=4, scoreable=5, queries=6,
+            hit_queries=("a", "c", "d", "e"),  # gained three, LOST "b"
+            zero_row_queries=(), per_category={},
+        ),
+    )
+
+    lost = fusion_sweep.lost_census_queries(candidate, control_census)
+
+    assert lost == ("b",)
+    # ...and none of the columns that DO exist would have said so.
+    assert candidate.census_hits > control_census.hits, "census is net-positive"
+    assert fusion_sweep.rescued_zero_row_queries(candidate, control_census) == (
+        "c", "d", "e",
+    ), "resc is gains-only"
+    assert candidate.census.zero_row_queries == (), "zero sees an empty leg only"
+
+
+def test_a_row_that_loses_nothing_reports_no_losses():
+    """The column must not fire on a row that only gained.
+
+    Otherwise `lost` would read as noise on every row and Task 3 would learn
+    to ignore it — the failure mode of a column that is always non-zero.
+    """
+    control_census = LegCensus(
+        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
+        zero_row_queries=("c",), per_category={},
+    )
+    candidate = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[1],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=LegCensus(
+            k=K, hits=3, scoreable=5, queries=6,
+            hit_queries=("a", "b", "c"), zero_row_queries=(), per_category={},
+        ),
+    )
+
+    assert fusion_sweep.lost_census_queries(candidate, control_census) == ()
+    # A row with no census at all cannot claim a clean sheet either way.
+    censusless = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[1], hybrid=mode_report(), rescue=rescue(),
+    )
+    assert fusion_sweep.lost_census_queries(censusless, control_census) == ()
+
+
+def test_the_matrix_prints_what_a_widening_row_loses():
+    """The `lost` cell reaches the TABLE FACE, which is what Task 3 copies.
+
+    Constraint (a) is not structurally safe for a widening-PRIMARY row, so
+    the reading has to be column-supported rather than derived from
+    `hit_queries` by hand at write-up time.
+    """
+    control_census = LegCensus(
+        k=K, hits=2, scoreable=3, queries=4, hit_queries=("kw-hit", "kw-exact"),
+        zero_row_queries=("pm-miss",), per_category={"keyword": (2, 2)},
+    )
+    control = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
+        rescue=rescue(), census=control_census,
+        negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
+    )
+    widening = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[4],  # the `prefix` row
+        hybrid=mode_report(), rescue=rescue(),
+        census=LegCensus(
+            k=K, hits=2, scoreable=3, queries=4,
+            # Gained the zero-row query, LOST its own exact-match hit: the
+            # self-displacement the review measured, at fixture scale.
+            hit_queries=("kw-hit", "pm-miss"), zero_row_queries=(),
+            per_category={"keyword": (2, 2)},
+        ),
+        negatives=NegativeComposition(queries=1, fallback_rows=3, fts_only_rows=3),
+    )
+    report = SweepReport(
+        k=K, entries=(control, widening),
+        rescue_query_id="kw-hit", target_slug="note-saltmarsh-hide",
+        source_types=("media",), num_queries=4, num_scored=3, control_name="and",
+    )
+
+    rendered = format_construction_matrix(report)
+
+    assert "lost" in rendered
+    row = next(line for line in rendered.splitlines() if line.startswith("prefix"))
+    # census, resc, lost — the net census is UNCHANGED at 2 while one hit was
+    # traded for another, which is precisely why the third number is needed.
+    assert row.split()[2:5] == ["2", "1", "1"], row
+    assert "'census' is NET" in rendered
+    assert "bm25-ordered and LIMITED" in rendered
+    assert "not structurally safe" in rendered.lower()
+
+
+def test_the_neg_wide_legend_states_both_comparability_facts():
+    """Task 3 copies the table FACE, so the caveats must live on it.
+
+    Two facts a reader cannot recover from the numbers: (1) for a
+    widening-PRIMARY row every keyword row carries the widening stamp, so
+    `neg-wide == neg-fts` by construction and the fewer-is-better tie-break
+    cannot rank such a row against a fallback row; (2) the column was
+    renamed from TASK-15400's `neg-or` and its vocabulary grew, while the
+    original four rows' numbers are unchanged by that (no other
+    construction can stamp `prefix`).
+    """
+    control_census = LegCensus(
+        k=K, hits=1, scoreable=2, queries=3, hit_queries=("kw-hit",),
+        zero_row_queries=("pm-miss",), per_category={"keyword": (1, 1)},
+    )
+    control = StrategyReport(
+        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
+        rescue=rescue(), census=control_census,
+        negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
+    )
+    report = SweepReport(
+        k=K, entries=(control,), rescue_query_id="kw-hit",
+        target_slug="note-saltmarsh-hide", source_types=("media",),
+        num_queries=3, num_scored=2, control_name="and",
+    )
+
+    rendered = format_construction_matrix(report)
+
+    assert "neg-wide" in rendered
+    assert "RENAMED from" in rendered and "neg-or" in rendered
+    assert "neg-wide == neg-fts by construction" in rendered
+    assert "cannot rank such a row against a fallback row" in rendered
+    # The mitigation, stated rather than left to be rediscovered.
+    assert "does NOT move the 15400 four rows' numbers" in rendered
+    # ...and the legend names the widening forms from the constant, so a
+    # third form cannot appear in the counter and be absent from the prose.
+    for form in WIDENING_FORMS:
+        assert form in rendered
 
 
 def test_the_matrix_prints_rescues_beside_the_census():

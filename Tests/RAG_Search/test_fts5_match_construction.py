@@ -7,17 +7,46 @@ arc's sweep measure four candidate constructions against each other.
 
 **The default flipped in Task 4 (2026-08-11), and these pins moved with
 it.** `SearchConfig.fts_match_construction` was `"and"` (the pre-arc
-implicit AND over every token) and is now `"and_stopword_trim"`, the
+implicit AND over every token) and became `"and_stopword_trim"`, the
 construction the sweep's matrix chose under the arc's pre-registered rule
 (row `and_trim`: leg census 20 → 21 of 53, hybrid prompt/recall
 0.000 → 0.200, no gated cell down in any mode, zero extra FTS queries; the
 two OR-bearing rows scored 28/29 and were disqualified for losing the
 vector-blind fixture's hybrid rescue — see `_escape_fts5_query`'s docstring
-for the interleave-displacement mechanism). Two pins below name both states
-explicitly: `test_the_shipped_default_is_the_sweeps_winner` (the flip
-itself) and `test_and_construction_is_byte_identical_to_the_shipped_escaper`
-(same property, now asked for explicitly). Every OTHER pin here sets its
-construction by hand and is unaffected by which one ships.
+for the interleave-displacement mechanism).
+
+**TASK-15700 Part B (2026-08-13) added two more constructions**, the rows
+its re-run of the sweep pre-registers: `prefix` (the content tokens as
+PREFIX terms, promoting the 15400 sweep's report-only probe) and
+`and_then_prefix` (the AND primary with a prefix fallback). Their pins live
+in their own section below; the properties they extend are the same four.
+
+**AND TASK-15700 Task 4 (2026-08-13) FLIPPED THE DEFAULT AGAIN**, to
+`"and_then_prefix"` — **by OWNER RULING, not by the pre-registered rule's
+output.** The rule was applied verbatim: it disqualified the census-maximal
+`and_then_or` on constraint (b), tied `prefix` and `and_then_prefix` at
+census 23 (measurement-identical on every captured axis), and its tie-break
+— fewest extra FTS statements, 240 vs 460 — selected `prefix`. The owner
+overrode that tie-break, applying the standing stability-over-quick-wins
+ruling to a dimension it predates: `prefix` widens as the PRIMARY form and
+can self-displace inside one bm25-limited sub-leg, where the tiered merge
+protects nothing. Never describe the shipped value as the sweep's winner.
+
+Three pins here name both defaults explicitly:
+`test_the_shipped_default_is_the_owner_ruled_construction` (the flip and
+the ruling), `test_the_shipped_construction_runs_one_fallback_per_zero_row_
+sub_leg` (the flip's accepted PRICE — this pin previously asserted the
+exact opposite) and
+`test_and_construction_is_byte_identical_to_the_shipped_escaper` (same
+property, asked for explicitly). Every OTHER pin here sets its construction
+by hand and is unaffected by which one ships.
+
+**One fact worth carrying, because it is the easiest thing to get wrong
+about the current default:** `and_then_prefix`'s PRIMARY is the FULL AND
+(every token, function words included) — NOT the trimmed AND. The trim only
+appears in its per-sub-leg fallback. So the shipped default is not a
+superset of the previous one by construction; that it lost nothing is a
+MEASURED result on the golden corpus, not a structural guarantee.
 
 Four properties, each with a mutation that reds it:
 
@@ -27,7 +56,9 @@ Four properties, each with a mutation that reds it:
   falls back to the FULL AND when trimming empties the query, never to an
   empty MATCH expression -- an FTS5 syntax error); `or` ORs the content
   tokens and returns `""` (= "no rows", the existing skip contract) when
-  trimming empties them; `and_then_or` returns both forms.
+  trimming empties them; `and_then_or` returns both forms; `prefix` stars
+  the content tokens (`""` on an empty trim, as `or`) and `and_then_prefix`
+  returns the full AND with that prefix form as its fallback.
 * **The fallback fires ONLY on zero primary rows.** Counted with a spy on
   the SQL-executing helper, per sub-leg: one AND row means exactly one
   query. Dropping the zero-row guard (running the fallback unconditionally)
@@ -37,7 +68,8 @@ Four properties, each with a mutation that reds it:
   the FORM that matched it and nothing else: `"and"` for an implicit-AND
   expression (full or stopword-trimmed), `"or"` for the content-token OR
   form -- whether that form was reached as `and_then_or`'s fallback or run
-  as the `or` construction's primary. Task 2's negative-composition counter
+  as the `or` construction's primary -- and `"prefix"` likewise for the two
+  prefix-bearing constructions. Task 2's negative-composition counter
   and Task 5's mechanism prose both read this key, so it must name the form,
   not the position: under the `or` construction NO row is a fallback row,
   and fallback-ness is derivable from (construction, form) whenever it is
@@ -57,7 +89,7 @@ parse of the expression -- a mock would pin nothing.
 import asyncio
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -71,8 +103,11 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_AND,
     FTS_MATCH_CONSTRUCTION_AND,
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
+    FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+    FTS_MATCH_CONSTRUCTION_PREFIX,
     FTS_MATCH_CONSTRUCTIONS,
     FTS_MATCH_OR,
+    FTS_MATCH_PREFIX,
     _FTS5_STOPWORDS,
     RAGService,
 )
@@ -202,22 +237,49 @@ PROMPT_ROWS = [
 ]
 AND_HIT_QUERY = "wombat burrow"                      # every token present
 OR_ONLY_QUERY = "how does the wombat template work"  # "template"/"work" absent
+# The PREFIX mechanism at fixture scale (TASK-15700): the prompt says
+# "inspection", the query says "inspect". Both tokens are content words, so
+# no stopword trim reaches it and the OR form would only find it by dropping
+# the second token entirely -- while `"wombat"* "inspect"*` matches it as the
+# implicit AND it is. This is the shape behind the 15400 probe's 3 rescues.
+PREFIX_ONLY_QUERY = "wombat inspect"
 
 
 # --- expression shape -------------------------------------------------------
 
 
-def test_the_shipped_default_is_the_sweeps_winner(tmp_path: Path) -> None:
-    """DISCLOSED ORACLE FLIP (2026-08-11, TASK-15400 Task 4, sweep row
-    `and_trim`): the default was `"and"` and is now `"and_stopword_trim"`.
+def test_the_shipped_default_is_the_owner_ruled_construction(
+    tmp_path: Path,
+) -> None:
+    """DISCLOSED ORACLE FLIP (2026-08-13, TASK-15700 Task 4): the default was
+    `"and_stopword_trim"` and is now `"and_then_prefix"`.
 
-    Both states named on purpose. `"and"` was the pre-arc construction (the
-    implicit AND over EVERY token); `"and_stopword_trim"` is what the arc's
-    construction matrix chose under its pre-registered rule — census 20 → 21
-    of 53, hybrid prompt/recall 0.000 → 0.200, no cell down in any mode,
-    zero extra FTS queries. This assertion is the flip: a default reverted
-    to `"and"` reds it (and reds the gated prompt pin in
-    `Tests/RAG_Eval/test_fixture_authoring_probe.py`).
+    Both states named on purpose, and so is the REASON, because this flip is
+    the one place in the suite where the shipped value is NOT the
+    pre-registered rule's own output:
+
+    * `"and_stopword_trim"` was TASK-15400's measured winner (census 20 → 21
+      of 53) and shipped 2026-08-11 → 2026-08-13.
+    * TASK-15700 re-ran the sweep as SIX rows under the form-tiered merge.
+      The rule, applied verbatim, disqualified the census-maximal
+      `and_then_or` (29) on constraint (b), then TIED `prefix` and
+      `and_then_prefix` at census 23 — measurement-identical on every
+      captured axis (all 105 gated cells unmoved, all 60 hybrid top-10s and
+      all 60 keyword-leg top-10s identical, same rescues, `lost` 0) — and
+      its tie-break (fewest extra FTS statements, 240 vs 460) selected
+      **`prefix`**.
+    * **The OWNER RULED `and_then_prefix` ships instead**, applying the
+      standing stability-over-quick-wins ruling to a dimension the tie-break
+      predates: `prefix` widens as the PRIMARY form and self-displaces
+      inside a single bm25-limited sub-leg (where tiering can protect
+      nothing), while `and_then_prefix` never widens a NON-EMPTY AND primary
+      and confines widening rows to tier 2. Price: 220 extra SQLite
+      statements on this corpus, zero measured retrieval difference.
+
+    So this pin is deliberately NOT named "the sweep's winner" — it was, up
+    to 2026-08-13, and renaming it is part of the disclosure. A default
+    reverted to `"and_stopword_trim"` reds this assertion and the census pin
+    in `Tests/RAG_Eval/test_fusion_decision_rule.py`.
 
     Args:
         tmp_path: pytest's per-test temporary directory; unused by this
@@ -228,14 +290,23 @@ def test_the_shipped_default_is_the_sweeps_winner(tmp_path: Path) -> None:
     service = _make_service()
     assert (
         service.config.search.fts_match_construction
-        == FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM
+        == FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX
     )
 
-    # ...and the winner's shape at the DEFAULT, not merely its name: the
-    # function word goes, the content tokens stay ANDed, no fallback query.
+    # ...and the SHAPE at the DEFAULT, not merely the name. Read this pair
+    # carefully, because it is the flip's most easily mis-stated fact: the
+    # PRIMARY is the FULL AND -- every token, function words INCLUDED -- and
+    # NOT the trimmed AND the outgoing default ran. The trim now lives only
+    # in the FALLBACK, which fires per sub-leg on a zero-row primary.
+    # Consequence, recorded rather than left to be rediscovered: the new
+    # default is NOT a superset of the old one by construction (a sub-leg
+    # whose full AND returns rows never seeks the trim-only hits). That it
+    # loses nothing is a MEASURED fact on the golden corpus (TASK-15700
+    # Task 3: `lost` 0 against both the control and the shipped row), never
+    # a structural guarantee.
     assert service._fts5_match_expressions("notes about the vendor") == (
-        '"notes" "vendor"',
-        None,
+        '"notes" "about" "the" "vendor"',
+        '"notes"* "vendor"*',
     )
 
 
@@ -367,6 +438,200 @@ def test_a_repeated_token_is_still_one_term_and_suppresses_the_fallback():
     )
 
 
+# --- the prefix constructions (TASK-15700 Part B) --------------------------
+#
+# Two pre-registered rows, added for the 15700 re-run. `prefix` is the
+# construction the 15400 sweep's report-only probe measured a 3-rescue lead
+# on; `and_then_prefix` is the composition (AND primary, prefix fallback)
+# that gets BOTH protections -- every current AND hit preserved by
+# construction, and its widening rows confined to tier 2 by Part A's merge.
+#
+# THE PROVENANCE RULE: `prefix` must build the expression the probe built,
+# byte for byte, or the lead it is being promoted on was measured on a
+# different query. The probe (`Tests/RAG_Eval/harness/fusion_sweep.py`,
+# `prefix_probe_expression`) SPACE-joins one `"tok"*` per CONTENT token --
+# an implicit AND over prefix terms, not a disjunction -- and returns ""
+# when trimming empties the token list. The byte-identity is pinned at the
+# probe's own site (`test_fusion_decision_rule.py`); the shape is pinned
+# here on the probe's own example query.
+
+
+def test_prefix_construction_stars_each_content_token_outside_the_quotes():
+    """The probe's form: implicit AND over prefix terms, star OUTSIDE.
+
+    `"tok"*` is "a phrase whose last token is a prefix"; the star INSIDE the
+    quotes is part of the literal string and matches nothing (FTS5's own
+    tokenizer drops it), which would silently reduce this construction to
+    the trimmed AND. The expression below is character-for-character the one
+    `prefix_probe_expression` pins for the same query.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_PREFIX)
+
+    primary, fallback = service._fts5_match_expressions("the shift log")
+    assert primary == '"shift"* "log"*'
+    assert fallback is None
+
+
+def test_prefix_construction_returns_no_rows_when_trimming_empties_the_query():
+    """A stopword prefix (`"the"*`) is junk that matches most of the corpus.
+
+    So the content-token trim is not optional here, and when it leaves
+    nothing the answer is honestly no rows -- `""`, the existing skip
+    contract -- exactly as under `or`. The probe returns `""` for this query
+    too.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_PREFIX)
+
+    assert service._fts5_match_expressions("what about the") == ("", None)
+
+
+def test_and_then_prefix_returns_the_and_primary_and_the_prefix_fallback():
+    """The composition: no AND hit is widened, and zero-row sub-legs widen."""
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    primary, fallback = service._fts5_match_expressions("notes about the vendor")
+    assert primary == '"notes" "about" "the" "vendor"'
+    assert fallback == '"notes"* "vendor"*'
+
+
+def test_and_then_prefix_has_no_fallback_when_every_token_is_a_stopword():
+    """Nothing to widen TO: a stopword-only prefix form is junk, not a query."""
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    assert service._fts5_match_expressions("what about the") == (
+        '"what" "about" "the"',
+        None,
+    )
+
+
+def test_and_then_prefix_never_suppresses_a_fallback_on_an_identical_term_set():
+    """THE SUPPRESSION PIN -- a prefix fallback is ALWAYS wider.
+
+    `and_then_or`'s suppression asks "do both forms reduce to the same
+    single FTS5 term?", because an OR over one term IS that term and
+    re-running it can only return the same zero rows. That reasoning does
+    NOT transfer: `"wombat"*` and `"wombat"` are the same TERM SET and
+    different QUERIES -- the prefix form matches every word starting with
+    it. Copying the suppression across would silence the fallback on exactly
+    the single-content-token queries the probe's rescues came from.
+
+    Suppression fires here only when the prefix expression is EMPTY (the
+    all-stopword case above), which is the "nothing to widen to" case rather
+    than a term-set comparison.
+    """
+    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
+
+    assert service._fts5_match_expressions("wombat") == ('"wombat"', '"wombat"*')
+    # ...including the repeated-token shape `and_then_or` folds to one term.
+    assert service._fts5_match_expressions("wombat wombat") == (
+        '"wombat" "wombat"',
+        '"wombat"* "wombat"*',
+    )
+    assert service._fts5_match_expressions("Wombat wombat,") == (
+        '"Wombat" "wombat,"',
+        '"Wombat"* "wombat,"*',
+    )
+
+    # The contrast that makes the pin discriminating: the OR composition
+    # suppresses every one of those, because for IT the two forms really are
+    # the same query.
+    or_service = _make_service(construction="and_then_or")
+    assert or_service._fts5_match_expressions("wombat") == ('"wombat"', None)
+    assert or_service._fts5_match_expressions("wombat wombat")[1] is None
+
+
+def test_the_prefix_form_really_is_wider_than_the_and_over_the_same_terms():
+    """The suppression pin's premise, against real FTS5.
+
+    "Semantically wider" is a measurable claim, not a slogan: the same
+    single term matches strictly more documents with the star than without.
+    If this ever stopped being true, suppressing the fallback would be
+    correct and the pin above would be the wrong rule.
+    """
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.execute("CREATE VIRTUAL TABLE docs USING fts5(title, content)")
+        conn.execute(
+            "INSERT INTO docs(title, content) VALUES (?, ?)",
+            ("Burrow survey", "The wombats were counted at dusk."),
+        )
+        conn.commit()
+
+        def match(expression):
+            return conn.execute(
+                "SELECT rowid FROM docs WHERE docs MATCH ?", (expression,)
+            ).fetchall()
+
+        service = _make_service(
+            construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX
+        )
+        primary, fallback = service._fts5_match_expressions("wombat")
+
+        assert match(primary) == [], "the AND form must NOT reach 'wombats'"
+        assert match(fallback) == [(1,)], "the prefix form must"
+
+
+def test_a_zero_row_and_falls_back_to_the_prefix_form_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prefix mechanism end to end: one extra query, one rescue.
+
+    The seeded prompt says "inspection"; the query says "inspect". No
+    stopword list and no disjunction reaches that -- the prefix form does,
+    which is the mechanism behind the probe's 3 rescues.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+        monkeypatch: pytest's monkeypatch fixture; installs the
+            `_prompts_fts` call-counting spy.
+    """
+    db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
+        prompts_db_path=db_path,
+    )
+    calls = _prompts_fts_spy(monkeypatch)
+
+    results = asyncio.run(
+        service._keyword_search(
+            PREFIX_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
+        )
+    )
+
+    assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
+    assert len(calls) == 2, f"expected primary + ONE fallback, got {calls}"
+    assert calls[0] == '"wombat" "inspect"'
+    assert calls[1] == '"wombat"* "inspect"*'
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_PREFIX]
+
+
+def test_the_prefix_construction_stamps_its_rows_as_the_prefix_form(
+    tmp_path: Path,
+) -> None:
+    """Under `prefix` the prefix expression IS the primary -- and the stamp
+    still names the FORM, so the sweep's negative-composition counter reads
+    the same value under both prefix-bearing constructions and lets the
+    construction column say which of them was a fallback.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            prompts database.
+    """
+    db_path, _ids = _seed_prompts(tmp_path, PROMPT_ROWS)
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_PREFIX, prompts_db_path=db_path
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            PREFIX_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
+        )
+    )
+
+    assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
+    assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_PREFIX]
+
+
 def test_stopword_trimming_is_case_and_punctuation_insensitive():
     """FTS5 reads `About,` as the term `about`; so must the trimmer."""
     service = _make_service(construction="or")
@@ -396,12 +661,20 @@ def test_every_token_stays_individually_quoted_in_every_construction():
                 continue
             # Tokens never contain whitespace, so stripping the OR
             # operators and splitting on spaces yields exactly the terms --
-            # every one of which must be a quoted literal.
+            # every one of which must be a quoted literal. A prefix term is
+            # that same quoted literal with FTS5's star appended OUTSIDE the
+            # closing quote (TASK-15700); stripping one trailing star is
+            # therefore part of reading the term, and a star moved INSIDE
+            # the quotes leaves the term looking quoted here but reds the
+            # expression-shape and behavioural pins above.
             terms = expression.replace(" OR ", " ").split(" ")
             bare = [
                 term
                 for term in terms
-                if not (term.startswith('"') and term.endswith('"'))
+                if not (
+                    term.removesuffix("*").startswith('"')
+                    and term.removesuffix("*").endswith('"')
+                )
             ]
             assert bare == [], (
                 f"{construction}: unquoted term(s) {bare} in {expression!r}"
@@ -415,9 +688,17 @@ def test_an_invalid_construction_warns_once_and_behaves_as_and():
     to the shipped behaviour", which was the same thing when `and` shipped.
     It is not any more — the fail-safe deliberately stays on the pre-arc
     full AND (the most conservative construction, the one that never widens
-    a query) while the shipped default is `and_stopword_trim`. The
-    assertion below is unchanged and is what pins that: an invalid value
-    emits `'"notes" "about" "the" "vendor"'`, NOT the trimmed default.
+    a query) while the default moves. The assertion below is unchanged and
+    is what pins that: an invalid value emits
+    `'"notes" "about" "the" "vendor"'`, and never a widened form.
+
+    RE-DISCLOSED (2026-08-13, TASK-15700 Task 4): the default moved a second
+    time, to `and_then_prefix`. Note the assertion is now byte-identical to
+    the shipped default's PRIMARY — the fail-safe and the default's primary
+    are the same full AND — so what this pin still discriminates is the
+    FALLBACK: an unrecognized value must emit no second expression at all,
+    where the shipped default emits `'"notes"* "vendor"*'`. That is asserted
+    explicitly below rather than left implied by the primary alone.
     """
     service = _make_service(construction="or_of_ands_probably")
 
@@ -427,7 +708,11 @@ def test_an_invalid_construction_warns_once_and_behaves_as_and():
 
     assert first == ('"notes" "about" "the" "vendor"', None)
     assert second[1] is None
-    matching = [m for m in warnings if "or_of_ands_probably" in m]
+    # EVENT-ONLY contract (dev TASK-15103 Batch C, rebased in 2026-08-13):
+    # resolver diagnostics are redacted — the warning is a fixed event and
+    # never echoes the user-controlled value. Assert the event + the count,
+    # not the value.
+    matching = [m for m in warnings if "Unknown fts_match_construction" in m]
     assert len(matching) == 1, (
         f"an invalid construction must warn exactly once per service: {matching}"
     )
@@ -463,7 +748,10 @@ def test_a_non_str_construction_warns_once_per_distinct_bad_value():
 
     assert first == FTS_MATCH_CONSTRUCTION_AND
     assert second == FTS_MATCH_CONSTRUCTION_AND
-    matching = [m for m in warnings if "keyword leg is falling back" in m]
+    # EVENT-ONLY contract (dev TASK-15103 Batch C): the fixed event, no
+    # value echo — dedup is still per distinct surrogate key, so the count
+    # is what discriminates.
+    matching = [m for m in warnings if "Unknown fts_match_construction" in m]
     assert len(matching) == 1, (
         f"a repeated non-str bad value must warn exactly once: {matching}"
     )
@@ -549,10 +837,37 @@ def test_a_zero_row_and_falls_back_to_the_or_form_exactly_once(
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_the_shipped_and_construction_never_runs_a_second_query(
+def test_the_shipped_construction_runs_one_fallback_per_zero_row_sub_leg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default behaviour is byte-identical, including the query COUNT.
+    """DISCLOSED ORACLE FLIP (2026-08-13, TASK-15700 Task 4): this pin
+    asserted the OPPOSITE, and the reversal is the cost the owner accepted.
+
+    Both states, explicitly:
+
+    * BEFORE — under `and_stopword_trim` this test was
+      `test_the_shipped_and_construction_never_runs_a_second_query` and
+      asserted `len(calls) == 1`: the shipped construction had no fallback
+      form at all, so a zero-row sub-leg simply returned nothing.
+    * AFTER — the shipped `and_then_prefix` defines a fallback, so a sub-leg
+      whose primary returns zero rows runs a SECOND statement. Measured over
+      the 60 golden queries: 460 statements against the old default's 240,
+      i.e. **220 extra, 92% of sub-legs falling back** on the 172-document
+      eval corpus (an upper bound — the fallback fires only where the
+      AND primary found nothing, so a denser corpus hits it less).
+
+    That extra work is precisely what the pre-registered tie-break weighed,
+    and precisely what the OWNER RULING overrode in favour of structural
+    immunity to intra-sub-leg self-displacement (see
+    `test_the_shipped_default_is_the_owner_ruled_construction`). Pinning the
+    count here keeps the price VISIBLE rather than letting it drift: if this
+    ever reads 1, the default silently lost its fallback; if it reads more
+    than 2 for one sub-leg, the zero-row guard broke and the fallback is
+    running unconditionally.
+
+    The query also shows why the prefix fallback is not a widening free
+    lunch: it ANDs its prefix terms, so unlike `and_then_or`'s OR fallback
+    (which answers this same query) it still returns nothing here.
 
     Args:
         tmp_path: pytest's per-test temporary directory; holds the seeded
@@ -571,7 +886,13 @@ def test_the_shipped_and_construction_never_runs_a_second_query(
     )
 
     assert results == []
-    assert len(calls) == 1, f"the shipped construction has no fallback: {calls}"
+    assert len(calls) == 2, (
+        f"expected the shipped construction's primary + ONE fallback: {calls}"
+    )
+    # The primary is the FULL AND (function words included) -- NOT the
+    # trimmed AND the previous default ran. The trim lives in the fallback.
+    assert calls[0] == '"how" "does" "the" "wombat" "template" "work"'
+    assert calls[1] == '"wombat"* "template"* "work"*'
 
 
 def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path: Path) -> None:
@@ -723,14 +1044,24 @@ def test_media_sub_leg_falls_back_independently(
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(
+def test_sub_legs_carry_and_and_fallback_rows_in_one_query_primary_first(
     tmp_path: Path,
 ) -> None:
-    """The spec's deliberate mixed mode: one query, two provenances.
+    """One query, two provenances -- and the primary one leads.
 
     Media matches every token (AND); the prompt only matches through the OR
     fallback. Both rows come back, each stamped with the form that found it
     -- which is what keeps Task 5's mechanism prose table-derived.
+
+    RENAMED (TASK-15700, was
+    `test_sub_legs_interleave_and_and_fallback_rows_in_one_query`): the two
+    provenances are no longer INTERLEAVED. `_keyword_search` tiers them, so
+    the ORDER is now load-bearing and this test asserts it instead of
+    collapsing the results into an order-blind dict. Media happens to be
+    first in the source order here, so the ordering assertion would pass
+    under the old round-robin too -- it is a second witness for the tier
+    order, not the primary one (`Tests/RAG_Search/test_keyword_leg_tiered_merge.py`
+    owns that, with the sources in the order that discriminates).
 
     Args:
         tmp_path: pytest's per-test temporary directory; holds the seeded
@@ -757,6 +1088,11 @@ def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(
         r.metadata["source_type"]: r.metadata["fts_match"] for r in results
     }
     assert stamps == {"media": FTS_MATCH_AND, "prompt": FTS_MATCH_OR}
+
+    # The tier order, in sequence: every primary-form row precedes every
+    # fallback row.
+    forms = [r.metadata["fts_match"] for r in results]
+    assert forms == [FTS_MATCH_AND, FTS_MATCH_OR], forms
 
 
 def test_a_query_with_no_searchable_tokens_still_touches_no_database(
@@ -874,6 +1210,30 @@ def test_each_construction_gets_its_own_hybrid_cache_key():
         for construction in FTS_MATCH_CONSTRUCTIONS
     }
     assert len(set(keys.values())) == len(FTS_MATCH_CONSTRUCTIONS), keys
+
+
+def test_the_two_prefix_constructions_key_distinctly_from_every_other_row():
+    """TASK-15700's two new values, named rather than counted.
+
+    The test above is a set-size check over `FTS_MATCH_CONSTRUCTIONS`, so it
+    would still pass if a new construction were simply never added to that
+    tuple. These two are asserted by name: a per-service cache plus a sweep
+    that mutates the construction between rows is exactly the shape that
+    reported "k doesn't matter" in TASK-4110, and the two new rows enter that
+    sweep.
+    """
+    cache = SimpleRAGCache(enabled=True)
+
+    def key(construction):
+        return cache._make_key(
+            "quokka", "hybrid", 10, None, None, None, (0.7, 5, 2), construction
+        )
+
+    assert key("prefix") != key(FTS_MATCH_AND)
+    assert key("and_then_prefix") != key(FTS_MATCH_AND)
+    assert key("prefix") != key("and_then_prefix")
+    assert key("prefix") != key("and_then_or")
+    assert key("and_then_prefix") != key("and_then_or")
 
 
 def test_the_keyword_search_type_keys_the_construction_too():

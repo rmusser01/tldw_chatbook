@@ -367,6 +367,21 @@ def _rrf_merge_parallel_results(
     def result_key(result: SearchResult):
         return (result.source, result.id)
 
+    # EXEMPT from TASK-15700's form tiering, verified rather than assumed.
+    # `RAGService._keyword_search` had to tier this same round robin because
+    # its sub-legs can return rows from two different MATCH forms in one
+    # query (a fallback construction widens a zero-row sub-leg), and a
+    # fallback row taking leg rank 1 from an untouched primary row cost the
+    # vector-blind fixture its hybrid rescue. This path's FTS legs are
+    # `search_media_fts5` / `search_conversations_fts5` /
+    # `search_notes_fts5`, which call the DB-level searches
+    # (`media_db.search_media_db`, `db.search_conversations_by_content`,
+    # `db.search_notes`). None of them reads
+    # `SearchConfig.fts_match_construction`, none runs
+    # `_fts5_match_expressions` / `_fts_rows_with_fallback`, and none stamps
+    # `fts_match` -- there is no second form for these lists to carry and so
+    # nothing to partition. The unification of this legacy blend with the
+    # engine's is TASK-3501's; do not refactor it here speculatively.
     fts_leg = interleave_rankings(fts_lists, key=result_key)
     vector_leg = interleave_rankings(vector_lists, key=result_key)
 
