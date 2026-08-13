@@ -7,13 +7,11 @@ not a provider plug-in or schema-driven form system.
 
 from __future__ import annotations
 
-import io
 import math
 import os
 import shutil
 import stat
 import unicodedata
-import wave
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -45,6 +43,13 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     openai_destination_fingerprint,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.sample_audio_validation import (
+    CONTENT_TYPES_BY_FORMAT,
+    MAX_PLAYABLE_AUDIO_BYTES,
+    audio_body_matches_format,
+    compressed_audio_has_decodable_frame,
+    wav_has_complete_frames,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     ProviderTestFingerprint,
     SpeechTTSConfigurationState,
@@ -565,18 +570,8 @@ class GlobalSpeechTTSValidationError(ValueError):
 class ProcessProviderTestEvidenceStore:
     """Process-only successful sample evidence keyed by provider fingerprint."""
 
-    _DEFAULT_MAX_SAMPLE_BYTES = 8 * 1024 * 1024
-
-    _CONTENT_TYPES_BY_FORMAT = MappingProxyType(
-        {
-            "aac": frozenset({"audio/aac"}),
-            "flac": frozenset({"audio/flac"}),
-            "mp3": frozenset({"audio/mpeg", "audio/mp3"}),
-            "opus": frozenset({"audio/ogg", "audio/opus"}),
-            "pcm": frozenset({"audio/l16", "audio/pcm"}),
-            "wav": frozenset({"audio/wav", "audio/wave", "audio/x-wav"}),
-        }
-    )
+    _DEFAULT_MAX_SAMPLE_BYTES = MAX_PLAYABLE_AUDIO_BYTES
+    _CONTENT_TYPES_BY_FORMAT = CONTENT_TYPES_BY_FORMAT
 
     def __init__(self) -> None:
         self._successful_samples: dict[str, ProviderTestFingerprint] = {}
@@ -586,31 +581,7 @@ class ProcessProviderTestEvidenceStore:
 
     @staticmethod
     def _wav_has_complete_frames(body: bytes) -> bool:
-        if (
-            len(body) < 44
-            or body[:4] != b"RIFF"
-            or body[8:12] != b"WAVE"
-            or int.from_bytes(body[4:8], "little") + 8 != len(body)
-        ):
-            return False
-        try:
-            with wave.open(io.BytesIO(body), "rb") as audio:
-                channels = audio.getnchannels()
-                sample_width = audio.getsampwidth()
-                frame_rate = audio.getframerate()
-                frame_count = audio.getnframes()
-                if (
-                    audio.getcomptype() != "NONE"
-                    or channels <= 0
-                    or sample_width <= 0
-                    or frame_rate <= 0
-                    or frame_count <= 0
-                ):
-                    return False
-                frames = audio.readframes(frame_count)
-                return len(frames) == frame_count * channels * sample_width
-        except (EOFError, wave.Error):
-            return False
+        return wav_has_complete_frames(body)
 
     @staticmethod
     def _compressed_audio_has_decodable_frame(
@@ -619,48 +590,7 @@ class ProcessProviderTestEvidenceStore:
     ) -> bool:
         """Decode at most one bounded audio frame, failing closed without PyAV."""
 
-        try:
-            import av
-        except ImportError:
-            return False
-
-        container_format, expected_codecs = {
-            "mp3": ("mp3", frozenset({"mp3", "mp3float"})),
-            "opus": ("ogg", frozenset({"opus"})),
-            "flac": ("flac", frozenset({"flac"})),
-            "aac": ("aac", frozenset({"aac"})),
-        }[response_format]
-        try:
-            with av.open(
-                io.BytesIO(body),
-                mode="r",
-                format=container_format,
-            ) as container:
-                streams = tuple(container.streams.audio)
-                if len(streams) != 1:
-                    return False
-                stream = streams[0]
-                codec_name = str(getattr(stream.codec_context, "name", "")).lower()
-                if codec_name not in expected_codecs:
-                    return False
-                for packet_index, packet in enumerate(container.demux(stream)):
-                    if packet_index >= 64:
-                        return False
-                    for frame in packet.decode():
-                        sample_rate = getattr(frame, "sample_rate", 0)
-                        samples = getattr(frame, "samples", 0)
-                        layout = getattr(frame, "layout", None)
-                        channels = len(getattr(layout, "channels", ()))
-                        return bool(
-                            type(sample_rate) is int
-                            and 1 <= sample_rate <= 384_000
-                            and type(samples) is int
-                            and 1 <= samples <= sample_rate
-                            and 1 <= channels <= 8
-                        )
-                return False
-        except Exception:  # noqa: BLE001 - malformed or unsupported audio
-            return False
+        return compressed_audio_has_decodable_frame(body, response_format)
 
     @classmethod
     def _audio_body_matches_format(
@@ -672,23 +602,13 @@ class ProcessProviderTestEvidenceStore:
         channels: int | None,
         sample_width_bytes: int | None,
     ) -> bool:
-        if response_format == "wav":
-            return cls._wav_has_complete_frames(body)
-        if response_format in {"mp3", "opus", "flac", "aac"}:
-            return cls._compressed_audio_has_decodable_frame(body, response_format)
-        if response_format == "pcm":
-            if (
-                type(sample_rate_hz) is not int
-                or not 1 <= sample_rate_hz <= 384_000
-                or type(channels) is not int
-                or not 1 <= channels <= 8
-                or type(sample_width_bytes) is not int
-                or sample_width_bytes not in {1, 2, 3, 4}
-            ):
-                return False
-            frame_size = channels * sample_width_bytes
-            return len(body) >= frame_size and len(body) % frame_size == 0
-        return False
+        return audio_body_matches_format(
+            body,
+            response_format,
+            sample_rate_hz=sample_rate_hz,
+            channels=channels,
+            sample_width_bytes=sample_width_bytes,
+        )
 
     def record_successful_sample(
         self,

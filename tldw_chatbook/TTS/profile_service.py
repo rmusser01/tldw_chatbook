@@ -50,6 +50,7 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileVerificationEvidence,
     profile_options_fingerprint,
 )
+from tldw_chatbook.TTS.sample_audio_validation import validate_playable_audio_file
 from tldw_chatbook.TTS.TTS_Generation import (
     AudioCppGuidedDependencySnapshot,
     validate_audio_cpp_guided_dependency_snapshot,
@@ -1189,6 +1190,14 @@ def _dependency_projection(
 
 
 @dataclass(frozen=True, slots=True)
+class _ProfileEvidenceLifecycle:
+    """Latest profile revision or tombstone observed by this service."""
+
+    revision: int
+    deleted: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PortableProfileAvailabilityObservation:
     """Current local capability state for one sanitized portable profile."""
 
@@ -1354,6 +1363,10 @@ class TTSProfileService:
         self._tts_service = tts_service
         self._sample_evidence: dict[UUID, TTSProfileVerificationEvidence] = {}
         self._sample_evidence_lock = RLock()
+        self._sample_evidence_lifecycle: dict[
+            UUID, _ProfileEvidenceLifecycle
+        ] = {}
+        self._sample_evidence_epoch = 0
         if _uuid_factory is not None:
             self._uuid_factory = _uuid_factory
 
@@ -2100,6 +2113,7 @@ class TTSProfileService:
             repository_generation=repository_generation,
             profile=profile,
         )
+        self._mark_profile_evidence_current(profile)
         self.record_sample_evidence(loaded, artifact)
         return loaded
 
@@ -2114,6 +2128,13 @@ class TTSProfileService:
             return
         try:
             profile = self._validate_loaded(loaded)
+            with self._sample_evidence_lock:
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                if lifecycle is not None and (
+                    lifecycle.deleted or lifecycle.revision != profile.revision
+                ):
+                    return
+                admission_epoch = self._sample_evidence_epoch
             selection = artifact.requested_selection
             if type(selection) is not TTSRequestedSelectionSnapshot:
                 return
@@ -2136,6 +2157,16 @@ class TTSProfileService:
             if (
                 type(audio_format) is not str
                 or audio_format.removeprefix(".") != profile.response_format
+            ):
+                return
+            if (
+                validate_playable_audio_file(
+                    artifact.path,
+                    profile.response_format,
+                    artifact.content_type,
+                    artifact.metadata,
+                )
+                is None
             ):
                 return
             provider_revision = self._current_configuration_revision(
@@ -2163,7 +2194,15 @@ class TTSProfileService:
             return
 
         with self._sample_evidence_lock:
-            self._sample_evidence.pop(evidence.profile_id, None)
+            lifecycle = self._sample_evidence_lifecycle.get(evidence.profile_id)
+            if (
+                self._sample_evidence_epoch != admission_epoch
+                or lifecycle is not None
+                and (lifecycle.deleted or lifecycle.revision != profile.revision)
+            ):
+                return
+            # FIFO is intentional: re-recording an existing UUID does not
+            # extend its residency; only first admission establishes order.
             self._sample_evidence[evidence.profile_id] = evidence
             while len(self._sample_evidence) > _PROFILE_SAMPLE_EVIDENCE_LIMIT:
                 oldest_profile_id = next(iter(self._sample_evidence))
@@ -2326,7 +2365,7 @@ class TTSProfileService:
             required_profile_id=loaded_profile.profile_id,
         )
         self._require_repository_generation(loaded.repository_generation)
-        self._clear_sample_evidence(loaded_profile.profile_id)
+        self._mark_profile_evidence_current(profile)
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
             profile=profile,
@@ -2575,7 +2614,7 @@ class TTSProfileService:
         if value is not None:
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(loaded.repository_generation)
-        self._clear_sample_evidence(profile.profile_id)
+        self._mark_profile_evidence_deleted(profile)
 
     async def _read_portable_collisions(
         self,
@@ -3072,9 +3111,21 @@ class TTSProfileService:
             )
         )
 
-    def _clear_sample_evidence(self, profile_id: UUID) -> None:
+    def _mark_profile_evidence_current(self, profile: TTSGenerationProfile) -> None:
         with self._sample_evidence_lock:
-            self._sample_evidence.pop(profile_id, None)
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, False)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
+
+    def _mark_profile_evidence_deleted(self, profile: TTSGenerationProfile) -> None:
+        with self._sample_evidence_lock:
+            self._sample_evidence_epoch += 1
+            self._sample_evidence_lifecycle[profile.profile_id] = (
+                _ProfileEvidenceLifecycle(profile.revision, True)
+            )
+            self._sample_evidence.pop(profile.profile_id, None)
 
     def _classify_profile_with_evidence(
         self,
@@ -3096,7 +3147,13 @@ class TTSProfileService:
                 provider_configuration_revision=provider_configuration_revision,
             )
             with self._sample_evidence_lock:
-                evidence = self._sample_evidence.get(profile.profile_id)
+                lifecycle = self._sample_evidence_lifecycle.get(profile.profile_id)
+                evidence = (
+                    None
+                    if lifecycle is not None
+                    and (lifecycle.deleted or lifecycle.revision != profile.revision)
+                    else self._sample_evidence.get(profile.profile_id)
+                )
                 if evidence is not None and evidence != expected:
                     self._sample_evidence.pop(profile.profile_id, None)
                     evidence = None

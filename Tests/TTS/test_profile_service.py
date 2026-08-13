@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import os
 import struct
+import threading
 import traceback
+import wave
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields
@@ -17,6 +20,7 @@ from uuid import UUID
 import pytest
 
 import tldw_chatbook.TTS.profile_service as profile_service
+import tldw_chatbook.TTS.sample_audio_validation as sample_audio_validation
 import tldw_chatbook.TTS.TTS_Generation as tts_generation
 from tldw_chatbook.TTS.adapter_registry import TTSProviderConfigurationSnapshot
 from tldw_chatbook.TTS.audio_cpp_guided_config import (
@@ -618,6 +622,7 @@ def _artifact(
 
 def _successful_artifact(
     selection: TTSRequestedSelectionSnapshot,
+    path: Path,
     *,
     provider_id: str | None = None,
     model_id: str | None = None,
@@ -626,7 +631,7 @@ def _successful_artifact(
 ) -> STTSGeneratedAudio:
     selected_voice = selection.voice_id if voice_id is _UNSET else voice_id
     return STTSGeneratedAudio(
-        path=Path("/private/secret/result.mp3"),
+        path=path,
         provider_id=selection.provider_id if provider_id is None else provider_id,
         model_id=selection.model_id if model_id is None else model_id,
         voice_id=cast(str | None, selected_voice),
@@ -635,10 +640,23 @@ def _successful_artifact(
         audio_format=(
             selection.response_format if audio_format is None else audio_format
         ),
-        content_type="audio/mpeg",
+        content_type=(
+            "audio/wav" if selection.response_format == "wav" else "audio/mpeg"
+        ),
         metadata={"endpoint": "https://user:credential@example.test"},
         requested_selection=selection,
     )
+
+
+@pytest.fixture
+def successful_audio_path(tmp_path: Path) -> Path:
+    path = tmp_path / "completed.wav"
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(struct.pack("<h", 100) * 32)
+    return path
 
 
 def _selection(
@@ -2261,7 +2279,9 @@ def test_current_revision_reads_requested_active_provider_not_publication_counte
 
 
 @pytest.mark.asyncio
-async def test_openai_profile_created_from_sample_is_available_this_process() -> None:
+async def test_openai_profile_created_from_sample_is_available_this_process(
+    successful_audio_path: Path,
+) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"audio_cpp": 2, "openai": 41}
     tts_service.saved_revisions = {"openai": 7}
@@ -2271,13 +2291,13 @@ async def test_openai_profile_created_from_sample_is_available_this_process() ->
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
 
     loaded = await service.create_from_artifact(
         "Pocket Alba",
-        _successful_artifact(selection),
+        _successful_artifact(selection, successful_audio_path),
     )
     observed = await service.observe_availability(
         TTSProfilePageSnapshot(
@@ -2299,7 +2319,9 @@ async def test_openai_profile_created_from_sample_is_available_this_process() ->
 
 
 @pytest.mark.asyncio
-async def test_openai_profile_evidence_invalidates_on_active_revision_change() -> None:
+async def test_openai_profile_evidence_invalidates_on_active_revision_change(
+    successful_audio_path: Path,
+) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"audio_cpp": 2, "openai": 41}
     service, repository, _tts_service = _service(tts_service=tts_service)
@@ -2307,12 +2329,12 @@ async def test_openai_profile_evidence_invalidates_on_active_revision_change() -
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
     loaded = await service.create_from_artifact(
         "Pocket Alba",
-        _successful_artifact(selection),
+        _successful_artifact(selection, successful_audio_path),
     )
 
     tts_service.revisions["openai"] = 42
@@ -2345,11 +2367,12 @@ async def test_openai_profile_evidence_invalidates_on_active_revision_change() -
         {"provider_id": "elevenlabs"},
         {"model_id": "other-model"},
         {"voice_id": "other-voice"},
-        {"audio_format": "wav"},
+        {"audio_format": "mp3"},
     ),
 )
 async def test_sample_evidence_rejects_malformed_or_mismatched_artifact(
     artifact_overrides: dict[str, object],
+    successful_audio_path: Path,
 ) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"audio_cpp": 2, "openai": 41}
@@ -2358,23 +2381,158 @@ async def test_sample_evidence_rejects_malformed_or_mismatched_artifact(
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
     )
     loaded = LoadedTTSProfile(repository.generation, profile)
     selection = _selection(
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
 
     service.record_sample_evidence(
         loaded,
-        _successful_artifact(selection, **artifact_overrides),  # type: ignore[arg-type]
+        _successful_artifact(
+            selection,
+            successful_audio_path,
+            **artifact_overrides,
+        ),  # type: ignore[arg-type]
     )
 
     assert profile.profile_id not in service._sample_evidence
+
+
+@pytest.mark.parametrize(
+    "invalid_kind",
+    ("missing", "empty", "malformed", "oversized", "directory", "symlink"),
+)
+def test_sample_evidence_requires_bounded_playable_regular_audio(
+    tmp_path: Path,
+    invalid_kind: str,
+    successful_audio_path: Path,
+) -> None:
+    path = tmp_path / f"{invalid_kind}.wav"
+    if invalid_kind == "empty":
+        path.write_bytes(b"")
+    elif invalid_kind == "malformed":
+        path.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    elif invalid_kind == "oversized":
+        path.write_bytes(b"x" * ((8 * 1024 * 1024) + 1))
+    elif invalid_kind == "directory":
+        path.mkdir()
+    elif invalid_kind == "symlink":
+        path.symlink_to(successful_audio_path)
+
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository.generation,
+        _profile(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="wav",
+        ),
+    )
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+
+    service.record_sample_evidence(loaded, _successful_artifact(selection, path))
+
+    assert service._sample_evidence == {}
+
+
+def test_sample_evidence_rejects_relative_artifact_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    relative = Path("relative.wav")
+    monkeypatch.chdir(tmp_path)
+    with wave.open(str(relative), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(struct.pack("<h", 100) * 32)
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository.generation,
+        _profile(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="wav",
+        ),
+    )
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+
+    service.record_sample_evidence(loaded, _successful_artifact(selection, relative))
+
+    assert service._sample_evidence == {}
+
+
+def test_sample_evidence_rejects_path_replaced_after_bounded_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    successful_audio_path: Path,
+) -> None:
+    path = tmp_path / "replaceable.wav"
+    path.write_bytes(successful_audio_path.read_bytes())
+    replacement = tmp_path / "replacement.wav"
+    replacement.write_bytes(successful_audio_path.read_bytes())
+    original_read = sample_audio_validation._read_bounded_regular_file
+
+    def replace_after_read(
+        artifact_path: Path,
+        max_bytes: int,
+    ) -> tuple[bytes, os.stat_result] | None:
+        result = original_read(artifact_path, max_bytes)
+        os.replace(replacement, artifact_path)
+        return result
+
+    monkeypatch.setattr(
+        sample_audio_validation,
+        "_read_bounded_regular_file",
+        replace_after_read,
+    )
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository.generation,
+        _profile(
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="wav",
+        ),
+    )
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+
+    service.record_sample_evidence(loaded, _successful_artifact(selection, path))
+
+    assert service._sample_evidence == {}
 
 
 def test_sample_evidence_rejects_failed_cancelled_or_forged_values() -> None:
@@ -2399,7 +2557,9 @@ def test_sample_evidence_rejects_failed_cancelled_or_forged_values() -> None:
 
 
 @pytest.mark.asyncio
-async def test_edit_and_delete_clear_process_sample_evidence() -> None:
+async def test_edit_and_delete_clear_process_sample_evidence(
+    successful_audio_path: Path,
+) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"openai": 41}
     service, _repository, _tts_service = _service(tts_service=tts_service)
@@ -2407,12 +2567,12 @@ async def test_edit_and_delete_clear_process_sample_evidence() -> None:
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
     loaded = await service.create_from_artifact(
         "Pocket Alba",
-        _successful_artifact(selection),
+        _successful_artifact(selection, successful_audio_path),
     )
     assert loaded.profile.profile_id in service._sample_evidence
 
@@ -2423,21 +2583,150 @@ async def test_edit_and_delete_clear_process_sample_evidence() -> None:
             provider_id="openai",
             model_id="pocket-tts",
             voice_id="alba",
-            response_format="mp3",
+            response_format="wav",
             speed=1.0,
             options={},
         ),
     )
     assert loaded.profile.profile_id not in service._sample_evidence
 
-    service.record_sample_evidence(updated, _successful_artifact(selection))
+    service.record_sample_evidence(
+        updated,
+        _successful_artifact(selection, successful_audio_path),
+    )
     assert updated.profile.profile_id in service._sample_evidence
     await service.delete_profile(updated)
     assert updated.profile.profile_id not in service._sample_evidence
 
 
 @pytest.mark.asyncio
-async def test_new_service_and_unrecorded_profile_have_no_sample_evidence() -> None:
+@pytest.mark.parametrize("mutation", ("edit", "delete"))
+async def test_inflight_sample_cannot_reinsert_after_profile_mutation(
+    mutation: str,
+    monkeypatch: pytest.MonkeyPatch,
+    successful_audio_path: Path,
+) -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    profile = _profile(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+    )
+    loaded = LoadedTTSProfile(repository.generation, profile)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+    artifact = _successful_artifact(selection, successful_audio_path)
+    validation_started = threading.Event()
+    validation_release = threading.Event()
+    real_validate = profile_service.validate_playable_audio_file
+
+    def blocked_validation(*args: object, **kwargs: object) -> object:
+        validation_started.set()
+        assert validation_release.wait(2)
+        return real_validate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        profile_service,
+        "validate_playable_audio_file",
+        blocked_validation,
+    )
+    worker = threading.Thread(
+        target=service.record_sample_evidence,
+        args=(loaded, artifact),
+    )
+    worker.start()
+    assert await asyncio.to_thread(validation_started.wait, 2)
+
+    if mutation == "edit":
+        await service.update_profile(
+            loaded,
+            TTSProfileDraft(
+                display_name="Edited while validating",
+                provider_id="openai",
+                model_id="pocket-tts",
+                voice_id="alba",
+                response_format="wav",
+                speed=1.0,
+                options={},
+            ),
+        )
+    else:
+        await service.delete_profile(loaded)
+    validation_release.set()
+    await asyncio.to_thread(worker.join, 2)
+
+    assert not worker.is_alive()
+    assert profile.profile_id not in service._sample_evidence
+    service.record_sample_evidence(loaded, artifact)
+    assert profile.profile_id not in service._sample_evidence
+
+
+@pytest.mark.asyncio
+async def test_concurrent_observation_cannot_publish_deleted_profile_as_available(
+    monkeypatch: pytest.MonkeyPatch,
+    successful_audio_path: Path,
+) -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"audio_cpp": 2, "openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+    loaded = await service.create_from_artifact(
+        "Pocket Alba",
+        _successful_artifact(selection, successful_audio_path),
+    )
+    page = TTSProfilePageSnapshot(
+        repository_generation=repository.generation,
+        profiles=(loaded.profile,),
+        total=1,
+    )
+    classification_started = threading.Event()
+    classification_release = threading.Event()
+    original_classify = service._classify_profile_with_evidence
+
+    def blocked_classification(*args: object, **kwargs: object) -> object:
+        classification_started.set()
+        assert classification_release.wait(2)
+        return original_classify(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        service,
+        "_classify_profile_with_evidence",
+        blocked_classification,
+    )
+    observed: list[TTSProfileAvailabilitySnapshot] = []
+
+    def observe_in_thread() -> None:
+        observed.append(asyncio.run(service.observe_availability(page)))
+
+    worker = threading.Thread(target=observe_in_thread)
+    worker.start()
+    assert await asyncio.to_thread(classification_started.wait, 2)
+    await service.delete_profile(loaded)
+    classification_release.set()
+    await asyncio.to_thread(worker.join, 2)
+
+    assert not worker.is_alive()
+    assert observed[0].profiles[0].state == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_new_service_and_unrecorded_profile_have_no_sample_evidence(
+    successful_audio_path: Path,
+) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"audio_cpp": 2, "openai": 41}
     first, repository, _tts_service = _service(tts_service=tts_service)
@@ -2445,12 +2734,12 @@ async def test_new_service_and_unrecorded_profile_have_no_sample_evidence() -> N
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
     loaded = await first.create_from_artifact(
         "Pocket Alba",
-        _successful_artifact(selection),
+        _successful_artifact(selection, successful_audio_path),
     )
     restarted = TTSProfileService(repository, tts_service)
 
@@ -2466,7 +2755,9 @@ async def test_new_service_and_unrecorded_profile_have_no_sample_evidence() -> N
     assert restarted._sample_evidence == {}
 
 
-def test_sample_evidence_cache_is_bounded_and_thread_safe() -> None:
+def test_sample_evidence_cache_concurrent_admission_retains_every_bounded_id(
+    successful_audio_path: Path,
+) -> None:
     tts_service = _FakeTTSService()
     tts_service.revisions = {"openai": 41}
     service, repository, _tts_service = _service(tts_service=tts_service)
@@ -2474,10 +2765,10 @@ def test_sample_evidence_cache_is_bounded_and_thread_safe() -> None:
         provider_id="openai",
         model_id="pocket-tts",
         voice_id="alba",
-        response_format="mp3",
+        response_format="wav",
         configuration_revision=41,
     )
-    artifact = _successful_artifact(selection)
+    artifact = _successful_artifact(selection, successful_audio_path)
     loaded_profiles = tuple(
         LoadedTTSProfile(
             repository.generation,
@@ -2486,23 +2777,58 @@ def test_sample_evidence_cache_is_bounded_and_thread_safe() -> None:
                 provider_id="openai",
                 model_id="pocket-tts",
                 voice_id="alba",
-                response_format="mp3",
+                response_format="wav",
             ),
         )
-        for index in range(300)
+        for index in range(128)
     )
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         tuple(
             executor.map(
                 lambda loaded: service.record_sample_evidence(loaded, artifact),
-                loaded_profiles[:-1],
+                loaded_profiles,
             )
         )
-    service.record_sample_evidence(loaded_profiles[-1], artifact)
 
-    assert len(service._sample_evidence) <= 256
-    assert loaded_profiles[-1].profile.profile_id in service._sample_evidence
+    assert set(service._sample_evidence) == {
+        loaded.profile.profile_id for loaded in loaded_profiles
+    }
+
+
+def test_sample_evidence_cache_uses_deterministic_fifo_eviction(
+    successful_audio_path: Path,
+) -> None:
+    tts_service = _FakeTTSService()
+    tts_service.revisions = {"openai": 41}
+    service, repository, _tts_service = _service(tts_service=tts_service)
+    selection = _selection(
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="alba",
+        response_format="wav",
+        configuration_revision=41,
+    )
+    artifact = _successful_artifact(selection, successful_audio_path)
+
+    for index in range(300):
+        service.record_sample_evidence(
+            LoadedTTSProfile(
+                repository.generation,
+                _profile(
+                    profile_id=UUID(int=index + 1),
+                    provider_id="openai",
+                    model_id="pocket-tts",
+                    voice_id="alba",
+                    response_format="wav",
+                ),
+            ),
+            artifact,
+        )
+
+    assert tuple(service._sample_evidence) == tuple(
+        UUID(int=index) for index in range(45, 301)
+    )
 
 
 @pytest.mark.asyncio

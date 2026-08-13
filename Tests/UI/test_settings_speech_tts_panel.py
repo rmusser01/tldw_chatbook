@@ -881,15 +881,18 @@ async def test_settings_connection_uses_sample_over_unsupported_catalog() -> Non
     )
     evidence = ProcessProviderTestEvidenceStore()
     evidence.record_catalog(fingerprint, SpeechTTSConnectionState.UNSUPPORTED)
-    wav = (
-        b"RIFF"
-        + struct.pack("<I", 38)
-        + b"WAVEfmt "
-        + struct.pack("<IHHIIHH", 16, 1, 1, 8_000, 16_000, 2, 16)
+    pcm = struct.pack("<h", 100) * 32
+    fmt = struct.pack("<HHIIHH", 1, 1, 16_000, 32_000, 2, 16)
+    wave_body = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
         + b"data"
-        + struct.pack("<I", 2)
-        + b"\x00\x00"
+        + struct.pack("<I", len(pcm))
+        + pcm
     )
+    wav = b"RIFF" + struct.pack("<I", len(wave_body)) + wave_body
     assert evidence.record_successful_sample(
         fingerprint,
         status_code=200,
