@@ -5162,7 +5162,116 @@ async def test_mounted_selection_precondition_allows_current_relevant_config(
 
 
 @pytest.mark.asyncio
-async def test_mounted_manual_reconfirmation_binds_current_authoritative_precondition():
+async def test_mounted_manual_typing_captures_config_once_per_decision(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+
+    endpoint = "https://manual-session.example/v1/chat/completions"
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.custom": {"api_url": endpoint}}
+    ).fully_applied
+    capture_calls = []
+    original_capture = SetupWizardContainer.capture_provider_config_precondition
+
+    def counted_capture(discovery_key):
+        capture_calls.append(discovery_key)
+        return original_capture(discovery_key)
+
+    monkeypatch.setattr(
+        SetupWizardContainer,
+        "capture_provider_config_precondition",
+        staticmethod(counted_capture),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": endpoint}}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                "custom", "discovered-session-model"
+            )
+        )
+    )
+    model_step = None
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(30):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "")
+                    == "discovered-session-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        manual = model_step.query_one("#setup-model-custom", Input)
+        baseline = len(capture_calls)
+        for value in ("m", "manual", "manual-session", "manual-session-model"):
+            manual.value = value
+            await pilot.pause()
+
+        assert len(capture_calls) == baseline + 1
+        first_precondition = model_step._selection_config_precondition
+        assert first_precondition is not None
+
+        manual.value = ""
+        await pilot.pause()
+        assert model_step._selection_config_precondition is None
+        baseline = len(capture_calls)
+        for value in ("n", "new", "new-manual-model"):
+            manual.value = value
+            await pilot.pause()
+        assert len(capture_calls) == baseline + 1
+        assert model_step._selection_config_precondition is not first_precondition
+
+        target.value = True
+        await pilot.pause()
+        assert model_step._model_id_from_custom_input is False
+        assert model_step._selection_config_precondition is (
+            container._first_run_provider_config_preconditions[
+                model_step._selection_discovery_key
+            ]
+        )
+
+        manual.value = "retry-manual-model"
+        await pilot.pause()
+        retry = model_step.query_one("#setup-model-retry", Button)
+        retry.press()
+        await pilot.pause()
+        assert model_step._selection_config_precondition is None
+
+        manual.value = "unmount-manual-model"
+        await pilot.pause()
+        assert model_step._selection_config_precondition is not None
+
+    assert model_step is not None
+    assert model_step._selection_config_precondition is None
+
+
+@pytest.mark.asyncio
+async def test_mounted_manual_reconfirmation_binds_current_authoritative_precondition(
+    monkeypatch,
+):
     from unittest.mock import AsyncMock
 
     from tldw_chatbook import config as config_module
@@ -5177,6 +5286,18 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
             }
         }
     ).fully_applied
+    capture_calls = []
+    original_capture = SetupWizardContainer.capture_provider_config_precondition
+
+    def counted_capture(discovery_key):
+        capture_calls.append(discovery_key)
+        return original_capture(discovery_key)
+
+    monkeypatch.setattr(
+        SetupWizardContainer,
+        "capture_provider_config_precondition",
+        staticmethod(counted_capture),
+    )
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
         "api_settings": {
@@ -5222,8 +5343,12 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
                 break
             await pilot.pause(0.05)
         assert target is not None
-        target.value = True
-        await pilot.pause()
+        manual = model_step.query_one("#setup-model-custom", Input)
+        baseline = len(capture_calls)
+        for value in ("m", "manual-a", "manual-selection-a-model"):
+            manual.value = value
+            await pilot.pause()
+        assert len(capture_calls) == baseline + 1
 
         assert config_module.apply_settings_mutation_to_cli_config(
             {
@@ -5236,6 +5361,7 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
         await container._advance()
         assert container.current_step == model_index
         assert not container.provider_setup_committed
+        assert model_step._selection_config_precondition is None
 
         wizard.app_instance.app_config["api_settings"]["custom"].update(
             {
@@ -5249,9 +5375,11 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
         await pilot.pause()
         await container._advance()
         assert container.current_step == model_index
-        manual = model_step.query_one("#setup-model-custom", Input)
-        manual.value = "manual-selection-b-model"
-        await pilot.pause()
+        baseline = len(capture_calls)
+        for value in ("m", "manual-b", "manual-selection-b-model"):
+            manual.value = value
+            await pilot.pause()
+        assert len(capture_calls) == baseline + 1
         await container._advance()
 
         authoritative = config_module.get_atomic_config_snapshot().values

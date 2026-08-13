@@ -2881,6 +2881,7 @@ class ModelStep(SetupStep):
             None
         )
         self._selection_config_precondition: object | None = None
+        self._manual_decision_active = False
         self.selected_model_id: str = ""
         # Bug-5: tracks whether selected_model_id's current value came from
         # the free-text custom Input (as opposed to the RadioSet) -- lets
@@ -2902,6 +2903,7 @@ class ModelStep(SetupStep):
         self._selection_discovery_key = None
         self._rendered_discovery_key = None
         self._selection_config_precondition = None
+        self._manual_decision_active = False
         self.selected_model_id = ""
         self._model_id_from_custom_input = False
         if not self.is_mounted:
@@ -3013,6 +3015,7 @@ class ModelStep(SetupStep):
                 if prefill_model_id
                 else None
             )
+            self._manual_decision_active = False
             try:
                 self.query_one("#setup-model-custom", Input).value = prefill_model_id
             except Exception:
@@ -3086,6 +3089,8 @@ class ModelStep(SetupStep):
         if isinstance(owner, ProviderStep):
             owner.cancel_selected_discovery_handoff()
         self._explicit_provider_draft = None
+        self._selection_config_precondition = None
+        self._manual_decision_active = False
 
     async def _load_models(
         self,
@@ -3362,6 +3367,9 @@ class ModelStep(SetupStep):
             return
         event.button.add_class("hidden")
         self._rendered_discovery_key = None
+        self._manual_decision_active = False
+        if self._model_id_from_custom_input:
+            self._selection_config_precondition = None
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
         provider_draft = self._current_provider_draft()
         if isinstance(owner, ProviderStep) and provider_draft is not None:
@@ -3461,15 +3469,22 @@ class ModelStep(SetupStep):
         previous_model = self.selected_model_id
         value = event.value.strip()
         if value:
+            current_key = self._current_discovery_key()
             self._clear_model_radio_selection()
             self.selected_model_id = value
             self._model_id_from_custom_input = True
-            self._selection_discovery_key = self._current_discovery_key()
-            self._selection_config_precondition = (
-                self._capture_current_config_precondition()
-            )
+            if (
+                not self._manual_decision_active
+                or self._selection_discovery_key != current_key
+            ):
+                self._manual_decision_active = True
+                self._selection_config_precondition = (
+                    self._capture_current_config_precondition()
+                )
+            self._selection_discovery_key = current_key
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
+            self._manual_decision_active = False
             pressed = self._live_pressed_radio()
             # TASK-1503: clean id, never the (possibly decorated) label.
             self.selected_model_id = (
@@ -3499,6 +3514,7 @@ class ModelStep(SetupStep):
         changed = model_id != self.selected_model_id
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
+        self._manual_decision_active = False
         current_key = self._current_discovery_key()
         self._selection_discovery_key = (
             discovery_key
