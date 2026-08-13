@@ -4557,6 +4557,247 @@ async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "owner", "env_var"),
+    [
+        ("Custom OpenAI API", "custom", "CUSTOM_API_KEY"),
+        ("custom_openai_api_2", "custom_2", "CUSTOM_2_API_KEY"),
+    ],
+)
+async def test_console_persisted_explicit_keyless_ignores_saved_env_and_legacy_keys(
+    monkeypatch,
+    provider: str,
+    owner: str,
+    env_var: str,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    endpoint = f"https://{owner}.keyless.example.test/v1/chat/completions"
+    config = {
+        "api_settings": {
+            owner: {
+                "api_url": endpoint,
+                "model": "keyless-model",
+                "credential_source": "none",
+                "api_key": "saved-chat-canary",
+                "api_key_env_var": env_var,
+            }
+        }
+    }
+    legacy_values = {
+        "api_settings": {
+            "custom": {
+                "api_url": endpoint,
+                "api_key": "legacy-chat-canary",
+            }
+        },
+        "custom_openai_api_2": {
+            "api_ip": endpoint,
+            "api_key": "legacy-chat-canary",
+        },
+    }
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(legacy_values),
+    )
+    monkeypatch.setattr(LLM_API_Calls_Local, "load_settings", lambda: legacy_values)
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={env_var: "environment-chat-canary"},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, streaming=False)
+    )
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hello"}],
+        )
+    ]
+
+    assert resolution.ready is True
+    assert resolution.api_key is None
+    assert resolution.api_key_source is None
+    assert chunks == ["ok"]
+    assert calls == [(endpoint, "")]
+    rendered = repr((resolution, calls))
+    assert "saved-chat-canary" not in rendered
+    assert "environment-chat-canary" not in rendered
+    assert "legacy-chat-canary" not in rendered
+
+
+def test_custom_adapter_fallback_honors_persisted_explicit_keyless(monkeypatch):
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    class RuntimeConfigSnapshotStub:
+        values = {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://adapter-keyless.example/v1/chat/completions",
+                    "model": "adapter-model",
+                    "credential_source": "none",
+                    "api_key": "saved-adapter-canary",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setenv("CUSTOM_API_KEY", "environment-adapter-canary")
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedCustomSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(),
+    )
+
+    result = LLM_API_Calls_Local.chat_with_custom_openai(
+        [{"role": "user", "content": "hello"}],
+        streaming=False,
+    )
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert calls == [
+        ("https://adapter-keyless.example/v1/chat/completions", "")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["llama_cpp", "local_llamacpp"])
+async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorization(
+    provider: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    endpoint = "http://127.0.0.1:19090"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(
+        http_client=client,
+        config_provider=lambda: {
+            "api_settings": {
+                provider: {
+                    "api_url": endpoint,
+                    "model": "keyless-model",
+                    "credential_source": "none",
+                    "api_key": "saved-llama-chat-canary",
+                    "api_key_env_var": "LLAMA_CPP_API_KEY",
+                }
+            }
+        },
+        environ={"LLAMA_CPP_API_KEY": "environment-llama-chat-canary"},
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider=provider,
+                base_url=endpoint,
+                explicit_model="keyless-model",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ]
+    finally:
+        await client.aclose()
+
+    assert resolution.ready is True
+    assert resolution.api_key is None
+    assert chunks == ["ok"]
+    assert [request.method for request in requests] == ["GET", "POST"]
+    assert all("Authorization" not in request.headers for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    endpoint = "http://127.0.0.1:19091"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(
+        http_client=client,
+        config_provider=lambda: {
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": endpoint,
+                    "model": "authenticated-model",
+                    "credential_source": "stored",
+                    "api_key": "stored-llama-request-canary",
+                    "api_key_env_var": "LLAMA_CPP_API_KEY",
+                }
+            }
+        },
+        environ={"LLAMA_CPP_API_KEY": "ignored-llama-environment-canary"},
+    )
+    try:
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="llama_cpp",
+                base_url=endpoint,
+                explicit_model="authenticated-model",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ]
+    finally:
+        await client.aclose()
+
+    assert resolution.ready is True
+    assert resolution.api_key_source == "config:api_settings.llama_cpp.api_key"
+    assert chunks == ["ok"]
+    assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
+        "Bearer stored-llama-request-canary",
+    ]
+    assert "stored-llama-request-canary" not in repr(resolution)
+
+
+@pytest.mark.asyncio
 async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) -> None:
     """Confirm the real gateway-to-adapter chain posts to a configured Anthropic api_base_url.
 

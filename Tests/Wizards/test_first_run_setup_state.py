@@ -1020,6 +1020,7 @@ class TestFirstRunProviderContracts:
         assert dict(mutation.section_values["api_settings.llama_cpp"]) == {
             "model": "local-model",
             "api_url": "http://127.0.0.1:8080",
+            "credential_source": "none",
         }
         assert dict(mutation.section_values["chat_defaults"]) == {
             "provider": "llama_cpp",
@@ -1299,7 +1300,7 @@ class TestFirstRunProviderContracts:
         assert mutation.semantic_identity.credential_source == "stored"
         assert "existing-secret" not in repr(mutation)
 
-    def test_none_source_preserves_unset_environment_declaration(self):
+    def test_none_source_does_not_activate_unset_environment_declaration(self):
         mutation = setup_state.build_first_run_provider_commit(
             _first_run_provider_draft(source="none", value="", revision=6),
             "custom-model",
@@ -1314,11 +1315,9 @@ class TestFirstRunProviderContracts:
         )
 
         provider_values = mutation.section_values["api_settings.custom"]
-        assert provider_values["api_key_env_var"] == "CUSTOM_API_KEY"
-        assert "api_key_env_var" not in mutation.delete_keys.get(
-            "api_settings.custom", ()
-        )
-        assert mutation.semantic_identity.credential_source == "environment"
+        assert provider_values["credential_source"] == "none"
+        assert "api_key_env_var" in mutation.delete_keys["api_settings.custom"]
+        assert mutation.semantic_identity.credential_source == "none"
 
     def test_none_source_prefers_valid_inline_over_unset_environment_declaration(self):
         mutation = setup_state.build_first_run_provider_commit(
@@ -1345,8 +1344,9 @@ class TestFirstRunProviderContracts:
         "placeholder", ("<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key")
     )
     def test_none_source_prefers_valid_custom_environment_over_placeholder_inline(
-        self, placeholder
+        self, placeholder, monkeypatch
     ):
+        monkeypatch.setenv("PRIVATE_CUSTOM_KEY", "active-environment-key")
         mutation = setup_state.build_first_run_provider_commit(
             _first_run_provider_draft(source="none", value="", revision=8),
             "custom-model",
@@ -1363,6 +1363,7 @@ class TestFirstRunProviderContracts:
 
         provider_values = mutation.section_values["api_settings.custom"]
         assert provider_values["api_key_env_var"] == "PRIVATE_CUSTOM_KEY"
+        assert provider_values["credential_source"] == "environment"
         assert "api_key" in mutation.delete_keys["api_settings.custom"]
         assert mutation.semantic_identity.credential_source == "environment"
 
@@ -1638,6 +1639,44 @@ class TestSecretPresence:
             {}, {"LLAMA_CPP_API_KEY": "unused"}, provider_key="llama_cpp"
         )
         assert presence.env_var is None
+        assert presence.env_var_set is False
+        assert presence.configured is False
+
+    def test_explicit_none_hides_saved_and_environment_presence(self):
+        presence = read_provider_secret_presence(
+            {
+                "api_settings": {
+                    "custom": {
+                        "credential_source": "none",
+                        "api_key": "saved-presence-canary",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+            {"CUSTOM_API_KEY": "environment-presence-canary"},
+            provider_key="custom",
+        )
+
+        assert presence.configured is False
+        assert presence.inline_configured is False
+        assert presence.env_var_set is False
+
+    def test_declared_but_unset_environment_is_not_an_active_credential_source(self):
+        presence = read_provider_secret_presence(
+            {
+                "api_settings": {
+                    "custom": {
+                        "credential_source": "environment",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+            {},
+            provider_key="custom",
+        )
+
+        assert presence.env_var == "CUSTOM_API_KEY"
+        assert presence.env_var_declared is True
         assert presence.env_var_set is False
         assert presence.configured is False
 

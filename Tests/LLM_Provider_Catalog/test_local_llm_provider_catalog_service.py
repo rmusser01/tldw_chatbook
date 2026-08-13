@@ -178,8 +178,6 @@ async def test_local_llm_provider_catalog_service_discovers_configured_openai_co
             "api_key": "sk-test",
         }
     ]
-
-
 @pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_for_discovery():
     discovery_calls = []
@@ -433,6 +431,55 @@ async def test_qwencloud_discovery_uses_only_its_modern_or_environment_key(
     assert all("secret-canary" not in message for message in log_messages)
     assert "secret-canary" not in repr(result)
     assert settings == original_settings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "settings_key", "env_var"),
+    [
+        ("Custom OpenAI API", "custom", "CUSTOM_API_KEY"),
+        ("custom_openai_api_2", "custom_2", "CUSTOM_2_API_KEY"),
+        ("llama_cpp", "llama_cpp", "LLAMA_CPP_API_KEY"),
+    ],
+)
+async def test_persisted_explicit_keyless_source_is_authoritative_for_discovery(
+    provider,
+    settings_key,
+    env_var,
+) -> None:
+    discovery_calls = []
+
+    async def discover_models(**kwargs):
+        discovery_calls.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {settings_key: []},
+        settings_loader=lambda: {
+            "providers": {settings_key: []},
+            "api_settings": {
+                settings_key: {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                    "credential_source": "none",
+                    "api_key": "saved-discovery-canary",
+                    "api_key_env_var": env_var,
+                }
+            },
+        },
+        discovery_client=discover_models,
+        environ={env_var: "environment-discovery-canary"},
+    )
+
+    result = await service.discover_models(provider=provider)
+
+    assert result.status == "success"
+    assert len(discovery_calls) == 1
+    assert discovery_calls[0]["api_key"] is None
 
 
 @pytest.mark.asyncio

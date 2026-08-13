@@ -8633,9 +8633,20 @@ class SettingsScreen(BaseAppScreen):
             self._mark_provider_test_result_stale()
 
     def _provider_current_credential_source(self, provider: str) -> str:
+        from tldw_chatbook.Chat.provider_readiness import (
+            configured_provider_credential_source,
+        )
+
         draft = self._provider_draft()
         dirty = draft.dirty_keys if draft is not None else set()
         api_key_dirty = "api_key" in dirty
+        credential_fields_dirty = bool(
+            {"api_key", "credential_env_var"}.intersection(dirty)
+        )
+        if not credential_fields_dirty and configured_provider_credential_source(
+            self._provider_config(provider)
+        ) == "none":
+            return "none"
         if api_key_dirty:
             try:
                 if self.query_one("#settings-provider-api-key", Input).value.strip():

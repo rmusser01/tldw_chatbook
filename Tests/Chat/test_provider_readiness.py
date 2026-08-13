@@ -1501,6 +1501,101 @@ def test_keyless_local_provider_is_ready_without_api_key():
     assert readiness.user_message == "Ollama is ready. No API key is required."
 
 
+@pytest.mark.parametrize(
+    ("provider", "settings_key", "env_var"),
+    [
+        ("custom", "custom", "CUSTOM_API_KEY"),
+        ("custom_2", "custom_2", "CUSTOM_2_API_KEY"),
+        ("llama_cpp", "llama_cpp", "LLAMA_CPP_API_KEY"),
+    ],
+)
+def test_explicit_keyless_source_overrides_saved_and_environment_credentials(
+    provider,
+    settings_key,
+    env_var,
+):
+    readiness = get_provider_readiness(
+        provider,
+        {
+            "api_settings": {
+                settings_key: {
+                    "credential_source": "none",
+                    "api_key": "saved-readiness-canary",
+                    "api_key_env_var": env_var,
+                }
+            }
+        },
+        environ={env_var: "environment-readiness-canary"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.requires_api_key is False
+    assert readiness.api_key is None
+    assert readiness.api_key_source is None
+    assert readiness.user_message == (
+        f"{provider} is ready. No API key is required."
+    )
+
+
+def test_missing_credential_source_retains_legacy_saved_then_environment_precedence():
+    stored = get_provider_readiness(
+        "custom",
+        {
+            "api_settings": {
+                "custom": {
+                    "api_key": "legacy-stored-key",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        },
+        environ={"CUSTOM_API_KEY": "legacy-environment-key"},
+    )
+    environment = get_provider_readiness(
+        "custom",
+        {"api_settings": {"custom": {"api_key_env_var": "CUSTOM_API_KEY"}}},
+        environ={"CUSTOM_API_KEY": "legacy-environment-key"},
+    )
+
+    assert stored.api_key == "legacy-stored-key"
+    assert stored.api_key_source == "config:api_settings.custom.api_key"
+    assert environment.api_key == "legacy-environment-key"
+    assert environment.api_key_source == "env:CUSTOM_API_KEY"
+
+
+def test_explicit_stored_and_environment_sources_keep_the_selected_precedence():
+    stored = get_provider_readiness(
+        "custom",
+        {
+            "api_settings": {
+                "custom": {
+                    "credential_source": "stored",
+                    "api_key": "selected-stored-key",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        },
+        environ={"CUSTOM_API_KEY": "ignored-environment-key"},
+    )
+    environment = get_provider_readiness(
+        "custom",
+        {
+            "api_settings": {
+                "custom": {
+                    "credential_source": "environment",
+                    "api_key": "ignored-stored-key",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        },
+        environ={"CUSTOM_API_KEY": "selected-environment-key"},
+    )
+
+    assert stored.api_key == "selected-stored-key"
+    assert stored.api_key_source == "config:api_settings.custom.api_key"
+    assert environment.api_key == "selected-environment-key"
+    assert environment.api_key_source == "env:CUSTOM_API_KEY"
+
+
 @pytest.mark.parametrize("provider", ["vLLM", "Custom-2", "local-llm"])
 def test_known_keyless_provider_aliases_are_ready_without_api_key(provider):
     readiness = get_provider_readiness(

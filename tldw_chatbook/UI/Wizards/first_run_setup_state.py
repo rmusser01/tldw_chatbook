@@ -471,15 +471,16 @@ def build_first_run_provider_commit(
         )
 
     if credential.source == "none":
-        try:
-            mutation = build_provider_setup_mutation(shared_draft("stored"), config)
-        except ValueError:
-            try:
-                mutation = build_provider_setup_mutation(
-                    shared_draft("environment"), config
-                )
-            except ValueError:
-                mutation = build_provider_setup_mutation(shared_draft("none"), config)
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+        readiness = get_provider_readiness(effective_draft.provider, config)
+        if str(readiness.api_key_source or "").startswith("config:"):
+            source = "stored"
+        elif str(readiness.api_key_source or "").startswith("env:"):
+            source = "environment"
+        else:
+            source = "none"
+        mutation = build_provider_setup_mutation(shared_draft(source), config)
     elif credential.source == "draft" and not credential_value:
         mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:
@@ -1482,6 +1483,14 @@ def read_provider_secret_presence(
     from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
 
     settings = _first_run_provider_settings(app_config, provider_key)
+    credential_source = settings.get("credential_source")
+    explicit_source = (
+        credential_source.strip().lower()
+        if type(credential_source) is str
+        and credential_source.strip().lower()
+        in {"none", "stored", "environment"}
+        else None
+    )
     env_var_raw = settings.get("api_key_env_var")
     env_var_declared = isinstance(env_var_raw, str) and bool(env_var_raw.strip())
     env_var = (
@@ -1491,6 +1500,13 @@ def read_provider_secret_presence(
     )
     env_var_set = bool(env_var and _is_real_provider_api_key(environ.get(env_var)))
     inline = _is_real_provider_api_key(settings.get("api_key"))
+    if explicit_source == "none":
+        inline = False
+        env_var_set = False
+    elif explicit_source == "stored":
+        env_var_set = False
+    elif explicit_source == "environment":
+        inline = False
     return SecretPresence(
         configured=inline or env_var_set,
         inline_configured=inline,

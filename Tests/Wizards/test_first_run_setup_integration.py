@@ -487,19 +487,26 @@ class TestWizardAtomicProviderHandoff:
     async def test_model_continue_calls_atomic_writer_once_and_mirrors_full_success(
         self, monkeypatch
     ):
+        from tldw_chatbook import config as config_module
+        from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
         app_config = {"unrelated": {"keep": True}}
         container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
         calls = []
+        real_writer = config_module.apply_settings_mutation_to_cli_config
 
         def writer(
             section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            _assert_locked_precondition(locked_snapshot_precondition)
             calls.append((section_values, delete_keys))
-            return ConfigMutationResult(True, True, None)
+            return real_writer(
+                section_values,
+                delete_keys=delete_keys,
+                locked_snapshot_precondition=locked_snapshot_precondition,
+            )
 
         monkeypatch.setattr(
-            "tldw_chatbook.Chat.provider_setup_persistence."
+            persistence_module,
             "apply_settings_mutation_to_cli_config",
             writer,
         )
@@ -522,6 +529,7 @@ class TestWizardAtomicProviderHandoff:
             "provider": "custom",
             "model": "custom-model",
         }
+        assert sections["api_settings.custom"]["credential_source"] == "stored"
         assert deletes["api_settings.custom"] == ("api_key_env_var",)
         assert app_config["unrelated"] == {"keep": True}
         assert app_config["chat_defaults"] == {
@@ -621,19 +629,26 @@ class TestWizardAtomicProviderHandoff:
     async def test_repeated_success_for_same_staged_pair_does_not_write_twice(
         self, monkeypatch
     ):
+        from tldw_chatbook import config as config_module
+        from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         call_count = 0
+        real_writer = config_module.apply_settings_mutation_to_cli_config
 
         def writer(
             section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
-            return ConfigMutationResult(True, True, None)
+            return real_writer(
+                section_values,
+                delete_keys=delete_keys,
+                locked_snapshot_precondition=locked_snapshot_precondition,
+            )
 
         monkeypatch.setattr(
-            "tldw_chatbook.Chat.provider_setup_persistence."
+            persistence_module,
             "apply_settings_mutation_to_cli_config",
             writer,
         )
@@ -714,8 +729,9 @@ class TestWizardAtomicProviderHandoff:
 
     @pytest.mark.asyncio
     async def test_explicit_clear_deletes_both_credential_forms_after_model_commit(
-        self, temp_config
+        self, temp_config, monkeypatch
     ):
+        monkeypatch.setenv("CUSTOM_API_KEY", "ambient-clear-canary")
         _write(
             {
                 "api_settings.custom": {
@@ -735,8 +751,17 @@ class TestWizardAtomicProviderHandoff:
 
         persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
         assert persisted["api_url"] == "https://example.test/v1/chat/completions"
+        assert persisted["credential_source"] == "none"
         assert "api_key" not in persisted
         assert "api_key_env_var" not in persisted
+        readiness = get_provider_readiness(
+            "custom",
+            _reload(),
+            environ={"CUSTOM_API_KEY": "ambient-clear-canary"},
+        )
+        assert readiness.ready is True
+        assert readiness.api_key is None
+        assert readiness.api_key_source is None
 
     @pytest.mark.asyncio
     async def test_unchanged_inline_key_outranks_unset_declaration_after_atomic_commit(
@@ -793,9 +818,48 @@ class TestWizardAtomicProviderHandoff:
 
         persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
         assert persisted["api_key_env_var"] == "CUSTOM_API_KEY"
+        assert persisted["credential_source"] == "environment"
         assert "api_key" not in persisted
         readiness = get_provider_readiness(
             "custom", _reload(), environ={"CUSTOM_API_KEY": "environment-secret"}
         )
         assert readiness.ready is True
         assert readiness.api_key_source == "env:CUSTOM_API_KEY"
+
+    @pytest.mark.asyncio
+    async def test_explicit_keyless_can_be_replaced_after_reload(
+        self, temp_config, monkeypatch
+    ):
+        monkeypatch.setenv("CUSTOM_API_KEY", "ambient-replacement-canary")
+        _write(
+            {
+                "api_settings.custom": {
+                    "api_url": "https://example.test/v1/chat/completions",
+                    "credential_source": "none",
+                }
+            }
+        )
+        replacement = SetupWizardContainer(
+            SimpleNamespace(app_config=_reload())
+        )
+        replacement.stage_provider_setup(
+            _typed_provider_draft(
+                source="draft",
+                value="new-inline-replacement-key",
+                revision=4,
+            )
+        )
+
+        assert await replacement.commit_staged_provider_setup("custom-model") is True
+
+        persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
+        assert persisted["credential_source"] == "stored"
+        assert persisted["api_key"] == "new-inline-replacement-key"
+        assert "api_key_env_var" not in persisted
+        readiness = get_provider_readiness(
+            "custom",
+            _reload(),
+            environ={"CUSTOM_API_KEY": "ambient-replacement-canary"},
+        )
+        assert readiness.api_key == "new-inline-replacement-key"
+        assert readiness.api_key_source == "config:api_settings.custom.api_key"

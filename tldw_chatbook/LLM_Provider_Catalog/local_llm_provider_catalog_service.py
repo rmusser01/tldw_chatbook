@@ -14,8 +14,10 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
 )
 from tldw_chatbook.Chat.provider_readiness import (
+    configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
+    resolve_provider_credential,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
     ProviderRefreshOutcome,
@@ -64,7 +66,6 @@ from ..config import (
     get_cli_providers_and_models,
     load_settings,
     provider_settings_for_key,
-    resolve_provider_api_key,
 )
 
 
@@ -302,16 +303,16 @@ class LocalLLMProviderCatalogService:
         )
 
     def _api_key_from_provider_settings(
-        self, provider_settings: Mapping[str, Any]
+        self,
+        provider_key: str,
+        provider_settings: Mapping[str, Any],
     ) -> str | None:
-        configured_key = resolve_provider_api_key(provider_settings.get("api_key"))
-        if configured_key:
-            return configured_key
-
-        env_var = self._valid_text(provider_settings.get("api_key_env_var"))
-        if env_var:
-            return resolve_provider_api_key(self.environ.get(env_var))
-        return None
+        credential, _source, _env_var = resolve_provider_credential(
+            provider_key,
+            provider_settings,
+            environ=self.environ,
+        )
+        return credential
 
     def _resolve_api_key(
         self,
@@ -330,12 +331,25 @@ class LocalLLMProviderCatalogService:
             )
         except ProviderSettingsError:
             return None
-        staged_key = self._api_key_from_provider_settings(staged_provider_settings)
+        staged_source = configured_provider_credential_source(
+            staged_provider_settings
+        )
+        if staged_source == "stored":
+            pinned_saved_settings = dict(saved_provider_settings)
+            pinned_saved_settings["credential_source"] = "stored"
+            return self._api_key_from_provider_settings(
+                provider_key, pinned_saved_settings
+            )
+        staged_key = self._api_key_from_provider_settings(
+            provider_key, staged_provider_settings
+        )
         if "api_key" in staged_provider_settings or (
             "api_key_env_var" in staged_provider_settings
-        ):
+        ) or "credential_source" in staged_provider_settings:
             return staged_key
-        saved_key = self._api_key_from_provider_settings(saved_provider_settings)
+        saved_key = self._api_key_from_provider_settings(
+            provider_key, saved_provider_settings
+        )
         if saved_key:
             return saved_key
 

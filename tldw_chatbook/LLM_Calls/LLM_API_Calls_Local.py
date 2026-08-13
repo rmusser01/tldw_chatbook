@@ -1830,7 +1830,20 @@ def chat_with_custom_openai(
             provider="ollama",
             message="Ollama API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    if api_key_resolved:
+        current_api_key = api_key
+    elif api_key:
+        current_api_key = api_key
+    else:
+        from tldw_chatbook.Chat.provider_readiness import (
+            resolve_provider_credential,
+        )
+
+        current_api_key, _credential_source, _env_var = resolve_provider_credential(
+            "custom",
+            cfg,
+            environ=os.environ,
+        )
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(

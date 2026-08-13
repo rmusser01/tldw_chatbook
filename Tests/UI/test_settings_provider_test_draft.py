@@ -713,6 +713,23 @@ def _bare_settings_screen(app_config):
     return screen
 
 
+def test_provider_source_ui_honors_persisted_explicit_keyless_decision():
+    screen = _bare_settings_screen(
+        {
+            "api_settings": {
+                "custom": {
+                    "credential_source": "none",
+                    "api_key": "saved-settings-ui-canary",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+    )
+    screen._provider_draft = lambda: None
+
+    assert screen._provider_current_credential_source("custom") == "none"
+
+
 def test_findings_show_draft_endpoint_tagged():
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:9099"}}}
     screen = _bare_settings_screen(app_config)

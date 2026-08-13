@@ -450,6 +450,7 @@ def test_setup_mutation_updates_llama_pair_endpoint_model_and_confirmation():
     assert mutation.section_values["api_settings.llama_cpp"] == {
         "api_url": "http://127.0.0.1:8080",
         "model": "qwen",
+        "credential_source": "none",
     }
     assert mutation.delete_keys == {
         "api_settings.llama_cpp": ("api_key", "api_key_env_var")
@@ -501,6 +502,7 @@ def test_custom_setup_mutation_persists_full_chat_url_for_all_input_forms(
     assert mutation.section_values[section] == {
         "api_url": "https://example.test/proxy/v1/chat/completions",
         "model": "model-a",
+        "credential_source": "none",
     }
     assert mutation.section_values["chat_defaults"] == {
         "provider": confirmation,
@@ -707,6 +709,7 @@ def test_existing_endpoint_key_uses_settings_read_precedence_without_shadow_key(
     assert mutation.section_values["api_settings.openai"] == {
         "base_url": "https://new.example.test/proxy/v1",
         "model": "qwen",
+        "credential_source": "none",
     }
 
 
@@ -785,7 +788,10 @@ def test_endpoint_clear_deletes_only_owned_endpoint_and_confirmation():
     mutation = build_provider_setup_mutation(_draft(endpoint=""), config)
 
     assert mutation.section_values == {
-        "api_settings.llama_cpp": {"model": "qwen"},
+        "api_settings.llama_cpp": {
+            "model": "qwen",
+            "credential_source": "none",
+        },
         "chat_defaults": {"provider": "llama_cpp", "model": "qwen"},
     }
     assert mutation.delete_keys == {
@@ -832,10 +838,148 @@ def test_credential_replacement_and_clear_are_sparse_and_secret_safe():
         {},
     )
     assert "api_key" not in cleared.section_values["api_settings.openai"]
+    assert (
+        cleared.section_values["api_settings.openai"]["credential_source"]
+        == "none"
+    )
     assert cleared.delete_keys["api_settings.openai"] == (
         "api_key",
         "api_key_env_var",
     )
+
+
+def test_credential_source_is_persisted_for_each_authoritative_auth_decision():
+    config = {
+        "api_settings": {
+            "custom": {
+                "api_key": "saved-key-canary",
+                "api_key_env_var": "CUSTOM_API_KEY",
+            }
+        }
+    }
+
+    cleared = build_provider_setup_mutation(
+        _draft(
+            provider="custom",
+            endpoint="https://keyless.example.test/v1/chat/completions",
+            credential_source="none",
+        ),
+        config,
+    )
+    kept = build_provider_setup_mutation(
+        _draft(
+            provider="custom",
+            endpoint="https://keyless.example.test/v1/chat/completions",
+            credential_source="stored",
+        ),
+        config,
+    )
+    environment = build_provider_setup_mutation(
+        _draft(
+            provider="custom",
+            endpoint="https://keyless.example.test/v1/chat/completions",
+            credential_source="environment",
+            credential_env_var="CUSTOM_API_KEY",
+        ),
+        config,
+    )
+
+    assert cleared.section_values["api_settings.custom"]["credential_source"] == (
+        "none"
+    )
+    assert kept.section_values["api_settings.custom"]["credential_source"] == (
+        "stored"
+    )
+    assert environment.section_values["api_settings.custom"][
+        "credential_source"
+    ] == "environment"
+
+
+def test_unset_environment_declaration_does_not_change_none_credential_identity(
+    monkeypatch,
+):
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+    original = config_module.AtomicConfigSnapshot(
+        1,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        },
+    )
+    sparse = config_module.AtomicConfigSnapshot(
+        2,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                }
+            }
+        },
+    )
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="custom",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "custom", "https://keyless.example.test/v1/chat/completions"
+        ),
+        credential_source="none",
+        credential_revision=0,
+        model_id="manual-model",
+        model_provenance="manual",
+    )
+    expected = persistence_module.bind_provider_setup_precondition(
+        persistence_module.capture_provider_setup_precondition(
+            original,
+            provider="custom",
+        ),
+        identity=identity,
+    )
+
+    assert expected._matches_snapshot(sparse) is True
+
+    monkeypatch.setenv("CUSTOM_API_KEY", "appeared-environment-canary")
+    assert expected._matches_snapshot(original) is False
+
+
+def test_present_environment_rotation_changes_credential_identity(monkeypatch):
+    settings = {
+        "api_settings": {
+            "custom": {
+                "api_url": "https://keyless.example.test/v1/chat/completions",
+                "credential_source": "environment",
+                "api_key_env_var": "CUSTOM_API_KEY",
+            }
+        }
+    }
+    snapshot = config_module.AtomicConfigSnapshot(1, settings)
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="custom",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "custom", "https://keyless.example.test/v1/chat/completions"
+        ),
+        credential_source="environment",
+        credential_revision=1,
+        model_id="manual-model",
+        model_provenance="manual",
+    )
+    monkeypatch.setenv("CUSTOM_API_KEY", "environment-key-a")
+    expected = persistence_module.bind_provider_setup_precondition(
+        persistence_module.capture_provider_setup_precondition(
+            snapshot,
+            provider="custom",
+        ),
+        identity=identity,
+    )
+
+    assert expected._matches_snapshot(snapshot) is True
+    monkeypatch.setenv("CUSTOM_API_KEY", "environment-key-b")
+    assert expected._matches_snapshot(snapshot) is False
+    rendered = repr(expected)
+    assert "environment-key-a" not in rendered
+    assert "environment-key-b" not in rendered
 
 
 def test_environment_credential_persists_only_variable_name_not_value(monkeypatch):

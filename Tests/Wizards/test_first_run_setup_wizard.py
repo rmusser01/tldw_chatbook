@@ -4357,6 +4357,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
                 "api_settings": {
                     "custom": {
                         "api_url": "https://exact.test/proxy/v1/chat/completions",
+                        "credential_source": "environment",
                         "api_key_env_var": "CUSTOM_API_KEY",
                     }
                 }
@@ -4382,6 +4383,7 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
             "api_settings": {
                 "custom": {
                     "api_url": "https://exact.test/proxy/v1/chat/completions",
+                    "credential_source": "environment",
                     "api_key_env_var": "CUSTOM_API_KEY",
                 }
             }
@@ -5424,6 +5426,90 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
         assert container.committed_provider_model == "manual-two"
         assert authoritative["chat_defaults"]["model"] == "manual-two"
         assert len(setup_writes) == 2
+
+
+@pytest.mark.asyncio
+async def test_mounted_sparse_keyless_save_back_next_is_idempotent(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+    endpoint = "https://sparse-keyless.example/v1/chat/completions"
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.custom": {"api_url": endpoint}}
+    ).fully_applied
+    setup_writes = []
+    real_persist = persistence_module.persist_provider_setup
+
+    def counted_persist(mutation):
+        setup_writes.append(mutation)
+        return real_persist(mutation)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "persist_provider_setup",
+        counted_persist,
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "providers": {"custom": []},
+        "api_settings": {"custom": {"api_url": endpoint}},
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result(
+                "custom", "sparse-keyless-discovered"
+            )
+        )
+    )
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert provider_index is not None
+        assert model_index is not None
+        assert voice_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        manual = model_step.query_one("#setup-model-custom", Input)
+        manual.value = "sparse-keyless-manual"
+        await pilot.pause()
+        await container._advance()
+
+        assert container.current_step == voice_index
+        assert len(setup_writes) == 1
+        authoritative = config_module.get_atomic_config_snapshot().values
+        custom = authoritative["api_settings"]["custom"]
+        assert custom["credential_source"] == "none"
+        readiness = get_provider_readiness(
+            "custom",
+            authoritative,
+            environ={"CUSTOM_API_KEY": "late-environment-canary"},
+        )
+        assert readiness.api_key is None
+        assert readiness.api_key_source is None
+
+        container.action_back()
+        await pilot.pause()
+        await container._advance()
+
+        assert container.current_step == voice_index
+        assert len(setup_writes) == 1
 
 
 @pytest.mark.asyncio
@@ -8033,6 +8119,7 @@ async def test_model_step_uses_exact_provider_draft_with_scope_service():
                 "api_settings": {
                     "custom": {
                         "api_url": "https://draft.example/proxy/v1/chat/completions",
+                        "credential_source": "draft",
                         "api_key": "draft-secret",
                     }
                 }

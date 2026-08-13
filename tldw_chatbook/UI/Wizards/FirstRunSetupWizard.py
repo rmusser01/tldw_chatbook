@@ -781,6 +781,10 @@ def _first_run_discovery_staged_settings(
     settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
     credential = provider_draft.credential
     credential_value = wizard_state._credential_value_for_boundary(credential)
+    boundary_source = credential.source
+    if boundary_source == "draft" and not credential_value:
+        boundary_source = "none"
+    settings["credential_source"] = boundary_source
     if credential.source == "draft":
         settings["api_key"] = credential_value
     elif credential.source == "environment":
@@ -1771,7 +1775,10 @@ class ProviderStep(SetupStep):
             status.update(f"API key required. {recovery}")
             return
         if self._clear_requested:
-            status.update("The stored key will be removed when you continue.")
+            status.update(
+                "No API key will be used for chat. The stored key will be removed "
+                "when you continue."
+            )
             return
         credential_source, _, _ = self._credential_at_request_boundary()
         if test_available:
@@ -2455,7 +2462,10 @@ class ProviderStep(SetupStep):
                 self._updating_connection_controls = False
             self._refresh_endpoint_resolution()
         if ui_draft.clear_requested:
-            status.update("The stored key will be removed when you continue.")
+            status.update(
+                "No API key will be used for chat. The stored key will be removed "
+                "when you continue."
+            )
             actions.remove_class("hidden")
         elif ui_draft.api_key:
             status.update("A replacement API key is ready for this provider.")
@@ -2569,7 +2579,8 @@ class ProviderStep(SetupStep):
             key_input.value = ""
         key_input.display = True
         self.query_one("#setup-provider-key-status", Static).update(
-            "The stored key will be removed when you continue."
+            "No API key will be used for chat. The stored key will be removed "
+            "when you continue."
         )
         if changed:
             self._credential_semantics_changed()

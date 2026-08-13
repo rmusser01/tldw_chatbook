@@ -130,6 +130,7 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Invalid provider settings": ("incomplete", "invalid_settings"),
     "Unknown provider": ("incomplete", "invalid_settings"),
 }
+_PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
 
 
 def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
@@ -418,6 +419,60 @@ def _invalid_settings_readiness(
     )
 
 
+def configured_provider_credential_source(
+    provider_settings: Mapping[str, object],
+) -> str | None:
+    """Return one explicit persisted auth decision, or legacy mode when absent."""
+
+    value = provider_settings.get("credential_source")
+    if type(value) is not str:
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in _PERSISTED_CREDENTIAL_SOURCES else None
+
+
+def resolve_provider_credential(
+    provider_key: str,
+    provider_settings: Mapping[str, object],
+    *,
+    environ: Mapping[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve the selected credential without overriding an explicit auth mode."""
+
+    selected_source = configured_provider_credential_source(provider_settings)
+    configured_key = _valid_api_key(provider_settings.get("api_key"))
+    env_var_value = provider_settings.get("api_key_env_var")
+    configured_env_var = (
+        env_var_value.strip()
+        if isinstance(env_var_value, str) and env_var_value.strip()
+        else None
+    )
+
+    if selected_source == "none":
+        return None, None, None
+    if selected_source == "stored":
+        if configured_key is None:
+            return None, None, None
+        return (
+            configured_key,
+            f"config:api_settings.{provider_key}.api_key",
+            None,
+        )
+
+    env_var = configured_env_var
+    if selected_source is None and env_var is None:
+        env_var = default_api_key_env_var(provider_key)
+    if selected_source is None and configured_key is not None:
+        return (
+            configured_key,
+            f"config:api_settings.{provider_key}.api_key",
+            None,
+        )
+    env_key = _valid_api_key(environ.get(env_var, "")) if env_var else None
+    if env_key is None:
+        return None, None, env_var
+    return env_key, f"env:{env_var}", env_var
+
 def get_provider_readiness(
     provider: str | None,
     app_config: Mapping[str, object],
@@ -459,34 +514,25 @@ def get_provider_readiness(
         return _invalid_settings_readiness(provider_name, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
-    configured_key = _valid_api_key(provider_settings.get("api_key"))
-    env_var_value = provider_settings.get("api_key_env_var")
-    env_var = (
-        env_var_value.strip()
-        if isinstance(env_var_value, str) and env_var_value.strip()
-        else default_api_key_env_var(provider_key)
+    configured_key, configured_source, env_var = resolve_provider_credential(
+        provider_key,
+        provider_settings,
+        environ=env,
     )
-    env_key = _valid_api_key(env.get(env_var, "")) if env_var else None
-    resolved_key = configured_key or env_key
-    if resolved_key and provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
+    if configured_key and provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
         try:
-            resolved_key = _resolved_hosted_api_key(provider_key, app_config, env)
+            configured_key = _resolved_hosted_api_key(provider_key, app_config, env)
         except ChatConfigurationError:
             return _invalid_settings_readiness(provider_name, provider_key)
-    if resolved_key:
-        from_config = configured_key is not None
+    if configured_key:
         return ProviderReadiness(
             provider=provider_name,
             provider_key=provider_key,
             requires_api_key=requires_api_key,
             ready=True,
-            api_key=resolved_key,
-            api_key_source=(
-                f"config:api_settings.{provider_key}.api_key"
-                if from_config
-                else f"env:{env_var}"
-            ),
-            env_var=None if from_config else env_var,
+            api_key=configured_key,
+            api_key_source=configured_source,
+            env_var=env_var,
             reason="Ready",
             recovery=None,
         )

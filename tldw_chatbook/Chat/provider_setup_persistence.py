@@ -877,6 +877,7 @@ def build_provider_setup_mutation(
         deletes.setdefault(provider_section, []).append(stored_key)
     else:
         deletes.setdefault(provider_section, []).extend((stored_key, environment_key))
+    provider_values["credential_source"] = saved_credential_source
 
     if endpoint:
         semantic_identity = ProviderDraftIdentity(
@@ -1157,7 +1158,7 @@ def _provider_setup_observations(
     """Derive the non-secret provider CAS state from one config snapshot."""
 
     from .console_provider_endpoints import effective_provider_discovery_endpoint
-    from .provider_readiness import default_api_key_env_var
+    from .provider_readiness import resolve_provider_credential
 
     if not isinstance(app_config, Mapping):
         raise TypeError("Provider setup config snapshot is invalid.")
@@ -1193,23 +1194,31 @@ def _provider_setup_observations(
             chat_provider = None
         chat_model = _safe_model(chat_defaults.get("model"))
 
-    stored_key, environment_key = ownership.credential_keys
-    stored_value = _existing_credential_value(provider_settings.get(stored_key))
-    configured_env = _existing_environment_name(provider_settings.get(environment_key))
-    env_var = configured_env or default_api_key_env_var(ownership.provider_key) or ""
-    env_value = _existing_credential_value(os.environ.get(env_var)) if env_var else None
-    if stored_value is not None:
+    credential_value, credential_source, env_var = resolve_provider_credential(
+        ownership.provider_key,
+        provider_settings,
+        environ=os.environ,
+    )
+    if (
+        credential_value is not None
+        and credential_source is not None
+        and credential_source.startswith("config:")
+    ):
         credential = _ProviderCredentialObservation(
             "stored",
-            f"stored\0{stored_value}",
+            f"stored\0{credential_value}",
         )
-    elif env_value is not None:
+    elif (
+        credential_value is not None
+        and credential_source is not None
+        and credential_source.startswith("env:")
+    ):
         credential = _ProviderCredentialObservation(
             "environment",
-            f"environment\0{env_var}\0{env_value}",
+            f"environment\0{env_var or ''}\0{credential_value}",
         )
     else:
-        credential = _ProviderCredentialObservation("none", f"none\0{env_var}")
+        credential = _ProviderCredentialObservation("none", "none")
     return (
         route_identity,
         routing_state,
@@ -1622,12 +1631,16 @@ def _validate_provider_setup_mutation(
         raise error
     allowed_provider_keys = {
         ownership.model_key,
+        "credential_source",
         *ownership.credential_keys,
         *_ENDPOINT_KEY_PRECEDENCE,
     }
     if not set(provider_values).issubset(allowed_provider_keys):
         raise error
     if provider_values.get(ownership.model_key) != model:
+        raise error
+    configured_source = provider_values.get("credential_source")
+    if configured_source not in {"none", "stored", "environment"}:
         raise error
     provider_deletes = delete_keys.get(provider_section, ())
     if not set(provider_deletes).issubset(
@@ -1680,6 +1693,8 @@ def _validate_provider_setup_mutation(
     ):
         desired_source = "none"
     else:
+        raise error
+    if configured_source != desired_source:
         raise error
 
     if set_endpoint_keys:
