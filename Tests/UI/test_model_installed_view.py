@@ -422,11 +422,15 @@ async def test_header_and_unmanaged_row_open_real_gguf_picker(
 
         picked(None)
         assert len(pushed) == 0
+        await pilot.pause()
+        view._header_import_pressed()
+        _picker, picked = pushed.pop(0)
         picked(source)
         consent, decided = pushed.pop(0)
         assert isinstance(consent, LocalGGUFImportConsentModal)
         assert consent.source == source
         decided(False)
+        await pilot.pause()
 
         row_action = view.query_one(".model-import", Button)
         row_action.focus()
@@ -493,6 +497,226 @@ async def test_declined_consent_performs_no_service_call(
 
     assert service.import_sources == []
     assert service.activation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_picker_reserves_lane_and_blocks_second_selection_and_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Picker ownership disables every competing Installed-view mutation."""
+    from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    managed = InstalledArtifact(
+        path=tmp_path / "managed-model",
+        descriptor=replace(
+            make_descriptor(),
+            reference=reference,
+            precision=reference.variant,
+        ),
+        ready=True,
+        active=False,
+        error=None,
+    )
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            reference,
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = inventory_rows(
+        (managed,),
+        ArtifactDiskUsage(0, 0, 64 * 1024 * 1024),
+        (),
+    ) + _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        await pilot.click("#installed-models-import-gguf")
+        await pilot.pause()
+
+        assert getattr(view, "_import_selecting", False) is True
+        assert len(pushed) == 1
+        for selector in (
+            "#installed-models-refresh",
+            "#installed-models-repair",
+            "#installed-models-import-gguf",
+            ".model-import",
+            ".model-activate",
+            ".model-delete",
+        ):
+            assert view.query_one(selector, Button).disabled is True
+
+        view._header_import_pressed()
+        assert len(pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_consent_fails_closed_if_install_owns_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Consent cannot cross an app-level install that claimed the store later."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    InstalledView = module.InstalledView
+
+    source = tmp_path / "PRIVATE-SELECTION-RACE.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+
+    try:
+        async with app.run_test() as pilot:
+            monkeypatch.setattr(
+                app,
+                "push_screen",
+                lambda screen, callback=None: pushed.append((screen, callback)),
+            )
+            await pilot.click("#installed-models-import-gguf")
+            picker, picked = pushed.pop()
+            assert isinstance(picker, Screen)
+            picked(source)
+            _consent, decided = pushed.pop()
+
+            view.set_install_state(None, active=True)
+            await pilot.pause()
+            decided(True)
+            await pilot.pause()
+
+            rendered = _rendered_static_text(view)
+            notifications = " ".join(
+                notification.message for notification in app._notifications
+            )
+            assert service.import_sources == []
+            assert service.activation_calls == []
+            assert view._pending_import_path is None
+            assert getattr(view, "_import_selecting", False) is False
+            assert str(source) not in rendered
+            assert str(source) not in notifications
+            assert str(source) not in "".join(logs)
+    finally:
+        module.logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_decline_releases_selection_lane_and_restores_controls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary decline restores actions and leaves the outside row available."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _InstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        await pilot.click("#installed-models-import-gguf")
+        _picker, picked = pushed.pop()
+        picked(source)
+        _consent, decided = pushed.pop()
+        decided(False)
+        await pilot.pause()
+
+        assert getattr(view, "_import_selecting", False) is False
+        assert view._pending_import_path is None
+        assert view.query_one("#installed-models-refresh", Button).disabled is False
+        assert view.query_one("#installed-models-repair", Button).disabled is False
+        assert view.query_one("#installed-models-import-gguf", Button).disabled is False
+        assert view.query_one(".model-import", Button).disabled is False
+        assert source.name in _rendered_static_text(view)
+
+        view._header_import_pressed()
+        assert len(pushed) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("consent_open", (False, True))
+async def test_unmount_invalidates_reserved_selection_lane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    consent_open: bool,
+) -> None:
+    """Detached picker and consent callbacks cannot regain import ownership."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+    pushed: list[tuple[Screen, Callable]] = []
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(
+            app,
+            "push_screen",
+            lambda screen, callback=None: pushed.append((screen, callback)),
+        )
+        view._open_import_picker()
+        assert getattr(view, "_import_selecting", False) is True
+        _picker, picked = pushed.pop()
+        callback = picked
+        callback_result = source
+        if consent_open:
+            picked(source)
+            _consent, callback = pushed.pop()
+            callback_result = True
+
+        generation = view._import_generation
+        await view.remove()
+        callback(callback_result)
+        await pilot.pause()
+
+        assert getattr(view, "_import_selecting", False) is False
+        assert view._pending_import_path is None
+        assert view._import_generation > generation
+        assert service.import_sources == []
 
 
 @pytest.mark.asyncio

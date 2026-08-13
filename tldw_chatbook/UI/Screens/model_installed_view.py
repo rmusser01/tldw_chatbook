@@ -229,6 +229,7 @@ class InstalledView(Widget):
         self._operation_name: str | None = None
         self._pending_delete_reference: ArtifactRef | None = None
         self._import_generation = 0
+        self._import_selecting = False
         self._import_active = False
         self._import_cancelable = False
         self._import_cancel_event: threading.Event | None = None
@@ -238,14 +239,21 @@ class InstalledView(Widget):
         self._import_retry_available = False
         super().__init__(id=id)
 
-    def _lifecycle_pending(self) -> bool:
-        """Return whether any managed-store mutation currently owns the view."""
+    def _non_import_lifecycle_pending(self) -> bool:
+        """Return whether an incumbent non-import operation owns the store."""
         return (
             self._loading
             or self._install_active
             or self._operation_reference is not None
             or self._operation_name is not None
             or self._pending_delete_reference is not None
+        )
+
+    def _lifecycle_pending(self) -> bool:
+        """Return whether any managed-store mutation currently owns the view."""
+        return (
+            self._non_import_lifecycle_pending()
+            or self._import_selecting
             or self._import_active
         )
 
@@ -579,8 +587,10 @@ class InstalledView(Widget):
             self._import_cancel_event.set()
         self._import_generation += 1
         generation = self._import_generation
+        self._import_selecting = True
         self._pending_import_path = None
         self._import_retry_available = False
+        self.refresh(recompose=True)
         location = (
             suggested_path.parent if suggested_path is not None else self._legacy_dir
         )
@@ -602,16 +612,23 @@ class InstalledView(Widget):
         result: Path | list[Path] | None,
     ) -> None:
         """Ask for managed-copy consent after one current GGUF selection."""
-        if not self.is_attached or generation != self._import_generation:
+        if (
+            not self.is_attached
+            or generation != self._import_generation
+            or not self._import_selecting
+        ):
             return
         if not isinstance(result, Path):
+            self._release_import_selection()
             return
         if result.suffix.casefold() != ".gguf":
+            self._release_import_selection()
             self.notify("Choose a GGUF model file.", severity="warning")
             return
         try:
             size_bytes = result.stat().st_size
         except OSError:
+            self._release_import_selection()
             self.notify(
                 "The selected GGUF could not be read safely.",
                 severity="error",
@@ -625,17 +642,38 @@ class InstalledView(Widget):
 
     def _import_consent_decided(self, generation: int, confirmed: bool) -> None:
         """Begin managed I/O only after explicit consent for the current path."""
-        if not self.is_attached or generation != self._import_generation:
+        if (
+            not self.is_attached
+            or generation != self._import_generation
+            or not self._import_selecting
+        ):
             return
         source = self._pending_import_path
         if not confirmed or source is None:
-            self._pending_import_path = None
-            self._import_retry_available = False
+            self._release_import_selection()
             return
         self._begin_import(source, generation=generation)
 
+    def _release_import_selection(self) -> None:
+        """Release transient picker/consent ownership without exposing its path."""
+        self._import_selecting = False
+        self._pending_import_path = None
+        self._import_retry_available = False
+        if self.is_attached:
+            self.refresh(recompose=True)
+
     def _begin_import(self, source: Path, *, generation: int | None = None) -> None:
         """Start one cancellable local import from retained transient state."""
+        if self._non_import_lifecycle_pending():
+            if generation == self._import_generation and self._import_selecting:
+                self._release_import_selection()
+            return
+        if generation is not None:
+            if generation != self._import_generation or not self._import_selecting:
+                return
+            self._import_selecting = False
+        elif self._import_selecting:
+            return
         if self._import_active:
             if self._import_cancel_event is not None:
                 self._import_cancel_event.set()
@@ -828,6 +866,7 @@ class InstalledView(Widget):
         """Cancel and invalidate import callbacks before detaching."""
         if self._import_cancel_event is not None:
             self._import_cancel_event.set()
+        self._import_selecting = False
         self._pending_import_path = None
         self._import_generation += 1
 
