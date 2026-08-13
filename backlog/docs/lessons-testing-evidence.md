@@ -9,6 +9,27 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A schema-version label does not make a synthetic database historical
+
+**TASK-15702/TASK-15704, 2026-08-12.** Raising ChaChaNotes from v35 to v36
+first broke migration tests that had either stamped a tiny hand-written database
+with the then-current version or pinned ``_CURRENT_SCHEMA_VERSION`` while using
+the evolving bootstrap SQL. The former skipped migration with required tables
+missing; the latter silently included columns that did not exist at the claimed
+historical version. Focused tests for the new v36 migration passed, but the full
+DB suite exposed both fixture classes: current-version fixtures failed during
+startup maintenance, while an incomplete v24 fixture failed only after reaching
+a much later migration.
+
+**What to do.** A migration fixture must prove the historical preconditions that
+matter to the migration under test: schema version, required tables/columns, and
+the absence of fields being introduced. When later code needs a complete current
+database with one malformed record, create a real current database and alter only
+that record or table; do not label a partial schema as current. After every schema
+bump, run the complete DB migration suite, not only the new migration module.
+
+---
+
 ## A "slow-accept listener" does not delay TCP connect() — it delays accept()
 
 **TASK-15473, 2026-08-11.** Writing an evidence test that the event loop stays
