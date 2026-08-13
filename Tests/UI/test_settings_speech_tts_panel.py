@@ -3222,6 +3222,40 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_production_bundle_applies_speech_disclosure_styles() -> None:
+    bundled_css = _BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "#settings-speech-details,\n#settings-speech-scope-inspector",
+        "#settings-speech-details > CollapsibleTitle,\n"
+        "#settings-speech-scope-inspector > CollapsibleTitle",
+        "#settings-speech-details > Contents,\n"
+        "#settings-speech-scope-inspector > Contents",
+    ):
+        assert selector in bundled_css
+
+    app = _StyledPanelHarness(configure_provider="audio_cpp")
+    assert Path(app.CSS_PATH).resolve() == _BUNDLE.resolve()
+
+    async with app.run_test(size=(120, 40)):
+        details = app.query_one("#settings-speech-details", Collapsible)
+        title = details.query_one("CollapsibleTitle")
+        contents = details.query_one("Contents")
+
+        assert details.styles.width.value == 100
+        assert details.styles.width.unit.name == "WIDTH"
+        assert str(details.styles.height) == "auto"
+        assert details.styles.min_height.value == 3
+        assert details.styles.margin.top == 1
+        assert details.styles.padding.width == 0
+        assert title.styles.height.value == 3
+        assert title.styles.min_height.value == 3
+        assert title.styles.padding.top == 1
+        assert title.styles.padding.width == 2
+        assert str(contents.styles.height) == "auto"
+        assert contents.styles.padding.width == 2
+
+
+@pytest.mark.asyncio
 async def test_managed_guided_selection_provenance_stays_in_collapsed_details() -> None:
     state = _audio_cpp_state()
     state.providers["audio_cpp"].update(
