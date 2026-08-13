@@ -1455,7 +1455,12 @@ class ProviderStep(SetupStep):
         provider_key = self.selected_provider_key
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         key_input = self.query_one("#setup-provider-api-key", Input)
-        typed = key_input.value.strip() if key_input.display else ""
+        ui_draft = self._provider_drafts.get(provider_key)
+        typed = (
+            key_input.value.strip()
+            if key_input.display
+            else (ui_draft.api_key.strip() if ui_draft is not None else "")
+        )
         base_readiness = get_provider_readiness(
             provider_key, app_config, environ=self._environment()
         )
@@ -1787,8 +1792,11 @@ class ProviderStep(SetupStep):
             app_config, self._environment(), provider_key=provider_key
         )
         key_input = self.query_one("#setup-provider-api-key", Input)
+        ui_draft = self._provider_drafts.get(provider_key)
         typed_key = (
-            key_input.value.strip() if key_input.display and key_input.value else ""
+            key_input.value.strip()
+            if key_input.display and key_input.value
+            else (ui_draft.api_key.strip() if ui_draft is not None else "")
         )
         if typed_key:
             source, value = "draft", typed_key
@@ -2539,8 +2547,14 @@ class ProviderStep(SetupStep):
 
     @on(Input.Changed, "#setup-provider-api-key")
     def _on_key_changed(self, event: Input.Changed) -> None:
-        del event
         if self._updating_connection_controls:
+            return
+        captured = self._provider_drafts.get(self.selected_provider_key)
+        if (
+            captured is not None
+            and captured.api_key == event.value
+            and captured.credential_revision == self._credential_revision
+        ):
             return
         self._clear_requested = False
         self._credential_semantics_changed()
@@ -2743,11 +2757,15 @@ class ProviderStep(SetupStep):
         if not provider_key:
             return True, ""  # legitimately nothing pressed -- skip is correct
         self.selected_provider_key = provider_key
+        key_input = self.query_one("#setup-provider-api-key", Input)
+        captured = self._provider_drafts.get(provider_key)
+        if captured is None or captured.api_key != key_input.value:
+            self._clear_requested = False
+            self._credential_semantics_changed()
         readiness = self._current_provider_readiness()
         if not readiness.ready:
             recovery = readiness.recovery or "Add a provider credential."
             return False, f"API key required. {recovery}"
-        key_input = self.query_one("#setup-provider-api-key", Input)
         typed_key = bool(
             key_input.display and key_input.value and key_input.value.strip()
         )
@@ -2844,6 +2862,11 @@ class ModelStep(SetupStep):
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
 
+        self.invalidate_discovery_bound_selection()
+
+    def invalidate_discovery_bound_selection(self) -> None:
+        """Drop a selection whose exact provider discovery identity changed."""
+
         self._model_load_generation += 1
         self._shown_for_discovery_key = None
         self._selection_discovery_key = None
@@ -2861,16 +2884,6 @@ class ModelStep(SetupStep):
             return
         if self.is_active:
             self.on_show()
-            self.run_worker(
-                partial(
-                    self._render_models,
-                    [],
-                    discovery_key=self._current_discovery_key(),
-                    load_generation=self._model_load_generation,
-                ),
-                exclusive=True,
-                group="setup-model-credential-clear",
-            )
 
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
@@ -3048,6 +3061,12 @@ class ModelStep(SetupStep):
         models: list[str] = []
         discovery_state = "available"
         failure_category = ""
+        await self._render_models(
+            [],
+            discovery_state="loading",
+            discovery_key=discovery_key,
+            load_generation=load_generation,
+        )
         provider_draft = self._current_provider_draft()
         if provider_draft is None or discovery_key is None:
             await self._render_models(
@@ -3263,6 +3282,14 @@ class ModelStep(SetupStep):
                     disabled=True,
                 )
             )
+        elif discovery_state == "loading":
+            await radio_set.mount(
+                SetupRadioButton(
+                    "(loading models…)",
+                    id="setup-model-loading",
+                    disabled=True,
+                )
+            )
         elif no_provider:
             await radio_set.mount(
                 SetupRadioButton(
@@ -3392,8 +3419,11 @@ class ModelStep(SetupStep):
         changed = model_id != self.selected_model_id
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
+        current_key = self._current_discovery_key()
         self._selection_discovery_key = (
-            self._current_discovery_key() if model_id else None
+            discovery_key
+            if model_id and discovery_key == current_key
+            else current_key if model_id else None
         )
         if changed:
             self._notify_provider_model_changed(
@@ -3480,10 +3510,20 @@ class ModelStep(SetupStep):
         commit_staged = getattr(self.wizard, "commit_staged_provider_setup", None)
         if not callable(commit_staged):
             return False, "Return to Provider and review the connection."
-        ok = await commit_staged(model_id)
+        selection_key = self._selection_discovery_key
+        if selection_key is None:
+            pressed = self._live_pressed_radio()
+            selection_key = getattr(pressed, "_discovery_key", None)
+        ok = await commit_staged(model_id, discovery_key=selection_key)
         if ok:
             self.selected_model_id = model_id
             self._selection_discovery_key = self._current_discovery_key()
+        elif selection_key != self._current_discovery_key():
+            return (
+                False,
+                "Connection settings changed. Models were refreshed; select a "
+                "model again or re-enter its ID.",
+            )
         return (
             (True, "") if ok else (False, "Saving the provider and model setup failed.")
         )
@@ -6600,7 +6640,9 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_generation = 0
         self._provider_commit_lock = asyncio.Lock()
         self._provider_commit_task: asyncio.Task[bool] | None = None
-        self._provider_commit_identity: tuple[int, str] | None = None
+        self._provider_commit_identity: tuple[
+            int, str, wizard_state.FirstRunModelDiscoveryKey
+        ] | None = None
         self._provider_commit_write_started = False
         self._provider_cleanup_requested = False
         self._provider_dismiss_pending = False
@@ -6685,6 +6727,36 @@ class SetupWizardContainer(WizardContainer):
         model_step = self.steps[model_index]
         if isinstance(model_step, ModelStep):
             model_step.invalidate_credential_bound_selection()
+
+    def _refresh_changed_provider_identity(
+        self,
+        owner: ProviderStep,
+        provider_draft: wizard_state.FirstRunProviderDraft,
+    ) -> None:
+        """Fence old model state and start discovery for the current draft."""
+
+        self._first_run_selected_provider_models = {}
+        self._first_run_selected_provider_outcomes = {}
+        self.wizard_data.pop(wizard_state.STEP_MODEL, None)
+        current_key = owner._model_discovery_key(provider_draft)
+        if (
+            owner.is_mounted
+            and current_key is not None
+            and (
+                owner._selected_discovery_key != current_key
+                or owner._selected_discovery_state not in {"in_progress", "complete"}
+            )
+        ):
+            owner._begin_selected_provider_discovery(
+                provider_draft,
+                sync_live_credential=False,
+            )
+        model_index = self._step_index_for_id(wizard_state.STEP_MODEL)
+        if model_index is None:
+            return
+        model_step = self.steps[model_index]
+        if isinstance(model_step, ModelStep) and model_step.is_mounted:
+            model_step.invalidate_discovery_bound_selection()
 
     def clear_provider_setup_sensitive_state(
         self, *, clear_widgets: bool = True
@@ -6792,52 +6864,95 @@ class SetupWizardContainer(WizardContainer):
             wizard_state._credential_value_for_boundary(right_credential),
         )
 
-    async def commit_staged_provider_setup(self, model_id: str) -> bool:
+    async def commit_staged_provider_setup(
+        self,
+        model_id: str,
+        *,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+    ) -> bool:
         """Persist the staged connection and model through one atomic mutation."""
 
         if type(model_id) is not str:
             return False
+        if discovery_key is not None and (
+            type(discovery_key) is not wizard_state.FirstRunModelDiscoveryKey
+        ):
+            return False
         normalized_model = model_id.strip()
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
-        if isinstance(owner, ProviderStep) and owner.is_mounted:
-            if owner._sync_live_credential_revision():
-                return False
-            current_draft = owner._effective_provider_draft()
-            if current_draft is None or not self.stage_provider_setup(current_draft):
-                return False
+        changed_draft: wizard_state.FirstRunProviderDraft | None = None
         async with self._provider_commit_lock:
-            provider_draft = self._staged_provider_draft
-            if provider_draft is None:
-                return False
-            if (
-                self._provider_setup_committed
-                and self._committed_provider_model == normalized_model
-            ):
-                return True
-            identity = (self._provider_stage_generation, normalized_model)
-            active_task = self._provider_commit_task
-            if (
-                active_task is not None
-                and not active_task.done()
-                and identity == self._provider_commit_identity
-            ):
-                operation = active_task
-            else:
-                if self._provider_commit_write_started:
-                    return False
-                self._provider_commit_generation += 1
-                lease = self._provider_commit_generation
-                operation = asyncio.create_task(
-                    self._run_provider_setup_commit(
-                        provider_draft,
-                        normalized_model,
-                        self._provider_stage_generation,
-                        lease,
+            if isinstance(owner, ProviderStep) and owner.is_mounted:
+                owner._sync_live_credential_revision()
+                current_draft = owner._effective_provider_draft()
+                current_key = owner._model_discovery_key(current_draft)
+                expected_key = discovery_key
+                if expected_key is None and self._staged_provider_draft is not None:
+                    expected_key = owner._model_discovery_key(
+                        self._staged_provider_draft
                     )
+                if current_draft is None or current_key is None:
+                    logger.debug("First-run provider save rejected (identity=invalid)")
+                    return False
+                if expected_key != current_key:
+                    logger.debug("First-run provider save rejected (identity=changed)")
+                    if not self.stage_provider_setup(current_draft):
+                        return False
+                    changed_draft = current_draft
+                elif not self.stage_provider_setup(current_draft):
+                    return False
+            if changed_draft is not None:
+                operation = None
+            else:
+                provider_draft = self._staged_provider_draft
+                if provider_draft is None:
+                    return False
+                expected_key = discovery_key
+                if expected_key is None:
+                    try:
+                        expected_key = wizard_state.build_first_run_model_discovery_key(
+                            provider_draft
+                        )
+                    except ValueError:
+                        return False
+                if (
+                    self._provider_setup_committed
+                    and self._committed_provider_model == normalized_model
+                ):
+                    return True
+                identity = (
+                    self._provider_stage_generation,
+                    normalized_model,
+                    expected_key,
                 )
-                operation.add_done_callback(self._provider_commit_finished)
-                self._provider_commit_task = operation
-                self._provider_commit_identity = identity
+                active_task = self._provider_commit_task
+                if (
+                    active_task is not None
+                    and not active_task.done()
+                    and identity == self._provider_commit_identity
+                ):
+                    operation = active_task
+                else:
+                    if self._provider_commit_write_started:
+                        return False
+                    self._provider_commit_generation += 1
+                    lease = self._provider_commit_generation
+                    operation = asyncio.create_task(
+                        self._run_provider_setup_commit(
+                            provider_draft,
+                            normalized_model,
+                            expected_key,
+                            self._provider_stage_generation,
+                            lease,
+                        )
+                    )
+                    operation.add_done_callback(self._provider_commit_finished)
+                    self._provider_commit_task = operation
+                    self._provider_commit_identity = identity
+        if changed_draft is not None and isinstance(owner, ProviderStep):
+            self._refresh_changed_provider_identity(owner, changed_draft)
+            return False
+        assert operation is not None
         return await asyncio.shield(operation)
 
     def _provider_commit_finished(self, task: asyncio.Task[bool]) -> None:
@@ -6852,6 +6967,7 @@ class SetupWizardContainer(WizardContainer):
         self,
         provider_draft: wizard_state.FirstRunProviderDraft,
         model_id: str,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         stage_generation: int,
         lease: int,
     ) -> bool:
@@ -6860,6 +6976,8 @@ class SetupWizardContainer(WizardContainer):
         await asyncio.sleep(0)
         current_task = asyncio.current_task()
         write_started = False
+        changed_draft: wizard_state.FirstRunProviderDraft | None = None
+        owner = getattr(self, "_first_run_provider_discovery_owner", None)
         try:
             async with self._provider_commit_lock:
                 if (
@@ -6868,20 +6986,51 @@ class SetupWizardContainer(WizardContainer):
                     or self._staged_provider_draft is not provider_draft
                 ):
                     return False
-                app_config = getattr(self.app_instance, "app_config", {}) or {}
-                try:
-                    mutation = wizard_state.build_first_run_provider_commit(
-                        provider_draft,
-                        model_id,
-                        app_config,
-                    )
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "First-run provider commit rejected (category=validation)"
-                    )
-                    return False
-                self._provider_commit_write_started = True
-                write_started = True
+                if isinstance(owner, ProviderStep) and owner.is_mounted:
+                    owner._sync_live_credential_revision()
+                    current_draft = owner._effective_provider_draft()
+                    current_key = owner._model_discovery_key(current_draft)
+                    if current_draft is None or current_key is None:
+                        logger.debug(
+                            "First-run provider save lease rejected (identity=invalid)"
+                        )
+                        return False
+                    if current_key != discovery_key:
+                        logger.debug(
+                            "First-run provider save lease rejected (identity=changed)"
+                        )
+                        if not self.stage_provider_setup(current_draft):
+                            return False
+                        changed_draft = current_draft
+                    elif not self._provider_drafts_match(
+                        provider_draft, current_draft
+                    ):
+                        logger.debug(
+                            "First-run provider save lease rejected (draft=changed)"
+                        )
+                        return False
+                if changed_draft is not None:
+                    mutation = None
+                else:
+                    app_config = getattr(self.app_instance, "app_config", {}) or {}
+                    try:
+                        mutation = wizard_state.build_first_run_provider_commit(
+                            provider_draft,
+                            model_id,
+                            app_config,
+                        )
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "First-run provider commit rejected (category=validation)"
+                        )
+                        return False
+                    self._provider_commit_write_started = True
+                    write_started = True
+
+            if changed_draft is not None and isinstance(owner, ProviderStep):
+                self._refresh_changed_provider_identity(owner, changed_draft)
+                return False
+            assert mutation is not None
 
             saved = await self.commit_config(
                 mutation.section_values,

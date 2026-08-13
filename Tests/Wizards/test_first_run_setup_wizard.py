@@ -4722,6 +4722,481 @@ async def test_mounted_settings_aware_builtin_discovery_uses_exact_runtime_host_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "provider_key",
+        "provider_list_key",
+        "setting_name",
+        "initial_setting",
+        "changed_setting",
+        "initial_host",
+        "changed_host",
+    ),
+    [
+        (
+            "moonshot",
+            "Moonshot",
+            "api_region",
+            "china",
+            "global",
+            "api.moonshot.cn",
+            "api.moonshot.ai",
+        ),
+        (
+            "huggingface",
+            "HuggingFace",
+            "use_router_url_format",
+            "true",
+            "false",
+            "router.huggingface.co",
+            "api-inference.huggingface.co",
+        ),
+    ],
+)
+async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
+    provider_key: str,
+    provider_list_key: str,
+    setting_name: str,
+    initial_setting: str,
+    changed_setting: str,
+    initial_host: str,
+    changed_host: str,
+):
+    """A model discovered for endpoint A cannot be atomically saved under B."""
+    import httpx
+
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        model = (
+            "identity-a-model"
+            if request.url.host == initial_host
+            else "identity-b-model"
+        )
+        return httpx.Response(200, json={"data": [{"id": model}]})
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "providers": {provider_list_key: []},
+        "api_settings": {
+            provider_key: {
+                setting_name: initial_setting,
+                "api_key": "save-boundary-credential-canary",
+            }
+        },
+    }
+    writes: list[object] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+
+        async def real_discovery(**kwargs):
+            return await discover_openai_compatible_models(**kwargs, client=client)
+
+        local_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {provider_list_key: []},
+            settings_loader=lambda: wizard.app_instance.app_config,
+            discovery_client=real_discovery,
+            environ={},
+        )
+        wizard.app_instance.llm_provider_catalog_scope_service = (
+            LLMProviderCatalogScopeService(
+                local_service=local_service,
+                server_service=None,
+            )
+        )
+        app = _HostApp(wizard)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            container = wizard.query_one(SetupWizardContainer)
+
+            async def commit_config(
+                settings,
+                *,
+                delete_keys=None,
+                after_write=None,
+                provider_setup_mutation=None,
+            ):
+                if provider_setup_mutation is not None:
+                    writes.append(provider_setup_mutation)
+                container._mirror_into_app_config(settings, delete_keys)
+                return True
+
+            container.commit_config = commit_config
+            container.select_track(TRACK_QUICK)
+            provider_index = container._step_index_for_id(STEP_PROVIDER)
+            model_index = container._step_index_for_id(STEP_MODEL)
+            assert provider_index is not None and model_index is not None
+            container.show_step(provider_index)
+            provider_step = container.steps[provider_index]
+            assert isinstance(provider_step, ProviderStep)
+            provider_step.select_provider(provider_key)
+            await container._advance()
+
+            model_step = container.steps[model_index]
+            assert isinstance(model_step, ModelStep)
+            target = None
+            for _ in range(30):
+                target = next(
+                    (
+                        button
+                        for button in model_step.query(RadioButton)
+                        if getattr(button, "_model_id", "") == "identity-a-model"
+                    ),
+                    None,
+                )
+                if target is not None:
+                    break
+                await pilot.pause(0.05)
+            assert target is not None
+            target.value = True
+            await pilot.pause()
+            selected_key = model_step._selection_discovery_key
+            assert selected_key is not None
+            assert selected_key.connection_identity[1].startswith(
+                f"https://{initial_host}/"
+            )
+
+            wizard.app_instance.app_config["api_settings"][provider_key][
+                setting_name
+            ] = changed_setting
+            await container._advance()
+
+            assert container.current_step == model_index
+            assert writes == []
+            assert not container.provider_setup_committed
+            assert model_step.selected_model_id == ""
+            assert model_step._selection_discovery_key is None
+            assert model_step._effective_model_id() == ""
+            error = str(model_step.query_one(".setup-step-error", Static).renderable)
+            assert "connection settings changed" in error.lower()
+
+            for _ in range(30):
+                if any(
+                    getattr(button, "_model_id", "") == "identity-b-model"
+                    for button in model_step.query(RadioButton)
+                ):
+                    break
+                await pilot.pause(0.05)
+            current_key = model_step._current_discovery_key()
+            assert current_key is not None and current_key != selected_key
+            assert current_key.connection_identity[1].startswith(
+                f"https://{changed_host}/"
+            )
+            assert [request.url.host for request in requests] == [
+                initial_host,
+                changed_host,
+            ]
+
+            manual = model_step.query_one("#setup-model-custom", Input)
+            manual.value = "identity-a-model"
+            await pilot.pause()
+            await container._advance()
+
+            assert len(writes) == 1
+            assert container.provider_setup_committed
+            assert container.committed_provider_model == "identity-a-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", ["endpoint", "credential"])
+async def test_mounted_model_save_rejects_hidden_provider_identity_change(
+    changed_field: str,
+):
+    """Hidden Provider controls cannot silently retarget a selected model."""
+    from unittest.mock import AsyncMock
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {
+                "api_url": "https://identity-a.example/v1/chat/completions",
+                "api_key": "stored-save-boundary-canary",
+            }
+        }
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "identity-a-model")
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    writes: list[object] = []
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+
+        async def commit_config(
+            settings,
+            *,
+            delete_keys=None,
+            after_write=None,
+            provider_setup_mutation=None,
+        ):
+            if provider_setup_mutation is not None:
+                writes.append(provider_setup_mutation)
+            container._mirror_into_app_config(settings, delete_keys)
+            return True
+
+        container.commit_config = commit_config
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(20):
+            rows = [
+                button
+                for button in model_step.query(RadioButton)
+                if getattr(button, "_model_id", "") == "identity-a-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+        old_key = model_step._selection_discovery_key
+        assert old_key is not None
+
+        if changed_field == "endpoint":
+            provider_step.query_one("#setup-provider-endpoint", Input).value = (
+                "https://identity-b.example/v1/chat/completions"
+            )
+        else:
+            provider_step.query_one("#setup-provider-api-key", Input).value = (
+                "replacement-save-boundary-canary"
+            )
+        await pilot.pause()
+        await container._advance()
+
+        assert container.current_step == model_index
+        assert writes == []
+        assert model_step.selected_model_id == ""
+        assert model_step._selection_discovery_key is None
+        assert model_step._current_discovery_key() != old_key
+        assert not container.provider_setup_committed
+        for rendered in (repr(old_key), pilot.app.export_screenshot()):
+            assert "stored-save-boundary-canary" not in rendered
+            assert "replacement-save-boundary-canary" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_mounted_save_identity_change_fences_cancellation_resistant_old_result():
+    """A late endpoint-A retry cannot repopulate handoff state after save rejects."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    retry_started = asyncio.Event()
+    release_retry = asyncio.Event()
+    calls = 0
+
+    async def discover_models(**kwargs):
+        nonlocal calls
+        calls += 1
+        provider_settings = kwargs["staged_settings"]["api_settings"]["moonshot"]
+        endpoint = next(
+            value
+            for key, value in provider_settings.items()
+            if key in {"api_url", "api_base_url"}
+        )
+        if calls == 2:
+            retry_started.set()
+            while not release_retry.is_set():
+                try:
+                    await release_retry.wait()
+                except asyncio.CancelledError:
+                    continue
+            return _typed_model_discovery_result("moonshot", "late-china-model")
+        model = "china-model" if ".cn/" in endpoint else "global-model"
+        return _typed_model_discovery_result("moonshot", model)
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "moonshot": {
+                "api_region": "china",
+                "api_key": "late-result-save-boundary-canary",
+            }
+        }
+    }
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("moonshot")
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(20):
+            rows = [
+                button
+                for button in model_step.query(RadioButton)
+                if getattr(button, "_model_id", "") == "china-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+        stale_key = model_step._selection_discovery_key
+        assert stale_key is not None
+
+        draft = container.staged_provider_draft
+        assert draft is not None
+        provider_step._begin_selected_provider_discovery(
+            draft,
+            sync_live_credential=False,
+        )
+        await asyncio.wait_for(retry_started.wait(), timeout=2)
+        wizard.app_instance.app_config["api_settings"]["moonshot"][
+            "api_region"
+        ] = "global"
+        await container._advance()
+        release_retry.set()
+        await pilot.pause(0.2)
+
+        current_key = model_step._current_discovery_key()
+        assert current_key is not None and current_key != stale_key
+        assert stale_key not in provider_step._selected_provider_models
+        assert stale_key not in provider_step._selected_provider_outcomes
+        assert stale_key not in container._first_run_selected_provider_models
+        assert stale_key not in container._first_run_selected_provider_outcomes
+        assert model_step.selected_model_id == ""
+        assert all(
+            getattr(button, "_model_id", "") != "late-china-model"
+            for button in model_step.query(RadioButton)
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_save_lease_rechecks_identity_immediately_before_write(
+    monkeypatch,
+):
+    """A settings change after task creation is still fenced before persistence."""
+    from unittest.mock import AsyncMock
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "moonshot": {
+                "api_region": "china",
+                "api_key": "lease-recheck-credential-canary",
+            }
+        }
+    }
+    scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=_typed_model_discovery_result("moonshot", "china-only-model")
+        )
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+
+    async with _HostApp(wizard).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        writes: list[object] = []
+
+        async def commit_config(
+            settings,
+            *,
+            delete_keys=None,
+            after_write=None,
+            provider_setup_mutation=None,
+        ):
+            if provider_setup_mutation is not None:
+                writes.append(provider_setup_mutation)
+            return True
+
+        container.commit_config = commit_config
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("moonshot")
+        await container._advance()
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        for _ in range(20):
+            rows = [
+                button
+                for button in model_step.query(RadioButton)
+                if getattr(button, "_model_id", "") == "china-only-model"
+            ]
+            if rows:
+                break
+            await pilot.pause(0.05)
+        assert rows
+        rows[0].value = True
+        await pilot.pause()
+        china_key = model_step._selection_discovery_key
+        assert china_key is not None
+
+        original_effective_draft = provider_step._effective_provider_draft
+        calls = 0
+
+        def change_settings_after_first_boundary_check(*args, **kwargs):
+            nonlocal calls
+            draft = original_effective_draft(*args, **kwargs)
+            calls += 1
+            if calls == 1:
+                wizard.app_instance.app_config["api_settings"]["moonshot"][
+                    "api_region"
+                ] = "global"
+            return draft
+
+        monkeypatch.setattr(
+            provider_step,
+            "_effective_provider_draft",
+            change_settings_after_first_boundary_check,
+        )
+        await container._advance()
+
+        assert calls >= 2
+        assert writes == []
+        assert container.current_step == model_index
+        assert not container.provider_setup_committed
+        assert model_step.selected_model_id == ""
+        current_key = model_step._current_discovery_key()
+        assert current_key is not None and current_key != china_key
+        assert current_key.connection_identity[1].startswith(
+            "https://api.moonshot.ai/"
+        )
+
+
+@pytest.mark.asyncio
 async def test_mounted_builtin_settings_change_fences_prior_discovery_identity():
     import asyncio
 
@@ -6146,7 +6621,10 @@ async def test_model_step_commit_hands_model_to_staged_provider_commit():
         step.set_selected_model("gpt-5.6-terra")
         ok, error = await step.commit()
         assert ok, error
-        wizard.commit_staged_provider_setup.assert_awaited_once_with("gpt-5.6-terra")
+        wizard.commit_staged_provider_setup.assert_awaited_once_with(
+            "gpt-5.6-terra",
+            discovery_key=step._current_discovery_key(),
+        )
         wizard.commit_config.assert_not_called()
 
 
@@ -6281,7 +6759,10 @@ async def test_model_step_commit_reads_pressed_radio_without_changed_event():
         ok, error = await step.commit()
         assert ok, error
         assert step.selected_model_id == "radio-model-a"
-        wizard.commit_staged_provider_setup.assert_awaited_once_with("radio-model-a")
+        wizard.commit_staged_provider_setup.assert_awaited_once_with(
+            "radio-model-a",
+            discovery_key=step._current_discovery_key(),
+        )
         wizard.commit_config.assert_not_called()
 
 
