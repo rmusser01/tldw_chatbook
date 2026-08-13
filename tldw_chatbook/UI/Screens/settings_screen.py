@@ -3640,11 +3640,19 @@ class SettingsScreen(BaseAppScreen):
         read+atomic-rewrite+cache-reload per click. The in-memory
         ``app_config`` update in ``_toggle_remote_images`` (which the
         transcript gate reads live) stays synchronous; only the disk write
-        moves to a worker.
+        moves to a worker. Guarded broadly: an uncaught exception in a
+        ``@work(thread=True)`` worker is fatal to the app by default
+        (``exit_on_error=True``), so a config-write hiccup must not crash
+        the whole session.
         """
-        save_settings_to_cli_config(
-            {"chat.images": {"render_remote_images": next_value}}
-        )
+        try:
+            save_settings_to_cli_config(
+                {"chat.images": {"render_remote_images": next_value}}
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist render_remote_images.", exc_info=True
+            )
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -9460,9 +9468,16 @@ class SettingsScreen(BaseAppScreen):
         synchronously on the event loop once per keystroke that parses as a
         valid, changed value (every digit of a multi-digit number). The
         no-op guard above (cheap: reads the cached settings, no I/O) stays
-        synchronous; only the actual write is deferred.
+        synchronous; only the actual write is deferred. Guarded broadly: an
+        uncaught exception in a ``@work(thread=True)`` worker is fatal to
+        the app by default (``exit_on_error=True``).
         """
-        save_settings_to_cli_config(section_values)
+        try:
+            save_settings_to_cli_config(section_values)
+        except Exception:
+            logger.warning(
+                "Failed to persist model_catalog settings.", exc_info=True
+            )
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
