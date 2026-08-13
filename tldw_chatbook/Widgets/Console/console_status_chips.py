@@ -13,7 +13,7 @@ from typing import Any
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import HorizontalScroll
+from textual.containers import Horizontal, HorizontalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -342,15 +342,16 @@ class ConsoleCostChip(ConsoleChip):
         self.post_message(self.ConsoleCostChipPressed())
 
 
-class ConsoleStatusChips(HorizontalScroll):
+class ConsoleStatusChips(Horizontal):
     """Full-width strip of Console readiness pills (provider/model/assistant/
     RAG/source/tool/approval plus the retrieval-scope chip).
 
-    TASK-2154.5 (LY-03): the strip scrolls horizontally when the chips
-    outgrow the viewport instead of silently clipping them -- keyboard
-    reachability comes from focus auto-scroll (``Screen.set_focus``'s
-    ``scroll_visible``), mouse from Shift+wheel / trackpad swipe; the
-    scrollbar itself is hidden (single-row strip, tab-strip precedent).
+    TASK-2154.5 (LY-03): the expanded presentation's inner strip scrolls
+    horizontally when the chips outgrow the viewport instead of silently
+    clipping them -- keyboard reachability comes from focus auto-scroll
+    (``Screen.set_focus``'s ``scroll_visible``), mouse from Shift+wheel /
+    trackpad swipe; the scrollbar itself is hidden (single-row strip,
+    tab-strip precedent).
 
     Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
     counter emphasis after provider/model/source/tool/approval state changes.
@@ -364,6 +365,7 @@ class ConsoleStatusChips(HorizontalScroll):
         ephemeral: bool = False,
         cost_state: ConsoleCostState | None = None,
         run_copy: str = "",
+        collapsed: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the strip.
@@ -396,6 +398,7 @@ class ConsoleStatusChips(HorizontalScroll):
                 background run is still streaming must render the chip on
                 the first frame, not after the next sync tick. ``""``
                 (or any non-active state) renders hidden.
+            collapsed: Whether to show the one-line collapsed presentation.
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -409,6 +412,7 @@ class ConsoleStatusChips(HorizontalScroll):
         self.ephemeral = ephemeral
         self._cost_state = cost_state
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
+        self._collapsed = bool(collapsed)
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -435,70 +439,121 @@ class ConsoleStatusChips(HorizontalScroll):
         return chip
 
     def compose(self) -> ComposeResult:
-        # First: this is a property of the whole chat, not one setting.
-        yield self._temporary_chip()
-        # TASK-2154.18 (FB-08): the active-run chip sits left-most among
-        # the transient chips so it stays visible when the strip scrolls
-        # horizontally (TASK-2154.5) -- the stable readiness chips keep
-        # their learned relative order behind it. Hidden unless a run is
-        # active (see ``sync_run_chip``).
-        yield self._run_chip()
-        yield self._chip(
-            self.state.provider_label,
-            id="console-provider-chip",
-            chip_class=ConsoleModelChip,
+        expanded = Horizontal(id="console-status-expanded")
+        expanded.styles.display = "none" if self._collapsed else "block"
+        with expanded:
+            collapse_button = Button(
+                "Status ▾",
+                id="console-status-collapse",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse status details."
+            collapse_button.styles.width = 9
+            collapse_button.styles.min_width = 9
+            collapse_button.styles.max_width = 9
+            collapse_button.styles.line_pad = 0
+            yield collapse_button
+            chip_scroll = HorizontalScroll(id="console-status-chip-scroll")
+            chip_scroll.styles.height = 1
+            chip_scroll.styles.min_height = 1
+            chip_scroll.styles.max_height = 1
+            chip_scroll.styles.scrollbar_size_horizontal = 0
+            with chip_scroll:
+                # First: this is a property of the whole chat, not one setting.
+                yield self._temporary_chip()
+                # TASK-2154.18 (FB-08): the active-run chip sits left-most among
+                # the transient chips so it stays visible when the strip scrolls
+                # horizontally (TASK-2154.5) -- the stable readiness chips keep
+                # their learned relative order behind it. Hidden unless a run is
+                # active (see ``sync_run_chip``).
+                yield self._run_chip()
+                yield self._chip(
+                    self.state.provider_label,
+                    id="console-provider-chip",
+                    chip_class=ConsoleModelChip,
+                )
+                yield self._chip(
+                    self.state.model_label,
+                    id="console-model-chip",
+                    chip_class=ConsoleModelChip,
+                )
+                yield self._chip(
+                    self.state.system_prompt_label,
+                    id="console-system-prompt-chip",
+                    chip_class=ConsoleSystemPromptChip,
+                )
+                yield self._chip(
+                    self.state.assistant_label,
+                    id="console-assistant-chip",
+                    chip_class=ConsoleAssistantChip,
+                )
+                yield self._chip(
+                    self.state.rag_label,
+                    id="console-rag-chip",
+                    chip_class=ConsoleRagChip,
+                )
+                yield self._chip(
+                    self.state.sources_label,
+                    id="console-sources-chip",
+                    emphasis=self.state.sources_active,
+                    chip_class=ConsoleSourcesChip,
+                )
+                tools_chip = self._chip(
+                    self.state.tools_label,
+                    id="console-tools-chip",
+                    emphasis=self.state.tools_active,
+                    chip_class=ConsoleToolsChip,
+                )
+                # TASK-2154.12 (TX-04): hidden entirely at a zero tool count, the
+                # same posture as the unscoped scope chip and the None cost chip --
+                # the old "Tools: not loaded" placeholder exposed a lazy-loading
+                # implementation detail (Console UX review 2026-08).
+                tools_chip.display = self.state.tools_active
+                yield tools_chip
+                yield self._chip(
+                    self.state.approvals_label,
+                    id="console-approvals-chip",
+                    emphasis=self.state.approvals_active,
+                    chip_class=ConsoleApprovalsChip,
+                )
+                # task-10: the retrieval-scope chip -- unlike the chips above,
+                # hidden entirely when unscoped rather than showing a
+                # "Scope: everything" default (see ``_scope_chip_render``).
+                yield self._scope_chip()
+                # task-4 (PR3 cost ticker): last in the strip, hidden entirely
+                # when there is no cost state (see ``_cost_chip_render``).
+                yield self._cost_chip()
+
+        collapsed = Horizontal(id="console-status-collapsed")
+        collapsed.styles.display = "block" if self._collapsed else "none"
+        with collapsed:
+            expand_button = Button(
+                "Status ▴",
+                id="console-status-expand",
+                compact=True,
+            )
+            expand_button.tooltip = "Expand status details."
+            expand_button.styles.width = 9
+            expand_button.styles.min_width = 9
+            expand_button.styles.max_width = 9
+            expand_button.styles.line_pad = 0
+            yield expand_button
+            yield Static("Status hidden", id="console-status-collapsed-copy")
+
+    @property
+    def collapsed(self) -> bool:
+        """Whether the collapsed status presentation is active."""
+        return self._collapsed
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Toggle the mounted status presentations without touching chip state."""
+        self._collapsed = bool(collapsed)
+        self.query_one("#console-status-expanded", Horizontal).display = (
+            not self._collapsed
         )
-        yield self._chip(
-            self.state.model_label,
-            id="console-model-chip",
-            chip_class=ConsoleModelChip,
+        self.query_one("#console-status-collapsed", Horizontal).display = (
+            self._collapsed
         )
-        yield self._chip(
-            self.state.system_prompt_label,
-            id="console-system-prompt-chip",
-            chip_class=ConsoleSystemPromptChip,
-        )
-        yield self._chip(
-            self.state.assistant_label,
-            id="console-assistant-chip",
-            chip_class=ConsoleAssistantChip,
-        )
-        yield self._chip(
-            self.state.rag_label,
-            id="console-rag-chip",
-            chip_class=ConsoleRagChip,
-        )
-        yield self._chip(
-            self.state.sources_label,
-            id="console-sources-chip",
-            emphasis=self.state.sources_active,
-            chip_class=ConsoleSourcesChip,
-        )
-        tools_chip = self._chip(
-            self.state.tools_label,
-            id="console-tools-chip",
-            emphasis=self.state.tools_active,
-            chip_class=ConsoleToolsChip,
-        )
-        # TASK-2154.12 (TX-04): hidden entirely at a zero tool count, the
-        # same posture as the unscoped scope chip and the None cost chip --
-        # the old "Tools: not loaded" placeholder exposed a lazy-loading
-        # implementation detail (Console UX review 2026-08).
-        tools_chip.display = self.state.tools_active
-        yield tools_chip
-        yield self._chip(
-            self.state.approvals_label,
-            id="console-approvals-chip",
-            emphasis=self.state.approvals_active,
-            chip_class=ConsoleApprovalsChip,
-        )
-        # task-10: the retrieval-scope chip -- unlike the chips above,
-        # hidden entirely when unscoped rather than showing a
-        # "Scope: everything" default (see ``_scope_chip_render``).
-        yield self._scope_chip()
-        # task-4 (PR3 cost ticker): last in the strip, hidden entirely
-        # when there is no cost state (see ``_cost_chip_render``).
-        yield self._cost_chip()
 
     def _run_chip(self) -> ConsoleRunChip:
         label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)

@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import HorizontalScroll
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import (
@@ -97,12 +98,16 @@ class _ChipsOverflowApp(App):
         )
 
 
-def _visible_chips(strip: ConsoleStatusChips):
-    return [chip for chip in strip.children if chip.display is True]
+def _visible_chips(scroller: HorizontalScroll):
+    return [
+        chip
+        for chip in scroller.query(".console-control-chip")
+        if chip.display is True
+    ]
 
 
-def _assert_chip_fully_inside_viewport(strip: ConsoleStatusChips, chip) -> None:
-    viewport = strip.content_region
+def _assert_chip_fully_inside_viewport(scroller: HorizontalScroll, chip) -> None:
+    viewport = scroller.content_region
     region = chip.region
     assert region.width > 0, f"#{chip.id} has zero width"
     assert region.x >= viewport.x, (
@@ -123,11 +128,11 @@ async def test_strip_scrolls_when_chips_overflow(size: tuple[int, int]) -> None:
     app = _ChipsOverflowApp(_fat_state())
     async with app.run_test(size=size) as pilot:
         await pilot.pause(0.2)
-        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
-        assert strip.virtual_size.width > strip.content_region.width
-        assert strip.is_scrollable and strip.allow_horizontal_scroll
+        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
+        assert scroller.virtual_size.width > scroller.content_region.width
+        assert scroller.is_scrollable and scroller.allow_horizontal_scroll
         # Single-row contract: the hidden horizontal scrollbar costs no row.
-        assert strip.content_region.height == 1
+        assert scroller.content_region.height == 1
 
 
 @pytest.mark.asyncio
@@ -139,8 +144,8 @@ async def test_every_chip_fully_reachable_by_focus(size: tuple[int, int]) -> Non
     app = _ChipsOverflowApp(_fat_state())
     async with app.run_test(size=size) as pilot:
         await pilot.pause(0.2)
-        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chips = _visible_chips(strip)
+        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
+        chips = _visible_chips(scroller)
         # The fat state must actually render the trailing conditional chips
         # for this to prove anything: temporary + tools + cost are present.
         ids = {chip.id for chip in chips}
@@ -151,7 +156,7 @@ async def test_every_chip_fully_reachable_by_focus(size: tuple[int, int]) -> Non
         for chip in chips:
             chip.focus()
             await pilot.pause(0.3)
-            _assert_chip_fully_inside_viewport(strip, chip)
+            _assert_chip_fully_inside_viewport(scroller, chip)
 
 
 @pytest.mark.asyncio
@@ -161,10 +166,10 @@ async def test_no_scroll_when_content_fits() -> None:
     app = _ChipsOverflowApp(_slim_state(), fat=False)
     async with app.run_test(size=(160, 48)) as pilot:
         await pilot.pause(0.2)
-        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
-        assert strip.max_scroll_x == 0
-        for chip in _visible_chips(strip):
-            _assert_chip_fully_inside_viewport(strip, chip)
+        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
+        assert scroller.max_scroll_x == 0
+        for chip in _visible_chips(scroller):
+            _assert_chip_fully_inside_viewport(scroller, chip)
 
 
 @pytest.mark.asyncio
