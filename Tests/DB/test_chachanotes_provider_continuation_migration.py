@@ -295,15 +295,15 @@ def test_v36_to_v37_requires_exact_precondition_and_handles_preadded_column(
     db.close_connection()
 
 
-def test_v35_to_v36_rejects_incompatible_preadded_column_without_partial_mutation(
+def test_v36_to_v37_rejects_incompatible_preadded_column_without_partial_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = tmp_path / "chachanotes.db"
-    _seed_v35_database(db_path, monkeypatch)
+    _seed_v36_database(db_path, monkeypatch)
 
-    with monkeypatch.context() as v35_patch:
-        v35_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 35)
+    with monkeypatch.context() as v36_patch:
+        v36_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 36)
         db = CharactersRAGDB(db_path, client_id="incompatible-pre-applied")
         connection = db.get_connection()
         connection.execute(
@@ -317,9 +317,9 @@ def test_v35_to_v36_rejects_incompatible_preadded_column_without_partial_mutatio
             if name in MESSAGE_SYNC_TRIGGERS
         }
         with pytest.raises(SchemaError, match="incompatible"):
-            db._migrate_from_v35_to_v36(connection)
+            db._migrate_from_v36_to_v37(connection)
 
-        assert _version(connection) == 35
+        assert _version(connection) == 36
         assert {
             name: sql
             for name, sql in _schema_objects(connection, "trigger").items()

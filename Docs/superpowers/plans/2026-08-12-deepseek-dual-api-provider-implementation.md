@@ -13,16 +13,16 @@
 ## Design Sources And ADR Check
 
 - Approved design: `Docs/superpowers/specs/2026-08-12-deepseek-dual-api-provider-design.md`
-- Canonical decisions: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md` and `backlog/decisions/059-deepseek-dual-api-provider-boundary.md`
+- Canonical decisions: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md` and `backlog/decisions/064-deepseek-dual-api-provider-boundary.md`
 - Dependencies: merged TASK-15675 and TASK-15676 implementations.
 - Backlog source of truth: `backlog/tasks/task-15677 - Add-DeepSeek-dual-API-provider-support.md`
 - Official sources linked from the approved design: DeepSeek Responses, create-response, Chat Completion, thinking, tools, models/pricing.
 
 ADR required: yes
 
-ADR paths: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`, `backlog/decisions/059-deepseek-dual-api-provider-boundary.md`
+ADR paths: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`, `backlog/decisions/064-deepseek-dual-api-provider-boundary.md`
 
-Reason: ADR-058 owns the durable private-history boundary and ADR-059 owns the one-provider/two-wire-mode decision and semantic Responses contract. No new ADR is needed.
+Reason: ADR-063 owns the durable private-history boundary and ADR-064 owns the one-provider/two-wire-mode decision and semantic Responses contract. No new ADR is needed.
 
 ## Scope Guardrails
 
@@ -38,7 +38,7 @@ Reason: ADR-058 owns the durable private-history boundary and ADR-059 owns the o
 ## Branch And Baseline Discipline
 
 - [ ] Begin only after TASK-15675 and TASK-15676 are merged. Create a fresh `codex/deepseek-dual-api` branch/worktree from current `origin/dev`.
-- [ ] Put TASK-15677 In Progress before production changes, then add a structured Implementation Plan section to its task file that links this document and ADR-058/059; do not replace it with a one-line CLI plan:
+- [ ] Put TASK-15677 In Progress before production changes, then add a structured Implementation Plan section to its task file that links this document and ADR-063/064; do not replace it with a one-line CLI plan:
 
   ```bash
   backlog task edit 15677 -s "In Progress"
@@ -330,7 +330,7 @@ class DeepSeekResponsesTranslator:
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q tldw_chatbook/LLM_Calls/deepseek.py tldw_chatbook/LLM_Calls/deepseek_streaming.py
   ```
 
-- [ ] Self-review every AC and ADR-058/059 invariant. Confirm no second provider/cache/loop/schema, no provider built-ins/stateful Responses fields, no Qwen/Kimi/Z.ai drift, no raw secret/body leakage, no hidden replay, and no paid default test.
+- [ ] Self-review every AC and ADR-063/064 invariant. Confirm no second provider/cache/loop/schema, no provider built-ins/stateful Responses fields, no Qwen/Kimi/Z.ai drift, no raw secret/body leakage, no hidden replay, and no paid default test.
 - [ ] Check every AC individually, add observed Implementation Notes/evidence/deviations to the task file, verify the rendered task, and set Done only when complete:
 
   ```bash

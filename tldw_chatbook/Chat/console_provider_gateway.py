@@ -100,7 +100,7 @@ _CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
 
 
 def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
-    """Resolve ADR-059's pinned DeepSeek mode without changing legacy default."""
+    """Resolve ADR-064's pinned DeepSeek mode without changing legacy default."""
     candidate = provider_settings.get("api_mode", "chat_completions")
     if not isinstance(candidate, str):
         raise ChatConfigurationError("DeepSeek API mode must be a string.")

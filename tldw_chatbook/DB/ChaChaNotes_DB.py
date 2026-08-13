@@ -4993,7 +4993,7 @@ UPDATE db_schema_version
                     or has_non_null_value
                 ):
                     raise SchemaError(
-                        "Provider continuation column is incompatible with schema V36"
+                        "Provider continuation column is incompatible with schema V37"
                     )
             with self.transaction() as cursor:
                 pending = ""

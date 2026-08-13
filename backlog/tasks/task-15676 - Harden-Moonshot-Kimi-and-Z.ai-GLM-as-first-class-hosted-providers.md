@@ -11,7 +11,7 @@ references:
   - Docs/superpowers/specs/2026-08-12-kimi-zai-hosted-chat-completions-design.md
   - >-
     Docs/superpowers/plans/2026-08-12-kimi-zai-hosted-chat-completions-implementation.md
-  - backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md
+  - backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md
 priority: high
 ---
 

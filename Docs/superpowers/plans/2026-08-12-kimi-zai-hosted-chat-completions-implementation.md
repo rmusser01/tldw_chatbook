@@ -13,16 +13,16 @@
 ## Design Sources And ADR Check
 
 - Approved design: `Docs/superpowers/specs/2026-08-12-kimi-zai-hosted-chat-completions-design.md`
-- Canonical decision: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+- Canonical decision: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
 - Foundation dependency: TASK-15675 and its schema/runtime/export implementation.
 - Backlog source of truth: `backlog/tasks/task-15676 - Harden-Moonshot-Kimi-and-Z.ai-GLM-as-first-class-hosted-providers.md`
 - Official sources linked from the approved design: Kimi docs/OpenAPI and Z.ai docs/OpenAPI.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+ADR path: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
 
-Reason: This PR implements ADR-058's reusable hosted Chat wire boundary and provider-specific continuation policies. No additional decision is needed.
+Reason: This PR implements ADR-063's reusable hosted Chat wire boundary and provider-specific continuation policies. No additional decision is needed.
 
 ## Scope Guardrails
 
@@ -38,7 +38,7 @@ Reason: This PR implements ADR-058's reusable hosted Chat wire boundary and prov
 ## Branch And Baseline Discipline
 
 - [ ] Begin only after TASK-15675 is merged. Create a fresh `codex/kimi-zai-hosted-chat` branch/worktree from current `origin/dev`; do not reuse the foundation worktree.
-- [ ] Put TASK-15676 In Progress before production edits, then add a structured Implementation Plan section to its task file that links this document and ADR-058; do not replace it with a one-line CLI plan:
+- [ ] Put TASK-15676 In Progress before production edits, then add a structured Implementation Plan section to its task file that links this document and ADR-063; do not replace it with a one-line CLI plan:
 
   ```bash
   backlog task edit 15676 -s "In Progress"
@@ -398,7 +398,7 @@ The decoder preserves the exact optional SSE `event:` label and joined `data:` t
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q tldw_chatbook/LLM_Calls
   ```
 
-- [ ] Self-review every AC and ADR-058 rule. Confirm Qwen Responses is untouched, Qwen Chat parity is green, no other provider migrated, no API mode/vendor built-in tools/server state/new schema, and default tests made no paid calls.
+- [ ] Self-review every AC and ADR-063 rule. Confirm Qwen Responses is untouched, Qwen Chat parity is green, no other provider migrated, no API mode/vendor built-in tools/server state/new schema, and default tests made no paid calls.
 - [ ] Check all ACs individually, add observed Implementation Notes/evidence/deviations to the task file, verify the rendered task, and set Done only after the gates pass:
 
   ```bash
@@ -419,4 +419,4 @@ The decoder preserves the exact optional SSE `event:` label and joined `data:` t
 
 - This is PR 2 of 3. Open against `dev` only after TASK-15675 is merged.
 - Merge before starting TASK-15677 so DeepSeek consumes the landed neutral Chat boundary rather than duplicating it.
-- PR description links ADR-058, TASK-15675/15676, both approved specs/plans, the Qwen parity evidence, joined tool/cancellation evidence, optional-live status, and exact baseline-only failures.
+- PR description links ADR-063, TASK-15675/15676, both approved specs/plans, the Qwen parity evidence, joined tool/cancellation evidence, optional-live status, and exact baseline-only failures.

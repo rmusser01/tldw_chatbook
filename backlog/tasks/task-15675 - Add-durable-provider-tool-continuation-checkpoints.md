@@ -12,7 +12,7 @@ references:
     Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md
   - >-
     Docs/superpowers/plans/2026-08-12-durable-provider-tool-continuation-implementation.md
-  - backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md
+  - backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md
 priority: high
 ---
 
@@ -44,7 +44,7 @@ The executable TDD plan is
 It is ordered as follows:
 
 1. Define the bounded canonical checkpoint and owner-group contract without vendor wire translation.
-2. Add schema-v36 message ownership and atomic persistence.
+2. Add schema-v37 message ownership and atomic persistence.
 3. Extend Sync v1 and reconcile durable Sync-v2 outbox intent.
 4. Add one typed runtime lifecycle callback before side effects.
 5. Bind checkpoints to Console messages and explicit Resume/Discard UX.
@@ -54,20 +54,20 @@ It is ordered as follows:
 
 ADR required: yes
 
-ADR path: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+ADR path: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
 
 Reason: This task changes durable message storage, sync/export behavior, and the
-provider/runtime side-effect boundary. ADR-058 records the approved contract.
+provider/runtime side-effect boundary. ADR-063 records the approved contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 - Added the bounded canonical continuation record on assistant message owners,
-  schema-v36 persistence and migration, both sync paths plus durable scoped
+  schema-v37 persistence and migration, both sync paths plus durable scoped
   Sync-v2 projection receipts, typed runtime lifecycle barriers, explicit
   Console Resume/Take over/Discard recovery, atomic history budgeting, and
-  versioned `.chatbook`/explicit JSON portability. ADR-058 remains the governing
+  versioned `.chatbook`/explicit JSON portability. ADR-063 remains the governing
   storage, sync, runtime, privacy, and provider-policy boundary; provider wire
   adapters remain follow-up work.
 - Added deterministic joined crash coverage for all seven approved boundaries
@@ -85,12 +85,12 @@ provider/runtime side-effect boundary. ADR-058 records the approved contract.
   Kimi/GLM policies do not receive unrelated prior sidecars. These corrections
   close AC5, AC9, and AC10 without adding provider wire adapters or an open
   metadata bag.
-- Final focused continuation verification: `356 passed, 2 warnings in 41.39s`
-  across 13 named canonical storage/migration, runtime/eviction, Console
-  persistence/recovery/history/privacy/budget, Sync-v2 reconciliation, and
-  `.chatbook` round-trip files. The original Task 8 crash module independently
-  passed `9 passed`; later review-added production crash/sync/policy cases were
-  accepted by the final specification and quality reviews at `0d4ac3f6b`.
+- Post-rebase focused continuation verification: `384 passed, 2 warnings in
+  37.61s` across 13 named canonical storage/migration, runtime/eviction,
+  Console persistence/recovery/history/privacy/budget, Sync-v2 reconciliation,
+  and `.chatbook` round-trip files. The schema-v36 note-folder plus schema-v37
+  continuation migration pair passed `14 passed`; selected joined
+  controller/gateway/bridge/service/store paths passed `14 passed`.
 - Settled touched surfaces: Agents `1386 passed`; Chat effective `4536 passed,
   3 verified baseline failures, 64 skipped`; Chatbooks `243 passed, 1 skipped`;
   Sync Interop `250 passed`; DB retained 37 verified pre-task failures after
@@ -100,13 +100,11 @@ provider/runtime side-effect boundary. ADR-058 records the approved contract.
   broad testing. It has no terminal summary, was not restarted, and is not used
   as passing evidence; the user directed closeout from directly related tests
   only.
-- Static evidence: the Task 8 Python file passes Ruff lint/format and
-  `py_compile`; mypy reports no issues in `provider_continuation.py`,
-  `agent_runtime.py`, and `chat_outbox_producer.py`; working-tree and branch
-  whitespace checks pass. Branch-wide Ruff lint's 31 findings reproduce exactly
-  on `origin/dev`. Ruff format's 17 inherited deviations also reproduce on
-  `origin/dev`; the one branch-added test-file deviation was corrected in
-  `3b2a5ea85`, whose 57 runtime tests passed.
+- Static evidence: the rebase-resolution Python files pass Ruff lint and
+  compileall, the changed migration test passes Ruff format, and diff checks
+  pass. Whole-file Ruff formatting still reports three large legacy production
+  modules; all three deviations reproduce on rebased `origin/dev`, so no
+  formatter-only churn was introduced.
 - Documentation explains private-state exclusions, explicit recovery and
   ambiguity, frozen targets with current credential resolution, local commit
   plus idempotent encrypted Sync-v2 projection, export compatibility, and the

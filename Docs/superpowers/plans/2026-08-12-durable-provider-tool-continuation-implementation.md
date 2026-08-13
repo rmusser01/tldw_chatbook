@@ -13,15 +13,15 @@
 ## Design Sources And ADR Check
 
 - Approved design: `Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md`
-- Canonical decision: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+- Canonical decision: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
 - Backlog source of truth: `backlog/tasks/task-15675 - Add-durable-provider-tool-continuation-checkpoints.md`
-- Related decisions: ADR-006, ADR-012, ADR-020, ADR-026, and ADR-057.
+- Related decisions: ADR-006, ADR-012, ADR-020, ADR-026, and ADR-062.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/058-hosted-provider-wire-and-durable-tool-continuation.md`
+ADR path: `backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
 
-Reason: This changes the durable message schema, sync/export contracts, provider/runtime handoff, and side-effect recovery policy. ADR-058 already records the approved boundary, so no additional ADR is needed.
+Reason: This changes the durable message schema, sync/export contracts, provider/runtime handoff, and side-effect recovery policy. ADR-063 already records the approved boundary, so no additional ADR is needed.
 
 ## Scope Guardrails
 
@@ -45,7 +45,7 @@ Reason: This changes the durable message schema, sync/export contracts, provider
   ```
 
 - [x] Record the rebased SHA and run identical clean-base and feature-branch baselines for the DB, runtime, sync, Console, and Chatbook suites named below. Localhost-bind failures must be rerun outside the managed socket sandbox; do not count a sandbox `PermissionError` as product evidence.
-- [x] Verify TASK-15675 is already In Progress and that its structured Implementation Plan links this document and ADR-058 before production edits:
+- [x] Verify TASK-15675 is already In Progress and that its structured Implementation Plan links this document and ADR-063 before production edits:
 
   ```bash
   backlog task 15675 --plain
@@ -166,7 +166,7 @@ def continuation_owner_group(
 
 **Files:**
 
-- Create: `tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_provider_continuation.sql`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
 - Modify: `tldw_chatbook/Chat/chat_conversation_service.py`
 - Create: `Tests/DB/test_chachanotes_provider_continuation_migration.py`
@@ -213,7 +213,7 @@ def continuation_owner_group(
 - [x] Commit:
 
   ```bash
-  git add tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_provider_continuation.sql tldw_chatbook/DB/ChaChaNotes_DB.py tldw_chatbook/Chat/chat_conversation_service.py Tests/DB/test_chachanotes_provider_continuation_migration.py Tests/ChaChaNotesDB/test_provider_continuation.py Tests/Chat/test_chat_conversation_service.py
+  git add tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql tldw_chatbook/DB/ChaChaNotes_DB.py tldw_chatbook/Chat/chat_conversation_service.py Tests/DB/test_chachanotes_provider_continuation_migration.py Tests/ChaChaNotesDB/test_provider_continuation.py Tests/Chat/test_chat_conversation_service.py
   git commit -m "feat(db): persist provider continuation on messages"
   ```
 
@@ -497,7 +497,7 @@ def continuation_owner_group(
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m compileall -q tldw_chatbook
   ```
 
-- [x] Self-review every TASK-15675 acceptance criterion and ADR-058 invariant. Confirm no provider adapter, API default, vendor built-in tool, legacy Settings surface, or paid test was added in this PR.
+- [x] Self-review every TASK-15675 acceptance criterion and ADR-063 invariant. Confirm no provider adapter, API default, vendor built-in tool, legacy Settings surface, or paid test was added in this PR.
 - [x] Only after all criteria and evidence are complete, check every AC individually, write concise observed Implementation Notes with exact tests/deviations into the task, verify the rendered task, and only then mark Done:
 
   ```bash
@@ -550,5 +550,5 @@ def continuation_owner_group(
 ## PR Boundary And Handoff
 
 - This is PR 1 of 3. Open it against `dev` and merge it before starting TASK-15676.
-- PR description must link ADR-058, TASK-15675, this plan, the approved spec, schema migration evidence, crash matrix, and any baseline-only failures.
+- PR description must link ADR-063, TASK-15675, this plan, the approved spec, schema migration evidence, crash matrix, and any baseline-only failures.
 - After merge, create the TASK-15676 branch from the latest `dev`; do not stack provider implementation on an unmerged schema branch.

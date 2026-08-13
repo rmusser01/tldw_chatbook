@@ -5223,7 +5223,7 @@ class ConsoleChatStore:
 
         The runtime callback is synchronous because it is invoked on the
         controller's existing agent worker thread. Persistent primary runs
-        use the schema-v36 dedicated create/update operations; explicitly
+        use the schema-v37 dedicated create/update operations; explicitly
         ephemeral runs retain no checkpoint and remain non-resumable.
 
         Args:
