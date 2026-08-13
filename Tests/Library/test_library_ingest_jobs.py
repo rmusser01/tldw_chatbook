@@ -13,6 +13,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     ActiveIngestJobRef,
     ActiveIngestSubmissionRefused,
     IngestJobState,
+    LibraryIngestJob,
     LibraryIngestJobRegistry,
     normalize_active_ingest_source,
 )
@@ -116,6 +117,26 @@ def test_find_active_source_matches_deduplicates_candidate_keys(tmp_path):
     )
 
     assert [item.job_id for item in matches] == [job.job_id]
+
+
+def test_find_active_source_matches_deeply_isolates_mutable_job_fields(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    source = str(tmp_path / "a.txt")
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path=source,
+        ingest_options={"pdf": {"engine": "pymupdf"}},
+        error_detail={"diagnostic": {"code": "pending"}},
+    )
+    registry.restore([job], next_id=2)
+
+    match = registry.find_active_source_matches([source], origin="local")[0]
+    match.ingest_options["pdf"]["engine"] = "mutated"
+    match.error_detail["diagnostic"]["code"] = "mutated"
+
+    stored = registry.get_job(job.job_id)
+    assert stored.ingest_options == {"pdf": {"engine": "pymupdf"}}
+    assert stored.error_detail == {"diagnostic": {"code": "pending"}}
 
 
 def test_active_ingest_refusal_exposes_only_bounded_safe_refs():

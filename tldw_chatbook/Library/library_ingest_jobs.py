@@ -369,7 +369,9 @@ def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
 
     return replace(
         job,
+        ingest_options=deepcopy(job.ingest_options),
         progress=deepcopy(job.progress),
+        error_detail=deepcopy(job.error_detail),
         stt_failure_provenance=deepcopy(job.stt_failure_provenance),
         retry_source_failure_provenance=deepcopy(
             job.retry_source_failure_provenance
