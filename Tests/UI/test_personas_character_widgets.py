@@ -2,6 +2,10 @@
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
@@ -60,7 +64,7 @@ LEGACY_EDITOR_KEYS = set(CHARACTER) | {
 }
 
 
-class WidgetApp(App):
+class WidgetApp(ConsolidatedCSSApp):
     def compose(self):
         yield PersonasCharacterCardWidget()
         yield PersonasCharacterEditorWidget()

@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.color import Color
 from textual.containers import Vertical, VerticalScroll
 from textual.widget import Widget
@@ -87,7 +91,7 @@ def test_action_layout_tolerates_rows_not_yet_mounted(
     panel._sync_action_layout(80)
 
 
-class _PanelHarness(App[None]):
+class _PanelHarness(ConsolidatedCSSApp):
     """Mount one panel and record its typed presentation messages."""
 
     def __init__(self, panel: LibraryFileNotesGitPanel) -> None:
@@ -194,7 +198,7 @@ class _PanelWithOutsideControlHarness(_PanelHarness):
         yield self.panel
 
 
-class _DialogHarness(App[None]):
+class _DialogHarness(ConsolidatedCSSApp):
     """Open a Session Git trust dialog at mount."""
 
     def __init__(self, dialog: SessionGitTrustDialog) -> None:
@@ -209,7 +213,7 @@ class _DialogHarness(App[None]):
         self.result = result
 
 
-class _WorkspaceHarness(App[None]):
+class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one real File Notes workspace."""
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
@@ -220,7 +224,7 @@ class _WorkspaceHarness(App[None]):
         yield self.workspace
 
 
-class _RemountWorkspaceHarness(App[None]):
+class _RemountWorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace beneath a removable host."""
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:

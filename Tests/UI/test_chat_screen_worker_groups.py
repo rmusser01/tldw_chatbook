@@ -1,5 +1,9 @@
 """Worker-group hygiene for ChatScreen (TASK-228).
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 Root cause being guarded against: Textual's ``run_worker(..., exclusive=True)``
 cancels every other worker in the same group, and calls without ``group=`` all
 share the default group. The Console send worker and the UI-sync re-kick both
@@ -203,7 +207,7 @@ class TestTextualExclusiveGroupSemantics:
     def _make_app(results: dict):
         from textual.app import App
 
-        class Probe(App):
+        class Probe(ConsolidatedCSSApp):
             async def long_run(self):
                 try:
                     await asyncio.sleep(3)

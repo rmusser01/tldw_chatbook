@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
@@ -31,7 +35,7 @@ class _SourceService:
         return dict(self._records)
 
 
-class _ViewApp(App[None]):
+class _ViewApp(ConsolidatedCSSApp):
     CSS_PATH = str(_BUNDLED_STYLESHEET)
 
     def __init__(self, service: _SourceService, *, runtime_ready: bool = True) -> None:

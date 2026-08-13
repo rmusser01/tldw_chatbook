@@ -17,6 +17,10 @@ a full pilot-driven screen.
 import pytest
 import pytest_asyncio
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
@@ -796,7 +800,7 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
 # shape and assert the painted region is non-zero.
 
 
-class _AvatarHolderApp(App):
+class _AvatarHolderApp(ConsolidatedCSSApp):
     """Host mirroring the rail's auto/auto avatar holder (task-1661 shape)."""
 
     def __init__(self, screen: ChatScreen, spec: dict | None):

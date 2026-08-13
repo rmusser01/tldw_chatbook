@@ -3,13 +3,17 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import NoteSelectionDialog
 from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
 
 
-class _ScreenHost(App):
+class _ScreenHost(ConsolidatedCSSApp):
     def __init__(self, screen):
         super().__init__()
         self.screen_under_test = screen
@@ -46,7 +50,7 @@ async def test_note_selection_bulk_controls_have_tooltips(monkeypatch):
 async def test_tag_management_bulk_controls_have_tooltips():
     app_instance = SimpleNamespace(media_db=None, notify=Mock())
 
-    class TagWindowApp(App):
+    class TagWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield CollectionsTagWindow(app_instance=app_instance)
 

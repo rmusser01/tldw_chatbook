@@ -1,5 +1,9 @@
 """Mounted Console workspace context rail regressions."""
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from __future__ import annotations
 
 import inspect
@@ -2605,7 +2609,7 @@ async def test_status_label_width_is_thirteen() -> None:
     that actually buys on screen."""
     from textual.app import App
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield ConsoleWorkspaceStatusPair(
                 "Workspace", "demo", label_id="l", value_id="v"
@@ -2743,7 +2747,7 @@ async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
     from textual.app import App
     from textual.widgets import Static
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield ConsoleWorkspaceStatusPair(
                 "Workspace", "Default", label_id="l", value_id="v"
@@ -2764,7 +2768,7 @@ async def test_status_pair_value_tooltip_escapes_markup() -> None:
     from textual.app import App
     from textual.widgets import Static
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield ConsoleWorkspaceStatusPair(
                 "Workspace", "[b]danger[/b]", label_id="l", value_id="v"

@@ -9,6 +9,10 @@ import weakref
 
 import pytest
 from textual import events
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
@@ -65,7 +69,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 from tldw_chatbook.config import API_MODELS_BY_PROVIDER, DEFAULT_CONFIG_FROM_TOML
 
 
-class SummaryHarness(App[None]):
+class SummaryHarness(ConsolidatedCSSApp):
     CSS = """
     Screen {
         layout: vertical;
@@ -97,7 +101,7 @@ def test_console_settings_screen_region_falls_back_to_mounted_region() -> None:
     assert _settings_screen_region(widget) == mounted_region
 
 
-class ModalHarness(App[None]):
+class ModalHarness(ConsolidatedCSSApp):
     CSS = """
     Screen {
         layout: vertical;

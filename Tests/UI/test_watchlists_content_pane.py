@@ -1,5 +1,9 @@
 import pytest
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 pytestmark = pytest.mark.unit
 
 
@@ -118,7 +122,7 @@ async def test_content_pane_shows_placeholder_with_no_item():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             yield ContentPane()
 
@@ -1597,7 +1601,7 @@ async def test_the_mark_unread_button_is_compact():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {"title": "x", "content": "y", "content_kind": "article"}
@@ -1628,7 +1632,7 @@ async def test_the_expand_button_posts_the_request():
         ExpandReaderRequested,
     )
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.captured: list[str] = []
@@ -1674,7 +1678,7 @@ async def test_the_expand_button_label_reflects_expanded_when_seeded():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {"title": "x", "content": "y", "content_kind": "article"}
@@ -2154,7 +2158,7 @@ async def test_a_change_item_gets_both_snapshot_affordance_buttons():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {
@@ -2187,7 +2191,7 @@ async def test_an_article_item_gets_neither_snapshot_affordance_button():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {
@@ -2232,7 +2236,7 @@ async def test_pressing_full_page_posts_view_snapshot_requested_with_full_page()
         "url": "https://anthropic.com/news",
     }
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = item
@@ -2273,7 +2277,7 @@ async def test_pressing_previous_snapshot_posts_view_snapshot_requested_with_pre
         "url": "https://anthropic.com/news",
     }
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = item
@@ -2703,7 +2707,7 @@ async def test_the_star_button_reflects_the_open_items_state():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {
@@ -2734,7 +2738,7 @@ async def test_the_star_button_posts_the_toggle_without_an_optimistic_flip():
         StarToggleRequested,
     )
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.captured: list[dict] = []
@@ -2783,7 +2787,7 @@ def _action_row_app(item: dict):
         ToggleBriefingQueueRequested,
     )
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.opened: list[dict] = []
@@ -2881,7 +2885,7 @@ async def test_the_position_footer_renders_and_updates_in_place():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             pane = ContentPane()
             pane.item = {"title": "x", "content": "y", "content_kind": "article"}
@@ -2912,7 +2916,7 @@ async def test_the_next_unread_footer_button_posts_the_panes_message():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
     from tldw_chatbook.UI.Watchlists_Modules.items_pane import NextUnreadRequested
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.captured: list[NextUnreadRequested] = []
@@ -2940,7 +2944,7 @@ async def test_the_empty_reader_has_no_position_footer():
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
-    class _PaneHost(App):
+    class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
             yield ContentPane()
 

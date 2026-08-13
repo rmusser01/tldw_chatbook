@@ -7,6 +7,10 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
@@ -65,7 +69,7 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class StagedContextHarness(App):
+class StagedContextHarness(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleStagedContextState) -> None:
         super().__init__()
         self.state = state

@@ -27,6 +27,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_shell_state import (
@@ -85,7 +89,7 @@ def _select_mode_zero_selected_state() -> LibraryMediaCanvasState:
     )
 
 
-class _EmptyMediaCanvasApp(App):
+class _EmptyMediaCanvasApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_select_mode_zero_selected_state(), id="library-media-canvas"
@@ -133,7 +137,7 @@ def _select_mode_state(selected_count: int) -> LibraryMediaCanvasState:
     )
 
 
-class _SelectModeApp(App):
+class _SelectModeApp(ConsolidatedCSSApp):
     def __init__(self, selected_count: int):
         super().__init__()
         self._selected_count = selected_count
@@ -165,7 +169,7 @@ async def test_select_mode_bulk_buttons_carry_marker_at_zero_selection():
         assert not str(delete_btn.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
 
 
-class _ExportCanvasApp(App):
+class _ExportCanvasApp(ConsolidatedCSSApp):
     def __init__(self, state: LibraryExportFormState):
         super().__init__()
         self._state = state
@@ -239,7 +243,7 @@ def _collections_state(*, create_enabled: bool) -> LibraryCollectionsPanelState:
     )
 
 
-class _CollectionsPanelApp(App):
+class _CollectionsPanelApp(ConsolidatedCSSApp):
     def __init__(self, state: LibraryCollectionsPanelState):
         super().__init__()
         self._state = state
@@ -938,7 +942,7 @@ async def test_media_canvas_rows_do_not_inherit_the_rail_title_budget():
         count=1,
     )
 
-    class _App(App):
+    class _App(ConsolidatedCSSApp):
         def compose(self):
             yield LibraryMediaCanvas(canvas=state, id="library-media-canvas")
 
@@ -1199,7 +1203,7 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
         selected_count=0,
     )
 
-    class _NotesSelectApp(App):
+    class _NotesSelectApp(ConsolidatedCSSApp):
         def compose(self):
             yield LibraryNotesCanvas(list_state=state, id="library-notes-canvas")
 

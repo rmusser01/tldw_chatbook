@@ -25,6 +25,10 @@ import json
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Select, Switch, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -55,7 +59,7 @@ pytestmark = pytest.mark.asyncio
 # ===================================================================
 
 
-class _CharHost(App):
+class _CharHost(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.dirty = 0
@@ -67,7 +71,7 @@ class _CharHost(App):
         self.dirty += 1
 
 
-class _PersonaHost(App):
+class _PersonaHost(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.dirty = 0

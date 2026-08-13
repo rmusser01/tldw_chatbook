@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 import asyncio
 import threading
 import time
@@ -386,7 +390,7 @@ async def test_skill_install_card_allow_and_deny():
         SkillInstallConfirmCard,
     )
 
-    class _Host(App[None]):
+    class _Host(ConsolidatedCSSApp):
         def __init__(self):
             super().__init__()
             self.decided = []

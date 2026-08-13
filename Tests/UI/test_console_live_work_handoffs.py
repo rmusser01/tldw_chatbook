@@ -10,6 +10,10 @@ from unittest.mock import Mock
 import pytest
 from textual.css.query import NoMatches
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
@@ -123,7 +127,7 @@ def _load_console_live_work_source_readiness_state():
     return ConsoleLiveWorkSourceReadinessState
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance

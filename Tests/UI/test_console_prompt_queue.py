@@ -6,6 +6,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 from textual.widgets import TextArea
 
@@ -152,7 +156,7 @@ def test_paused_shelf_exposes_state_specific_primary_action(
     assert presentation.primary_action == action
 
 
-class _RegionApp(App[None]):
+class _RegionApp(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsolePromptQueueRegion(id="queue")
 

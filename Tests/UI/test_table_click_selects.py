@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import DataTable
 
 pytestmark = pytest.mark.unit
 
 
-class _Harness(App):
+class _Harness(ConsolidatedCSSApp):
     """Mount one pane and capture every message it posts."""
 
     def __init__(self, pane) -> None:

@@ -16,6 +16,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import (
     Button,
@@ -55,7 +59,7 @@ from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
 )
 
 
-class _CanvasHost(App):
+class _CanvasHost(ConsolidatedCSSApp):
     def __init__(
         self,
         state: LibraryIngestCanvasState,
@@ -78,7 +82,7 @@ class _CanvasHost(App):
         yield LibraryIngestCanvas(self._state, **kwargs)
 
 
-class _QueuePanelHost(App):
+class _QueuePanelHost(ConsolidatedCSSApp):
     """Mount only the real queue panel with the shipped app stylesheet."""
 
     CSS_PATH = str(
@@ -99,7 +103,7 @@ class _QueuePanelHost(App):
         )
 
 
-class _MessageRecordingHost(App):
+class _MessageRecordingHost(ConsolidatedCSSApp):
     """Host that records ``OptionValueChanged`` and ``OptionPanelToggled``."""
 
     def __init__(self, state: LibraryIngestCanvasState) -> None:

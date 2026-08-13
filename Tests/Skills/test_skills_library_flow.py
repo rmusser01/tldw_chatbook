@@ -1,4 +1,8 @@
 """Real-service end-to-end tests for the Library Skills detail/trust editor
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 (Task 4 of the Skills sub-project).
 
 Mirrors ``Tests/UI/test_library_prompts_canvas.py``'s real-service section:
@@ -693,7 +697,7 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
     from textual.app import App
     from tldw_chatbook.UI.Screens.skills_screen import SkillTrustBootstrapModal
 
-    class _ModalHost(App):
+    class _ModalHost(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.result: str | None = "unset"

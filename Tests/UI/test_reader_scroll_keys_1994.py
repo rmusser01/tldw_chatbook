@@ -7,6 +7,10 @@ ReaderVerticalScroll; the Console transcript keeps its selection j/k
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -15,7 +19,7 @@ from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 from tldw_chatbook.Widgets.reader_scroll import ReaderVerticalScroll
 
 
-class ScrollHarness(App):
+class ScrollHarness(ConsolidatedCSSApp):
     CSS = "ReaderVerticalScroll { height: 10; }"
 
     def compose(self) -> ComposeResult:
@@ -56,7 +60,7 @@ async def test_reader_keys_scroll_line_and_page():
 
 @pytest.mark.asyncio
 async def test_named_panes_use_reader_scroll():
-    class SurfacesHarness(App):
+    class SurfacesHarness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ModelCardViewer(id="viewer")
 

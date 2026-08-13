@@ -18,6 +18,10 @@ from unittest.mock import patch
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -220,7 +224,7 @@ class _MinimalScreen(BaseAppScreen):
         yield Static("minimal screen content")
 
 
-class _MinimalScreenHost(App):
+class _MinimalScreenHost(ConsolidatedCSSApp):
     """Hosts a bare BaseAppScreen subclass with no App-level footer of its
     own, so the only AppFooterStatus in the tree is the one the screen
     itself composes."""
@@ -244,7 +248,7 @@ async def test_base_app_screen_composes_footer_status():
         assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
 
-class _DefaultScreenFooterHost(App):
+class _DefaultScreenFooterHost(ConsolidatedCSSApp):
     """Mirrors app.py's real shape: an `AppFooterStatus` composed directly
     on the App's own DEFAULT screen (id="app-footer-status", exactly like
     `TldwCli._create_main_ui_widgets`), with a real destination screen

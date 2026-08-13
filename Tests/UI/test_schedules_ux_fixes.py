@@ -10,6 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Static
 
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import _conflict_type_label
@@ -77,7 +81,7 @@ def test_conflict_type_labels_are_plain_language() -> None:
     )
 
 
-class _SyncBarHarness(App[None]):
+class _SyncBarHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield SyncStatusWidget(
             current_owner="local",
@@ -99,7 +103,7 @@ async def test_sync_bar_labels_and_tooltips() -> None:
         assert clear.tooltip
 
 
-class _FormHarness(App[None]):
+class _FormHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("harness")
 

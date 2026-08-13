@@ -6,6 +6,10 @@ HF README display and the Library note preview.
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Markdown
 
 import tldw_chatbook.Utils.markdown_parsing as markdown_parsing
@@ -35,7 +39,7 @@ def test_factory_degrades_to_none_without_dependency(monkeypatch):
     assert front_matter_parser_factory() is None
 
 
-class ViewerHarness(App):
+class ViewerHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ModelCardViewer(id="viewer")
 

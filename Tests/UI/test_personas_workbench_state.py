@@ -31,6 +31,10 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -87,7 +91,7 @@ def stub_characters(monkeypatch):
     )
 
 
-class _RestoringPersonasTestApp(App):
+class _RestoringPersonasTestApp(ConsolidatedCSSApp):
     """Harness that seeds ``restore_state`` before the screen ever mounts.
 
     Mirrors ``tldw_chatbook/app.py``'s navigation handler, which constructs

@@ -1,5 +1,9 @@
 """TASK-1971: B/E turn snapshots around agent runs + change_snapshots schema.
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 Tracker and bridge tests run against REAL git (no mocks — TASK-1970's rule).
 The bridge tests drive the real run loop with a scripted gateway whose
 streaming callback writes files mid-turn: that is literally the run-window
@@ -681,7 +685,7 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     assert outcome.status not in ("error",), outcome.steps
     assert db.change_snapshots_for_run(run_id), "precondition: the run recorded rows"
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance
@@ -771,7 +775,7 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
     )
     assert marker.change_review_run_id == run_id
 
-    class _ConsoleHarness(App):
+    class _ConsoleHarness(ConsolidatedCSSApp):
         def __init__(self, app_instance):
             super().__init__()
             self.app_instance = app_instance
