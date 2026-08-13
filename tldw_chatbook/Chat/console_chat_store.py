@@ -688,6 +688,53 @@ class ConsoleChatStore:
         # stopped terminal must advance the context epoch when the row becomes
         # provider-visible history. A repeat failure stays excluded and stable.
         self._failed_retry_message_ids: set[str] = set()
+        # Process-local observers for the first LIVE transition of a message
+        # into the complete state. Restored/already-complete rows never pass
+        # through the publisher, so hydration cannot replay speech.
+        self._message_completed_subscribers: dict[
+            int, Callable[[tuple[str, str]], None]
+        ] = {}
+        self._next_message_completed_subscriber_id = 1
+        self._message_completion_emitted_ids: set[str] = set()
+
+    def subscribe_message_completed(
+        self,
+        callback: Callable[[tuple[str, str]], None],
+    ) -> Callable[[], None]:
+        """Observe first live completion tokens until the returned unsubscribe.
+
+        The callback receives only an immutable ``(session_id, message_id)``
+        token. Subscriber failures are isolated from message finalization.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        subscriber_id = self._next_message_completed_subscriber_id
+        self._next_message_completed_subscriber_id += 1
+        self._message_completed_subscribers[subscriber_id] = callback
+        subscribed = True
+
+        def unsubscribe() -> None:
+            nonlocal subscribed
+            if not subscribed:
+                return
+            subscribed = False
+            self._message_completed_subscribers.pop(subscriber_id, None)
+
+        return unsubscribe
+
+    def _publish_message_completed(self, session_id: str, message_id: str) -> None:
+        """Publish one deduplicated live completion without message content."""
+        if message_id in self._message_completion_emitted_ids:
+            return
+        if self._message_session_index.get(message_id) != session_id:
+            return
+        self._message_completion_emitted_ids.add(message_id)
+        token = (session_id, message_id)
+        for callback in tuple(self._message_completed_subscribers.values()):
+            try:
+                callback(token)
+            except Exception:
+                logger.warning("Console completion subscriber failed")
 
     def ensure_session(
         self,
@@ -1380,6 +1427,7 @@ class ConsoleChatStore:
             self._message_speech_revisions.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
+            self._message_completion_emitted_ids.discard(message_id)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -4086,6 +4134,7 @@ class ConsoleChatStore:
             self._persist_existing_message(
                 message, preserve_provider_continuation=True
             )
+            self._publish_message_completed(session_id, message.id)
             return self._snapshot(message)
 
         try:
@@ -4097,6 +4146,7 @@ class ConsoleChatStore:
                 self._persist_existing_message(
                     message, preserve_provider_continuation=True
                 )
+                self._publish_message_completed(session_id, message.id)
                 return self._snapshot(message)
 
             citation_write = None
@@ -4120,6 +4170,7 @@ class ConsoleChatStore:
             except Exception:
                 self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
+            self._publish_message_completed(session_id, message.id)
             return self._snapshot(message)
         finally:
             self.clear_terminal_citation_state(message.id)
@@ -4321,7 +4372,10 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
+        self._publish_message_completed(session_id, message.id)
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:

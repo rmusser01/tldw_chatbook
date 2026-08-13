@@ -32,6 +32,7 @@ path the legacy play button drives today), not new logic introduced here.
 from __future__ import annotations
 
 import asyncio
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -46,7 +47,9 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSMessageSpeechRequestEvent,
     TTSPlaybackEvent,
     TTSProgressEvent,
+    TTSEventHandler,
 )
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 
@@ -178,6 +181,114 @@ async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
     assert isinstance(completion, TTSCompleteEvent)
     assert completion.message_id == message.id
     assert completion.error == "TTS service not available"
+
+
+@pytest.mark.asyncio
+async def test_trusted_snapshot_rejection_reports_auto_speak_failure_once() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="PRIVATE_RESPONSE_TEXT",
+    )
+    snapshot = store.issue_tts_message_speech_snapshot(message.id)
+    store.update_message_content(message.id, "changed")
+    outcomes: list[bool] = []
+    event = TTSMessageSpeechRequestEvent(
+        snapshot,
+        store.validate_tts_message_speech_snapshot,
+        outcome_callback=outcomes.append,
+    )
+    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler.app = _FakeApp()
+
+    await handler.handle_tts_request(event)
+
+    assert outcomes == [False]
+    assert "PRIVATE_RESPONSE_TEXT" not in repr(handler.app.loguru_logger.method_calls)
+
+
+@pytest.mark.asyncio
+async def test_auto_speak_outcome_callback_reaches_admitted_generation() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+    outcomes: list[bool] = []
+    event = TTSMessageSpeechRequestEvent(
+        store.issue_tts_message_speech_snapshot(message.id),
+        store.validate_tts_message_speech_snapshot,
+        outcome_callback=outcomes.append,
+    )
+    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler._validate_message_speech_snapshot = AsyncMock(return_value="Ready.")
+    handler._prepare_tts_text = AsyncMock(return_value="Ready.")
+    handler._resolve_message_speech_request = AsyncMock(return_value=object())
+    handler._admit_tts_generation = AsyncMock()
+
+    await handler.handle_tts_request(event)
+
+    callback = handler._admit_tts_generation.await_args.kwargs["outcome_callback"]
+    callback(True)
+    callback(False)
+    assert outcomes == [True]
+
+
+def test_auto_speak_outcome_callback_must_be_callable() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+
+    with pytest.raises(ValueError, match="outcome_callback"):
+        TTSMessageSpeechRequestEvent(
+            store.issue_tts_message_speech_snapshot(message.id),
+            store.validate_tts_message_speech_snapshot,
+            outcome_callback=False,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_effective_openai_destination_is_versioned_and_sanitized() -> None:
+    app_tts = {
+        "default_provider": "openai",
+        "default_model_mode": "exact",
+        "default_model": "pocket-tts",
+        "default_voice_mode": "exact",
+        "default_voice": "alba",
+        "default_format": "wav",
+        "default_speed": 1.0,
+        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+        "OPENAI_AUTH_MODE": "none",
+    }
+    service = build_default_tts_service(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {"app_tts": app_tts},
+            "APP_TTS_CONFIG": app_tts,
+        }
+    )
+    handler = TTSEventHandler()
+    handler._tts_service = service
+
+    try:
+        destination = await handler.resolve_console_speech_destination(None, None)
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+    assert destination is not None
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", destination.fingerprint)
+    assert destination.provider_label == "OpenAI"
+    assert destination.sanitized_destination == "http://127.0.0.1:8765"
+    assert destination.charges_may_apply is False
+    assert "speech" not in repr(destination)
 
 
 @pytest.mark.asyncio

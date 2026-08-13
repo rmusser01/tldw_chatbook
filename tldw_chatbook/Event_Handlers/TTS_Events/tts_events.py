@@ -6,7 +6,7 @@ import asyncio
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from functools import partial
 from typing import Dict, Optional, TypeVar
 from pathlib import Path
@@ -56,8 +56,15 @@ from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
+    TTSEffectiveSettingsResolver,
     TTSSelectionOverrides,
 )
+from tldw_chatbook.TTS.openai_compatible_config import (
+    is_loopback_openai_compatible_endpoint,
+    normalize_openai_compatible_endpoint,
+    openai_destination_fingerprint,
+)
+from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
 
 _T = TypeVar("_T")
@@ -119,6 +126,26 @@ class _TTSArtifactIOTimeout(RuntimeError):
     """Raised when bounded artifact I/O continues in a retained worker."""
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleTTSDestination:
+    """Text-free effective destination used for per-conversation consent."""
+
+    fingerprint: str
+    provider_label: str
+    sanitized_destination: str
+    charges_may_apply: bool
+
+    def __post_init__(self) -> None:
+        if type(self.fingerprint) is not str:
+            raise ValueError("fingerprint must be a string")
+        if type(self.provider_label) is not str or not self.provider_label:
+            raise ValueError("provider_label must be a non-empty string")
+        if type(self.sanitized_destination) is not str:
+            raise ValueError("sanitized_destination must be a string")
+        if type(self.charges_may_apply) is not bool:
+            raise ValueError("charges_may_apply must be a boolean")
+
+
 #######################################################################################################################
 #
 # TTS Event Messages
@@ -143,19 +170,39 @@ class TTSMessageSpeechRequestEvent(Message):
         self,
         snapshot: TTSMessageSpeechSnapshot,
         validator: Callable[[TTSMessageSpeechSnapshot], str],
+        outcome_callback: Callable[[bool], None] | None = None,
     ) -> None:
         super().__init__()
         if type(snapshot) is not TTSMessageSpeechSnapshot:
             raise ValueError("snapshot must be TTSMessageSpeechSnapshot")
         if not callable(validator):
             raise ValueError("validator must be callable")
+        if outcome_callback is not None and not callable(outcome_callback):
+            raise ValueError("outcome_callback must be callable or None")
         self.snapshot = snapshot
         self.validator = validator
+        self._outcome_callback = outcome_callback
+        self._outcome_reported = False
 
     @property
     def message_id(self) -> str:
         """Expose the native message id without duplicating caller text."""
         return self.snapshot.message_id
+
+    def report_outcome(self, succeeded: bool) -> None:
+        """Report one bounded terminal result without exposing request data."""
+        if self._outcome_reported or self._outcome_callback is None:
+            return
+        self._outcome_reported = True
+        try:
+            self._outcome_callback(succeeded is True)
+        except Exception:
+            logger.warning("Console speech outcome callback failed")
+
+    @property
+    def has_outcome_callback(self) -> bool:
+        """Return whether this request needs an automatic-speech result."""
+        return self._outcome_callback is not None
 
 
 class TTSStreamingEvent(Message):
@@ -524,6 +571,7 @@ class TTSEventHandler:
                 event.validator,
             )
             if request_text is None:
+                event.report_outcome(False)
                 return
             request_message_id: str | None = event.message_id
             request_voice: str | None = None
@@ -546,6 +594,8 @@ class TTSEventHandler:
             effective_message_id,
         )
         if text is None:
+            if isinstance(event, TTSMessageSpeechRequestEvent):
+                event.report_outcome(False)
             return
 
         resolution: CharacterTTSRequestResolution | None = None
@@ -574,6 +624,7 @@ class TTSEventHandler:
                         global_override_token=token,
                     )
                 )
+                event.report_outcome(False)
                 return
 
         await self._admit_tts_generation(
@@ -581,6 +632,12 @@ class TTSEventHandler:
             message_id=effective_message_id,
             voice=request_voice,
             resolution=resolution,
+            outcome_callback=(
+                event.report_outcome
+                if isinstance(event, TTSMessageSpeechRequestEvent)
+                and event.has_outcome_callback
+                else None
+            ),
         )
 
     async def speak_utterance(
@@ -854,6 +911,20 @@ class TTSEventHandler:
         assignment) is the app-wide default profile even consulted, and
         only when one is actually configured.
         """
+        return await self._resolve_speech_request_identity(
+            text=text,
+            assistant_kind=snapshot.assistant_kind,
+            character_ref=snapshot.character_ref,
+        )
+
+    async def _resolve_speech_request_identity(
+        self,
+        *,
+        text: str,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+    ) -> CharacterTTSRequestResolution:
+        """Resolve character/default/global authority without retaining text."""
         profile_service: object | None = None
         profile_service_loaded = False
 
@@ -874,14 +945,14 @@ class TTSEventHandler:
                 profile_service_loaded = True
             return profile_service
 
-        if snapshot.assistant_kind == "character":
+        if assistant_kind == "character":
             await ensure_profile_service()
 
         resolver = CharacterTTSRequestResolver(profile_service)
         resolution = await resolver.resolve(
             text=text,
-            assistant_kind=snapshot.assistant_kind,
-            character_ref=snapshot.character_ref,
+            assistant_kind=assistant_kind,
+            character_ref=character_ref,
         )
         if resolution.source != "global":
             return resolution
@@ -896,6 +967,116 @@ class TTSEventHandler:
             default_profile_id=default_profile_id,
             profile_service=default_profile_service,
         )
+
+    async def resolve_console_speech_destination(
+        self,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+    ) -> ConsoleTTSDestination | None:
+        """Resolve the effective TTS authority without using message text."""
+        service = self._tts_service
+        if service is None:
+            return None
+        resolution = await self._resolve_speech_request_identity(
+            text="destination-resolution",
+            assistant_kind=assistant_kind,
+            character_ref=character_ref,
+        )
+        character_profile = None
+        default_profile = None
+        if resolution.source in {"assigned", "default_profile"}:
+            request = resolution.request
+            if (
+                request is None
+                or resolution.repository_generation is None
+                or resolution.profile_id is None
+                or resolution.profile_revision is None
+            ):
+                return None
+            selection = TTSSelectionOverrides(
+                provider_id=request.provider_id,
+                model_mode="exact",
+                model_id=request.model_id,
+                voice_mode="server_default" if request.voice is None else "exact",
+                voice_id=request.voice,
+                response_format=request.response_format,
+                speed=request.speed,
+                provider_options=request.options,
+            )
+            if resolution.source == "assigned":
+                character_profile = TTSCharacterProfileSelection(
+                    selection=selection,
+                    repository_generation=resolution.repository_generation,
+                    profile_revision=resolution.profile_revision,
+                    profile_id=resolution.profile_id,
+                    reference=resolution.reference,
+                )
+            else:
+                default_profile = TTSDefaultProfileSelection(
+                    selection=selection,
+                    repository_generation=resolution.repository_generation,
+                    profile_revision=resolution.profile_revision,
+                    profile_id=resolution.profile_id,
+                    reference=resolution.reference,
+                )
+
+        effective = await TTSEffectiveSettingsResolver().resolve_non_studio(
+            global_preferences=service.preferences_snapshot(),
+            global_preferences_revision=service.preferences_generation(),
+            provider_revision_reader=service.configuration_revision,
+            catalog_reader=service.get_catalog,
+            character_profile=character_profile,
+            default_profile=default_profile,
+        )
+        provider_id = effective.provider_id
+        provider_label = next(
+            (
+                descriptor.display_name
+                for descriptor in service.provider_descriptors()
+                if descriptor.provider_id == provider_id
+            ),
+            provider_id,
+        )
+        raw_endpoint = await self._effective_provider_endpoint(service, provider_id)
+        endpoint = normalize_openai_compatible_endpoint(raw_endpoint)
+        return ConsoleTTSDestination(
+            fingerprint=(
+                "sha256:"
+                f"{openai_destination_fingerprint(provider_id, endpoint)}"
+            ),
+            provider_label=provider_label,
+            sanitized_destination=endpoint.origin,
+            charges_may_apply=(
+                provider_id in {"openai", "elevenlabs"}
+                and not is_loopback_openai_compatible_endpoint(endpoint)
+            ),
+        )
+
+    @staticmethod
+    async def _effective_provider_endpoint(service, provider_id: str) -> str:
+        if provider_id == "audio_cpp":
+            observation = await service.audio_cpp_runtime_observation()
+            return observation.active_endpoint or "http://localhost"
+        if provider_id == "elevenlabs":
+            return "https://api.elevenlabs.io"
+        if provider_id != "openai":
+            return "http://localhost"
+
+        configuration = await service.registry.provider_configuration_snapshot(
+            provider_id
+        )
+        applied = configuration.applied_config
+        app_config = applied.get("app_config") if isinstance(applied, Mapping) else None
+        app_tts = (
+            app_config.get("app_tts")
+            if isinstance(app_config, Mapping)
+            else None
+        )
+        if isinstance(app_tts, Mapping):
+            raw_endpoint = app_tts.get("OPENAI_BASE_URL")
+            if isinstance(raw_endpoint, str) and raw_endpoint:
+                return raw_endpoint
+        return "https://api.openai.com/v1/audio/speech"
 
     def _read_default_profile_id(self) -> str | None:
         """Return the non-blank configured default profile id, or None.
@@ -999,6 +1180,7 @@ class TTSEventHandler:
         message_id: str,
         voice: str | None,
         resolution: CharacterTTSRequestResolution | None,
+        outcome_callback: Callable[[bool], None] | None = None,
     ) -> None:
         """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
@@ -1024,19 +1206,29 @@ class TTSEventHandler:
                         ),
                     )
                 )
+                if outcome_callback is not None:
+                    outcome_callback(False)
                 return
 
         self._request_cooldown[message_id] = current_time
         self._enforce_cooldown_limit()
 
-        task = asyncio.create_task(
-            self._generate_tts_with_rate_limit(
+        if outcome_callback is None:
+            generation = self._generate_tts_with_rate_limit(
                 text,
                 message_id,
                 voice,
                 resolution,
             )
-        )
+        else:
+            generation = self._generate_tts_with_rate_limit(
+                text,
+                message_id,
+                voice,
+                resolution,
+                outcome_callback=outcome_callback,
+            )
+        task = asyncio.create_task(generation)
         asyncio.create_task(self._add_active_task(task))
 
     async def _generate_tts_with_rate_limit(
@@ -1045,12 +1237,20 @@ class TTSEventHandler:
         message_id: Optional[str],
         voice: Optional[str],
         resolution: CharacterTTSRequestResolution | None = None,
+        *,
+        outcome_callback: Callable[[bool], None] | None = None,
     ) -> None:
         """Generate TTS audio (rate limiting handled by TTSService)"""
         try:
-            await self._generate_tts(text, message_id, voice, resolution)
+            await self._generate_tts(
+                text,
+                message_id,
+                voice,
+                resolution,
+                outcome_callback=outcome_callback,
+            )
         except asyncio.CancelledError:
-            logger.info(f"TTS generation cancelled for message {message_id}")
+            logger.info("TTS generation cancelled")
             raise
 
     async def _generate_tts(
@@ -1061,6 +1261,7 @@ class TTSEventHandler:
         resolution: CharacterTTSRequestResolution | None = None,
         *,
         on_finished: Callable[[bool], None] | None = None,
+        outcome_callback: Callable[[bool], None] | None = None,
         quiet: bool = False,
     ) -> None:
         """Generate one complete resolved TTS response and publish its artifact.
@@ -1095,6 +1296,17 @@ class TTSEventHandler:
         )
         start_time = asyncio.get_event_loop().time()
         outcome_code = "generation_failed"
+        outcome_reported = False
+
+        def report_outcome(ok: bool) -> None:
+            nonlocal outcome_reported
+            if outcome_reported or outcome_callback is None:
+                return
+            outcome_reported = True
+            try:
+                outcome_callback(ok is True)
+            except Exception:
+                logger.warning("Console speech outcome callback failed")
         provider_id: str | None = None
         # Task-4 review N3: the resolved provider speed, when available --
         # folded into the legacy completion poll's timeout estimate
@@ -1553,6 +1765,7 @@ class TTSEventHandler:
                     )
                 )
         finally:
+            report_outcome(outcome_code == "success")
             if provider_id is not None:
                 labels = {
                     "provider_id": provider_id,

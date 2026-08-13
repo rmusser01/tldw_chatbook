@@ -71,6 +71,71 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
+def test_message_completed_subscription_emits_first_live_completion_once():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    unsubscribe = store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+
+    store.append_stream_chunk(message.id, "Welcome back.")
+    completed = store.mark_message_complete(message.id)
+
+    assert observed == [(session.id, completed.id)]
+    assert type(observed[0]) is tuple
+    unsubscribe()
+
+
+def test_message_completed_subscription_ignores_complete_append_and_unsubscribe():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+    unsubscribe = store.subscribe_message_completed(observed.append)
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Existing greeting.",
+    )
+    unsubscribe()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message.id, "New reply.")
+    store.mark_message_complete(message.id)
+
+    assert observed == []
+
+
+def test_message_completed_subscription_isolates_callback_failure_and_duplicates():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    observed: list[tuple[str, str]] = []
+
+    def raising_callback(_token: tuple[str, str]) -> None:
+        raise RuntimeError("subscriber failed")
+
+    store.subscribe_message_completed(raising_callback)
+    store.subscribe_message_completed(observed.append)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message.id, "New reply.")
+
+    store.mark_message_complete(message.id)
+    store._publish_message_completed(session.id, message.id)
+
+    assert observed == [(session.id, message.id)]
+
+
 def test_reply_speech_preference_disqualifies_initial_session_reuse():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()

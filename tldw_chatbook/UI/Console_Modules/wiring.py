@@ -48,15 +48,19 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
+    ConsoleAutoSpeakCoordinator,
+)
+
 from .agent import ConsoleAgentController
 from .dictation import ConsoleDictationController
 from .hands_free import ConsoleHandsFreeController
 from .message import ConsoleMessageController
-from .prompts import ConsolePromptsController
 from .prompt_queue import (
     ConsolePromptQueueUIController,
     commit_queued_draft_transaction,
 )
+from .prompts import ConsolePromptsController
 from .session import ConsoleSessionController
 from .workspace import ConsoleWorkspaceController
 
@@ -541,6 +545,47 @@ def build_console_controllers(
         ),
         save_console_video_copy=(
             lambda message_id: screen._save_console_video_copy(message_id)
+        ),
+    )
+    screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
+        store_accessor=lambda: screen._ensure_console_chat_store(),
+        resolve_destination=(
+            lambda assistant_kind, character_ref: (
+                screen._resolve_console_auto_speak_destination(
+                    assistant_kind,
+                    character_ref,
+                )
+            )
+        ),
+        issue_message_speech=(
+            lambda message_id, outcome_callback: (
+                screen._message.request_console_message_speech(
+                    message_id,
+                    outcome_callback,
+                )
+            )
+        ),
+        open_consent=(
+            lambda modal, callback: screen.push_screen(modal, callback=callback)
+        ),
+        hands_free_active=(
+            lambda: (
+                screen._console_hands_free is not None
+                or screen._console_realtime is not None
+            )
+        ),
+        sync_controls=lambda enabled, paused: screen._sync_console_auto_speak_controls(
+            enabled,
+            paused,
+        ),
+        notify=lambda copy, severity: screen.app_instance.notify(
+            copy,
+            severity=severity,
+        ),
+        schedule=lambda coroutine: screen.run_worker(
+            coroutine,
+            exclusive=False,
+            group="console-auto-speak",
         ),
     )
     #: The prompt cluster -- Prompt Library modal, `/prompt` + `/system`

@@ -457,6 +457,7 @@ from ...UI.Workbench import (
 )
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
+from ...TTS.profile_types import CharacterRef
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
@@ -478,6 +479,10 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+)
+from ...Widgets.Console.console_control_bar import (
+    ConsoleAutoSpeakChanged,
+    ConsoleAutoSpeakResumeRequested,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_context_controls import (
@@ -14680,6 +14685,7 @@ class ChatScreen(BaseAppScreen):
         # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
         # (Task 4's stated ordering hazard: read marks BEFORE activation).
         self._claim_console_fleet_wake_marks()
+        self._console_auto_speak.mount()
 
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
@@ -15027,6 +15033,7 @@ class ChatScreen(BaseAppScreen):
         # raise, and a raised exception must not strand an unpersisted
         # toggle-then-quit.
         await self._flush_sidebar_state_now()
+        self._console_auto_speak.unmount()
         registry = self._h3_image_edit_registry()
         store = self._console_chat_store
         if store is not None:
@@ -20930,6 +20937,49 @@ class ChatScreen(BaseAppScreen):
         self._console_control_bar_sync_scheduled = True
         self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
+    async def _resolve_console_auto_speak_destination(
+        self,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+    ):
+        """Resolve the same effective TTS authority used by synthesis."""
+        ensure_handler = getattr(self.app_instance, "_ensure_tts_handler", None)
+        if not callable(ensure_handler):
+            return None
+        handler = await ensure_handler()
+        resolver = getattr(handler, "resolve_console_speech_destination", None)
+        if not callable(resolver):
+            return None
+        try:
+            return await resolver(assistant_kind, character_ref)
+        except Exception:
+            return None
+
+    def _sync_console_auto_speak_controls(
+        self,
+        enabled: bool,
+        paused: bool,
+    ) -> None:
+        """Push authoritative active-conversation state into the control bar."""
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
+            return
+        control_bar.sync_auto_speak(enabled=enabled, paused=paused)
+
+    @on(ConsoleAutoSpeakChanged)
+    def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
+        event.stop()
+        self._console_auto_speak.request_enabled(event.enabled)
+
+    @on(ConsoleAutoSpeakResumeRequested)
+    def on_console_auto_speak_resume_requested(
+        self,
+        event: ConsoleAutoSpeakResumeRequested,
+    ) -> None:
+        event.stop()
+        self._console_auto_speak.request_resume()
+
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""
         self._console_control_bar_sync_scheduled = False
@@ -20999,6 +21049,7 @@ class ChatScreen(BaseAppScreen):
         # cache TTL counts down with no control-state change at all.
         # `_sync_console_cost_chip` owns its own equality guard.
         self._sync_console_cost_chip()
+        self._console_auto_speak.sync_controls()
 
     def _push_console_control_state_if_changed(
         self,

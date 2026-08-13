@@ -1071,6 +1071,46 @@ class ConsoleMessageController:
             )
         await self._sync_native_console_chat_ui()
 
+    async def request_console_message_speech(
+        self,
+        message_id: str,
+        outcome_callback: Callable[[bool], None] | None = None,
+    ) -> bool:
+        """Dispatch Manual Speak's exact trusted snapshot/event path."""
+        from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSMessageSpeechRequestEvent,
+        )
+
+        store = self._ensure_console_chat_store()
+        try:
+            speech_snapshot = store.issue_tts_message_speech_snapshot(
+                message_id,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+        except ConsoleSpeechSnapshotRejected as error:
+            self.app_instance.notify(str(error), severity="warning")
+            if outcome_callback is not None:
+                outcome_callback(False)
+            return False
+
+        def validate_speech_snapshot(snapshot):
+            return store.validate_tts_message_speech_snapshot(
+                snapshot,
+                presentation_context=self._screen._console_presentation_context(),
+            )
+
+        self.app_instance.post_message(
+            TTSMessageSpeechRequestEvent(
+                speech_snapshot,
+                validate_speech_snapshot,
+                outcome_callback=outcome_callback,
+            )
+        )
+        self._console_speaking_message_id = message_id
+        await self._sync_native_console_chat_ui()
+        return True
+
     async def handle_console_message_action(self, event: Button.Pressed) -> bool:
         """Route a transcript message action through the native action service.
 
@@ -1186,41 +1226,7 @@ class ConsoleMessageController:
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
         if action_id == "speak" and result.status == "completed":
-            from tldw_chatbook.Chat.console_speech import (
-                ConsoleSpeechSnapshotRejected,
-            )
-            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-                TTSMessageSpeechRequestEvent,
-            )
-
-            try:
-                speech_snapshot = store.issue_tts_message_speech_snapshot(
-                    message.id,
-                    presentation_context=self._screen._console_presentation_context(),
-                )
-            except ConsoleSpeechSnapshotRejected as error:
-                self.app_instance.notify(str(error), severity="warning")
-                return True
-
-            def validate_speech_snapshot(snapshot):
-                return store.validate_tts_message_speech_snapshot(
-                    snapshot,
-                    presentation_context=self._screen._console_presentation_context(),
-                )
-
-            self.app_instance.post_message(
-                TTSMessageSpeechRequestEvent(
-                    speech_snapshot,
-                    validate_speech_snapshot,
-                )
-            )
-            # task-559 unit 2: track this message as "speaking" so the
-            # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes
-            # whatever was previously tracked -- the underlying player is a
-            # single-slot global singleton that stops any prior clip before
-            # starting a new one, so the tracked id and reality agree).
-            self._console_speaking_message_id = message.id
-            await self._sync_native_console_chat_ui()
+            await self.request_console_message_speech(message.id)
         if action_id == "speak-stop" and result.status == "completed":
             # Reuses the legacy stop-button's exact plumbing (spec: "do not
             # invent a parallel audio-control path") -- safe to post

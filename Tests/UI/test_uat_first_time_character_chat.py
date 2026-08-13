@@ -119,6 +119,32 @@ UAT_COMPLETE_WAV = (
 )
 
 
+async def test_roleplay_greeting_is_not_a_live_completion_but_new_reply_is() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        assistant_kind="character",
+        character_name="Alba",
+    )
+    completions: list[tuple[str, str]] = []
+    store.subscribe_message_completed(completions.append)
+
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Welcome, traveler.",
+    )
+    reply = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(reply.id, "I can hear you.")
+    store.mark_message_complete(reply.id)
+
+    assert greeting.id not in {message_id for _, message_id in completions}
+    assert completions == [(session.id, reply.id)]
+
+
 class _AvailableAudioCppCapabilities:
     """Stable external-server capability evidence for the portability UAT."""
 
@@ -570,6 +596,20 @@ async def test_first_time_user_character_chat_journey(
 
         await _wait_for(pilot, console_mounted, timeout=30.0)
         chat_screen = app.screen
+
+        from textual.widgets import Switch as _Switch
+        from textual.widgets import Static as _Static
+
+        auto_speak = chat_screen.query_one("#console-auto-speak", _Switch)
+        auto_speak_label = chat_screen.query_one(
+            "#console-auto-speak-label", _Static
+        )
+        assert str(auto_speak_label.renderable) == "Speak replies"
+        assert auto_speak.name == "Speak replies"
+        assert auto_speak.value is False
+        assert auto_speak.disabled is False
+        rendered_frame = app.export_screenshot()
+        assert "Speak&#160;replies" in rendered_frame
 
         # -- 7. Type and send a message (native Console composer) ------------
         from textual.widgets import Input as _Input
