@@ -44,6 +44,9 @@ from tldw_chatbook.Library.library_ingest_state import (
     format_ingest_progress_line,
     library_ingest_retry_label,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 
 
 def _command_short_name(command: str) -> str:
@@ -985,8 +988,7 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
 #: actually overflows -- a mid-sentence clip must never be the only signal.
 INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
 
-
-class LibraryIngestCanvas(VerticalScroll):
+class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

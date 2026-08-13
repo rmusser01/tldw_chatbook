@@ -37,7 +37,12 @@ from ...Library.library_rag_state import (
 from .library_rail import SelectAllOnFocusingClickInput
 
 
-class LibrarySearchRagPanel(VerticalScroll):
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+
+
+class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
     """Display the source scope, query controls, and evidence results."""
 
     def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:

@@ -41,6 +41,9 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
 _EMPTY_PROMPTS_COPY = "No prompts yet."
@@ -62,8 +65,7 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
 
-
-class LibraryPromptsListCanvas(Vertical):
+class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     """Render the Library prompts canvas: the list view, or the prompt editor.
 
     Attributes:

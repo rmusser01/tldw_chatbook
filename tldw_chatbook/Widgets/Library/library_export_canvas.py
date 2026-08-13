@@ -26,6 +26,9 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 
 
 def apply_library_export_submit_gate(
@@ -58,8 +61,7 @@ def apply_library_export_submit_gate(
     # reflects.
     submit_button.tooltip = export_button_tooltip(state)
 
-
-class LibraryExportCanvas(VerticalScroll):
+class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library export canvas: scope summary + chatbook export form.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

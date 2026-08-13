@@ -51,6 +51,9 @@ from tldw_chatbook.Library.library_skills_state import (
     skill_name_shadows_builtin,
     skill_trust_header_line,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
 # task-418: the old copy ("create them in Library ▸ Skills") pointed at
@@ -558,8 +561,7 @@ def skill_supporting_files_text(
             lines.append(f"{file.name} — {file.size} bytes (binary)")
     return "\n".join(lines)
 
-
-class LibrarySkillsListCanvas(VerticalScroll):
+class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``

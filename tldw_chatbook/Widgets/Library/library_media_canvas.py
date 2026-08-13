@@ -24,10 +24,13 @@ from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
+class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library media list with a type filter and preview.
 
     Attributes:
