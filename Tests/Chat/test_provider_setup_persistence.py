@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     ProviderSetupMutation,
     build_provider_setup_mutation,
+    canonical_provider_key,
     persist_provider_setup,
     provider_credential_keys,
     provider_endpoint_key,
@@ -61,6 +62,57 @@ def test_provider_ownership_tables_cover_established_aliases(
     assert provider_credential_keys(provider) == ("api_key", "api_key_env_var")
 
 
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("Anthropic", "anthropic"),
+        ("Aphrodite", "aphrodite"),
+        ("Cohere", "cohere"),
+        ("Custom", "custom"),
+        ("Custom OpenAI", "custom"),
+        ("Custom OpenAI API", "custom"),
+        ("custom-openai", "custom"),
+        ("custom_openai", "custom"),
+        ("custom-openai-api", "custom"),
+        ("custom_openai_api", "custom"),
+        ("Custom 2", "custom_2"),
+        ("Custom-2", "custom_2"),
+        ("Custom OpenAI 2", "custom_2"),
+        ("Custom OpenAI API 2", "custom_2"),
+        ("Custom OpenAI API-2", "custom_2"),
+        ("custom-2", "custom_2"),
+        ("custom-openai-2", "custom_2"),
+        ("custom_openai_2", "custom_2"),
+        ("custom-openai-api-2", "custom_2"),
+        ("custom_openai_api_2", "custom_2"),
+        ("DeepSeek", "deepseek"),
+        ("Google", "google"),
+        ("Groq", "groq"),
+        ("HuggingFace", "huggingface"),
+        ("Hugging Face", "huggingface"),
+        ("Llama_cpp", "llama_cpp"),
+        ("llama.cpp", "llama_cpp"),
+        ("local llama.cpp", "local_llamacpp"),
+        ("local-llamacpp", "local_llamacpp"),
+        ("local-llm", "local_llm"),
+        ("mlx_lm", "local_mlx_lm"),
+        ("Mistral", "mistral"),
+        ("MistralAI", "mistralai"),
+        ("Moonshot", "moonshot"),
+        ("Ollama", "ollama"),
+        ("Oobabooga", "oobabooga"),
+        ("OpenAI", "openai"),
+        ("OpenRouter", "openrouter"),
+        ("QwenCloud", "qwencloud"),
+        ("TabbyAPI", "tabbyapi"),
+        ("vLLM", "vllm"),
+        ("ZAI", "zai"),
+    ],
+)
+def test_canonical_provider_key_is_the_public_alias_authority(provider, expected):
+    assert canonical_provider_key(provider) == expected
+
+
 @pytest.mark.parametrize("provider", ["mistral", "mistralai"])
 def test_mistral_provider_entries_keep_distinct_config_owners(provider):
     mutation = build_provider_setup_mutation(
@@ -93,6 +145,8 @@ def test_mistral_provider_entries_keep_distinct_config_owners(provider):
     ["", "unknown", "custom---openai", "open ai", "../openai", "openai\u202e"],
 )
 def test_provider_ownership_tables_reject_unknown_or_malformed_keys(provider):
+    with pytest.raises(ValueError, match="Provider is not supported"):
+        canonical_provider_key(provider)
     with pytest.raises(ValueError, match="Provider is not supported"):
         provider_endpoint_key(provider)
     with pytest.raises(ValueError, match="Provider is not supported"):

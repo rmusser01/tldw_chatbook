@@ -1489,6 +1489,12 @@ class ModelStep(SetupStep):
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._discover_models = discover_models
         self._shown_for_provider: Optional[str] = None
+        self._shown_for_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
+            None
+        )
+        self._selection_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
+            None
+        )
         self.selected_model_id: str = ""
         # Bug-5: tracks whether selected_model_id's current value came from
         # the free-text custom Input (as opposed to the RadioSet) -- lets
@@ -1519,10 +1525,26 @@ class ModelStep(SetupStep):
         data = (self.wizard.wizard_data or {}).get(wizard_state.STEP_PROVIDER, {})
         return str(data.get("provider_key", "")), str(data.get("provider_value", ""))
 
+    def _current_discovery_key(
+        self,
+    ) -> wizard_state.FirstRunModelDiscoveryKey | None:
+        provider_draft = getattr(self.wizard, "staged_provider_draft", None)
+        if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
+            return None
+        try:
+            return wizard_state.build_first_run_model_discovery_key(provider_draft)
+        except ValueError:
+            return None
+
     def on_show(self) -> None:
         super().on_show()
         provider_key, provider_value = self._current_provider()
-        if provider_key != self._shown_for_provider:
+        discovery_key = self._current_discovery_key()
+        exact_key_changed = (
+            discovery_key is not None and discovery_key != self._shown_for_discovery_key
+        )
+        provider_changed = provider_key != self._shown_for_provider
+        if exact_key_changed or (discovery_key is None and provider_changed):
             # UI half of dependency invalidation: the config half (clearing
             # chat_defaults.model) already happened in ProviderStep.commit()
             # via invalidate_model_for_provider_change. This just keeps the
@@ -1535,13 +1557,23 @@ class ModelStep(SetupStep):
             # MATCHING the persisted chat_defaults.provider: same provider ->
             # surface the saved model; changed provider -> blank (the config
             # half of that invalidation already happened in ProviderStep).
-            prefill_model_id = wizard_state.rerun_model_prefill(
-                getattr(self.wizard.app_instance, "app_config", {}) or {},
-                provider_value=provider_value,
+            first_identity = (
+                self._shown_for_provider is None
+                and self._shown_for_discovery_key is None
+            )
+            prefill_model_id = (
+                wizard_state.rerun_model_prefill(
+                    getattr(self.wizard.app_instance, "app_config", {}) or {},
+                    provider_value=provider_value,
+                )
+                if first_identity
+                else ""
             )
             self.selected_model_id = prefill_model_id
             self._model_id_from_custom_input = False
             self._shown_for_provider = provider_key
+            self._shown_for_discovery_key = discovery_key
+            self._selection_discovery_key = discovery_key if prefill_model_id else None
             try:
                 self.query_one("#setup-model-custom", Input).value = prefill_model_id
             except Exception:
@@ -1559,7 +1591,12 @@ class ModelStep(SetupStep):
             pass
         if provider_key:
             self.run_worker(
-                partial(self._load_models, provider_key, provider_value),
+                partial(
+                    self._load_models,
+                    provider_key,
+                    provider_value,
+                    discovery_key,
+                ),
                 exclusive=True,
                 group="setup-model-load",
             )
@@ -1571,12 +1608,22 @@ class ModelStep(SetupStep):
             # that was never actually loading. Replace it with copy that
             # tells the user what to do instead.
             self.run_worker(
-                partial(self._render_models, [], no_provider=True),
+                partial(
+                    self._render_models,
+                    [],
+                    no_provider=True,
+                    discovery_key=discovery_key,
+                ),
                 exclusive=True,
                 group="setup-model-load",
             )
 
-    async def _load_models(self, provider_key: str, provider_value: str) -> None:
+    async def _load_models(
+        self,
+        provider_key: str,
+        provider_value: str,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
+    ) -> None:
         import asyncio
 
         models: list[str] = []
@@ -1631,11 +1678,17 @@ class ModelStep(SetupStep):
             models = wizard_state.curated_models_for_provider(
                 get_cli_providers_and_models(), provider_value
             )
-        await self._render_models(models[:20])
+        await self._render_models(models[:20], discovery_key=discovery_key)
 
     async def _render_models(
-        self, models: list[str], *, no_provider: bool = False
+        self,
+        models: list[str],
+        *,
+        no_provider: bool = False,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
     ) -> None:
+        if discovery_key is not None and discovery_key != self._current_discovery_key():
+            return
         try:
             radio_set = self.query_one("#setup-model-choice", RadioSet)
         except Exception:
@@ -1647,6 +1700,8 @@ class ModelStep(SetupStep):
         # can try to mount fresh "setup-model-option-N" ids while the stale
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
+        if discovery_key is not None and discovery_key != self._current_discovery_key():
+            return
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model
@@ -1656,6 +1711,7 @@ class ModelStep(SetupStep):
                 label = f"{model_id}   (recommended)" if index == 0 else model_id
                 button = SetupRadioButton(label, id=f"setup-model-option-{index}")
                 button._model_id = model_id
+                button._discovery_key = discovery_key
                 return button
 
             await radio_set.mount_all(
@@ -1706,6 +1762,7 @@ class ModelStep(SetupStep):
         if value:
             self.selected_model_id = value
             self._model_id_from_custom_input = True
+            self._selection_discovery_key = self._current_discovery_key()
         elif self._model_id_from_custom_input:
             self._model_id_from_custom_input = False
             pressed = self._live_pressed_radio()
@@ -1715,10 +1772,16 @@ class ModelStep(SetupStep):
                 if pressed is not None
                 else ""
             )
+            self._selection_discovery_key = (
+                self._current_discovery_key() if self.selected_model_id else None
+            )
 
     def set_selected_model(self, model_id: str) -> None:
         self.selected_model_id = model_id
         self._model_id_from_custom_input = False
+        self._selection_discovery_key = (
+            self._current_discovery_key() if model_id else None
+        )
 
     def _live_pressed_radio(self) -> Optional[RadioButton]:
         """F1 fix: read ``#setup-model-choice``'s ``pressed_button``, but only
@@ -1746,6 +1809,11 @@ class ModelStep(SetupStep):
         pressed = radio_set.pressed_button
         if pressed is None or pressed not in radio_set.query(RadioButton):
             return None
+        discovery_key = self._current_discovery_key()
+        if discovery_key is not None and (
+            getattr(pressed, "_discovery_key", None) != discovery_key
+        ):
+            return None
         return pressed
 
     def _effective_model_id(self) -> str:
@@ -1762,7 +1830,10 @@ class ModelStep(SetupStep):
         from a provider switch (see ``_live_pressed_radio``'s docstring)
         cannot resurrect the previous provider's model at commit time.
         """
-        if self.selected_model_id:
+        discovery_key = self._current_discovery_key()
+        if self.selected_model_id and (
+            discovery_key is None or self._selection_discovery_key == discovery_key
+        ):
             return self.selected_model_id
         pressed = self._live_pressed_radio()
         if pressed is None:
@@ -1781,12 +1852,13 @@ class ModelStep(SetupStep):
         ok = await commit_staged(model_id)
         if ok:
             self.selected_model_id = model_id
+            self._selection_discovery_key = self._current_discovery_key()
         return (
             (True, "") if ok else (False, "Saving the provider and model setup failed.")
         )
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"model_id": self.selected_model_id}
+        return {"model_id": self._effective_model_id()}
 
 
 class RagStep(SetupStep):

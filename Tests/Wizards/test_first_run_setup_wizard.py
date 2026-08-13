@@ -18,6 +18,7 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
@@ -393,6 +394,226 @@ async def test_mounted_provider_and_model_advance_checkpoint_then_commit_atomica
             "provider": "custom",
             "model": "mounted-model",
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["endpoint", "credential"])
+async def test_mounted_back_provider_identity_change_cannot_commit_old_model(change):
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {}
+    wizard.app_instance.llm_provider_catalog_scope_service = None
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        atomic_models = []
+
+        async def commit_config(
+            settings,
+            *,
+            delete_keys=None,
+            after_write=None,
+            provider_setup_mutation=None,
+        ):
+            if provider_setup_mutation is not None:
+                atomic_models.append(settings["chat_defaults"]["model"])
+                container._mirror_into_app_config(settings, delete_keys)
+            return True
+
+        container.commit_config = commit_config
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        provider_step.detected_base_url = "https://first.example.test/v1"
+        provider_step._detected_endpoint_provider_key = "custom"
+
+        await container._advance()
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        model_step.query_one("#setup-model-custom", Input).value = "old-model"
+        await pilot.pause()
+        old_key = model_step._shown_for_discovery_key
+        assert old_key is not None
+
+        container.show_step(provider_index)
+        if change == "endpoint":
+            provider_step._credential_revision -= 1
+            provider_step.detected_base_url = "https://second.example.test/v1"
+            provider_step._detected_endpoint_provider_key = "custom"
+        else:
+            provider_step.query_one(
+                "#setup-provider-key-input", Input
+            ).value = "replacement-secret"
+        await container._advance()
+        await pilot.pause()
+
+        assert container.current_step == model_index
+        assert model_step._shown_for_discovery_key != old_key
+        assert model_step.selected_model_id == ""
+        assert model_step.query_one("#setup-model-custom", Input).value == ""
+        await container._advance()
+        assert atomic_models == []
+        assert container.wizard_data[STEP_MODEL] == {"model_id": ""}
+
+        container.show_step(model_index)
+        model_step.query_one("#setup-model-custom", Input).value = "new-model"
+        await pilot.pause()
+        await container._advance()
+        assert atomic_models == ["new-model"]
+
+
+@pytest.mark.asyncio
+async def test_model_step_late_render_is_fenced_by_exact_discovery_key():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+        build_first_run_model_discovery_key,
+    )
+
+    old_draft = FirstRunProviderDraft(
+        "custom",
+        "https://old.example.test/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 1),
+    )
+    new_draft = FirstRunProviderDraft(
+        "custom",
+        "https://new.example.test/v1/chat/completions",
+        ProviderCredentialDraft("draft", "replacement-secret", 2),
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=old_draft,
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        old_key = build_first_run_model_discovery_key(old_draft)
+        wizard.staged_provider_draft = new_draft
+        step.on_show()
+        new_key = build_first_run_model_discovery_key(new_draft)
+        await pilot.pause(0.2)
+
+        await step._render_models(["late-old-model"], discovery_key=old_key)
+        await step._render_models(["current-model"], discovery_key=new_key)
+
+        buttons = list(step.query("#setup-model-choice RadioButton"))
+        assert [getattr(button, "_model_id", "") for button in buttons] == [
+            "current-model"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_model_step_cannot_recover_old_radio_before_new_key_renders():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    old_draft = FirstRunProviderDraft(
+        "custom",
+        "https://old.example.test/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 1),
+    )
+    new_draft = FirstRunProviderDraft(
+        "custom",
+        "https://new.example.test/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 1),
+    )
+    commit = AsyncMock(return_value=True)
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=old_draft,
+        commit_staged_provider_setup=commit,
+        rerun=False,
+    )
+    step = _model_step(
+        wizard, discover_models=AsyncMock(return_value=["old-radio-model"])
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio = step.query_one("#setup-model-choice RadioButton", RadioButton)
+        radio.value = True
+        await pilot.pause()
+        assert step.selected_model_id == "old-radio-model"
+
+        wizard.staged_provider_draft = new_draft
+        step.on_show()
+        ok, error = await step.commit()
+
+        assert ok, error
+        commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mounted_noop_provider_write_does_not_advance_or_checkpoint(monkeypatch):
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {}
+    wizard.app_instance.llm_provider_catalog_scope_service = None
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.provider_setup_persistence."
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: ConfigMutationResult(False, False, None),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        provider_step.detected_base_url = "https://noop.example.test/v1"
+        provider_step._detected_endpoint_provider_key = "custom"
+        await container._advance()
+        draft = container.staged_provider_draft
+        before_model = json.loads(json.dumps(wizard.app_instance.app_config))
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        model_step.query_one("#setup-model-custom", Input).value = "noop-model"
+        await pilot.pause()
+        await container._advance()
+
+        assert container.current_step == model_index
+        assert STEP_MODEL not in container.wizard_data
+        assert wizard.app_instance.app_config == before_model
+        assert container.provider_setup_committed is False
+        assert container.committed_provider_model == ""
+        assert container.staged_provider_draft is draft
 
 
 def _provider_step(

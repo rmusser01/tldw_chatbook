@@ -507,6 +507,7 @@ class TestWizardAtomicProviderHandoff:
     @pytest.mark.parametrize(
         "result",
         [
+            ConfigMutationResult(False, False, None),
             ConfigMutationResult(False, False, "before_replace"),
             ConfigMutationResult(True, False, "cache_reload"),
         ],
@@ -531,7 +532,8 @@ class TestWizardAtomicProviderHandoff:
             "apply_settings_mutation_to_cli_config",
             writer,
         )
-        container.stage_provider_setup(_typed_provider_draft())
+        original = _typed_provider_draft()
+        container.stage_provider_setup(original)
 
         committed = await container.commit_staged_provider_setup("custom-model")
 
@@ -539,7 +541,8 @@ class TestWizardAtomicProviderHandoff:
         assert len(calls) == 1
         assert app_config == before
         assert container.provider_setup_committed is False
-        assert container.staged_provider_draft is not None
+        assert container.committed_provider_model == ""
+        assert container.staged_provider_draft is original
 
     @pytest.mark.asyncio
     async def test_atomic_retry_uses_one_writer_per_attempt_and_no_early_mirror(

@@ -156,7 +156,10 @@ class FirstRunModelDiscoveryKey:
             or not 0 <= self.credential_revision <= _MAX_IDENTITY_COUNTER
         ):
             raise ValueError("Credential revision is invalid.")
-        if self.credential_source not in _CREDENTIAL_SOURCES:
+        if (
+            type(self.credential_source) is not str
+            or self.credential_source not in _CREDENTIAL_SOURCES
+        ):
             raise ValueError("Credential source is invalid.")
         try:
             ProviderDraftIdentity(
@@ -188,12 +191,9 @@ def build_first_run_model_discovery_key(
 
     if type(provider_draft) is not FirstRunProviderDraft:
         raise ValueError("Provider draft is invalid.")
-    resolution = resolve_provider_endpoint(
-        provider_draft.provider, provider_draft.endpoint
-    )
-    identity = canonical_connection_identity(
-        provider_draft.provider, provider_draft.endpoint
-    )
+    provider_key = _first_run_provider_owner_key(provider_draft.provider)
+    resolution = resolve_provider_endpoint(provider_key, provider_draft.endpoint)
+    identity = canonical_connection_identity(provider_key, provider_draft.endpoint)
     if resolution.errors or identity is None:
         raise ValueError("Provider endpoint is invalid.")
     return FirstRunModelDiscoveryKey(
@@ -207,14 +207,9 @@ def build_first_run_model_discovery_key(
 def _first_run_provider_owner_key(provider: object) -> str:
     """Return one shared provider owner key without reading configuration."""
 
-    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
-    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+    from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
 
-    provider_endpoint_key(provider)
-    resolution = resolve_provider_endpoint(provider, "http://127.0.0.1:1")
-    if resolution.errors or not resolution.provider_key:
-        raise ValueError("Provider is not supported.")
-    return resolution.provider_key
+    return canonical_provider_key(provider)
 
 
 def _validate_first_run_app_config(
@@ -222,12 +217,12 @@ def _validate_first_run_app_config(
 ) -> Mapping[str, object]:
     """Reject malformed matching provider tables before constructing a write."""
 
-    if not isinstance(app_config, Mapping):
+    if type(app_config) is not dict:
         raise TypeError("Application configuration is invalid.")
     api_settings = app_config.get("api_settings")
     if api_settings is None:
         return app_config
-    if not isinstance(api_settings, Mapping):
+    if type(api_settings) is not dict:
         raise TypeError("Provider configuration is invalid.")
     target = _first_run_provider_owner_key(provider)
     for index, (configured_provider, settings) in enumerate(api_settings.items()):
@@ -239,7 +234,7 @@ def _validate_first_run_app_config(
             continue
         if configured_owner != target:
             continue
-        if not isinstance(settings, Mapping):
+        if type(settings) is not dict:
             raise TypeError("Provider configuration is invalid.")
     return app_config
 
@@ -250,11 +245,11 @@ def _first_run_provider_settings(
     """Return the same owned provider table selected by shared persistence."""
 
     api_settings = app_config.get("api_settings")
-    if not isinstance(api_settings, Mapping):
+    if type(api_settings) is not dict:
         return {}
     target = _first_run_provider_owner_key(provider)
     exact = api_settings.get(target)
-    if isinstance(exact, Mapping):
+    if type(exact) is dict:
         return exact
     for index, (configured_provider, settings) in enumerate(api_settings.items()):
         if index >= 256:
@@ -263,7 +258,7 @@ def _first_run_provider_settings(
             configured_owner = _first_run_provider_owner_key(configured_provider)
         except ValueError:
             continue
-        if configured_owner == target and isinstance(settings, Mapping):
+        if configured_owner == target and type(settings) is dict:
             return settings
     return {}
 
@@ -290,7 +285,7 @@ def resolve_first_run_provider_draft(
             or ""
         )
     if endpoint:
-        resolution = resolve_provider_endpoint(provider_draft.provider, endpoint)
+        resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")
         return replace(provider_draft, endpoint=resolution.persisted_endpoint)
@@ -334,7 +329,8 @@ def build_first_run_provider_commit(
     model = _validated_first_run_model(model_id)
     if effective_draft.endpoint:
         resolution = resolve_provider_endpoint(
-            effective_draft.provider, effective_draft.endpoint
+            _first_run_provider_owner_key(effective_draft.provider),
+            effective_draft.endpoint,
         )
         if resolution.errors:
             raise ValueError("Provider endpoint is invalid.")

@@ -628,6 +628,100 @@ def _first_run_provider_draft(
 
 
 class TestFirstRunProviderContracts:
+    def test_exact_typed_contracts_reject_subclasses_without_callbacks(self):
+        callbacks = []
+
+        class HostileStr(str):
+            def __hash__(self):
+                callbacks.append("hash")
+                raise AssertionError("must not hash hostile text")
+
+            def __eq__(self, other):
+                callbacks.append("eq")
+                raise AssertionError("must not compare hostile text")
+
+            def strip(self, *args, **kwargs):
+                callbacks.append("strip")
+                raise AssertionError("must not normalize hostile text")
+
+        class HostileInt(int):
+            def __index__(self):
+                callbacks.append("index")
+                raise AssertionError("must not coerce hostile integer")
+
+        credential_type = setup_state.ProviderCredentialDraft
+        draft_type = setup_state.FirstRunProviderDraft
+        key_type = setup_state.FirstRunModelDiscoveryKey
+
+        for operation in (
+            lambda: credential_type(HostileStr("draft"), "secret", 1),
+            lambda: credential_type("draft", HostileStr("secret"), 1),
+            lambda: credential_type("draft", "secret", HostileInt(1)),
+            lambda: draft_type(
+                HostileStr("custom"),
+                "https://example.test/v1/chat/completions",
+                credential_type("none", "", 0),
+            ),
+            lambda: key_type(
+                provider_key="custom",
+                connection_identity=(
+                    "custom",
+                    "https://example.test/v1/chat/completions",
+                ),
+                credential_source=HostileStr("draft"),
+                credential_revision=1,
+            ),
+        ):
+            with pytest.raises(ValueError):
+                operation()
+        assert callbacks == []
+
+    def test_builder_rejects_hostile_mapping_without_callbacks_or_secret_errors(self):
+        callbacks = []
+
+        class HostileConfig(dict):
+            def get(self, key, default=None):
+                callbacks.append(key)
+                raise AssertionError("must not inspect hostile config")
+
+        class HostileModel(str):
+            def strip(self, *args, **kwargs):
+                callbacks.append("model-strip")
+                raise AssertionError("must not normalize hostile model")
+
+        secret = "hostile-builder-secret"
+        with pytest.raises(TypeError) as exc_info:
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(source="draft", value=secret),
+                "model",
+                HostileConfig(),
+            )
+
+        assert callbacks == []
+        assert secret not in str(exc_info.value)
+        assert len(str(exc_info.value)) < 160
+
+        with pytest.raises(ValueError):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(),
+                HostileModel("model"),
+                {},
+            )
+        assert callbacks == []
+
+        class HostileProviderTables(dict):
+            def items(self):
+                callbacks.append("provider-items")
+                raise AssertionError("must not scan hostile provider tables")
+
+        with pytest.raises(TypeError):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(),
+                "model",
+                {"api_settings": HostileProviderTables()},
+            )
+        assert callbacks == []
+
     def test_credential_value_is_memory_only_repr_compare_and_asdict_safe(self):
         credential_type = getattr(setup_state, "ProviderCredentialDraft", None)
         assert credential_type is not None
@@ -977,6 +1071,65 @@ class TestFirstRunProviderContracts:
             "provider": "custom",
             "model": "selected-model",
         }
+
+    @pytest.mark.parametrize(
+        ("provider", "canonical"),
+        [
+            ("OpenAI", "openai"),
+            ("Anthropic", "anthropic"),
+            ("MistralAI", "mistralai"),
+        ],
+    )
+    def test_persistence_aliases_normalize_endpoints_at_first_run_boundary(
+        self, provider, canonical
+    ):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(
+                provider=provider,
+                endpoint="https://provider.example.test/v1",
+            ),
+            "selected-model",
+            {},
+        )
+
+        assert mutation.section_values["chat_defaults"]["provider"] == canonical
+
+    @pytest.mark.parametrize("provider", ["OpenAI", "Anthropic", "MistralAI"])
+    def test_malformed_alias_owned_table_is_rejected_before_endpoint_mutation(
+        self, provider
+    ):
+        app_config = {"api_settings": {provider: []}}
+        before = deepcopy(app_config)
+
+        with pytest.raises(TypeError, match="Provider configuration"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(
+                    provider=provider,
+                    endpoint="https://provider.example.test/v1",
+                ),
+                "selected-model",
+                app_config,
+            )
+
+        assert app_config == before
+
+    def test_alias_owner_after_bounded_scan_fails_closed_without_mutation(self):
+        api_settings = {f"unknown_{index}": {} for index in range(256)}
+        api_settings["OpenAI"] = []
+        app_config = {"api_settings": api_settings}
+        before = deepcopy(app_config)
+
+        with pytest.raises(ValueError, match="too large"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(
+                    provider="openai",
+                    endpoint="https://provider.example.test/v1",
+                ),
+                "selected-model",
+                app_config,
+            )
+
+        assert app_config == before
 
     @pytest.mark.parametrize(
         ("source", "value", "expected_source", "set_key", "delete_key"),

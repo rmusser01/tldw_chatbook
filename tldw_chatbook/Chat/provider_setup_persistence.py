@@ -175,6 +175,12 @@ def _ownership_for(provider: object) -> _ProviderOwnership:
     return _ProviderOwnership(provider_key, config_section, endpoint_key)
 
 
+def canonical_provider_key(provider: object) -> str:
+    """Return the canonical config owner key for a supported provider alias."""
+
+    return _ownership_for(provider).provider_key
+
+
 def provider_endpoint_key(provider: object) -> str:
     """Return the exact endpoint key owned by an established provider."""
 
