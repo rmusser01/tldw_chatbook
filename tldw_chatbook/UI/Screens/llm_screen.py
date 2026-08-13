@@ -253,6 +253,7 @@ class LLMScreen(LabScreen):
         self._audio_cpp_consent_future: asyncio.Future[bool] | None = None
         self._audio_cpp_consent_modal: ModelInstallModal | None = None
         self._audio_cpp_reclaim_worker: Worker | None = None
+        self._audio_cpp_presentation_worker: Worker | None = None
         #: The reference, service, and (curated-only) registry/source map
         #: the currently running (or about-to-run) curated install needs
         #: -- captured once from the posted ``CuratedView.InstallRequested``
@@ -316,9 +317,32 @@ class LLMScreen(LabScreen):
         if claim is None or type(claim.value) is not AudioCppModelLibraryRequest:
             return
         self._audio_cpp_model_request_claim = claim
-        view = self._curated_view()
-        if view is not None:
-            view.set_consumer_filter("audio_cpp", allow_installed_return=True)
+        await self._present_audio_cpp_request(claim)
+
+    async def _present_audio_cpp_request(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryRequest],
+    ) -> None:
+        """Load and activate the exact audio.cpp return presentation."""
+
+        for _ in range(200):
+            if not self.is_attached or self._audio_cpp_model_request_claim is not claim:
+                return
+            view = self._curated_view()
+            window = self.llm_window
+            if view is not None and window is not None:
+                view.set_consumer_filter("audio_cpp", allow_installed_return=True)
+                view.ensure_loaded()
+                if view._load_error is not None:
+                    logger.warning(
+                        "Audio.cpp Model Library presentation failed to load"
+                    )
+                    return
+                if view._loaded:
+                    window.active_view = "curated"
+                    return
+            await asyncio.sleep(0.01)
+        logger.warning("Audio.cpp Model Library presentation timed out")
 
     def _current_server_rows(self) -> tuple[LabServerRow, ...]:
         """Return server liveness, shared across one refresh pass.
@@ -2167,6 +2191,9 @@ class LLMScreen(LabScreen):
         reclaim_worker = self._audio_cpp_reclaim_worker
         if reclaim_worker is not None and not reclaim_worker.is_finished:
             reclaim_worker.cancel()
+        presentation_worker = self._audio_cpp_presentation_worker
+        if presentation_worker is not None and not presentation_worker.is_finished:
+            presentation_worker.cancel()
         worker = self._external_selection_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -2684,12 +2711,14 @@ class LLMScreen(LabScreen):
         ordered second chance. `_hydrate_model_install_progress` is
         idempotent and internally guarded, so running both is safe.
         """
-        view = self._curated_view()
-        if view is not None and self._audio_cpp_model_request_claim is not None:
-            view.set_consumer_filter("audio_cpp", allow_installed_return=True)
-            view.ensure_loaded()
-            if self.llm_window is not None:
-                self.llm_window.active_view = "curated"
+        claim = self._audio_cpp_model_request_claim
+        if claim is not None:
+            self._audio_cpp_presentation_worker = self.run_worker(
+                self._present_audio_cpp_request(claim),
+                group="audio_cpp_request_presentation",
+                exclusive=True,
+                exit_on_error=False,
+            )
         if self._model_install_active:
             self._hydrate_model_install_progress()
         self._hydrate_external_status()

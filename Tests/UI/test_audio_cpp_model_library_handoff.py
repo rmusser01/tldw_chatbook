@@ -937,6 +937,7 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     monkeypatch,
 ) -> None:
     from textual.screen import Screen
+    from textual.widgets import Button
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
@@ -944,6 +945,7 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
     monkeypatch.setattr(
         LLMManagementWindow,
@@ -995,12 +997,29 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
         replacement = LLMScreen(app)
         await app.push_screen(replacement)
         assert replacement._audio_cpp_model_request_claim is None
+        assert await _wait_for(lambda: replacement.llm_window is not None, pilot)
+        replacement.llm_window.active_view = "remote"
         release.set()
         assert await _wait_for(
             lambda: app.audio_cpp_model_install_owner.active_count == 0, pilot
         )
         assert await _wait_for(
             lambda: replacement._audio_cpp_model_request_claim is not None, pilot
+        )
+        assert await _wait_for(
+            lambda: (
+                replacement.llm_window is not None
+                and replacement.llm_window.active_view == "curated"
+            ),
+            pilot,
+        )
+        replacement_view = replacement.query_one(CuratedView)
+        assert await _wait_for(lambda: replacement_view._loaded, pilot)
+        assert replacement_view._consumer_filter == "audio_cpp"
+        assert replacement_view.display
+        assert any(
+            not button.disabled
+            for button in replacement_view.query(".curated-install").results(Button)
         )
         reclaimed = replacement._audio_cpp_model_request_claim
 
