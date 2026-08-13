@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-07 18:20'
-updated_date: '2026-08-11 04:55'
+updated_date: '2026-08-13 18:05'
 labels:
   - console
   - architecture-gate
@@ -17,22 +17,23 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]`
-fails on dev: 18,930 lines against a budget of 18,909. Introduced by PR #1408 (console
-decomposition wave 3) itself — confirmed byte-identical on a clean dev-tip worktree at
-`15407a641` during the TASK-3035/3045 architecture-gate refresh (PR #1416), so it is not
-an artifact of any other branch. The decomposition stream is actively shrinking this
-screen; the 21-line overage is presumably transitional. Filed so the red gate is owned
-rather than becoming the next "pre-existing noise" that hides something real (see
-lessons-testing-evidence.md's TASK-2610 entry for how that ends). Resolve by shrinking
-the screen below budget in the next wave — not by raising the budget, unless the
-decomposition stream's owner explicitly decides the budget is wrong.
+The Console's one-way architecture ratchets are materially red on verified current
+`origin/dev`: `tldw_chatbook/UI/Screens/chat_screen.py` is 22,338 lines against a
+17,727-line ceiling, and `ChatScreen` has 705 direct methods against a 593-method
+ceiling. This task was originally filed at a 21-line overage after wave 3; later waves
+lowered the allowed ceiling while unrelated feature work kept accumulating in the
+screen. The result is now 4,611 lines and 112 methods over budget, not transitional
+noise. Resolve it through the reviewed Wave 6 controller extractions and lower the
+ratchets to the exact earned counts; never raise either budget to accept the growth.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The chat_screen size-ratchet test passes on dev
-- [ ] #2 The resolution shrinks the screen (or an explicit, documented owner decision adjusts the budget)
+- [ ] #1 On the final rebased dev base, both the `chat_screen.py` line-count and `ChatScreen` method-count ratchets pass without increasing either budget.
+- [ ] #2 The source-inspected Wave 6 move/delegate/stay inventory is enforced by AST ownership tests, and every retained screen delegate is framework-required, has a real caller, and its complete definition span (decorators excluded) is bounded to five physical source lines.
+- [ ] #3 Image/H3, video, conversation-browser, retrieval/RAG, skill, and character ownership moves to the reviewed controllers without changing DOM ownership, persistence ordering, worker groups, cancellation identity, remount/shutdown behavior, privacy, or user-visible outcomes.
+- [ ] #4 Every extracted family has isolated controller coverage using plain fakes without mounting Textual, including the Workspace browser extension, and the mounted product suites continue to cover screen/region integration.
+- [ ] #5 The coordinated child tasks TASK-3070.1 through TASK-3070.8 are completed independently with their focused verification evidence before this parent is closed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,11 +43,11 @@ ADR required: no
 ADR path: N/A (governed by `Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md` and `DESIGN.md` section 7)
 Reason: This is the next implementation wave of the existing, approved Console decomposition architecture; it does not introduce a new runtime, storage, security, or cross-module policy.
 
-1. Record the current post-rebase measurement and map the image/H3, video, conversation-browser, and retrieval/RAG ownership clusters method by method.
-2. Write and review a wave-6 design that preserves Textual entry points on `ChatScreen`, keeps DOM work in regions/screen handlers, and puts non-DOM state/behaviour in explicit controllers wired through `UI/Console_Modules/wiring.py`.
-3. Characterize each cluster through its real product boundary before moving code, then extract one controller at a time with exact dependency signatures and separate commits.
-4. Run the controller, UI, Chat, Video Generation, RAG, architecture, worker-group, and import/reference regression suites after each extraction; mutation-check the screen delegations and controller ownership seams.
-5. Rebase onto final `origin/dev`, measure again, lower the ratchet to the exact earned line/method counts, update the decomposition spec/task notes, and run repository-level verification before marking Done.
+1. Complete TASK-3070.1: record the rebased line/method baseline and lock the reviewed source-inspected ownership inventory, residue budget, and AST rules before production movement.
+2. Complete TASK-3070.2 through TASK-3070.7 one PR at a time after its predecessor merges: characterize the real product boundary, add isolated no-mount controller tests, extract one family with named late-bound dependencies, and prove its screen delegates and invariants.
+3. Extend the existing Workspace controller as the single conversation-browser state owner while preserving collapse/config and activation/resume behavior; keep Textual decorators, direct DOM, modal/picker presentation, and OS-player launch on the screen or existing region widgets.
+4. After each extraction, run its isolated controller tests, focused product/mounted suites, AST ownership/dependency checks, required mutations, static checks, and privacy/diff gates before beginning the next child.
+5. Complete TASK-3070.8: rebase onto final `origin/dev`, repeat the baseline comparison, lower both ratchets to the exact earned counts, update canonical decomposition progress and every task's notes, run the full repository DoD, and only then close this parent.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
