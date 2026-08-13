@@ -236,6 +236,47 @@ def test_ingest_shortcuts_advertise_retry_only_when_the_queue_is_settled():
     assert shortcuts.index(("r", "retry")) < shortcuts.index(("/", "search"))
 
 
+@pytest.mark.asyncio
+async def test_registry_ticks_only_reflow_footer_when_retry_availability_changes(
+    monkeypatch,
+):
+    """Identical registry ticks are footer no-ops; Retry transitions reflow once."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestLastSubmission,
+    )
+    from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+
+    app = _pilot_app()
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        footer = screen.query_one(AppFooterStatus)
+        real_set_shortcuts = footer.set_workbench_shortcuts
+        registrations: list[tuple[str, tuple]] = []
+
+        def record_registration(*, source: str, shortcuts: tuple) -> None:
+            registrations.append((source, shortcuts))
+            real_set_shortcuts(source=source, shortcuts=shortcuts)
+
+        monkeypatch.setattr(
+            footer, "set_workbench_shortcuts", record_registration
+        )
+
+        screen._handle_library_ingest_registry_changed()
+        screen._handle_library_ingest_registry_changed()
+        assert registrations == []
+
+        screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+            source="/tmp/talk.mp3"
+        )
+        screen._handle_library_ingest_registry_changed()
+        assert len(registrations) == 1
+        assert ("r", "retry") in registrations[0][1]
+
+        screen._handle_library_ingest_registry_changed()
+        assert len(registrations) == 1
+
+
 # --- pilot: restore + fresh preflight + identity --------------------------------
 
 

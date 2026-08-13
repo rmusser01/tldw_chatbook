@@ -10240,7 +10240,12 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._update_library_ingest_dynamic_regions()
-            self._register_footer_shortcuts()
+            shortcuts = self._library_ingest_shortcuts_for_current_state()
+            registration = ("library", tuple(shortcuts))
+            if self._footer_shortcut_registration != registration:
+                self.register_footer_shortcuts(
+                    source="library", shortcuts=shortcuts
+                )
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
