@@ -1,25 +1,41 @@
-"""Schema-v3 and metadata-projection tests for private clone references."""
+"""Schema-v4 and metadata-projection tests for private clone references."""
 
 from __future__ import annotations
 
+import hashlib
+import io
 import sqlite3
+import wave
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.DB.private_sqlite as private_sqlite
+import tldw_chatbook.TTS.profile_migration_candidate as migration_candidate
 import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2, v2_to_v3
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_migration_candidate import (
+    ProfileMigrationBoundary,
+    ProfileMigrationBoundaryRequest,
+    ProfileMigrationBoundarySnapshot,
+    step_profile_migration_candidate,
+)
 from tldw_chatbook.TTS.profile_reference_storage import (
     PROFILE_WITH_REFERENCE_SELECT,
     REFERENCE_ID_INDEX,
+    REFERENCE_PAYLOAD_SELECT,
     REFERENCE_TABLE,
+    decode_reference_payload,
     decode_reference_summary,
 )
 from tldw_chatbook.TTS.profile_schema import open_profile_store
-from tldw_chatbook.TTS.profile_reference_types import TTSCloneReferenceSummary
+from tldw_chatbook.TTS.profile_reference_types import (
+    TTSCloneRecipeRequirement,
+    TTSCloneReferenceSummary,
+)
 
 PROFILE_ID = "01234567-89ab-cdef-8123-456789abcdef"
 REFERENCE_ID = "fedcba98-7654-4321-8123-456789abcdef"
@@ -73,6 +89,41 @@ def _create_populated_v2(path: Path) -> None:
     connection.close()
 
 
+def _create_populated_v3_reference(path: Path) -> tuple[object, ...]:
+    _create_populated_v2(path)
+    frames = b"\x00\x00" * 2_400
+    output = io.BytesIO()
+    with wave.open(output, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(24_000)
+        writer.writeframes(frames)
+    wav_bytes = output.getvalue()
+    connection = sqlite3.connect(path)
+    v2_to_v3.migrate(connection)
+    row = (
+        PROFILE_ID,
+        REFERENCE_ID,
+        wav_bytes,
+        "Private transcript",
+        hashlib.sha256(wav_bytes).hexdigest(),
+        len(wav_bytes),
+        100,
+        24_000,
+        1,
+        "pcm_s16le",
+        NOW,
+        NOW,
+    )
+    connection.execute(
+        f"INSERT INTO {REFERENCE_TABLE} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        row,
+    )
+    connection.commit()
+    connection.close()
+    return row
+
+
 def _domain_rows(
     path: Path,
 ) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
@@ -96,10 +147,221 @@ def _domain_rows(
         connection.close()
 
 
-def test_v3_reference_schema_has_exact_owned_shape(tmp_path: Path) -> None:
+def test_v3_candidate_boundary_and_final_preserve_exact_private_reference(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    boundary_rows: list[tuple[object, ...]] = []
+
+    result = step_profile_migration_candidate(
+        connection,
+        boundary_sink=lambda snapshot, request: boundary_rows.append(
+            _candidate_reference_row(snapshot, request, tmp_path / "pre-v4.sqlite3")
+        ),
+    )
+
+    assert tuple(request.kind for request in result.boundaries) == (
+        ProfileMigrationBoundary.PRE_V4,
+    )
+    assert boundary_rows == [reference_before]
+    final = sqlite3.connect(path)
+    try:
+        final_row = final.execute(
+            f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+            (PROFILE_ID,),
+        ).fetchone()
+        assert tuple(final_row[:12]) == reference_before
+        assert final_row[12:] == (None, None)
+    finally:
+        final.close()
+
+
+def _candidate_reference_row(
+    snapshot: ProfileMigrationBoundarySnapshot,
+    request: ProfileMigrationBoundaryRequest,
+    destination_path: Path,
+) -> tuple[object, ...]:
+    assert request == ProfileMigrationBoundaryRequest(
+        ProfileMigrationBoundary.PRE_V4,
+        3,
+    )
+    opaque = private_sqlite.open_profile_migration_boundary_destination(
+        destination_path,
+        schema_version=request.schema_version,
+    )
+    snapshot.backup_to(opaque)
+    destination = sqlite3.connect(destination_path)
+    try:
+        return tuple(
+            destination.execute(
+                f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?",
+                (PROFILE_ID,),
+            ).fetchone()
+        )
+    finally:
+        destination.close()
+
+
+def test_boundary_evidence_retains_no_private_blob_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    captured: list[object] = []
+    original_capture = migration_candidate._capture_boundary_evidence
+
+    def capture(candidate: sqlite3.Connection, version: int):
+        evidence = original_capture(candidate, version)
+        captured.append(evidence)
+        return evidence
+
+    migration_candidate._capture_boundary_evidence = capture
+    try:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda snapshot, request: _candidate_reference_row(
+                snapshot,
+                request,
+                tmp_path / "compact.sqlite3",
+            ),
+        )
+    finally:
+        migration_candidate._capture_boundary_evidence = original_capture
+
+    assert captured
+    assert not _nested_contains_bytes(captured[0])
+    assert repr(reference_before[2]) not in repr(captured[0])
+    assert reference_before[3] not in repr(captured[0])
+
+
+def test_boundary_compact_evidence_rejects_isolated_transcript_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    reference_before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    destination_path = tmp_path / "mutated-boundary.sqlite3"
+
+    def mutate_isolated(
+        snapshot: ProfileMigrationBoundarySnapshot,
+        request: ProfileMigrationBoundaryRequest,
+    ) -> None:
+        isolated = object.__getattribute__(
+            snapshot,
+            "_ProfileMigrationBoundarySnapshot__snapshot",
+        )
+        assert isinstance(isolated, sqlite3.Connection)
+        isolated.execute(
+            f"UPDATE {REFERENCE_TABLE} SET reference_text = 'Different valid transcript'"
+        )
+        isolated.commit()
+        destination = private_sqlite.open_profile_migration_boundary_destination(
+            destination_path,
+            schema_version=request.schema_version,
+        )
+        with destination:
+            snapshot.backup_to(destination)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(connection, boundary_sink=mutate_isolated)
+
+    reopened = sqlite3.connect(destination_path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 0
+    finally:
+        reopened.close()
+    live = sqlite3.connect(path)
+    try:
+        assert tuple(live.execute(f"SELECT * FROM {REFERENCE_TABLE}").fetchone()) == (
+            reference_before
+        )
+    finally:
+        live.close()
+
+
+def _nested_contains_bytes(value: object) -> bool:
+    if type(value) is bytes:
+        return True
+    if hasattr(value, "__dataclass_fields__"):
+        return any(
+            _nested_contains_bytes(getattr(value, name))
+            for name in value.__dataclass_fields__  # type: ignore[attr-defined]
+        )
+    if isinstance(value, tuple):
+        return any(_nested_contains_bytes(item) for item in value)
+    return False
+
+
+def test_v3_candidate_rejects_corrupt_reference_before_boundary(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "PRIVATE-candidate.sqlite3"
+    _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(f"UPDATE {REFERENCE_TABLE} SET sha256 = ?", ("0" * 64,))
+    connection.commit()
+    calls: list[ProfileMigrationBoundary] = []
+
+    with _safe_error("reference_unavailable") as caught:
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda _borrowed, request: calls.append(request.kind),
+        )
+
+    assert calls == []
+    assert str(path) not in repr(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_candidate_step_rejects_private_reference_mutation_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    before = _create_populated_v3_reference(path)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def mutate_reference(candidate: sqlite3.Connection) -> None:
+        real_migration(candidate)
+        candidate.execute(
+            f"UPDATE {REFERENCE_TABLE} SET reference_text = 'Changed transcript'"
+        )
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, mutate_reference)
+
+    with _safe_error("migration_failed"):
+        step_profile_migration_candidate(
+            connection,
+            boundary_sink=lambda snapshot, request: _candidate_reference_row(
+                snapshot,
+                request,
+                tmp_path / "mutated.sqlite3",
+            ),
+        )
+
+    reopened = sqlite3.connect(path)
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert (
+            tuple(reopened.execute(f"SELECT * FROM {REFERENCE_TABLE}").fetchone())
+            == before
+        )
+    finally:
+        reopened.close()
+
+
+def test_v4_reference_schema_has_exact_owned_shape(tmp_path: Path) -> None:
     connection = open_profile_store(tmp_path / "profiles.sqlite3")
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert [
             tuple(row)
             for row in connection.execute(f"PRAGMA table_xinfo({REFERENCE_TABLE})")
@@ -116,6 +378,8 @@ def test_v3_reference_schema_has_exact_owned_shape(tmp_path: Path) -> None:
             (9, "sample_encoding", "TEXT", 1, None, 0, 0),
             (10, "created_at", "TEXT", 1, None, 0, 0),
             (11, "updated_at", "TEXT", 1, None, 0, 0),
+            (12, "recipe_id", "TEXT", 0, None, 0, 0),
+            (13, "recipe_revision", "INTEGER", 0, None, 0, 0),
         ]
         indexes = {
             row["name"]: row
@@ -150,6 +414,8 @@ def test_reference_projection_is_metadata_only_and_decodes_summary() -> None:
     assert "wav_bytes" not in lowered
     assert "reference_text" not in lowered
     assert "sha256" not in lowered
+    assert "recipe_id" in lowered
+    assert "recipe_revision" in lowered
     row = {
         "reference_reference_id": REFERENCE_ID,
         "reference_byte_length": 4_844,
@@ -159,6 +425,9 @@ def test_reference_projection_is_metadata_only_and_decodes_summary() -> None:
         "reference_sample_encoding": "pcm_s16le",
         "reference_created_at": NOW,
         "reference_updated_at": NOW,
+        "reference_recipe_id": "voice.recipe-1",
+        "reference_recipe_revision": 7,
+        "reference_model_id": "model-a",
     }
 
     summary = decode_reference_summary(row)
@@ -172,7 +441,151 @@ def test_reference_projection_is_metadata_only_and_decodes_summary() -> None:
         sample_encoding="pcm_s16le",
         created_at=datetime(2026, 8, 10, 12, 34, 56, 123456, tzinfo=UTC),
         updated_at=datetime(2026, 8, 10, 12, 34, 56, 123456, tzinfo=UTC),
+        recipe_requirement=TTSCloneRecipeRequirement(
+            recipe_id="voice.recipe-1",
+            recipe_revision=7,
+            model_id="model-a",
+        ),
     )
+
+
+def test_v4_reference_columns_are_nullable_and_pair_constrained(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_reference(path)
+    connection = open_profile_store(path)
+    try:
+        columns = {
+            row["name"]: row
+            for row in connection.execute(f"PRAGMA table_xinfo({REFERENCE_TABLE})")
+        }
+        assert columns["recipe_id"]["notnull"] == 0
+        assert columns["recipe_revision"]["notnull"] == 0
+        connection.execute(
+            f"UPDATE {REFERENCE_TABLE} SET recipe_id = ?, recipe_revision = ?",
+            ("voice.recipe-1", 2_147_483_647),
+        )
+        for recipe_id, recipe_revision in (
+            (None, 1),
+            ("voice.recipe-1", None),
+            ("-leading", 1),
+            ("UPPER", 1),
+            ("voice.recipe-1", 0),
+            ("voice.recipe-1", 2_147_483_648),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    f"UPDATE {REFERENCE_TABLE} SET recipe_id = ?, recipe_revision = ?",
+                    (recipe_id, recipe_revision),
+                )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "recipe_id",
+    ["a\x00UPPER", "a\x00", "a\x00._-", f"{'a' * 128}\x00hidden"],
+)
+def test_v4_sql_recipe_grammar_rejects_embedded_nul(
+    tmp_path: Path,
+    recipe_id: str,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    before = _create_populated_v3_reference(path)
+    connection = open_profile_store(path)
+    try:
+        connection.execute(f"DELETE FROM {REFERENCE_TABLE}")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO {REFERENCE_TABLE} VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (*before, recipe_id, 1),
+            )
+    finally:
+        connection.close()
+
+
+def test_v3_to_v4_preserves_reference_and_leaves_recipe_unknown(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    before = _create_populated_v3_reference(path)
+
+    migrated = open_profile_store(path)
+    try:
+        row = migrated.execute(
+            f"SELECT * FROM {REFERENCE_TABLE} WHERE profile_id = ?", (PROFILE_ID,)
+        ).fetchone()
+        assert tuple(row[:12]) == before
+        assert row["recipe_id"] is None
+        assert row["recipe_revision"] is None
+    finally:
+        migrated.close()
+
+
+def test_v4_reference_payload_decodes_exact_recipe_requirement(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    before = _create_populated_v3_reference(path)
+    connection = open_profile_store(path)
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="voice.recipe-1",
+        recipe_revision=7,
+        model_id="model-a",
+    )
+    try:
+        connection.execute(
+            f"UPDATE {REFERENCE_TABLE} SET recipe_id = ?, recipe_revision = ?",
+            (requirement.recipe_id, requirement.recipe_revision),
+        )
+        row = connection.execute(REFERENCE_PAYLOAD_SELECT).fetchone()
+        reference = decode_reference_payload(row, before[2])  # type: ignore[arg-type]
+    finally:
+        connection.close()
+
+    assert reference.recipe_requirement == requirement
+    assert reference.summary.recipe_requirement == requirement
+
+
+def test_v3_to_v4_validation_failure_rolls_back_candidate_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_reference(path)
+    real_validate = profile_schema._validate_migration_reference_rows
+
+    def fail_post_migration(
+        connection: sqlite3.Connection,
+        *,
+        schema_version: int,
+    ) -> None:
+        real_validate(connection, schema_version=schema_version)
+        if schema_version == 4:
+            raise RuntimeError("PRIVATE post-migration detail")
+
+    monkeypatch.setattr(
+        profile_schema,
+        "_validate_migration_reference_rows",
+        fail_post_migration,
+    )
+
+    with _safe_error("migration_failed") as caught:
+        open_profile_store(path)
+
+    candidate = sqlite3.connect(path)
+    try:
+        assert candidate.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert [
+            row[1]
+            for row in candidate.execute(f"PRAGMA table_xinfo({REFERENCE_TABLE})")
+        ][-2:] == ["created_at", "updated_at"]
+        assert (
+            candidate.execute(f"SELECT COUNT(*) FROM {REFERENCE_TABLE}").fetchone()[0]
+            == 1
+        )
+    finally:
+        candidate.close()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_reference_projection_decodes_missing_left_join_as_none() -> None:
@@ -185,6 +598,8 @@ def test_reference_projection_decodes_missing_left_join_as_none() -> None:
         "reference_sample_encoding": None,
         "reference_created_at": None,
         "reference_updated_at": None,
+        "reference_recipe_id": None,
+        "reference_recipe_revision": None,
     }
 
     assert decode_reference_summary(row) is None
@@ -211,6 +626,8 @@ def test_reference_projection_rejects_corrupt_metadata_context_free(
         "reference_sample_encoding": "pcm_s16le",
         "reference_created_at": NOW,
         "reference_updated_at": NOW,
+        "reference_recipe_id": None,
+        "reference_recipe_revision": None,
     }
     row[field] = value
 
@@ -231,7 +648,7 @@ def test_populated_v2_migration_preserves_domain_and_adds_no_reference(
 
     connection = open_profile_store(path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert (
             connection.execute(f"SELECT count(*) FROM {REFERENCE_TABLE}").fetchone()[0]
             == 0
@@ -356,7 +773,11 @@ def test_v2_migration_rolls_back_post_migration_validation_failure(
     assert caught.value.__context__ is None
 
 
-def test_schema_v3_migration_registration_is_exact() -> None:
-    assert v2_to_v3.TARGET_VERSION == profile_schema.CURRENT_PROFILE_SCHEMA_VERSION == 3
-    assert set(profile_schema.MIGRATIONS) == {0, 1, 2}
+def test_schema_v4_migration_registration_is_exact() -> None:
+    from tldw_chatbook.TTS.migrations import v3_to_v4
+
+    assert v2_to_v3.TARGET_VERSION == 3
+    assert v3_to_v4.TARGET_VERSION == profile_schema.CURRENT_PROFILE_SCHEMA_VERSION == 4
+    assert set(profile_schema.MIGRATIONS) == {0, 1, 2, 3}
     assert profile_schema.MIGRATIONS[2] is v2_to_v3.migrate
+    assert profile_schema.MIGRATIONS[3] is v3_to_v4.migrate

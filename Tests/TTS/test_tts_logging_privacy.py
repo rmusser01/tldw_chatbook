@@ -92,9 +92,7 @@ def test_clone_generation_diagnostics_discard_chunked_and_delayed_canaries(
     ring.clear()
     ring.feed("stdout", b"next generation safe line\n")
     diagnostics, _dropped = ring.snapshot()
-    assert tuple(line.text for line in diagnostics) == (
-        "next generation safe line",
-    )
+    assert tuple(line.text for line in diagnostics) == ("next generation safe line",)
 
 
 def test_supervisor_suppresses_only_the_exact_live_clone_generation() -> None:
@@ -287,6 +285,8 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "TTSConfigMutation",
         "TTSCloneReference",
         "TTSCloneReferenceSummary",
+        "TTSCloneRecipeRequirement",
+        "TTSCloneVoiceBundle",
         "TTSGenerationProfile",
         "TTSModelInfo",
         "TTSNativeCapabilitySnapshot",
@@ -309,11 +309,20 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "TTSService",
         "TTSStructuredVoiceAdapter",
         "TTSVoiceDiscoveryResult",
+        "TTSVoiceBundleError",
+        "TTSVoiceBundleHandle",
+        "TTSVoiceBundleImportChoice",
+        "TTSVoiceBundleImportResult",
+        "TTSVoiceBundlePortabilityService",
+        "TTSVoiceBundleReview",
+        "TTSVoiceBundleSinks",
         "VoiceDiscoveryState",
         "bind_tts_service",
         "canonical_json_options",
         "close_tts_resources",
         "get_tts_service",
+        "encode_clone_voice_bundle",
+        "inspect_clone_voice_bundle",
         "reset_tts_service_binding",
     }
     forbidden = {

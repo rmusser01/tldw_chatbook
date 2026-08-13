@@ -32,6 +32,7 @@ from tldw_chatbook.TTS.profile_errors import (
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_types import (
@@ -46,6 +47,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileDraft,
     TTSProfilePage,
 )
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    validate_audio_cpp_guided_dependency_snapshot,
+)
 
 ProfileAvailabilityState: TypeAlias = Literal[
     "available",
@@ -53,6 +58,22 @@ ProfileAvailabilityState: TypeAlias = Literal[
     "unverified",
 ]
 ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
+ProfileDependencyReason: TypeAlias = Literal[
+    "none",
+    "recipe_missing",
+    "recipe_mismatch",
+    "recipe_pending_apply",
+]
+ProfileDependencyAction: TypeAlias = Literal[
+    "none",
+    "open_audio_cpp_settings",
+    "open_speech_lab_apply",
+]
+ProfilePortabilityAdvisory: TypeAlias = Literal[
+    "none",
+    "recipe_provenance_unavailable",
+]
+ProfilePortabilityAction: TypeAlias = Literal["none", "generate_new_profile"]
 PortableProfileImportChoice: TypeAlias = Literal["create", "reuse", "copy"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
@@ -70,6 +91,9 @@ _TTS_PROFILE_DRAFT_TYPE: type[TTSProfileDraft] = TTSProfileDraft
 _TTS_CLONE_REFERENCE_TYPE: type[TTSCloneReference] = TTSCloneReference
 _TTS_CLONE_REFERENCE_SUMMARY_TYPE: type[TTSCloneReferenceSummary] = (
     TTSCloneReferenceSummary
+)
+_TTS_CLONE_RECIPE_REQUIREMENT_TYPE: type[TTSCloneRecipeRequirement] = (
+    TTSCloneRecipeRequirement
 )
 _PORTABLE_TTS_PROFILE_TYPE: type[PortableTTSProfile] = PortableTTSProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
@@ -131,6 +155,7 @@ class _ProfileRepositoryProtocol(Protocol):
         draft: TTSProfileDraft,
         profile_id: UUID,
         canonical: CanonicalTTSCloneReference,
+        recipe_requirement: TTSCloneRecipeRequirement,
         *,
         expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]: ...
@@ -230,6 +255,11 @@ class _ProfileTTSServiceProtocol(Protocol):
         provider_id: str,
         expected_revision: int,
     ) -> None: ...
+
+    async def audio_cpp_guided_dependency_snapshot(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -421,6 +451,27 @@ def _canonicalize_exact_profile_id(value: object) -> UUID:
     return canonical
 
 
+def _canonicalize_exact_recipe_requirement(
+    value: object,
+) -> TTSCloneRecipeRequirement | None:
+    """Return a fresh exact clone recipe requirement or legacy absence."""
+
+    if value is None:
+        return None
+    if type(value) is not _TTS_CLONE_RECIPE_REQUIREMENT_TYPE:
+        raise ProfileValidationError("reference_invalid")
+    requirement = cast(TTSCloneRecipeRequirement, value)
+    try:
+        canonical = TTSCloneRecipeRequirement(
+            recipe_id=requirement.recipe_id,
+            recipe_revision=requirement.recipe_revision,
+            model_id=requirement.model_id,
+        )
+    except Exception:
+        raise ProfileValidationError("reference_invalid") from None
+    return canonical
+
+
 def _canonicalize_exact_reference_summary(
     value: object,
 ) -> TTSCloneReferenceSummary:
@@ -439,6 +490,9 @@ def _canonicalize_exact_reference_summary(
             sample_encoding=summary.sample_encoding,
             created_at=summary.created_at,
             updated_at=summary.updated_at,
+            recipe_requirement=_canonicalize_exact_recipe_requirement(
+                summary.recipe_requirement
+            ),
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
@@ -454,15 +508,29 @@ def _canonicalize_exact_reference(value: object) -> TTSCloneReference:
         raise ProfileValidationError("reference_invalid")
     reference = cast(TTSCloneReference, value)
     try:
+        summary = _canonicalize_exact_reference_summary(reference.summary)
+        direct_requirement = _canonicalize_exact_recipe_requirement(
+            reference.recipe_requirement
+        )
+        if summary.recipe_requirement != direct_requirement:
+            raise ValueError
         canonical = TTSCloneReference(
-            summary=_canonicalize_exact_reference_summary(reference.summary),
+            summary=summary,
             reference_text=reference.reference_text,
             sha256=reference.sha256,
             wav_bytes=reference.wav_bytes,
+            recipe_requirement=summary.recipe_requirement,
         )
     except Exception:
         raise ProfileValidationError("reference_invalid") from None
-    if canonical != reference:
+    if (
+        type(reference.reference_text) is not str
+        or type(reference.sha256) is not str
+        or type(reference.wav_bytes) is not bytes
+        or canonical.reference_text != reference.reference_text
+        or canonical.sha256 != reference.sha256
+        or canonical.wav_bytes != reference.wav_bytes
+    ):
         raise ProfileValidationError("reference_invalid")
     return canonical
 
@@ -801,11 +869,15 @@ def _availability(
     profile_id: UUID,
     state: ProfileAvailabilityState,
     provider_id: str,
+    dependency: TTSProfileDependencyProjection | None = None,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
         state=state,
         recovery_action=_recovery_action(provider_id, state),
+        dependency=(
+            TTSProfileDependencyProjection() if dependency is None else dependency
+        ),
     )
 
 
@@ -927,20 +999,77 @@ class LoadedCharacterTTSAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSProfileDependencyProjection:
+    """Bounded dependency blocker plus an independent portability advisory."""
+
+    reason: ProfileDependencyReason = "none"
+    display: str | None = None
+    action: ProfileDependencyAction = "none"
+    advisory: ProfilePortabilityAdvisory = "none"
+    advisory_display: str | None = None
+    advisory_action: ProfilePortabilityAction = "none"
+
+    def __post_init__(self) -> None:
+        blockers = {
+            "none": (None, "none"),
+            "recipe_missing": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_mismatch": ("Needs compatible model", "open_audio_cpp_settings"),
+            "recipe_pending_apply": (
+                "Compatible model saved; apply settings",
+                "open_speech_lab_apply",
+            ),
+        }
+        advisories = {
+            "none": (None, "none"),
+            "recipe_provenance_unavailable": (
+                "Recipe provenance unavailable",
+                "generate_new_profile",
+            ),
+        }
+        if (
+            type(self.reason) is not str
+            or self.reason not in blockers
+            or type(self.action) is not str
+            or (self.display, self.action) != blockers[self.reason]
+            or type(self.advisory) is not str
+            or self.advisory not in advisories
+            or type(self.advisory_action) is not str
+            or (self.advisory_display, self.advisory_action)
+            != advisories[self.advisory]
+        ):
+            raise ProfileValidationError("dependency")
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProfileAvailability:
     """The current bounded availability state for one exact profile UUID."""
 
     profile_id: UUID
     state: ProfileAvailabilityState
     recovery_action: ProfileRecoveryAction
+    dependency: TTSProfileDependencyProjection = field(
+        default_factory=TTSProfileDependencyProjection
+    )
 
     def __post_init__(self) -> None:
         if type(self.profile_id) is not UUID:
             raise ProfileValidationError("profile_id")
         state = _validate_availability_state(self.state)
         action = _validate_recovery_action(self.recovery_action, state)
+        dependency = self.dependency
+        if type(dependency) is not TTSProfileDependencyProjection:
+            raise ProfileValidationError("dependency")
+        dependency = TTSProfileDependencyProjection(
+            reason=dependency.reason,
+            display=dependency.display,
+            action=dependency.action,
+            advisory=dependency.advisory,
+            advisory_display=dependency.advisory_display,
+            advisory_action=dependency.advisory_action,
+        )
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "recovery_action", action)
+        object.__setattr__(self, "dependency", dependency)
 
 
 @dataclass(frozen=True, slots=True)
@@ -985,6 +1114,58 @@ class TTSProfileAvailabilitySnapshot:
         )
         object.__setattr__(self, "catalog_revision", catalog_revision)
         object.__setattr__(self, "profiles", profiles)
+
+
+def _provenance_projection(
+    profile: TTSGenerationProfile,
+) -> TTSProfileDependencyProjection:
+    reference = profile.reference
+    if reference is not None and reference.recipe_requirement is None:
+        return TTSProfileDependencyProjection(
+            advisory="recipe_provenance_unavailable",
+            advisory_display="Recipe provenance unavailable",
+            advisory_action="generate_new_profile",
+        )
+    return TTSProfileDependencyProjection()
+
+
+def _dependency_projection(
+    state: str,
+    *,
+    advisory: TTSProfileDependencyProjection,
+) -> TTSProfileDependencyProjection:
+    blockers: dict[
+        str, tuple[ProfileDependencyReason, str | None, ProfileDependencyAction]
+    ] = {
+        "exact": ("none", None, "none"),
+        "missing": (
+            "recipe_missing",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "mismatch": (
+            "recipe_mismatch",
+            "Needs compatible model",
+            "open_audio_cpp_settings",
+        ),
+        "pending": (
+            "recipe_pending_apply",
+            "Compatible model saved; apply settings",
+            "open_speech_lab_apply",
+        ),
+    }
+    try:
+        reason, display, action = blockers[state]
+    except (KeyError, TypeError):
+        raise ProfileServiceError("operation_failed") from None
+    return TTSProfileDependencyProjection(
+        reason=reason,
+        display=display,
+        action=action,
+        advisory=advisory.advisory,
+        advisory_display=advisory.advisory_display,
+        advisory_action=advisory.advisory_action,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1408,6 +1589,7 @@ class TTSProfileService:
                         profile.profile_id,
                         "unavailable",
                         profile.provider_id,
+                        _provenance_projection(profile),
                     )
                     for profile in page.profiles
                 ),
@@ -1434,6 +1616,7 @@ class TTSProfileService:
                             else "unavailable"
                         ),
                         profile.provider_id,
+                        _provenance_projection(profile),
                     )
                     for profile in page.profiles
                 ),
@@ -1466,9 +1649,62 @@ class TTSProfileService:
             snapshot.configuration_revision,
         )
 
-        availability = tuple(
-            self._classify_profile(profile, snapshot) for profile in page.profiles
-        )
+        projected: list[TTSProfileAvailability] = []
+        for profile in page.profiles:
+            base = self._classify_profile(profile, snapshot)
+            advisory = _provenance_projection(profile)
+            requirement = (
+                None
+                if profile.reference is None
+                else profile.reference.recipe_requirement
+            )
+            if base.state != "available" or requirement is None:
+                projected.append(
+                    _availability(
+                        profile.profile_id,
+                        base.state,
+                        profile.provider_id,
+                        advisory,
+                    )
+                )
+                continue
+            dependency_failed = False
+            dependency: AudioCppGuidedDependencySnapshot | None = None
+            try:
+                dependency = (
+                    await self._tts_service.audio_cpp_guided_dependency_snapshot(
+                        requirement
+                    )
+                )
+            except Exception:  # noqa: BLE001 - collaborator detail stays private
+                dependency_failed = True
+            dependency = validate_audio_cpp_guided_dependency_snapshot(
+                dependency,
+                requirement,
+            )
+            if dependency_failed or dependency is None:
+                raise ProfileServiceError("operation_failed") from None
+            await self._require_configuration_revision(
+                _PROFILE_PROVIDER_ID,
+                dependency.provider_configuration_revision,
+            )
+            dependency_projection = _dependency_projection(
+                dependency.state,
+                advisory=advisory,
+            )
+            projected.append(
+                _availability(
+                    profile.profile_id,
+                    (
+                        "available"
+                        if dependency_projection.reason == "none"
+                        else "unavailable"
+                    ),
+                    profile.provider_id,
+                    dependency_projection,
+                )
+            )
+        availability = tuple(projected)
         self._require_repository_generation(page.repository_generation)
         if self._current_configuration_revision() != snapshot.configuration_revision:
             raise ProfileServiceError("stale_configuration")
@@ -1846,6 +2082,11 @@ class TTSProfileService:
         )
         repository_generation = self._current_repository_generation()
         profile_id = self._next_portable_uuid(set())
+        recipe_requirement = TTSCloneRecipeRequirement(
+            recipe_id=evidence.recipe_id,
+            recipe_revision=evidence.recipe_revision,
+            model_id=evidence.model_id,
+        )
 
         failed = False
         result = None
@@ -1854,6 +2095,7 @@ class TTSProfileService:
                 draft,
                 profile_id,
                 evidence.canonical_reference,
+                recipe_requirement,
                 expected_generation=repository_generation,
             )
         except (ProfileRepositoryError, ProfileValidationError):
@@ -1878,6 +2120,7 @@ class TTSProfileService:
             or reference.sample_rate_hz != canonical.sample_rate_hz
             or reference.channels != canonical.channels
             or reference.sample_encoding != canonical.sample_encoding
+            or reference.recipe_requirement != recipe_requirement
         ):
             raise ProfileServiceError("operation_failed")
         self._require_repository_generation(repository_generation)
@@ -1899,6 +2142,11 @@ class TTSProfileService:
             draft.options,
         ):
             raise ProfileServiceError("unsupported_profile")
+        if loaded_profile.reference is not None and not self._generation_fields_match(
+            loaded_profile,
+            draft,
+        ):
+            raise ProfileServiceError("operation_failed")
         if not self._generation_fields_match(loaded_profile, draft):
             await self._require_authoritative_capability(draft)
 
@@ -2439,7 +2687,9 @@ class TTSProfileService:
             repository_generation=(
                 loaded.repository_generation if profile.reference is not None else None
             ),
-            profile_revision=(profile.revision if profile.reference is not None else None),
+            profile_revision=(
+                profile.revision if profile.reference is not None else None
+            ),
         )
 
     @staticmethod

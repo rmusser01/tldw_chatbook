@@ -790,6 +790,13 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
         ) -> None:
             raise AssertionError("not used")
 
+        async def audio_cpp_guided_dependency_snapshot(
+            self,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            raise AssertionError("not used")
+
     repository = FocusedRepository()
     tts_service = FocusedTTSService()
 
@@ -972,8 +979,105 @@ def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
         "TldwCli",
         "_close_owned_tts_resources",
     )
+    portability_calls = _self_method_calls(
+        owner_close, "_close_tts_voice_bundle_service"
+    )
+    repository_calls = _self_method_calls(owner_close, "_close_tts_profile_repository")
+    assert len(portability_calls) == 1
+    assert len(repository_calls) == 1
+    assert portability_calls[0].lineno < repository_calls[0].lineno
     assert len(_self_method_calls(owner_close, "_close_tts_profile_repository")) == 1
     assert len(_self_method_calls(owner_close, "_close_tts_service")) == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[tuple[Path, object, object]] = []
+
+    class PortabilityOwner(FakeOwnedService):
+        pass
+
+    portability = PortabilityOwner()
+    repository = object()
+    profile_service = object()
+    tts_service = object()
+
+    def build(root: Path, repo: object, dependency: object) -> object:
+        constructed.append((root, repo, dependency))
+        return portability
+
+    monkeypatch.setattr(app_module, "TTSVoiceBundlePortabilityService", build)
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    owner = SimpleNamespace(
+        _tts_voice_bundle_service=None,
+        _tts_voice_bundle_service_close_task=None,
+        _tts_profile_repository=repository,
+        tts_service=tts_service,
+    )
+
+    async def ensure_profile_service() -> object:
+        return profile_service
+
+    owner._ensure_tts_profile_service = ensure_profile_service
+
+    first = await TldwCli._ensure_tts_voice_bundle_service(owner)
+    second = await TldwCli._ensure_tts_voice_bundle_service(owner)
+    assert first is portability
+    assert second is portability
+    assert constructed == [
+        (tmp_path / "tts_voice_bundle_portability", repository, tts_service)
+    ]
+
+    await TldwCli._close_tts_voice_bundle_service(owner)
+    assert portability.close_calls == 1
+    assert portability.wait_closed_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_composite_shutdown_joins_each_owner_in_authority_order() -> None:
+    events: list[str] = []
+    portability_joined = asyncio.Event()
+    repository_joined = asyncio.Event()
+
+    async def close_portability() -> None:
+        events.append("portability:start")
+        await asyncio.sleep(0)
+        portability_joined.set()
+        events.append("portability:joined")
+
+    async def close_repository() -> None:
+        assert portability_joined.is_set()
+        events.append("repository:start")
+        await asyncio.sleep(0)
+        repository_joined.set()
+        events.append("repository:joined")
+
+    async def close_service() -> None:
+        assert repository_joined.is_set()
+        events.append("service:start")
+        await asyncio.sleep(0)
+        events.append("service:joined")
+
+    owner = SimpleNamespace(
+        _close_tts_voice_bundle_service=close_portability,
+        _close_tts_profile_repository=close_repository,
+        _close_tts_service=close_service,
+        loguru_logger=Mock(),
+    )
+
+    await TldwCli._close_owned_tts_resources(owner)
+
+    assert events == [
+        "portability:start",
+        "portability:joined",
+        "repository:start",
+        "repository:joined",
+        "service:start",
+        "service:joined",
+    ]
 
 
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:

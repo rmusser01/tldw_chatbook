@@ -55,6 +55,7 @@ from tldw_chatbook.TTS.profile_reference_materialization import (
 )
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
+    TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_service import (
@@ -68,7 +69,10 @@ from tldw_chatbook.TTS.profile_types import (
     TTSGenerationProfile,
     TTSProfileDraft,
 )
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppGuidedDependencySnapshot,
+    TTSService,
+)
 
 from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
 
@@ -290,6 +294,24 @@ class _CloneCapturingAdapter(_CapturingAdapter):
     def preflight_clone_source(self) -> None:
         return
 
+    def preflight_clone_dependency(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert requirement == TTSCloneRecipeRequirement(
+            recipe_id="pocket_tts",
+            recipe_revision=1,
+            model_id="clone-model",
+        )
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        assert request.model_id == requirement.model_id
+        self.preflight_clone_dependency(requirement)
+
     def admit_clone_capability(
         self,
         request: TTSRequest,
@@ -319,7 +341,9 @@ class _CloneCapturingAdapter(_CapturingAdapter):
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         self.clone_requests.append(request)
-        self.clone_reference_bytes.append(request.materialization.voice_ref.read_bytes())
+        self.clone_reference_bytes.append(
+            request.materialization.voice_ref.read_bytes()
+        )
         self.clone_reference_texts.append(request.materialization.reference_text)
         return await super().synthesize(request.request, progress_sink)
 
@@ -997,9 +1021,7 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
             speed=1.0,
         ),
         native_capability_reader=native_capability,
-        clone_materializer=TTSCloneReferenceMaterializer(
-            tmp_path / "clone-runtime"
-        ),
+        clone_materializer=TTSCloneReferenceMaterializer(tmp_path / "clone-runtime"),
     )
     repository = TTSProfileRepository(tmp_path / "voice-profiles.sqlite3")
     await repository.open()
@@ -1019,10 +1041,16 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         options={},
     )
     generation = repository.generation
+    requirement = TTSCloneRecipeRequirement(
+        recipe_id="pocket_tts",
+        recipe_revision=1,
+        model_id="clone-model",
+    )
     created = await repository.create_profile_with_reference(
         draft,
         profile_id,
         _canonical_clone_reference(),
+        requirement,
         expected_generation=generation,
     )
     await repository.set_assignment(
@@ -1034,6 +1062,24 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         expected_profile=created.value,
     )
     profile_service = TTSProfileService(repository, service)
+
+    async def exact_dependency(
+        current: TTSCloneRecipeRequirement,
+    ) -> AudioCppGuidedDependencySnapshot:
+        assert current == requirement
+        return AudioCppGuidedDependencySnapshot(
+            state="exact",
+            provider_configuration_revision=registry.configuration_revision(
+                "audio_cpp"
+            ),
+            saved_generation=1,
+            applied_generation=1,
+            pending_configuration=False,
+            saved_requirement=current,
+            applied_requirement=current,
+        )
+
+    service.audio_cpp_guided_dependency_snapshot = exact_dependency  # type: ignore[method-assign]
 
     # Profile-library and Roleplay assignment reads are deliberately passive.
     page = await profile_service.list_profiles(offset=0)
@@ -1099,9 +1145,7 @@ async def test_assigned_clone_profile_stays_passive_until_console_speak(
         assert adapter.clone_reference_texts == [
             "Mira speaks one private reference sentence."
         ]
-        assert adapter.clone_reference_bytes == [
-            _canonical_clone_reference().wav_bytes
-        ]
+        assert adapter.clone_reference_bytes == [_canonical_clone_reference().wav_bytes]
         assert not admitted.materialization.voice_ref.exists()
         assert artifact is not None
         assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)

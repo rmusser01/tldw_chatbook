@@ -142,6 +142,8 @@ class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
         service_loader: Callable[[], Awaitable[TTSProfileService | None]],
         *,
         default_profile_id_reader: Callable[[], object | None] | None = None,
+        voice_bundle_service_loader: Callable[[], Awaitable[object | None]]
+        | None = None,
     ) -> None:
         super().__init__()
         if not callable(service_loader):
@@ -152,12 +154,14 @@ class VoiceProfilePickerModal(ModalScreen[TTSPlaygroundSelectionPreset | None]):
             raise TypeError("default profile reader must be callable")
         self._service_loader = service_loader
         self._default_profile_id_reader = default_profile_id_reader
+        self._voice_bundle_service_loader = voice_bundle_service_loader
 
     def compose(self) -> ComposeResult:
         with Vertical(id="speech-voice-profile-picker"):
             yield STTSProfileLibrary(
                 self._service_loader,
                 default_profile_id_reader=self._default_profile_id_reader,
+                voice_bundle_service_loader=self._voice_bundle_service_loader,
             )
             with Horizontal(id="speech-voice-profile-picker-actions"):
                 yield Button("Back to setup", id="speech-voice-profile-picker-cancel")
@@ -1095,7 +1099,7 @@ class AudioBookGenerationWidget(Widget):
             logger.error(f"Failed to preview chapter audio: {e}")
             self.app.notify(f"Failed to generate preview: {e}", severity="error")
 
-    def _get_model_for_provider(self, provider: str) -> str:
+    def _get_model_for_provider(self, provider: str) -> str:  # type: ignore[no-redef]
         """Get the default model for a given provider"""
         model_map = {
             "openai": "tts-1",
@@ -1533,6 +1537,7 @@ class STTSWindow(Container):
                     default_profile_id_reader=(
                         lambda: get_cli_setting("app_tts", "default_profile_id", None)
                     ),
+                    voice_bundle_service_loader=self._load_voice_bundle_service,
                 )
             )
         elif new_view == "settings":
@@ -1665,6 +1670,7 @@ class STTSWindow(Container):
                 default_profile_id_reader=(
                     lambda: get_cli_setting("app_tts", "default_profile_id", None)
                 ),
+                voice_bundle_service_loader=self._load_voice_bundle_service,
             ),
             self._apply_voice_profile_picker_result,
         )
@@ -1744,6 +1750,24 @@ class STTSWindow(Container):
             raise
         except Exception:
             logger.debug("TTS profile storage is unavailable")
+            return None
+
+    async def _load_voice_bundle_service(self) -> object | None:
+        """Resolve the app-owned portability service only when first used."""
+
+        ensure_service = getattr(
+            self.app_instance,
+            "_ensure_tts_voice_bundle_service",
+            None,
+        )
+        if not callable(ensure_service):
+            return None
+        try:
+            return await ensure_service()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("TTS voice bundle portability is unavailable")
             return None
 
 

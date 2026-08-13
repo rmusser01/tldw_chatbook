@@ -285,6 +285,9 @@ from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
+from tldw_chatbook.TTS.voice_bundle_service import (
+    TTSVoiceBundlePortabilityService,
+)
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.TTS_Generation import (
     bind_tts_service,
@@ -5000,6 +5003,8 @@ class TldwCli(
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self._tts_profile_service: TTSProfileService | None = None
+        self._tts_voice_bundle_service: TTSVoiceBundlePortabilityService | None = None
+        self._tts_voice_bundle_service_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -8678,6 +8683,45 @@ class TldwCli(
             self._tts_profile_service = profile_service
         return profile_service
 
+    async def _ensure_tts_voice_bundle_service(
+        self,
+    ) -> TTSVoiceBundlePortabilityService | None:
+        """Construct the app-owned portability owner only on first use."""
+
+        if getattr(self, "_tts_voice_bundle_service_close_task", None) is not None:
+            return None
+        if await self._ensure_tts_profile_service() is None:
+            return None
+        service = getattr(self, "_tts_voice_bundle_service", None)
+        if service is None:
+            service = TTSVoiceBundlePortabilityService(
+                get_user_data_dir() / "tts_voice_bundle_portability",
+                self._tts_profile_repository,
+                self.tts_service,
+            )
+            self._tts_voice_bundle_service = service
+        return service
+
+    async def _close_tts_voice_bundle_service(self) -> None:
+        """Close and join portability before repository authority is released."""
+
+        service = getattr(self, "_tts_voice_bundle_service", None)
+        if service is None:
+            return
+        close_task = getattr(self, "_tts_voice_bundle_service_close_task", None)
+        if close_task is None:
+
+            async def close_portability() -> None:
+                await service.close()
+                await service.wait_closed()
+
+            close_task = asyncio.create_task(
+                close_portability(),
+                name="close_tts_voice_bundle_service",
+            )
+            self._tts_voice_bundle_service_close_task = close_task
+        await join_retained_task(close_task)
+
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
 
@@ -8717,9 +8761,15 @@ class TldwCli(
         )
 
     async def _close_owned_tts_resources(self) -> None:
-        """Close both app-owned TTS resources without masking cancellation."""
+        """Close app-owned TTS resources without masking cancellation."""
 
         failures: list[tuple[str, BaseException]] = []
+        if hasattr(self, "_close_tts_voice_bundle_service"):
+            try:
+                await self._close_tts_voice_bundle_service()
+            except BaseException as portability_close_error:
+                failures.append(("voice_bundle_service", portability_close_error))
+
         try:
             await self._close_tts_profile_repository()
         except BaseException as profile_close_error:

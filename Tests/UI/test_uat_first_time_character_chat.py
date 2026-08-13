@@ -178,6 +178,11 @@ class _AvailableAudioCppCapabilities:
     ) -> None:
         assert (provider_id, expected_revision) == ("audio_cpp", self.revision)
 
+    async def audio_cpp_guided_dependency_snapshot(self, _requirement):
+        raise AssertionError(
+            "reference-free profile portability must not inspect clone dependencies"
+        )
+
 
 class _CompleteWAVSpeechService:
     """External audio.cpp response boundary returning one complete WAV."""

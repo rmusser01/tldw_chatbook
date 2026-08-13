@@ -20,7 +20,15 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
 from textual.worker import Worker
-from textual.widgets import Button, Input, ListView, Select, Static, TabbedContent, TextArea
+from textual.widgets import (
+    Button,
+    Input,
+    ListView,
+    Select,
+    Static,
+    TabbedContent,
+    TextArea,
+)
 
 from ...Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
@@ -160,6 +168,12 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
 from ..stts_profile_library import (
     TTSProfileEditorModal,
     profile_action_error_copy,
+)
+from ..tts_profile_recovery import dependency_recovery_actions
+from ..Speech.speech_runtime_status import speech_tts_navigation_context
+from ..Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
 )
 from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryAttachRequested,
@@ -335,6 +349,7 @@ class _CharacterTTSAuthorityUnavailable(RuntimeError):
 
 class _CharacterTTSMixedSnapshot(RuntimeError):
     """Repository or capability observations did not form one snapshot."""
+
 
 # Character editor avatar thumbnail box, in character cells. Must stay in
 # sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
@@ -731,9 +746,9 @@ class PersonasScreen(BaseAppScreen):
         self._character_tts_request_generation = 0
         self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
         self._character_tts_presentation = CharacterTTSPresentationState.disabled()
-        self._character_tts_profile_suggestion: (
-            CharacterTTSProfileSuggestion | None
-        ) = None
+        self._character_tts_profile_suggestion: CharacterTTSProfileSuggestion | None = (
+            None
+        )
         self._character_tts_suggestion_focus_pending = False
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
@@ -1005,9 +1020,9 @@ class PersonasScreen(BaseAppScreen):
         # otherwise a stale saved state would land the user on the dead
         # no-selection paint. A payload that then FAILS to apply its
         # selection clears the flag again in _apply_pending_restore below.
-        self._restored_from_saved_state = isinstance(wb, dict) and wb.get(
-            "active_mode"
-        ) in MODE_CHIP_ORDER
+        self._restored_from_saved_state = (
+            isinstance(wb, dict) and wb.get("active_mode") in MODE_CHIP_ORDER
+        )
         if self._restored_from_saved_state:
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
@@ -1095,9 +1110,7 @@ class PersonasScreen(BaseAppScreen):
             return
         if self.state.active_mode != "characters":
             return
-        first = next(
-            (r for r in self._characters if r.get("id") is not None), None
-        )
+        first = next((r for r in self._characters if r.get("id") is not None), None)
         if first is None:
             return
         try:
@@ -1213,9 +1226,7 @@ class PersonasScreen(BaseAppScreen):
                 type(exc).__name__,
             )
             try:
-                self.notify(
-                    "Couldn't load the character library.", severity="error"
-                )
+                self.notify("Couldn't load the character library.", severity="error")
             except Exception:
                 pass
 
@@ -1692,11 +1703,9 @@ class PersonasScreen(BaseAppScreen):
         page: TTSProfilePageSnapshot,
         availability: TTSProfileAvailabilitySnapshot,
     ) -> dict[UUID, TTSProfileAvailability]:
-        if (
-            availability.repository_generation != page.repository_generation
-            or {profile.profile_id for profile in page.profiles}
-            != {item.profile_id for item in availability.profiles}
-        ):
+        if availability.repository_generation != page.repository_generation or {
+            profile.profile_id for profile in page.profiles
+        } != {item.profile_id for item in availability.profiles}:
             raise _CharacterTTSMixedSnapshot
         return {item.profile_id: item for item in availability.profiles}
 
@@ -1706,12 +1715,14 @@ class PersonasScreen(BaseAppScreen):
         character_id: str,
         runtime_source: str,
     ) -> _CharacterTTSControlSnapshot | None:
-        character_ref, expected_server_id, capture = (
-            await self._resolve_character_tts_authority(
-                request_generation,
-                character_id,
-                runtime_source,
-            )
+        (
+            character_ref,
+            expected_server_id,
+            capture,
+        ) = await self._resolve_character_tts_authority(
+            request_generation,
+            character_id,
+            runtime_source,
         )
         service = await self._character_tts_profile_service()
         if not self._character_tts_request_is_current(
@@ -1853,8 +1864,7 @@ class PersonasScreen(BaseAppScreen):
 
         if (
             assigned.repository_generation != page.repository_generation
-            or page_availability.repository_generation
-            != page.repository_generation
+            or page_availability.repository_generation != page.repository_generation
             or len(availability_by_id) != len(loaded_profiles)
             or not self._character_tts_request_is_current(
                 request_generation,
@@ -1870,8 +1880,7 @@ class PersonasScreen(BaseAppScreen):
                 return None
             raise _CharacterTTSMixedSnapshot
         availability = tuple(
-            availability_by_id[loaded.profile.profile_id]
-            for loaded in loaded_profiles
+            availability_by_id[loaded.profile.profile_id] for loaded in loaded_profiles
         )
         snapshot = _CharacterTTSControlSnapshot(
             request_generation=request_generation,
@@ -1897,9 +1906,7 @@ class PersonasScreen(BaseAppScreen):
         snapshot: _CharacterTTSControlSnapshot,
         suggested_profile_id: UUID | None = None,
     ) -> CharacterTTSPresentationState:
-        availability_by_id = {
-            item.profile_id: item for item in snapshot.availability
-        }
+        availability_by_id = {item.profile_id: item for item in snapshot.availability}
         profiles = tuple(
             CharacterTTSProfileOption(
                 profile_id=loaded.profile.profile_id,
@@ -1908,6 +1915,7 @@ class PersonasScreen(BaseAppScreen):
                 recovery_action=(
                     availability_by_id[loaded.profile.profile_id].recovery_action
                 ),
+                dependency=availability_by_id[loaded.profile.profile_id].dependency,
             )
             for loaded in snapshot.loaded_profiles
         )
@@ -1939,7 +1947,14 @@ class PersonasScreen(BaseAppScreen):
             if count is None
             else f"Used by {count} character{'s' if count != 1 else ''}"
         )
-        if current_availability.state == "available":
+        dependency = current_availability.dependency
+        if dependency.display:
+            status = (
+                f"{current.profile.display_name} · {dependency.display} · "
+                f"{count_copy}. Repair the compatible model dependency or remove "
+                "this assignment."
+            )
+        elif current_availability.state == "available":
             status = f"{current.profile.display_name} · Available · {count_copy}."
         elif current_availability.state == "unavailable":
             status = (
@@ -1965,6 +1980,8 @@ class PersonasScreen(BaseAppScreen):
                 f"{count_copy}. The exact selection is used as-is; the "
                 "assignment is preserved."
             )
+        if dependency.advisory_display:
+            status = f"{status} {dependency.advisory_display}."
         if suggested_profile_id is not None:
             suggested = next(
                 profile
@@ -2016,6 +2033,7 @@ class PersonasScreen(BaseAppScreen):
             or loaded.profile.revision != suggestion.profile_revision
             or availability is None
             or availability.state == "unavailable"
+            or availability.dependency.reason != "none"
         ):
             self._clear_character_tts_profile_suggestion()
             return None
@@ -2054,9 +2072,7 @@ class PersonasScreen(BaseAppScreen):
                     character_id,
                     runtime_source,
                 ):
-                    self._disable_character_tts_controls(
-                        _CHARACTER_TTS_CHANGED_COPY
-                    )
+                    self._disable_character_tts_controls(_CHARACTER_TTS_CHANGED_COPY)
                 return
             except Exception as error:
                 if self._character_tts_request_is_current(
@@ -2128,11 +2144,7 @@ class PersonasScreen(BaseAppScreen):
             None,
         )
         availability = next(
-            (
-                item
-                for item in snapshot.availability
-                if item.profile_id == profile_id
-            ),
+            (item for item in snapshot.availability if item.profile_id == profile_id),
             None,
         )
         if loaded is None or availability is None:
@@ -2180,7 +2192,11 @@ class PersonasScreen(BaseAppScreen):
                 return
             if action == "assign" and profile_id is not None:
                 tokens = self._character_tts_profile_tokens(snapshot, profile_id)
-                if tokens is None or tokens[1].state == "unavailable":
+                if (
+                    tokens is None
+                    or tokens[1].state == "unavailable"
+                    or tokens[1].dependency.reason != "none"
+                ):
                     return
                 loaded, _availability = tokens
                 await service.set_assignment(
@@ -2189,12 +2205,9 @@ class PersonasScreen(BaseAppScreen):
                     current_assignment,
                 )
             else:
-                if (
-                    current_assignment is None
-                    or (
-                        profile_id is not None
-                        and profile_id != current_assignment.profile_id
-                    )
+                if current_assignment is None or (
+                    profile_id is not None
+                    and profile_id != current_assignment.profile_id
                 ):
                     return
                 await service.detach_assignment(
@@ -2204,10 +2217,10 @@ class PersonasScreen(BaseAppScreen):
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if (
-                isinstance(error, ProfileRepositoryError)
-                and error.code in {"conflict", "stale"}
-            ):
+            if isinstance(error, ProfileRepositoryError) and error.code in {
+                "conflict",
+                "stale",
+            }:
                 if self._character_tts_snapshot_context_is_current(snapshot):
                     self._notify(
                         "Voice assignment changed; refreshed current state.",
@@ -2262,9 +2275,7 @@ class PersonasScreen(BaseAppScreen):
             if (
                 type(count) is not int
                 or count < 0
-                or not await self._character_tts_authority_context_is_current(
-                    snapshot
-                )
+                or not await self._character_tts_authority_context_is_current(snapshot)
             ):
                 return
             draft = await self.app.push_screen_wait(
@@ -2277,19 +2288,17 @@ class PersonasScreen(BaseAppScreen):
             if (
                 draft is None
                 or type(draft) is not TTSProfileDraft
-                or not await self._character_tts_authority_context_is_current(
-                    snapshot
-                )
+                or not await self._character_tts_authority_context_is_current(snapshot)
             ):
                 return
             await service.update_profile(loaded, draft)
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if (
-                isinstance(error, ProfileRepositoryError)
-                and error.code in {"conflict", "stale"}
-            ):
+            if isinstance(error, ProfileRepositoryError) and error.code in {
+                "conflict",
+                "stale",
+            }:
                 if self._character_tts_snapshot_context_is_current(snapshot):
                     self._notify(
                         "Voice profile changed; refreshed current state.",
@@ -2330,6 +2339,35 @@ class PersonasScreen(BaseAppScreen):
         if message.action == "create":
             self._navigate_to_speech()
             return
+        if message.action in {
+            "open_audio_cpp_settings",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
+            if message.profile_id is None:
+                return
+            tokens = self._character_tts_profile_tokens(snapshot, message.profile_id)
+            if tokens is None or message.action not in {
+                action.operation
+                for action in dependency_recovery_actions(tokens[1].dependency)
+            }:
+                return
+        if message.action == "open_audio_cpp_settings":
+            self.app.post_message(
+                NavigateToScreen(
+                    "settings",
+                    {
+                        "category": "speech-tts",
+                        **speech_tts_navigation_context(
+                            SpeechTTSNavigationTarget(
+                                "audio_cpp",
+                                SpeechTTSNavigationIntent.CONFIGURE,
+                            )
+                        ),
+                    },
+                )
+            )
+            return
         if message.action in {"assign", "remove"}:
             if message.action == "assign":
                 self._clear_character_tts_profile_suggestion()
@@ -2346,7 +2384,11 @@ class PersonasScreen(BaseAppScreen):
             return
         if message.profile_id is None:
             return
-        if message.action == "preview":
+        if message.action in {
+            "preview",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
             self.run_worker(
                 self._character_tts_preview_worker(
                     message.profile_id,
@@ -2495,9 +2537,7 @@ class PersonasScreen(BaseAppScreen):
         return value
 
     @classmethod
-    def _server_character_rows(
-        cls, response: Any
-    ) -> tuple[list[dict], int | None]:
+    def _server_character_rows(cls, response: Any) -> tuple[list[dict], int | None]:
         """Normalize the existing list/query response shapes without widening them."""
         response_mapping = cls._character_record_mapping(response)
         total: int | None = None
@@ -2573,8 +2613,7 @@ class PersonasScreen(BaseAppScreen):
                 else:
                     current_sort_labels = dict(self._character_sort_cycle())
                     current_sort_label = (
-                        f"Sort: "
-                        f"{current_sort_labels.get(self.state.sort_key, 'Name')}"
+                        f"Sort: {current_sort_labels.get(self.state.sort_key, 'Name')}"
                     )
                     current_tag_label = (
                         f"Tag: {self.state.tag_filter}"
@@ -2639,9 +2678,7 @@ class PersonasScreen(BaseAppScreen):
         if expected_server_id is None:
             return
 
-        service = getattr(
-            self.app_instance, "character_persona_scope_service", None
-        )
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
         method_name = "search_characters" if query else "list_characters"
         load_characters = getattr(service, method_name, None)
         if not callable(load_characters):
@@ -2788,10 +2825,10 @@ class PersonasScreen(BaseAppScreen):
     def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
         """Build recovery copy when persona listing is unavailable."""
 
-        reason = (
-            str(exc).strip() or "The current backend did not return personas."
+        reason = str(exc).strip() or "The current backend did not return personas."
+        disabled_tooltip = (
+            f"{reason} Retry Personas or use Characters until personas are available."
         )
-        disabled_tooltip = f"{reason} Retry Personas or use Characters until personas are available."
         return DestinationRecoveryState(
             status_label="Personas unavailable",
             unavailable_what="Browse personas in Personas",
@@ -2910,9 +2947,7 @@ class PersonasScreen(BaseAppScreen):
                 self.state.selected_entity_kind == "persona"
                 and self.state.selected_entity_id
             ):
-                library.mark_active_row(
-                    "persona", self.state.selected_entity_id
-                )
+                library.mark_active_row("persona", self.state.selected_entity_id)
 
     @on(PersonaSearchChanged)
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
@@ -3170,13 +3205,10 @@ class PersonasScreen(BaseAppScreen):
                 )
                 records = list(response.get("dictionaries") or [])
             except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not list chat dictionaries."
-                )
+                logger.opt(exception=True).warning("Could not list chat dictionaries.")
                 records = []
                 recovery_copy = (
-                    "Dictionaries could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
                 )
 
         needle = expected_query.lower()
@@ -3248,9 +3280,7 @@ class PersonasScreen(BaseAppScreen):
         recovery_copy: str | None = None
         if manager is None:
             records: list[dict] = []
-            recovery_copy = (
-                "Lore is unavailable: the database is not configured."
-            )
+            recovery_copy = "Lore is unavailable: the database is not configured."
         else:
             try:
                 records = await asyncio.to_thread(
@@ -3260,8 +3290,7 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).warning("Could not list lore books.")
                 records = []
                 recovery_copy = (
-                    "Lore books could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    "Lore books could not be loaded.\nSwitch modes and back to retry."
                 )
 
         needle = expected_query.lower()
@@ -3420,11 +3449,7 @@ class PersonasScreen(BaseAppScreen):
         """Live header subtitle: destination purpose plus the editing state."""
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
-            noun = (
-                "persona"
-                if self.state.active_mode == "personas"
-                else "character"
-            )
+            noun = "persona" if self.state.active_mode == "personas" else "character"
             return f"New {noun}{suffix}"
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
@@ -3531,15 +3556,11 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         self._marked_rows = message.marks
         try:
-            self.query_one(PersonasInspectorPane).set_marked_count(
-                len(message.marks)
-            )
+            self.query_one(PersonasInspectorPane).set_marked_count(len(message.marks))
         except QueryError:
             pass
 
-    async def _fetch_server_character(
-        self, entity_id: str
-    ) -> tuple[str, dict] | None:
+    async def _fetch_server_character(self, entity_id: str) -> tuple[str, dict] | None:
         """Fetch one server card and prove its source target and numeric ID."""
         if (
             type(entity_id) is not str
@@ -3553,9 +3574,7 @@ class PersonasScreen(BaseAppScreen):
         expected_server_id = self._active_server_target()
         if expected_server_id is None:
             return None
-        service = getattr(
-            self.app_instance, "character_persona_scope_service", None
-        )
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
         get_character = getattr(service, "get_character", None)
         if not callable(get_character):
             return None
@@ -3635,9 +3654,7 @@ class PersonasScreen(BaseAppScreen):
             # F-036: a server character with no saved conversations gets the
             # same empty-state copy the local path renders via the
             # controller, not a bare Conversations header.
-            await inspector.show_conversations(
-                (), empty_copy="No saved conversations."
-            )
+            await inspector.show_conversations((), empty_copy="No saved conversations.")
             edit_button = self.query_one("#personas-card-edit-character", Button)
             edit_button.disabled = True
             edit_button.tooltip = _SERVER_READ_ONLY_TOOLTIP
@@ -3667,9 +3684,7 @@ class PersonasScreen(BaseAppScreen):
             entity_name=entity_name,
         )
         self._edit_mode = "view"
-        self.query_one(PersonasLibraryPane).mark_active_row(
-            "persona", entity_id
-        )
+        self.query_one(PersonasLibraryPane).mark_active_row("persona", entity_id)
         record = await self._fetch_profile_record(entity_id)
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
@@ -4265,7 +4280,10 @@ class PersonasScreen(BaseAppScreen):
                 f"Could not list world books for character {entity_id}."
             )
             rows = []
-        if self.state.selected_entity_id != entity_id or self.state.selected_entity_kind != "character":
+        if (
+            self.state.selected_entity_id != entity_id
+            or self.state.selected_entity_kind != "character"
+        ):
             return
         try:
             self.query_one(PersonasCharacterWorldBooksWidget).load_world_books(rows)
@@ -4548,10 +4566,7 @@ class PersonasScreen(BaseAppScreen):
         if not self._local_character_actions_allowed():
             return
         entity_id = self.state.selected_entity_id
-        if (
-            self.state.selected_entity_kind != "character"
-            or not entity_id
-        ):
+        if self.state.selected_entity_kind != "character" or not entity_id:
             return
         manager = self._lore_manager()
         if manager is None:
@@ -5168,9 +5183,7 @@ class PersonasScreen(BaseAppScreen):
                     ConversationAttachPicker(convs)
                 )
             except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not show the attach picker."
-                )
+                logger.opt(exception=True).warning("Could not show the attach picker.")
                 return
             if not picked:
                 return
@@ -5181,9 +5194,7 @@ class PersonasScreen(BaseAppScreen):
                     int(entity_id),
                 )
             except Exception as exc:
-                logger.opt(exception=True).warning(
-                    "Could not attach the world book."
-                )
+                logger.opt(exception=True).warning("Could not attach the world book.")
                 self._notify(f"Attach failed: {exc}", "error")
                 return
             await self._refresh_lore_attachments()
@@ -5728,9 +5739,7 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Duplicate failed: {exc}", "error")
             return
         if not source:
-            self._notify(
-                f"Could not load character {entity_id} to duplicate.", "error"
-            )
+            self._notify(f"Could not load character {entity_id} to duplicate.", "error")
             return
         if not self._local_character_actions_allowed():
             return
@@ -5775,7 +5784,9 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Duplicate failed: {exc}", "error")
             return
         if not new_id:
-            self._notify("Duplicate failed: character creation returned no id.", "error")
+            self._notify(
+                "Duplicate failed: character creation returned no id.", "error"
+            )
             return
         if not self._local_character_actions_allowed():
             return
@@ -5983,9 +5994,7 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         if str(message.persona_id) != (self.state.selected_entity_id or ""):
-            self._notify(
-                "Selection out of sync; reselect the persona.", "warning"
-            )
+            self._notify("Selection out of sync; reselect the persona.", "warning")
             return
         record = await self._fetch_profile_record(str(message.persona_id))
         self._edit_mode = "edit"
@@ -6213,8 +6222,10 @@ class PersonasScreen(BaseAppScreen):
             return override
         runner = build_gateway_runner(
             gateway_factory=self.preview.ensure_gateway,
-            selection_factory=lambda: PersonasPreviewController._selection_from_defaults(
-                getattr(self.app_instance, "app_config", {}) or {}, "chat_defaults"
+            selection_factory=lambda: (
+                PersonasPreviewController._selection_from_defaults(
+                    getattr(self.app_instance, "app_config", {}) or {}, "chat_defaults"
+                )
             ),
         )
         return CharacterGenerationController(runner=runner)
@@ -6441,9 +6452,7 @@ class PersonasScreen(BaseAppScreen):
                 pil = cache.get_pil(cache_key)
                 if pil is not None:
                     renderable = _GraphicsImage(pil)
-                    w_cells, h_cells = self._fit_avatar_cell_size(
-                        pil.width, pil.height
-                    )
+                    w_cells, h_cells = self._fit_avatar_cell_size(pil.width, pil.height)
                     renderable.styles.width = w_cells
                     renderable.styles.height = h_cells
             except Exception:
@@ -7105,8 +7114,7 @@ class PersonasScreen(BaseAppScreen):
             return
         if self._io_dialog_active:
             logger.debug(
-                "Import/export dialog already active; ignoring style pick "
-                "request."
+                "Import/export dialog already active; ignoring style pick request."
             )
             return
         self._io_dialog_active = True
@@ -7323,9 +7331,7 @@ class PersonasScreen(BaseAppScreen):
                     group="personas-avatar-render",
                     exit_on_error=False,
                 )
-                self._notify(
-                    "Avatar image generated — Save to keep it.", "information"
-                )
+                self._notify("Avatar image generated — Save to keep it.", "information")
                 return True
             # Propagate the write's real outcome (task-563 AC4) - a DB-write
             # failure here already notified via _apply_expression_upload's
@@ -7407,9 +7413,7 @@ class PersonasScreen(BaseAppScreen):
             character_id, state, getattr(self, "_expression_generate_style", None)
         )
 
-    async def _generate_all_expression_images_worker(
-        self, character_id: int
-    ) -> None:
+    async def _generate_all_expression_images_worker(self, character_id: int) -> None:
         """Generate avatar + all 3 expression-state images sequentially.
 
         Image-gen P3 Task 4: reuses ``_generate_one_slot`` per state, so
@@ -7543,8 +7547,7 @@ class PersonasScreen(BaseAppScreen):
                 "dialog; skipping the sweep."
             )
             self._notify(
-                "Could not show the overwrite confirmation; "
-                "Generate-all cancelled.",
+                "Could not show the overwrite confirmation; Generate-all cancelled.",
                 "warning",
             )
             return False
@@ -7663,7 +7666,10 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Expression Set (.zip / .tldw-persona-vpack)",
                 filters=Filters(
-                    ("Archives", lambda p: p.suffix.lower() in (".zip", ".tldw-persona-vpack")),
+                    (
+                        "Archives",
+                        lambda p: p.suffix.lower() in (".zip", ".tldw-persona-vpack"),
+                    ),
                 ),
                 context="character_expression_set_import",
             )
@@ -7677,7 +7683,9 @@ class PersonasScreen(BaseAppScreen):
             if file_path:
                 if not self._local_character_actions_allowed():
                     return
-                await self._import_expression_set_from_path(character_id, str(file_path))
+                await self._import_expression_set_from_path(
+                    character_id, str(file_path)
+                )
         finally:
             self._io_dialog_active = False
 
@@ -7763,9 +7771,7 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._io_dialog_active = False
 
-    async def _export_expression_set(
-        self, character_id: int, name: str
-    ) -> str | None:
+    async def _export_expression_set(self, character_id: int, name: str) -> str | None:
         """Build the export .zip and write it to the exports dir (atomic).
 
         Dialog-free (directly testable). Collects the idle image from the
@@ -7799,7 +7805,9 @@ class PersonasScreen(BaseAppScreen):
                 if data:
                     images[state] = data
         if not images:
-            self._notify("This character has no expression images to export.", "warning")
+            self._notify(
+                "This character has no expression images to export.", "warning"
+            )
             return None
         blob = await asyncio.to_thread(build_expression_set_zip, name, images)
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "character"
@@ -8143,9 +8151,7 @@ class PersonasScreen(BaseAppScreen):
         return result if result in {"reuse", "copy"} else None
 
     async def _confirm_reused_character_tts_apply(self) -> bool:
-        result = await self.app.push_screen_wait(
-            CharacterTTSExistingAssignmentDialog()
-        )
+        result = await self.app.push_screen_wait(CharacterTTSExistingAssignmentDialog())
         return result is True
 
     async def _local_character_ref_for_import(
@@ -8174,9 +8180,7 @@ class PersonasScreen(BaseAppScreen):
         plan = await service.inspect_portable_profile_import(observation)
         if type(plan) is not PortableProfileImportPlan:
             raise RuntimeError("invalid_profile_plan")
-        character_ref = await self._local_character_ref_for_import(
-            outcome.character_id
-        )
+        character_ref = await self._local_character_ref_for_import(outcome.character_id)
         loaded_assignment = await service.get_assigned_profile(character_ref)
         if type(loaded_assignment) is not LoadedCharacterTTSAssignment:
             raise RuntimeError("invalid_assignment_snapshot")
@@ -8983,9 +8987,7 @@ class PersonasScreen(BaseAppScreen):
                     "error",
                 )
             else:
-                self._notify(
-                    f"Deleted {len(deleted_ids)} {noun}.", "information"
-                )
+                self._notify(f"Deleted {len(deleted_ids)} {noun}.", "information")
         finally:
             self._delete_dialog_active = False
 
@@ -9271,9 +9273,7 @@ class PersonasScreen(BaseAppScreen):
                 self.app_instance, "character_persona_scope_service", None
             )
             if service is None or not hasattr(service, "delete_persona_profile"):
-                self._notify(
-                    "Delete failed: personas are unavailable.", "error"
-                )
+                self._notify("Delete failed: personas are unavailable.", "error")
                 return
             try:
                 await service.delete_persona_profile(
@@ -9581,9 +9581,7 @@ class PersonasScreen(BaseAppScreen):
                         mode=data.get("mode") or "session_scoped",
                         system_prompt=data.get("system_prompt"),
                         is_active=bool(data.get("is_active", True)),
-                        personality_traits=str(
-                            data.get("personality_traits") or ""
-                        ),
+                        personality_traits=str(data.get("personality_traits") or ""),
                     )
                 else:
                     request = PersonaProfileCreate(
@@ -9595,9 +9593,7 @@ class PersonasScreen(BaseAppScreen):
                     )
                 result = await service.create_persona_profile(request, mode=mode)
             else:
-                update_payload: dict[str, Any] = {
-                    "name": str(data.get("name") or "")
-                }
+                update_payload: dict[str, Any] = {"name": str(data.get("name") or "")}
                 for field_name in ("mode", "system_prompt", "is_active"):
                     if field_name in data:
                         update_payload[field_name] = data[field_name]
@@ -9741,8 +9737,7 @@ class PersonasScreen(BaseAppScreen):
             True in Characters mode with no selection (empty center), else False.
         """
         return (
-            self.state.active_mode == "characters"
-            and not self.state.selected_entity_id
+            self.state.active_mode == "characters" and not self.state.selected_entity_id
         )
 
     def _characters_empty_guidance_text(self) -> str:
@@ -9797,10 +9792,14 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             dict_panel = None
         if dict_panel is not None:
-            dict_panel.display = visible_id in (
-                "#ccp-character-card-view",
-                "#ccp-character-editor-view",
-            ) and self.state.runtime_source == "local"
+            dict_panel.display = (
+                visible_id
+                in (
+                    "#ccp-character-card-view",
+                    "#ccp-character-editor-view",
+                )
+                and self.state.runtime_source == "local"
+            )
         # The wrapper that holds BOTH character-attachment sections
         # (Roleplay P2f Task 6 added the world-books panel alongside the
         # P1f dictionaries panel inside #personas-character-attachments)
@@ -9818,10 +9817,14 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             attachments_wrapper = None
         if attachments_wrapper is not None:
-            attachments_wrapper.display = visible_id in (
-                "#ccp-character-card-view",
-                "#ccp-character-editor-view",
-            ) and self.state.runtime_source == "local"
+            attachments_wrapper.display = (
+                visible_id
+                in (
+                    "#ccp-character-card-view",
+                    "#ccp-character-editor-view",
+                )
+                and self.state.runtime_source == "local"
+            )
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:

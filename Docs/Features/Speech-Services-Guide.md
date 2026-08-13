@@ -121,11 +121,34 @@ backups, filesystem snapshots, SQLite recovery data, or storage media. The
 Windows privacy posture remains unverified until TASK-13208.
 
 Profiles that contain a reference can use it for compatible Guided Managed
-audio.cpp generation. Speech Lab now provides the supported setup path for a
-reviewed reference-required Guided model; voice-bundle portability remains
-unsupported. Ordinary profile/card portability remains wire version 1 and
-omits reference metadata, audio, transcript, digest, and source paths. Do not
-treat an ordinary profile export as a reference backup.
+audio.cpp generation. Speech Lab provides the supported setup path for a
+reviewed reference-required Guided model. Ordinary profile/card export remains
+the safe default: reference-free profiles use wire version 1, while a profile
+with a reference uses sanitized wire version 2 with an explicit
+`reference: omitted` marker. Neither format contains reference metadata,
+audio, transcript, digest, recipe provenance, or source paths. Do not treat an
+ordinary profile export as a reference backup.
+
+To intentionally transfer a saved clone voice on a supported POSIX host, open
+the Voice Profile library and choose **Export → Export portable voice bundle**.
+Chatbook warns that the file contains plaintext voice audio and transcript and
+does not enable Continue until you acknowledge that warning. The bundle is a
+strict four-file container (`manifest.json`, `profile.json`, `reference.wav`,
+and `reference.txt`), is created owner-only, and never overwrites an existing
+destination. Its checksums detect byte changes; they are not a signature,
+speaker-identity check, authenticity proof, or consent proof.
+
+**Import bundle** shows its own plaintext warning before opening the picker.
+Chatbook validates the unchanged source as hostile input, then shows bounded
+UUID, name, recipe, model, dependency, and conflict facts. You must explicitly
+choose Create, exact Reuse, or Import as copy. Import never overwrites, assigns
+a character, changes a default, installs a model, or retargets to another
+recipe. If the exact dependency is absent, Create/Copy is available only after
+you separately accept an inactive **Needs compatible model** result. Install or
+configure that exact Guided package in audio.cpp Settings, apply the saved
+Speech Lab configuration when prompted, then refresh the library. A migrated
+profile that says **Recipe provenance unavailable** must be previewed/generated
+and saved as a new profile before it can be bundled.
 
 For clone generation, Chatbook freezes the exact profile/reference revision,
 then verifies a reviewed clone-capable Guided recipe and the exact
@@ -188,19 +211,25 @@ temporary audio and materializations; it never deletes the WAV you selected.
 
 This workflow does not send client-local references to External audio.cpp or a
 Managed setup that uses your own `server.json`. It does not export reference
-bytes in ordinary profiles/cards, create portable voice bundles, claim Windows
-managed-reference parity, or enable a recipe that is not in the reviewed
-release-0.5.1 registry.
+bytes in ordinary profiles/cards, claim Windows bundle or managed-reference
+parity, or enable a recipe that is not in the reviewed release-0.5.1 registry.
 
-When Chatbook first opens a version 2 profile store, it creates and validates a
-retained v2 pre-migration backup before migrating to version 3. Older Chatbook
-builds refuse the version 3 database. The retained file is the sibling
-`<profile-db>.pre-v3.sqlite3`, where `<profile-db>` is the configured
-`[database] tts_profiles_db_path` or the default
-`tldw_chatbook_tts_profiles.db`. To downgrade, fully close Chatbook, replace
-the configured profile database with that retained backup, and then start the
-older build. Downgrade requires accepting loss of post-migration profile
-changes, including newer profile edits, assignments, and all stored references.
+The profile store is now schema version 4. Migration advances every supported
+older store through validated private candidates and retains stable downgrade
+siblings at the applicable boundaries: `<profile-db>.pre-v3.sqlite3` and
+`<profile-db>.pre-v4.sqlite3`. Version 3 references migrate without invented
+recipe provenance. Older builds refuse the newer active database. To downgrade
+to a version-3-capable build, fully close Chatbook, restore the stable
+`<profile-db>.pre-v4.sqlite3` sibling as the configured profile database, then
+start the older build. Accept that all post-migration profile changes and recipe
+provenance will be lost. Never copy over an open profile database.
+
+Bundle inspection, archive work, publication, and cleanup are owned by one
+application service. On shutdown Chatbook first seals and joins that service,
+then closes the profile repository, then closes TTS runtime ownership. A
+restart that finds unexplained portability residue fails closed and asks you to
+exit Chatbook and inspect the app-owned portability directory manually; it does
+not guess that a pathname is safe to delete.
 
 **Database Tools → Backup All Databases** includes the profile store when its
 repository is available. Chatbook creates that entry with SQLite's online

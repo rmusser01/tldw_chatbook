@@ -11,7 +11,10 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from tldw_chatbook.TTS.profile_reference_materialization import (
     TTSCloneReferenceMaterialization,
 )
-from tldw_chatbook.TTS.profile_reference_types import CanonicalTTSCloneReference
+from tldw_chatbook.TTS.profile_reference_types import (
+    CanonicalTTSCloneReference,
+    TTSCloneRecipeRequirement,
+)
 
 ProgressSink = Callable[["TTSProgress"], Awaitable[None]]
 CleanupCallback = Callable[[], Awaitable[None]]
@@ -36,6 +39,8 @@ TTSOperationCode = Literal[
     "process_exited",
     "runtime_unhealthy",
     "cleanup_failed",
+    "dependency_missing",
+    "dependency_changed",
 ]
 VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
 CapabilitySnapshotState = Literal["complete", "unverified"]
@@ -787,6 +792,24 @@ class TTSNativeCloneAdapter(Protocol):
         request: _AdmittedAudioCppCloneRequest,
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
+        raise NotImplementedError
+
+
+@runtime_checkable
+class TTSNativeCloneDependencyAdapter(Protocol):
+    """Native clone adapter that can preflight exact local configuration."""
+
+    def preflight_clone_dependency(
+        self,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
+        raise NotImplementedError
+
+    def preflight_clone_request_dependency(
+        self,
+        request: TTSRequest,
+        requirement: TTSCloneRecipeRequirement,
+    ) -> None:
         raise NotImplementedError
 
 

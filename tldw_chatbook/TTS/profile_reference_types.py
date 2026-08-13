@@ -24,6 +24,7 @@ MAX_REFERENCE_SAMPLE_RATE_HZ = 96_000
 REFERENCE_SAMPLE_ENCODING: Final[Literal["pcm_s16le"]] = "pcm_s16le"
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_RECIPE_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _ALLOWED_TRANSCRIPT_CONTROLS = frozenset({"\t", "\n"})
 
 
@@ -57,6 +58,54 @@ def _is_unsafe_transcript_character(character: str) -> bool:
         or 0xFDD0 <= code_point <= 0xFDEF
         or code_point & 0xFFFF in (0xFFFE, 0xFFFF)
     )
+
+
+def _is_unsafe_model_character(character: str) -> bool:
+    code_point = ord(character)
+    return (
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+        or 0xFDD0 <= code_point <= 0xFDEF
+        or code_point & 0xFFFF in (0xFFFE, 0xFFFF)
+    )
+
+
+def _validate_recipe_model_id(value: object) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 256
+        or any(_is_unsafe_model_character(character) for character in value)
+    ):
+        raise _validation_error("model_id")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise _validation_error("model_id") from None
+    return value
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class TTSCloneRecipeRequirement:
+    """Exact recipe and model dependency for a portable clone reference."""
+
+    recipe_id: str
+    recipe_revision: int
+    model_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.recipe_id) is not str or not _RECIPE_ID_PATTERN.fullmatch(
+            self.recipe_id
+        ):
+            raise _validation_error("recipe_id")
+        if (
+            type(self.recipe_revision) is not int
+            or not 1 <= self.recipe_revision <= 2_147_483_647
+        ):
+            raise _validation_error("recipe_revision")
+        object.__setattr__(self, "model_id", _validate_recipe_model_id(self.model_id))
+
+    def __repr__(self) -> str:
+        return "TTSCloneRecipeRequirement(<private>)"
 
 
 def validate_reference_text(value: object) -> str:
@@ -137,6 +186,7 @@ class TTSCloneReferenceSummary:
     sample_encoding: Literal["pcm_s16le"]
     created_at: datetime
     updated_at: datetime
+    recipe_requirement: TTSCloneRecipeRequirement | None = None
 
     def __post_init__(self) -> None:
         reference_id = _validate_uuid(self.reference_id)
@@ -151,6 +201,11 @@ class TTSCloneReferenceSummary:
         updated_at = _validate_utc_timestamp(self.updated_at, "updated_at")
         if created_at > updated_at:
             raise _validation_error("timestamps")
+        if (
+            self.recipe_requirement is not None
+            and type(self.recipe_requirement) is not TTSCloneRecipeRequirement
+        ):
+            raise _validation_error("reference_invalid")
         object.__setattr__(self, "reference_id", reference_id)
         object.__setattr__(self, "byte_length", metadata[0])
         object.__setattr__(self, "duration_ms", metadata[1])
@@ -215,9 +270,17 @@ class TTSCloneReference:
     reference_text: str
     sha256: str
     wav_bytes: bytes
+    recipe_requirement: TTSCloneRecipeRequirement | None = None
 
     def __post_init__(self) -> None:
         if type(self.summary) is not TTSCloneReferenceSummary:
+            raise _validation_error("reference_invalid")
+        if (
+            self.recipe_requirement is not None
+            and type(self.recipe_requirement) is not TTSCloneRecipeRequirement
+        ):
+            raise _validation_error("reference_invalid")
+        if self.recipe_requirement != self.summary.recipe_requirement:
             raise _validation_error("reference_invalid")
         if type(self.wav_bytes) is not bytes or not self.wav_bytes:
             raise _validation_error("reference_invalid")
@@ -246,6 +309,7 @@ __all__ = [
     "MAX_REFERENCE_TOTAL_BYTES",
     "REFERENCE_SAMPLE_ENCODING",
     "TTSCloneReference",
+    "TTSCloneRecipeRequirement",
     "TTSCloneReferenceSummary",
     "validate_reference_text",
 ]

@@ -49,6 +49,7 @@ from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
+    TTSCloneRecipeRequirement,
     TTSCloneReferenceSummary,
 )
 from tldw_chatbook.TTS.profile_service import (
@@ -85,6 +86,20 @@ from tldw_chatbook.TTS.TTS_Generation import (
     close_tts_resources,
     get_tts_service,
     reset_tts_service_binding,
+)
+from tldw_chatbook.TTS.voice_bundle_codec import (
+    TTSCloneVoiceBundle,
+    TTSVoiceBundleError,
+    TTSVoiceBundleSinks,
+    encode_clone_voice_bundle,
+    inspect_clone_voice_bundle,
+)
+from tldw_chatbook.TTS.voice_bundle_service import (
+    TTSVoiceBundleHandle,
+    TTSVoiceBundleImportChoice,
+    TTSVoiceBundleImportResult,
+    TTSVoiceBundlePortabilityService,
+    TTSVoiceBundleReview,
 )
 
 __all__ = [
@@ -132,7 +147,9 @@ __all__ = [
     "TTSConfigMutation",
     "TTSGenerationProfile",
     "TTSCloneReference",
+    "TTSCloneRecipeRequirement",
     "TTSCloneReferenceSummary",
+    "TTSCloneVoiceBundle",
     "TTSModelInfo",
     "TTSNativeCapabilitySnapshot",
     "TTSOperationCode",
@@ -154,10 +171,19 @@ __all__ = [
     "TTSService",
     "TTSStructuredVoiceAdapter",
     "TTSVoiceDiscoveryResult",
+    "TTSVoiceBundleError",
+    "TTSVoiceBundleSinks",
+    "TTSVoiceBundleHandle",
+    "TTSVoiceBundleImportChoice",
+    "TTSVoiceBundleImportResult",
+    "TTSVoiceBundlePortabilityService",
+    "TTSVoiceBundleReview",
     "VoiceDiscoveryState",
     "bind_tts_service",
     "canonical_json_options",
     "close_tts_resources",
     "get_tts_service",
+    "encode_clone_voice_bundle",
+    "inspect_clone_voice_bundle",
     "reset_tts_service_binding",
 ]
