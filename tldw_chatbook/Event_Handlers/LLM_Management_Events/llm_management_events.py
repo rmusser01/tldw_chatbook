@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Model_Artifacts.gguf_admission import (
+    GGUFPathError,
+    GGUFSourceChangedError,
     inspect_gguf_structure,
     open_local_gguf,
 )
@@ -170,9 +172,18 @@ def _settle_source_preparation(
         return bool(app.call_from_thread(settle))
     except Exception:
         try:
-            return settle()
+            return release_server_claim(app, provider, claim)
         except Exception:
             return False
+
+
+def _gguf_server_source_failure_message(error: BaseException) -> str:
+    """Map ordered external failures before the shared managed taxonomy."""
+    if isinstance(error, GGUFSourceChangedError):
+        return "The selected external GGUF changed during validation. Retry."
+    if isinstance(error, GGUFPathError):
+        return "The selected external GGUF is unavailable. Browse for another file."
+    return gguf_source_failure_message(error)
 
 
 def _close_worker_lease(app: "TldwCli", provider: str, leased: object) -> None:
@@ -233,7 +244,6 @@ def _run_gguf_server_worker(
                 if claim.cancel_event.is_set():
                     _settle_source_preparation(app, provider, claim)
                     return f"{provider} launch cancelled"
-                opened.recheck()
                 model_path = opened.path
         else:
             model_path, leased = acquire_managed_gguf(
@@ -274,7 +284,7 @@ def _run_gguf_server_worker(
             app,
             provider,
             claim,
-            gguf_source_failure_message(error),
+            _gguf_server_source_failure_message(error),
         )
         return f"{provider} source preparation failed"
     finally:

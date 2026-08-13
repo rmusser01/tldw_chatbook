@@ -8,7 +8,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import threading
+import time
 from typing import Any, Callable
 
 import pytest
@@ -812,6 +814,7 @@ def test_external_source_validation_is_worker_thread_store_free_and_read_only(
     assert results == ["captured"]
     assert inspection_threads and set(inspection_threads) == {thread.ident}
     assert recheck_threads and set(recheck_threads) == {thread.ident}
+    assert len(recheck_threads) == 2
     assert main_thread not in inspection_threads
     assert commands[0][commands[0].index("--model") + 1] == str(source.absolute())
     assert source_os_opens == [source.absolute()]
@@ -836,11 +839,32 @@ def test_external_source_validation_is_worker_thread_store_free_and_read_only(
     server_lifecycle.release_server_claim(app, "llamacpp", claim)
 
 
-@pytest.mark.parametrize("case", ["malformed", "missing", "symlink", "special"])
+@pytest.mark.parametrize(
+    ("case", "expected_recovery"),
+    [
+        (
+            "malformed",
+            "The selected file is not a valid GGUF. Choose another file.",
+        ),
+        (
+            "missing",
+            "The selected external GGUF is unavailable. Browse for another file.",
+        ),
+        (
+            "symlink",
+            "The selected external GGUF is unavailable. Browse for another file.",
+        ),
+        (
+            "special",
+            "The selected external GGUF is unavailable. Browse for another file.",
+        ),
+    ],
+)
 def test_external_source_rejections_happen_before_popen_without_private_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     case: str,
+    expected_recovery: str,
 ) -> None:
     private_marker = "PRIVATE_EXTERNAL_SOURCE"
     source = tmp_path / f"{private_marker}.gguf"
@@ -884,6 +908,8 @@ def test_external_source_rejections_happen_before_popen_without_private_output(
 
     assert result == "llamacpp source preparation failed"
     assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    assert app.destination.state_changes == [("llamacpp", expected_recovery)]
+    assert selection.external_path == source
     captured = repr(
         (
             result,
@@ -933,9 +959,80 @@ def test_external_replacement_after_inspection_fails_final_recheck_before_popen(
 
     assert result == "llamacpp source preparation failed"
     assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    assert app.destination.state_changes == [
+        (
+            "llamacpp",
+            "The selected external GGUF changed during validation. Retry.",
+        )
+    ]
+    assert selection.external_path == source
     assert "PRIVATE" not in repr(
         (result, app.destination.state_changes, app.loguru_logger.records)
     )
+
+
+def test_source_failure_marshalling_fallback_releases_without_worker_ui_mutation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "malformed.gguf"
+    source.write_bytes(b"not a gguf")
+    selection = _selection(GGUFSourceMode.EXTERNAL, external_path=source)
+    app = _App()
+    stale = _reserve(app, "llamacpp", selection)
+
+    def reject_marshalling(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("PRIVATE_MARSHALLING_FAILURE")
+
+    app.call_from_thread = reject_marshalling  # type: ignore[method-assign]
+    results: list[str | None] = []
+    first = threading.Thread(
+        target=lambda: results.append(
+            events.run_llamacpp_server_worker(
+                app,
+                "/runtime",
+                "127.0.0.1",
+                "8001",
+                (),
+                selection,
+                stale,
+            )
+        )
+    )
+    first.start()
+    first.join(timeout=5)
+
+    assert first.is_alive() is False
+    assert results == ["llamacpp source preparation failed"]
+    assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    assert app.destination.state_changes == []
+
+    current = _reserve(app, "llamacpp", selection)
+    app.destination.state_changes.append(("llamacpp", "newer status"))
+    second = threading.Thread(
+        target=lambda: results.append(
+            events.run_llamacpp_server_worker(
+                app,
+                "/runtime",
+                "127.0.0.1",
+                "8001",
+                (),
+                selection,
+                stale,
+            )
+        )
+    )
+    second.start()
+    second.join(timeout=5)
+
+    assert second.is_alive() is False
+    assert results == [
+        "llamacpp source preparation failed",
+        "llamacpp source preparation failed",
+    ]
+    assert server_lifecycle.current_server_claim(app, "llamacpp") is current
+    assert app.destination.state_changes == [("llamacpp", "newer status")]
+    assert "PRIVATE" not in repr((results, app.destination.state_changes))
+    server_lifecycle.release_server_claim(app, "llamacpp", current)
 
 
 def test_managed_transfer_precedes_popen_and_spawn_failure_closes_once(
@@ -1155,6 +1252,95 @@ def test_real_managed_lease_blocks_delete_until_exact_claim_and_process_death(
     assert server_lifecycle.clear_server_process(app, "llamacpp", claim, process)
     service.delete(reference)
     assert service.artifact_path(reference).exists() is False
+
+
+@pytest.mark.asyncio
+async def test_real_helper_process_retains_managed_lease_until_exact_reaping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="Managed", file_type=7))
+    service = ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    reference = service.import_local_gguf(source).reference
+    service.activate(reference)
+    selection = _selection(GGUFSourceMode.MANAGED, managed_ref=reference)
+    app = _App()
+    claim = _reserve(app, "llamacpp", selection)
+    stop_file = tmp_path / "stop-helper"
+    helper = (
+        "import pathlib,sys,time; "
+        "stop=pathlib.Path(sys.argv[1]); deadline=time.monotonic()+10; "
+        "\nwhile not stop.exists() and time.monotonic()<deadline: time.sleep(0.01)"
+    )
+    monkeypatch.setattr(events, "managed_service", lambda: service)
+    monkeypatch.setattr(
+        events,
+        "_build_gguf_server_command",
+        lambda *_args: [sys.executable, "-c", helper, str(stop_file)],
+    )
+    results: list[str | None] = []
+    worker = threading.Thread(
+        target=lambda: results.append(
+            events.run_llamacpp_server_worker(
+                app,
+                sys.executable,
+                "127.0.0.1",
+                "8001",
+                (),
+                selection,
+                claim,
+            )
+        )
+    )
+    process: subprocess.Popen[str] | None = None
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while process is None and time.monotonic() < deadline:
+            candidate = server_lifecycle.server_process(app, "llamacpp")
+            if candidate is not None:
+                process = candidate
+                break
+            await asyncio.sleep(0.01)
+
+        assert process is not None
+        assert isinstance(process, subprocess.Popen)
+        assert process.poll() is None
+        assert claim._resource is not None
+        with pytest.raises(ArtifactInUseError):
+            service.delete(reference)
+
+        stop_file.touch()
+        await asyncio.to_thread(worker.join, 5)
+
+        assert worker.is_alive() is False
+        assert results == ["llamacpp server exited (code=0)"]
+        assert process.poll() == 0
+        assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+        service.delete(reference)
+        assert service.artifact_path(reference).exists() is False
+    finally:
+        if process is None:
+            process = server_lifecycle.server_process(app, "llamacpp")
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        claim.cancel_event.set()
+        await asyncio.to_thread(worker.join, 5)
+        if server_lifecycle.current_server_claim(app, "llamacpp") is claim:
+            if process is not None and process.poll() is not None:
+                server_lifecycle.clear_server_process(
+                    app,
+                    "llamacpp",
+                    claim,
+                    process,
+                )
+            else:
+                server_lifecycle.release_server_claim(app, "llamacpp", claim)
 
 
 def test_managed_source_failure_is_path_private_and_does_not_overwrite_newer_claim(
