@@ -489,9 +489,18 @@ class LLMManagementWindow(Container):
         Binding("9", "jump_view(8)", "View 9", show=False),
     ]
 
-    def __init__(self, app_instance: "TldwCli", **kwargs):
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        can_start_import: Callable[[], bool] | None = None,
+        on_import_lane_changed: Callable[[bool], None] | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._can_start_import = can_start_import or (lambda: True)
+        self._on_import_lane_changed = on_import_lane_changed or (lambda _active: None)
         self._async_presentation_generations: dict[str, int] = {}
         self._managed_install_active = False
         self._managed_install_progress = None
@@ -616,6 +625,8 @@ class LLMManagementWindow(Container):
                 on_root_activated=source_service.on_root_activated,
                 may_delete=source_service.may_delete,
                 recycle_idle=self.app_instance._recycle_idle_local_stt_reference,
+                can_start_import=self._can_start_import,
+                on_import_lane_changed=self._on_import_lane_changed,
                 id="installed-models-view",
             )
         )

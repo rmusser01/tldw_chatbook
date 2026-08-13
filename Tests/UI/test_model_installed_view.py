@@ -70,10 +70,12 @@ class _ImportServiceFake:
         *,
         installed: tuple[InstalledArtifact, ...] = (),
         activation_error: BaseException | None = None,
+        activation_impl: Callable[[ArtifactRef], ArtifactRef] | None = None,
     ) -> None:
         self.import_impl = import_impl
         self.installed = installed
         self.activation_error = activation_error
+        self.activation_impl = activation_impl
         self.import_sources: list[Path] = []
         self.activation_calls: list[ArtifactRef] = []
         self.import_entered = threading.Event()
@@ -96,6 +98,8 @@ class _ImportServiceFake:
         try:
             if self.activation_error is not None:
                 raise self.activation_error
+            if self.activation_impl is not None:
+                return self.activation_impl(root_reference)
             return root_reference
         finally:
             self.activation_finished.set()
@@ -1604,6 +1608,59 @@ async def test_finalizing_disables_cancel_before_promotion(tmp_path: Path) -> No
 
         promotion_gate.set()
         await _wait_until(pilot, lambda: service.activation_finished.is_set())
+
+
+@pytest.mark.asyncio
+async def test_converged_import_finalizes_before_blocking_activation(
+    tmp_path: Path,
+) -> None:
+    """Already-installed convergence closes Cancel before activation starts."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    activation_entered = threading.Event()
+    release_activation = threading.Event()
+
+    def activate_impl(activated: ArtifactRef) -> ArtifactRef:
+        activation_entered.set()
+        assert release_activation.wait(timeout=3.0)
+        return activated
+
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            reference,
+            True,
+        ),
+        activation_impl=activate_impl,
+    )
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view._begin_import(source)
+        await _wait_until(pilot, lambda: activation_entered.is_set())
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+
+        try:
+            assert cancel.disabled is True
+            assert "Finalizing managed model" in _rendered_static_text(view)
+            assert view._import_cancel_event is not None
+            assert view._import_cancel_event.is_set() is False
+
+            app.screen.set_focus(cancel)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert view._import_cancel_event.is_set() is False
+            assert "Cancelling import" not in _rendered_static_text(view)
+        finally:
+            release_activation.set()
+
+        await _wait_until(pilot, lambda: service.activation_finished.is_set())
+        await _wait_until(pilot, lambda: not view._import_active)
 
 
 @pytest.mark.asyncio

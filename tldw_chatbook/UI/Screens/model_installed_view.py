@@ -197,6 +197,8 @@ class InstalledView(Widget):
         on_root_activated: Callable[[ArtifactRef], None] | None = None,
         may_delete: Callable[[ArtifactRef], str | None] | None = None,
         recycle_idle: Callable[[ArtifactRef], bool] | None = None,
+        can_start_import: Callable[[], bool] | None = None,
+        on_import_lane_changed: Callable[[bool], None] | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle view; no filesystem work occurs here.
@@ -207,6 +209,8 @@ class InstalledView(Widget):
             on_root_activated: Called after successful core activation.
             may_delete: Return a user-visible reason to block deletion.
             recycle_idle: Retire an idle worker that leases the exact artifact.
+            can_start_import: Return whether the host store lane is free.
+            on_import_lane_changed: Report ownership changes to the host.
             id: Optional Textual widget id.
         """
         self._service_factory = service_factory
@@ -216,6 +220,9 @@ class InstalledView(Widget):
         self._recycle_idle = (
             recycle_idle if recycle_idle is not None else lambda _reference: False
         )
+        self._can_start_import = can_start_import or (lambda: True)
+        self._on_import_lane_changed = on_import_lane_changed or (lambda _active: None)
+        self._import_lane_owned = False
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
         self._usage: ArtifactDiskUsage | None = None
@@ -231,6 +238,7 @@ class InstalledView(Widget):
         self._import_generation = 0
         self._import_selecting = False
         self._import_active = False
+        self._import_worker_generation: int | None = None
         self._import_cancelable = False
         self._import_cancel_event: threading.Event | None = None
         self._import_progress: LocalGGUFImportProgress | None = None
@@ -256,6 +264,13 @@ class InstalledView(Widget):
             or self._import_selecting
             or self._import_active
         )
+
+    def _set_import_lane_owned(self, active: bool) -> None:
+        """Report one idempotent host-lane transition."""
+        if active == self._import_lane_owned:
+            return
+        self._import_lane_owned = active
+        self._on_import_lane_changed(active)
 
     def compose(self) -> ComposeResult:
         """Compose from retained in-memory state without performing I/O."""
@@ -583,6 +598,13 @@ class InstalledView(Widget):
         """Open one GGUF-only picker and give it ownership of a generation."""
         if self._lifecycle_pending():
             return
+        if not self._can_start_import():
+            self.notify(
+                "Another model operation is already running.",
+                severity="information",
+            )
+            return
+        self._set_import_lane_owned(True)
         if self._import_cancel_event is not None:
             self._import_cancel_event.set()
         self._import_generation += 1
@@ -659,6 +681,7 @@ class InstalledView(Widget):
         self._import_selecting = False
         self._pending_import_path = None
         self._import_retry_available = False
+        self._set_import_lane_owned(False)
         if self.is_attached:
             self.refresh(recompose=True)
 
@@ -684,9 +707,18 @@ class InstalledView(Widget):
             generation = self._import_generation
         elif generation != self._import_generation:
             return
+        if not self._import_lane_owned:
+            if not self._can_start_import():
+                self.notify(
+                    "Another model operation is already running.",
+                    severity="information",
+                )
+                return
+            self._set_import_lane_owned(True)
         self._pending_import_path = source
         self._import_cancel_event = threading.Event()
         self._import_active = True
+        self._import_worker_generation = generation
         self._import_cancelable = True
         self._import_progress = None
         self._import_status = "Importing GGUF…"
@@ -708,47 +740,58 @@ class InstalledView(Widget):
         cancel_event: threading.Event,
     ) -> None:
         """Import and activate one exact managed reference off the UI loop."""
+        app = self.app
         try:
-            service = self._service_for_worker()
-            result = service.import_local_gguf(
-                source,
-                cancelled=cancel_event.is_set,
-                progress=lambda progress: self.app.call_from_thread(
-                    self._apply_import_progress,
+            try:
+                service = self._service_for_worker()
+                result = service.import_local_gguf(
+                    source,
+                    cancelled=cancel_event.is_set,
+                    progress=lambda progress: app.call_from_thread(
+                        self._apply_import_progress,
+                        generation,
+                        progress,
+                    ),
+                )
+            except Exception as exc:
+                logger.error(
+                    "Local GGUF import failed; phase=import; error_type={}",
+                    type(exc).__name__,
+                )
+                cancelled = cancel_event.is_set() and isinstance(
+                    exc, ArtifactStateError
+                )
+                app.call_from_thread(
+                    self._apply_import_failure,
                     generation,
-                    progress,
-                ),
-            )
-        except Exception as exc:
-            logger.error(
-                "Local GGUF import failed; phase=import; error_type={}",
-                type(exc).__name__,
-            )
-            cancelled = cancel_event.is_set() and isinstance(exc, ArtifactStateError)
-            self.app.call_from_thread(
-                self._apply_import_failure,
+                    (
+                        "Import cancelled. The original file and prior models are unchanged."
+                        if cancelled
+                        else local_import_failure_message(exc)
+                    ),
+                )
+                return
+            if not app.call_from_thread(
+                self._apply_import_finalizing,
                 generation,
-                (
-                    "Import cancelled. The original file and prior models are unchanged."
-                    if cancelled
-                    else local_import_failure_message(exc)
-                ),
-            )
-            return
-        try:
-            service.activate(result.reference)
-        except Exception as exc:
-            logger.error(
-                "Local GGUF import failed; phase=activation; error_type={}",
-                type(exc).__name__,
-            )
-            self.app.call_from_thread(
-                self._apply_import_activation_required,
-                generation,
-                result,
-            )
-            return
-        self.app.call_from_thread(self._apply_import_success, generation, result)
+            ):
+                return
+            try:
+                service.activate(result.reference)
+            except Exception as exc:
+                logger.error(
+                    "Local GGUF import failed; phase=activation; error_type={}",
+                    type(exc).__name__,
+                )
+                app.call_from_thread(
+                    self._apply_import_activation_required,
+                    generation,
+                    result,
+                )
+                return
+            app.call_from_thread(self._apply_import_success, generation, result)
+        finally:
+            app.call_from_thread(self._import_worker_stopped, generation)
 
     def _owns_import(self, generation: int) -> bool:
         """Return whether a callback still owns the mounted import lane."""
@@ -777,6 +820,33 @@ class InstalledView(Widget):
         except NoMatches:
             pass
 
+    def _apply_import_finalizing(self, generation: int) -> bool:
+        """Synchronously close cancellation before activation can begin."""
+        if not self._owns_import(generation) or not self._import_active:
+            return False
+        self._import_cancelable = False
+        self._import_status = "Finalizing managed model…"
+        try:
+            self.query_one("#installed-gguf-import-cancel", Button).disabled = True
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#installed-gguf-import-status", Static).update(
+                self._import_status
+            )
+        except NoMatches:
+            pass
+        return True
+
+    def _import_worker_stopped(self, generation: int) -> None:
+        """Release detached ownership only after its real worker has stopped."""
+        if generation != self._import_worker_generation or self.is_attached:
+            return
+        self._import_worker_generation = None
+        self._import_active = False
+        self._import_cancelable = False
+        self._set_import_lane_owned(False)
+
     def _apply_import_success(
         self,
         generation: int,
@@ -786,6 +856,7 @@ class InstalledView(Widget):
         if not self._owns_import(generation):
             return
         self._import_active = False
+        self._import_worker_generation = None
         self._import_cancelable = False
         self._import_progress = None
         self._pending_import_path = None
@@ -795,6 +866,7 @@ class InstalledView(Widget):
             if result.already_installed
             else "Imported and ready"
         )
+        self._set_import_lane_owned(False)
         self.ensure_loaded(force=True)
 
     def _apply_import_activation_required(
@@ -806,11 +878,13 @@ class InstalledView(Widget):
         if not self._owns_import(generation):
             return
         self._import_active = False
+        self._import_worker_generation = None
         self._import_cancelable = False
         self._import_progress = None
         self._pending_import_path = None
         self._import_retry_available = False
         self._import_status = "Installed — activation required"
+        self._set_import_lane_owned(False)
         self.ensure_loaded(force=True)
 
     def _apply_import_failure(self, generation: int, message: str) -> None:
@@ -818,10 +892,12 @@ class InstalledView(Widget):
         if not self._owns_import(generation):
             return
         self._import_active = False
+        self._import_worker_generation = None
         self._import_cancelable = False
         self._import_progress = None
         self._import_status = message
         self._import_retry_available = self._pending_import_path is not None
+        self._set_import_lane_owned(False)
         self.notify(message, severity="warning")
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_import_recovery)
@@ -869,6 +945,8 @@ class InstalledView(Widget):
         self._import_selecting = False
         self._pending_import_path = None
         self._import_generation += 1
+        if not self._import_active:
+            self._set_import_lane_owned(False)
 
     @on(Button.Pressed, "#installed-models-refresh")
     def _refresh_pressed(self) -> None:

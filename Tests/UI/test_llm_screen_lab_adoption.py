@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,11 +35,14 @@ def _deterministic_models_mount(monkeypatch):
             return False
         return _real_get_cli_setting(section, key, default)
 
+    async def ollama_unavailable(_window):
+        return False
+
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
     monkeypatch.setattr(
         LLMManagementWindow,
         "_ollama_api_available",
-        lambda _window: False,
+        ollama_unavailable,
     )
 
 
@@ -3889,3 +3893,303 @@ async def test_external_copy_uses_task6_plan_and_stop_uses_the_shared_service(
 
         assert service.stop_threads[0] != threading.get_ident()
         assert all(str(root) not in str(call) for call in screen.notify.call_args_list)
+
+
+def _task6_install_request(kind: str):
+    """Build one valid request for the real curated/remote screen handlers."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    if kind == "curated":
+        return CuratedView.InstallRequested(
+            ArtifactRef("task6-curated", "c" * 40, "int8"),
+            service=MagicMock(),
+            registry=MagicMock(),
+            sources={},
+        )
+    catalog = _remote_catalog()
+    return RemoteView.InstallRequested(
+        catalog,
+        _resolved_remote_model().candidates[0],
+        service=MagicMock(),
+        credential_resolver=MagicMock(),
+    )
+
+
+async def _task6_mounted_host(app, pilot):
+    """Return the real mounted screen/window/InstalledView host chain."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    screen = await _models_screen(app)
+    assert await _wait_for(
+        lambda: bool(screen.query("#installed-models-view")),
+        pilot,
+    )
+    window = screen.query_one(LLMManagementWindow)
+    installed = window.query_one("#installed-models-view", InstalledView)
+    return screen, window, installed
+
+
+def _task6_capture_screens(app):
+    pushed = []
+    app.push_screen = MagicMock(
+        side_effect=lambda modal, callback=None: pushed.append((modal, callback))
+    )
+    return pushed
+
+
+def _task6_stub_preflights(screen):
+    screen._run_curated_preflight = MagicMock(return_value=MagicMock())
+    screen._run_remote_preflight = MagicMock(return_value=MagicMock())
+
+
+def _task6_show_unmanaged_row(installed, source):
+    """Render one real external-GGUF row without starting inventory I/O."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+    from tldw_chatbook.UI.Screens.model_browser_state import (
+        UnmanagedRow,
+        inventory_rows,
+    )
+
+    installed._loaded = True
+    installed._rows = inventory_rows(
+        (),
+        ArtifactDiskUsage(0, 0, 64 * 1024 * 1024),
+        (UnmanagedRow(source, source.stat().st_size),),
+    )
+    installed.refresh(recompose=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "button_selector"),
+    (
+        ("curated", "#installed-models-import-gguf"),
+        ("remote", ".model-import"),
+    ),
+)
+async def test_local_selection_lane_refuses_host_installs_until_declined(
+    tmp_path,
+    monkeypatch,
+    kind,
+    button_selector,
+):
+    """Header and row imports own the host before either consent starts."""
+    from tldw_chatbook.UI.Screens import llm_screen as llm_screen_module
+
+    source = tmp_path / "private-outside.gguf"
+    source.write_bytes(b"gguf")
+    app = _app()
+    pushed = []
+    fake_logger = MagicMock()
+    monkeypatch.setattr(llm_screen_module, "logger", fake_logger)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, window, installed = await _task6_mounted_host(app, pilot)
+        _task6_show_unmanaged_row(installed, source)
+        window.active_view = "installed"
+        await pilot.pause()
+        pushed = _task6_capture_screens(app)
+        screen.notify = MagicMock()
+        _task6_stub_preflights(screen)
+
+        installed.query_one(button_selector, Button).press()
+        await pilot.pause()
+        assert len(pushed) == 1
+        picker_callback = pushed[-1][1]
+        picker_callback(source)
+        await pilot.pause()
+        assert len(pushed) == 2
+        consent_callback = pushed[-1][1]
+        assert installed._import_selecting is screen._local_gguf_import_active is True
+
+        screen.post_message(_task6_install_request(kind))
+        await pilot.pause()
+
+        runner = getattr(screen, f"_run_{kind}_preflight")
+        runner.assert_not_called()
+        assert screen._model_install_kind is None
+        assert installed._import_selecting is True
+        assert installed._pending_import_path == source
+        consent_callback(False)
+        await pilot.pause()
+        assert installed._import_selecting is False
+        assert installed._pending_import_path is None
+        assert screen._local_gguf_import_active is False
+
+        screen.post_message(_task6_install_request(kind))
+        await pilot.pause()
+        runner.assert_called_once_with()
+        assert screen._model_install_kind == kind
+        assert str(source) not in str(screen.notify.call_args_list)
+        assert str(source) not in str(fake_logger.mock_calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "phase"),
+    (("curated", "preflight"), ("remote", "pending-consent")),
+)
+async def test_host_install_ownership_refuses_local_picker(
+    tmp_path,
+    kind,
+    phase,
+):
+    """Curated preflight and remote consent both block physical Import."""
+    source = tmp_path / "private-never-selected.gguf"
+    source.write_bytes(b"gguf")
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, window, installed = await _task6_mounted_host(app, pilot)
+        _task6_show_unmanaged_row(installed, source)
+        window.active_view = "installed"
+        await pilot.pause()
+        pushed = _task6_capture_screens(app)
+        installed.notify = MagicMock()
+        _task6_stub_preflights(screen)
+        request = _task6_install_request(kind)
+        screen.post_message(request)
+        await pilot.pause()
+        assert screen._model_install_kind == kind
+
+        if phase == "pending-consent":
+            report = _remote_report_for(request.catalog, tmp_path / "managed")
+            screen._apply_remote_preflight_result(report, None)
+            assert len(pushed) == 1
+
+        pushed_before_import = len(pushed)
+        installed.query_one("#installed-models-import-gguf", Button).press()
+        await pilot.pause()
+
+        assert len(pushed) == pushed_before_import
+        assert installed._import_selecting is False
+        assert installed._pending_import_path is None
+        installed.notify.assert_called_once()
+        assert str(source) not in str(installed.notify.call_args_list)
+
+
+class _Task6HostImportService:
+    def __init__(self, root, *, fail=False):
+        from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+        self.artifacts_path = root / "managed" / "artifacts"
+        self.reference = ArtifactRef("task6-local", "d" * 40, "filetype-7")
+        self.fail = fail
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.activation_calls = 0
+
+    def import_local_gguf(self, source_file, *, cancelled, progress):
+        from tldw_chatbook.Model_Artifacts.service import LocalGGUFImportResult
+
+        self.entered.set()
+        assert self.release.wait(timeout=3.0)
+        if self.fail:
+            raise RuntimeError("private failure")
+        return LocalGGUFImportResult(self.reference, False)
+
+    def activate(self, root_reference):
+        self.activation_calls += 1
+        return root_reference
+
+    def list_installed(self):
+        return ()
+
+    def disk_usage(self):
+        from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
+
+        return ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", (False, True), ids=("success", "failure"))
+async def test_local_import_terminal_releases_host_ownership(tmp_path, fail):
+    """Success and failure free the host only after the worker settles."""
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"gguf")
+    service = _Task6HostImportService(tmp_path, fail=fail)
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _window, installed = await _task6_mounted_host(app, pilot)
+        installed._service_factory = lambda: service
+        installed._service = None
+        screen._run_curated_preflight = MagicMock(return_value=MagicMock())
+
+        installed._begin_import(source)
+        assert await _wait_for(service.entered.is_set, pilot)
+        try:
+            assert screen._local_gguf_import_active is True
+        finally:
+            service.release.set()
+        assert await _wait_for(lambda: not installed._import_active, pilot)
+        assert screen._local_gguf_import_active is False
+
+        screen.post_message(_task6_install_request("curated"))
+        await pilot.pause()
+        screen._run_curated_preflight.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_selection_unmount_releases_host_ownership(tmp_path):
+    """A picker-only lane has no worker and releases immediately on teardown."""
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _window, installed = await _task6_mounted_host(app, pilot)
+        app.push_screen = MagicMock()
+        screen._run_curated_preflight = MagicMock(return_value=MagicMock())
+        installed.query_one("#installed-models-import-gguf", Button).press()
+        await pilot.pause()
+        assert screen._local_gguf_import_active is True
+
+        await installed.remove()
+        assert screen._local_gguf_import_active is False
+        screen.post_message(_task6_install_request("curated"))
+        await pilot.pause()
+        screen._run_curated_preflight.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_path):
+    """A remounted window cannot steal ownership from a detached live worker."""
+    source = tmp_path / "outside.gguf"
+    source.write_bytes(b"gguf")
+    service = _Task6HostImportService(tmp_path)
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _window, installed = await _task6_mounted_host(app, pilot)
+        installed._service_factory = lambda: service
+        installed._service = None
+        screen.notify = MagicMock()
+        screen._run_curated_preflight = MagicMock(return_value=MagicMock())
+        worker_stopped = MagicMock(wraps=installed._import_worker_stopped)
+        installed._import_worker_stopped = worker_stopped
+        installed._begin_import(source)
+        assert await _wait_for(service.entered.is_set, pilot)
+        try:
+            assert screen._local_gguf_import_active is True
+        except BaseException:
+            service.release.set()
+            raise
+
+        try:
+            await installed.remove()
+            assert screen._local_gguf_import_active is True
+            screen.post_message(_task6_install_request("curated"))
+            await pilot.pause()
+            screen._run_curated_preflight.assert_not_called()
+        finally:
+            service.release.set()
+        assert await _wait_for(lambda: bool(worker_stopped.call_args_list), pilot)
+        assert await _wait_for(
+            lambda: screen._local_gguf_import_active is False,
+            pilot,
+        )
+        assert service.activation_calls == 0
+        screen.post_message(_task6_install_request("curated"))
+        await pilot.pause()
+        screen._run_curated_preflight.assert_called_once_with()
+        assert str(source) not in str(screen.notify.call_args_list)
