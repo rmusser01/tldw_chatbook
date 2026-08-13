@@ -298,7 +298,11 @@ async def test_character_handoff_uses_current_canonical_defaults_not_stale_sessi
     )
 
     active = store.switch_session(store.active_session_id)
+    assert active is original
     assert active.settings.model == "canonical-current-model"
+    assert active.settings.system_prompt == "Protect Captain Rowan as Alba."
+    assert active.assistant_kind == "character"
+    assert active.character_name == "Alba"
     assert len(store.sessions()) == 1
     assert active.id == original.id
 

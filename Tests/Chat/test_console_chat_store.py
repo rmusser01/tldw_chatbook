@@ -81,133 +81,38 @@ def test_typed_then_cleared_session_keeps_durable_work_marker():
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
-@pytest.mark.parametrize(
-    "container_name,value_factory",
-    [
-        pytest.param(
-            "_pending_persistence_message_ids",
-            lambda _session: None,
-            id="pending-persistence",
-        ),
-        pytest.param(
-            "_terminal_citation_finalizers",
-            lambda _session: object(),
-            id="citation-finalizer",
-        ),
-        pytest.param(
-            "_provisional_terminal_selection_ids",
-            lambda _session: None,
-            id="provisional-terminal",
-        ),
-        pytest.param(
-            "_terminal_persistence_deferred_ids",
-            lambda _session: None,
-            id="deferred-terminal",
-        ),
-        pytest.param(
-            "_stream_chunks_by_message", lambda _session: ["chunk"], id="stream-chunks"
-        ),
-        pytest.param(
-            "_stream_materialized_counts", lambda _session: 1, id="stream-materialized"
-        ),
-        pytest.param(
-            "_roleplay_message_projection_candidates",
-            lambda _session: ("projection",),
-            id="roleplay-message-projection",
-        ),
-        pytest.param(
-            "_variant_stream_bases", lambda _session: object(), id="variant-stream"
-        ),
-        pytest.param(
-            "_variant_restored_message_ids",
-            lambda _session: None,
-            id="restored-variant",
-        ),
-        pytest.param(
-            "_message_speech_revisions", lambda _session: 1, id="speech-revision"
-        ),
-        pytest.param(
-            "_failed_retry_message_ids", lambda _session: None, id="failed-retry"
-        ),
-        pytest.param(
-            "_native_parent_by_message", lambda _session: None, id="native-parent"
-        ),
-    ],
-)
-def test_pristine_session_rejects_each_session_colliding_live_message_state(
-    container_name, value_factory
-):
+def test_pristine_session_rejects_orphan_message_ownership_index():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
     session = _pristine_session(store, defaults)
-    container = getattr(store, container_name)
-    value = value_factory(session)
     message_id = "orphan-message-owned-by-pristine-session"
     store._message_session_index[message_id] = session.id
-    if isinstance(container, set):
-        container.add(message_id)
-    else:
-        container[message_id] = value
 
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
-@pytest.mark.parametrize(
-    "container_name,value",
-    [
-        pytest.param("_pending_persistence_message_ids", None, id="pending-persistence"),
-        pytest.param("_terminal_citation_finalizers", object(), id="citation-finalizer"),
-        pytest.param(
-            "_provisional_terminal_selection_ids", None, id="provisional-terminal"
-        ),
-        pytest.param(
-            "_terminal_persistence_deferred_ids", None, id="deferred-terminal"
-        ),
-        pytest.param("_stream_chunks_by_message", ["chunk"], id="stream-chunks"),
-        pytest.param("_stream_materialized_counts", 1, id="stream-materialized"),
-        pytest.param(
-            "_roleplay_message_projection_candidates",
-            ("projection",),
-            id="roleplay-message-projection",
-        ),
-        pytest.param("_variant_stream_bases", object(), id="variant-stream"),
-        pytest.param("_variant_restored_message_ids", None, id="restored-variant"),
-        pytest.param("_message_speech_revisions", 1, id="speech-revision"),
-        pytest.param("_failed_retry_message_ids", None, id="failed-retry"),
-        pytest.param("_native_parent_by_message", None, id="native-parent"),
-    ],
-)
-def test_pristine_session_ignores_foreign_message_id_collision(
-    container_name, value
-):
+def test_pristine_session_rejects_owned_tree_node_outside_visible_message_list():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    target = _pristine_session(store, defaults)
-    foreign = store.create_session(title="Other", settings=defaults)
-    foreign_message = ConsoleChatMessage(
-        id=target.id,
+    session = _pristine_session(store, defaults)
+    hidden_message = ConsoleChatMessage(
+        id="hidden-owned-message",
         role=ConsoleMessageRole.ASSISTANT,
-        content="foreign work",
+        content="hidden work",
     )
-    store._register_tree_node(foreign.id, foreign_message, parent_native_id=None)
-    container = getattr(store, container_name)
-    if isinstance(container, set):
-        container.add(foreign_message.id)
-    else:
-        container[foreign_message.id] = value
+    store._register_tree_node(session.id, hidden_message, parent_native_id=None)
+    assert store.messages_for_session(session.id) == []
 
-    assert store.is_pristine_session(target.id, expected_settings=defaults)
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
-def test_pristine_session_ignores_global_sync_version_cache():
+def test_pristine_session_does_not_assign_unattributed_message_cache_state():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    target = _pristine_session(store, defaults)
-    store._sync_v2_message_versions[
-        "foreign-conversation:foreign-persisted-message"
-    ] = "global-stable-version"
+    session = _pristine_session(store, defaults)
+    store._stream_chunks_by_message["unattributed-message"] = ["foreign chunk"]
 
-    assert store.is_pristine_session(target.id, expected_settings=defaults)
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
 
 
 def test_pristine_session_allows_harmless_initialized_empty_cache_entries():
@@ -392,6 +297,82 @@ def test_pristine_session_predicate_returns_false_for_missing_session():
     assert not store.is_pristine_session(
         "missing", expected_settings=_pristine_defaults()
     )
+
+
+def test_refresh_pristine_session_settings_preserves_live_object_identity():
+    prior = _pristine_defaults(model="stale-model")
+    current = _pristine_defaults(model="current-model")
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    updated_at_before = session.updated_at
+
+    refreshed = store.refresh_pristine_session_settings(
+        session.id,
+        prior_canonical_settings=prior,
+        current_canonical_settings=current,
+    )
+
+    assert refreshed is session
+    assert store.sessions()[0] is session
+    assert session.settings is current
+    assert session.canonical_settings_baseline is current
+    assert session.updated_at != updated_at_before
+
+
+@pytest.mark.parametrize(
+    "prior_change,current_change",
+    [
+        pytest.param({"source": "user"}, {}, id="prior-not-derived"),
+        pytest.param({}, {"source": "user"}, id="current-not-derived"),
+        pytest.param({}, {"system_prompt": "custom"}, id="current-system-prompt"),
+        pytest.param({}, {"character_label": "Alba"}, id="current-character-label"),
+        pytest.param({}, {"pinned_prefill": "Always:"}, id="current-prefill"),
+    ],
+)
+def test_refresh_pristine_session_settings_rejects_nondefault_baselines(
+    prior_change,
+    current_change,
+):
+    canonical_prior = _pristine_defaults(model="stale-model")
+    prior = replace(canonical_prior, **prior_change)
+    current = replace(
+        _pristine_defaults(model="current-model"),
+        **current_change,
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    before = replace(session)
+
+    with pytest.raises(ValueError, match="derived defaults"):
+        store.refresh_pristine_session_settings(
+            session.id,
+            prior_canonical_settings=prior,
+            current_canonical_settings=current,
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
+
+
+def test_refresh_pristine_session_settings_revalidation_failure_is_nonmutating(
+    monkeypatch,
+):
+    prior = _pristine_defaults(model="stale-model")
+    current = _pristine_defaults(model="current-model")
+    store = ConsoleChatStore()
+    session = _pristine_session(store, prior)
+    before = replace(session)
+    monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(ValueError, match="pristine"):
+        store.refresh_pristine_session_settings(
+            session.id,
+            prior_canonical_settings=prior,
+            current_canonical_settings=current,
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
 
 
 def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomically():

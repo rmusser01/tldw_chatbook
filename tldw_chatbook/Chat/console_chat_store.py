@@ -782,60 +782,26 @@ class ConsoleChatStore:
             or session.todos
         ):
             return False
-        direct_session_state = (
+        # Every real message and display-only tool marker is assigned to its
+        # session through the full tree and/or `_message_session_index` at its
+        # registration boundary. Any such ownership is therefore a complete
+        # strict disqualifier, even when the active-path message list is empty.
+        # Per-message cache entries without either ownership source are not
+        # attributable to this session and must not be guessed from key text.
+        owned_message_state = (
             self._messages_by_session.get(session_id)
             or self._nodes_by_session.get(session_id)
             or self._children_by_parent.get(session_id)
             or self._active_leaf_by_session.get(session_id) is not None
             or any(owner == session_id for owner in self._message_session_index.values())
             or bool(self._tool_markers_by_session.get(session_id))
-            or self._context_summary_by_session.get(session_id) != (None, None)
+        )
+        session_live_state = (
+            self._context_summary_by_session.get(session_id) != (None, None)
             or bool(self._roleplay_system_projection_candidates.get(session_id))
             or self._conversation_context_epochs.get(session_id) != 0
         )
-        if direct_session_state:
-            return False
-
-        return not self._session_owns_message_live_state(session_id)
-
-    def _session_owns_message_live_state(self, session_id: str) -> bool:
-        """Return whether native-message live state belongs to ``session_id``.
-
-        Every collection below is keyed by native ``ConsoleChatMessage.id``.
-        Resolve that key through the ownership index or the session's full tree;
-        a session id that merely happens to equal another session's message id
-        is not ownership. ``_sync_v2_message_versions`` is intentionally absent:
-        its keys are ``<conversation id>:<persisted message id>`` stable keys,
-        not native message ids.
-
-        The normal indexed-orphan case is rejected by the direct index audit in
-        :meth:`is_pristine_session`. This pass also protects structurally owned
-        state if an index entry is absent or inconsistent, while iterating only
-        live-message containers rather than every stored message tree.
-        """
-        owned_tree_nodes = self._nodes_by_session.get(session_id, {})
-        message_maps = (
-            self._terminal_citation_finalizers,
-            self._stream_chunks_by_message,
-            self._stream_materialized_counts,
-            self._roleplay_message_projection_candidates,
-            self._variant_stream_bases,
-            self._message_speech_revisions,
-            self._native_parent_by_message,
-        )
-        message_sets = (
-            self._pending_persistence_message_ids,
-            self._provisional_terminal_selection_ids,
-            self._terminal_persistence_deferred_ids,
-            self._variant_restored_message_ids,
-            self._failed_retry_message_ids,
-        )
-        return any(
-            self._message_session_index.get(message_id) == session_id
-            or message_id in owned_tree_nodes
-            for state in (*message_maps, *message_sets)
-            for message_id in state
-        )
+        return not (owned_message_state or session_live_state)
 
     def repurpose_pristine_session(
         self,
@@ -933,24 +899,36 @@ class ConsoleChatStore:
             or not isinstance(current_canonical_settings, ConsoleSessionSettings)
         ):
             raise TypeError("Canonical settings provenance is required.")
+        if not all(
+            settings.source == "derived"
+            and settings.system_prompt is None
+            and settings.character_label == ""
+            and settings.pinned_prefill is None
+            for settings in (
+                prior_canonical_settings,
+                current_canonical_settings,
+            )
+        ):
+            raise ValueError("Canonical settings must be unmodified derived defaults.")
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError("Session is no longer pristine.")
         if session.canonical_settings_baseline != prior_canonical_settings:
             raise ValueError("Session settings lack the expected canonical provenance.")
-        candidate = replace(
-            session,
-            settings=current_canonical_settings,
-            canonical_settings_baseline=current_canonical_settings,
-            updated_at=_utc_now_iso(),
-        )
+        proposed_updated_at = _utc_now_iso()
         if not self.is_pristine_session(
             session_id,
             expected_settings=prior_canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
-        self._sessions[session_id] = candidate
-        return candidate
+
+        # Validation and stale-eligibility checks are complete. These are plain
+        # dataclass assignments with no property setters, so the bounded commit
+        # cannot raise application-level exceptions and preserves held references.
+        session.settings = current_canonical_settings
+        session.canonical_settings_baseline = current_canonical_settings
+        session.updated_at = proposed_updated_at
+        return session
 
     def restore_persisted_session(
         self,
