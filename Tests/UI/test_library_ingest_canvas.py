@@ -1839,11 +1839,16 @@ def test_external_prepare_retains_before_enqueue(
         "tldw_chatbook.UI.Screens.library_screen.get_current_worker",
         lambda: SimpleNamespace(is_cancelled=False),
     )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        lambda values: saved_settings.append(values),
-    )
     screen = object.__new__(LibraryScreen)
+    # task-15470: the actual write moved into a `@work(thread=True)`
+    # instance method (`_save_library_ingest_options`), which needs a real
+    # running app to dispatch through `run_worker` -- `fake_app` above is a
+    # bare `SimpleNamespace` stand-in for sequencing, not a mounted app, and
+    # has no `_thread_id`. Patching the instance method (rather than the
+    # module-level `save_settings_to_cli_config` it wraps) keeps this
+    # test's own subject -- that sensitive/internal fields are stripped
+    # before persisting -- intact.
+    screen._save_library_ingest_options = lambda values: saved_settings.append(values)
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=submit,
         _ensure_parakeet_source_service=lambda: service,
@@ -2144,13 +2149,18 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen.refresh = MagicMock()
 
-    def save_backend(_section: str, _key: str, target: str) -> None:
+    def save_backend(target: str) -> None:
         backend["value"] = target
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        save_backend,
-    )
+    # task-15470: the actual persistence call moved into a
+    # `@work(thread=True)` instance method (`_save_library_ingest_backend`),
+    # which needs a running app to dispatch through `run_worker` -- this
+    # bare, unmounted screen has none. Patching the instance method itself
+    # (rather than the module-level `save_setting_to_cli_config`) keeps this
+    # test's actual subject -- cancellation/fencing of the external hash
+    # worker -- decoupled from how the backend choice eventually reaches
+    # disk, which has its own coverage.
+    screen._save_library_ingest_backend = save_backend
     LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
     generation, scope_id, *_rest = (
         screen._prepare_library_external_submission.call_args.args
@@ -2204,10 +2214,14 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
     screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
-        MagicMock(),
-    )
+    # task-15470: the actual persistence call moved into a
+    # `@work(thread=True)` instance method (`_save_library_ingest_options`),
+    # which needs a running app to dispatch through `run_worker` -- this
+    # bare, unmounted screen has none. Patching the instance method itself
+    # keeps this test's actual subject -- cancellation/fencing of the
+    # external hash worker -- decoupled from how reset options eventually
+    # reach disk, which has its own coverage.
+    screen._save_library_ingest_options = MagicMock()
 
     LibraryScreen._do_submit_ingest(screen, "/tmp/speech.wav")
     generation, scope_id, *_rest = (

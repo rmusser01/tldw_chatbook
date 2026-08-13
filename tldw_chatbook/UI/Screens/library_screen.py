@@ -20443,7 +20443,28 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_sync_active_token is not None:
             return
         self._library_notes_sync_folder_text = event.value
-        save_setting_to_cli_config("notes", "sync_directory", event.value)
+        self._save_library_notes_sync_setting("sync_directory", event.value)
+
+    @work(thread=True)
+    def _save_library_notes_sync_setting(self, key: str, value: Any) -> None:
+        """Persist one ``[notes]`` sync setting without blocking the UI thread.
+
+        task-15470: each of this cluster's commit points (Enter, Browse,
+        direction/conflict choice, auto-sync toggle, a validated Sync run)
+        used to call ``save_setting_to_cli_config`` directly on the event
+        loop -- a full config.toml read+atomic-rewrite+cache-reload
+        synchronously inside a button-press/submit handler. These are
+        discrete, already-gated-by-user-intent actions (not a keystroke
+        burst -- see ``handle_library_notes_sync_folder_changed`` above,
+        which deliberately does NOT persist per keystroke), so the fix is
+        the same off-loop dispatch this file already uses for Library
+        search history and rail preferences (``_save_library_search_
+        history``, ``_save_library_rail_preferences`` above), not a timer.
+        """
+        try:
+            save_setting_to_cli_config("notes", key, value)
+        except Exception:
+            pass
 
     @on(Button.Pressed, "#library-notes-sync-browse")
     async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
@@ -20470,7 +20491,7 @@ class LibraryScreen(BaseAppScreen):
         if not path or self._library_notes_sync_active_token is not None:
             return
         self._library_notes_sync_folder_text = str(path)
-        save_setting_to_cli_config("notes", "sync_directory", str(path))
+        self._save_library_notes_sync_setting("sync_directory", str(path))
         if self._library_notes_view == "sync":
             _sync_library_canvas(self, "notes")
 
@@ -20488,8 +20509,8 @@ class LibraryScreen(BaseAppScreen):
         if value not in SYNC_DIRECTIONS:
             return
         self._library_notes_sync_direction = value
-        save_setting_to_cli_config(
-            "notes", "sync_direction", self._library_notes_sync_direction
+        self._save_library_notes_sync_setting(
+            "sync_direction", self._library_notes_sync_direction
         )
         _sync_library_canvas(self, "notes")
 
@@ -20507,8 +20528,8 @@ class LibraryScreen(BaseAppScreen):
         if value not in SYNC_CONFLICTS:
             return
         self._library_notes_sync_conflict = value
-        save_setting_to_cli_config(
-            "notes", "sync_conflict_resolution", self._library_notes_sync_conflict
+        self._save_library_notes_sync_setting(
+            "sync_conflict_resolution", self._library_notes_sync_conflict
         )
         _sync_library_canvas(self, "notes")
 
@@ -20530,7 +20551,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_sync_active_token is not None:
             return
         self._library_notes_sync_auto = not self._library_notes_sync_auto
-        save_setting_to_cli_config("notes", "auto_sync", self._library_notes_sync_auto)
+        self._save_library_notes_sync_setting(
+            "auto_sync", self._library_notes_sync_auto
+        )
         if self._library_notes_sync_auto:
             self._arm_library_notes_auto_sync_timer()
         else:
@@ -20566,7 +20589,7 @@ class LibraryScreen(BaseAppScreen):
         # A validated run is a commit point for a typed-but-unsubmitted
         # folder (see handle_library_notes_sync_folder_changed): the folder
         # a run actually used is always the one that persists.
-        save_setting_to_cli_config("notes", "sync_directory", folder_value)
+        self._save_library_notes_sync_setting("sync_directory", folder_value)
         token = self._begin_library_notes_sync_run(folder)
         if token is None:
             return
@@ -20954,8 +20977,16 @@ class LibraryScreen(BaseAppScreen):
         resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
         current = resolve_backend() if callable(resolve_backend) else "local"
         target = "local" if current == "server" else "server"
-        save_setting_to_cli_config("library.ingest", "backend", target)
+        self._save_library_ingest_backend(target)
         _sync_library_canvas(self, "ingest")
+
+    @work(thread=True)
+    def _save_library_ingest_backend(self, target: str) -> None:
+        """Persist the ingest backend choice without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config("library.ingest", "backend", target)
+        except Exception:
+            pass
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -21192,7 +21223,7 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._invalidate_library_external_submission()
-            self._remember_library_ingest_location(selected_path)
+            self._persist_library_ingest_location(selected_path)
             self._adopt_library_ingest_path(str(selected_path))
             self.refresh(recompose=True)
             self._trigger_library_ingest_preflight(str(selected_path))
@@ -21248,6 +21279,20 @@ class LibraryScreen(BaseAppScreen):
             except OSError:
                 pass
         return str(Path.home())
+
+    @work(thread=True)
+    def _persist_library_ingest_location(self, selected_path: Path) -> None:
+        """Dispatch ``_remember_library_ingest_location`` off the loop.
+
+        task-15470: ``browse_callback`` used to call
+        ``_remember_library_ingest_location`` (a stat syscall plus a full
+        config.toml read+atomic-rewrite+cache-reload) straight on the event
+        loop, once per file picked via the Browse dialog. Kept as a thin
+        wrapper -- not folded into ``_remember_library_ingest_location``
+        itself -- so that method stays directly unit-testable (it is the
+        one existing tests call, and does not need a running app).
+        """
+        self._remember_library_ingest_location(selected_path)
 
     def _remember_library_ingest_location(self, selected_path: Path) -> None:
         """Persist the directory a source was picked from, for next time."""
@@ -22585,7 +22630,7 @@ class LibraryScreen(BaseAppScreen):
             if persisted:
                 option_settings[f"library.ingest_options.{group}"] = persisted
         if option_settings:
-            save_settings_to_cli_config(option_settings)
+            self._save_library_ingest_options(option_settings)
         form = self._library_ingest_form
         # (task-3313) Session-scoped snapshot of what was just submitted,
         # captured BEFORE the form clears, so "Retry this batch" can
@@ -22620,6 +22665,26 @@ class LibraryScreen(BaseAppScreen):
         # queue's outcome area sat below the fold on every submit. After
         # the recompose settles, bring the queue heading into view.
         self.call_after_refresh(self._scroll_library_ingest_queue_into_view)
+
+    @work(thread=True)
+    def _save_library_ingest_options(
+        self, option_settings: dict[str, dict[str, Any]]
+    ) -> None:
+        """Persist submitted per-type ingest options without blocking the UI.
+
+        task-15470: the batched call itself (one atomic mutation for every
+        changed type-options group, replacing what used to be one
+        ``save_setting_to_cli_config`` call per option) already landed
+        separately; this only moves that one call off the event loop,
+        matching this file's established ``@work(thread=True)`` pattern for
+        click-path config writes. ``option_settings`` is a fresh dict built
+        by the caller from a point-in-time snapshot, so no further mutation
+        of it races this worker thread's read.
+        """
+        try:
+            save_settings_to_cli_config(option_settings)
+        except Exception:
+            pass
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.
@@ -23204,7 +23269,7 @@ class LibraryScreen(BaseAppScreen):
             form.analyze = bool(defaults.get("analyze", False))
             form.chunk = bool(defaults.get("chunk", True))
             form.chunk_size = str(defaults.get("chunk_size", 1000))
-        save_settings_to_cli_config({f"library.ingest_options.{group}": {}})
+        self._save_library_ingest_options({f"library.ingest_options.{group}": {}})
         self._refresh_library_ingest_canvas_preserving_context()
 
     def _update_library_ingest_group_receipt(self, group: str) -> None:
