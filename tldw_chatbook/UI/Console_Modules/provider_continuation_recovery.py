@@ -172,7 +172,6 @@ class ProviderContinuationRecoveryCallout(Vertical):
     ) -> None:
         """Update fixed callout controls without removing or recomposing them."""
         self.recovery_state = state
-        self._busy = False
         if state is None:
             self.display = False
             return
@@ -182,9 +181,13 @@ class ProviderContinuationRecoveryCallout(Vertical):
         )
         self.query_one("#console-continuation-impact", Static).update(state.impact)
         self.query_one("#console-continuation-status", Static).update(
-            "The visible message is unchanged. No action is required."
-            if state.mode == "notice"
-            else "Choose an available action to continue."
+            "Working… actions are temporarily disabled."
+            if self._busy
+            else (
+                "The visible message is unchanged. No action is required."
+                if state.mode == "notice"
+                else "Choose an available action to continue."
+            )
         )
         resume = self.query_one("#console-continuation-resume", Button)
         take_over = self.query_one("#console-continuation-take-over", Button)
@@ -192,9 +195,9 @@ class ProviderContinuationRecoveryCallout(Vertical):
         resume.display = state.mode == "local"
         take_over.display = state.mode == "remote"
         discard.display = state.mode != "notice"
-        resume.disabled = not state.replay_available
-        take_over.disabled = not state.replay_available
-        discard.disabled = False
+        resume.disabled = self._busy or not state.replay_available
+        take_over.disabled = self._busy or not state.replay_available
+        discard.disabled = self._busy
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -237,7 +240,11 @@ class ProviderContinuationRecoveryCallout(Vertical):
         except Exception:
             succeeded = False
         if succeeded:
-            self.display = False
+            self._busy = False
+            if self.recovery_state != starting_state:
+                self.sync_recovery(self.recovery_state)
+            else:
+                self.display = False
             self.screen.focus_next("#console-transcript-region *")
             return
         self._busy = False

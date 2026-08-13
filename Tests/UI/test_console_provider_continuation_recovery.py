@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
@@ -170,6 +173,91 @@ class _RegionApp(App):
             recovery_replay_available_builder=lambda: self.replay_available,
             on_recovery_action=self.on_action,
         )
+
+
+class _BlockingRecovery:
+    def __init__(self, *, succeeds: bool) -> None:
+        self.succeeds = succeeds
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.actions: list[tuple[str, str, int]] = []
+
+    async def __call__(self, action: str, message_id: str, version: int) -> bool:
+        self.actions.append((action, message_id, version))
+        self.started.set()
+        await self.release.wait()
+        return self.succeeds
+
+
+@pytest.mark.parametrize("transition", ["same", "changed", "removed"])
+@pytest.mark.parametrize("succeeds", [True, False])
+async def test_sync_during_recovery_never_releases_inflight_action(
+    transition: str,
+    succeeds: bool,
+) -> None:
+    message = _message()
+    checkpoint = message.provider_continuation
+    blocker = _BlockingRecovery(succeeds=succeeds)
+    app = _RegionApp(lambda: message, on_action=blocker)
+    async with app.run_test(size=(48, 18)) as pilot:
+        await pilot.pause()
+        region = app.screen.query_one(ProviderContinuationTranscriptRegion)
+        callout = app.screen.query_one(ProviderContinuationRecoveryCallout)
+        resume = callout.query_one("#console-continuation-resume", Button)
+        resume.focus()
+        await pilot.press("enter")
+        await asyncio.wait_for(blocker.started.wait(), timeout=1)
+
+        if transition == "changed":
+            message.provider_continuation_remote = True
+        elif transition == "removed":
+            message.provider_continuation = None
+        region.sync_recovery()
+        await pilot.pause()
+
+        retry = callout.query_one(
+            "#console-continuation-take-over"
+            if transition == "changed"
+            else "#console-continuation-resume",
+            Button,
+        )
+        assert retry.disabled
+        retry.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert blocker.actions == [("resume", "assistant-owner", 1)]
+        rendered = "\n".join(
+            str(widget.render())
+            for widget in callout.query("*")
+            if hasattr(widget, "render")
+        )
+        assert "PRIVATE_" not in rendered
+
+        blocker.release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        if transition == "changed":
+            assert callout.display
+            assert not callout.query_one(
+                "#console-continuation-take-over", Button
+            ).disabled
+        elif transition == "removed" or succeeds:
+            assert not callout.display
+        else:
+            assert callout.display
+
+        message.provider_continuation = checkpoint
+        message.provider_continuation_remote = False
+        region.sync_recovery()
+        await pilot.pause()
+        resume = callout.query_one("#console-continuation-resume", Button)
+        assert not resume.disabled
+        resume.focus()
+        await pilot.pause()
+        assert app.focused is resume
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+        assert len(blocker.actions) == 2
 
 
 async def test_invalid_private_hydration_shows_safe_warning_without_actions() -> None:
