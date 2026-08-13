@@ -15,7 +15,7 @@ import os
 import tempfile
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -731,10 +731,57 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
     return tuple(model_ids)
 
 
+def _process_environment() -> Mapping[str, str]:
+    """Return the current process environment without retaining it on a widget."""
+
+    return os.environ
+
+
+def _empty_environment() -> Mapping[str, str]:
+    """Return an empty environment after provider state has been disposed."""
+
+    return {}
+
+
+@dataclass(frozen=True, slots=True)
+class _CredentialObservation:
+    """Private credential version marker whose digest is never represented."""
+
+    source: str
+    digest: bytes = field(repr=False)
+
+    def matches(self, source: str, digest: bytes) -> bool:
+        return self.source == source and hmac.compare_digest(self.digest, digest)
+
+
 class ProviderStep(SetupStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
     _MAX_PROVIDER_DRAFTS = 64
+    _OPENAI_COMPATIBLE_PROBE_PROVIDERS = frozenset(
+        {
+            "aphrodite",
+            "custom",
+            "custom_2",
+            "deepseek",
+            "groq",
+            "koboldcpp",
+            "llama_cpp",
+            "local_llamacpp",
+            "local_llamafile",
+            "local_ollama",
+            "local_vllm",
+            "mistral",
+            "mistralai",
+            "ollama",
+            "oobabooga",
+            "openai",
+            "openrouter",
+            "qwencloud",
+            "tabbyapi",
+            "vllm",
+        }
+    )
 
     def __init__(
         self,
@@ -744,7 +791,7 @@ class ProviderStep(SetupStep):
         discover: Optional[Callable[..., Any]] = None,
         probe: Optional[Callable[..., Any]] = None,
         local_discover: Optional[Callable[..., Any]] = None,
-        environ: Optional[Mapping[str, str]] = None,
+        environ: Optional[Mapping[str, str] | Callable[[], Mapping[str, str]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
@@ -756,11 +803,17 @@ class ProviderStep(SetupStep):
         self._discover = discover
         self._local_discover = local_discover or discover_local_servers
         self._probe = probe or _probe_first_run_provider_connection
-        # Environment credentials may rotate while this long-running screen is
-        # open, so retain the live mapping and resolve it only at request time.
-        self._environ = environ if environ is not None else os.environ
+        # Resolve environment credentials from a provider at each boundary.
+        # Keeping the mapping itself on the widget leaks rotated values through
+        # retained object state after dismissal.
+        if environ is None:
+            self._environment_provider = _process_environment
+        elif callable(environ):
+            self._environment_provider = environ
+        else:
+            self._environment_provider = lambda source=environ: source
         self._credential_observation_key = os.urandom(32)
-        self._credential_observations: dict[str, tuple[str, bytes]] = {}
+        self._credential_observations: dict[str, _CredentialObservation] = {}
         self.probe_generation = 0
         self._discovery_visible = False
         self._local_discovery_generation = 0
@@ -1014,18 +1067,48 @@ class ProviderStep(SetupStep):
         self._active_probe_token = None
         self._last_tested_provider_identity = None
         self._selected_discovery_credential_decision = None
+        self._selected_discovery_key = None
         self._selected_provider_models.clear()
         self._credential_observations.clear()
         self._credential_observation_key = b""
+        self._environment_provider = _empty_environment
+        self._pending_programmatic_endpoint_changes.clear()
+        self._detected_servers = ()
+        self._detected_endpoint_provider_key = ""
+        for attribute in ("detected_server", "detected_base_url"):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
         try:
             key_input = self.query_one("#setup-provider-api-key", Input)
-            with key_input.prevent(Input.Changed):
+            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
+            with (
+                key_input.prevent(Input.Changed),
+                endpoint_input.prevent(Input.Changed),
+            ):
                 key_input.value = ""
+                endpoint_input.value = ""
+            self.query_one("#setup-provider-effective-chat", Static).update("")
+            self.query_one("#setup-provider-endpoint-status", Static).update("")
+            self.query_one("#setup-provider-probe-status", Static).update("")
+            self.query_one("#setup-provider-detected", Static).update("")
+            self.query_one(
+                "#setup-provider-detection-results",
+                ProviderEndpointCandidateList,
+            ).clear_options()
         except Exception:
             pass
         for draft in self._provider_drafts.values():
             draft.clear_secret()
         self._provider_drafts.clear()
+
+    def _environment(self) -> Mapping[str, str]:
+        """Read the current environment through the injected live provider."""
+
+        try:
+            environment = self._environment_provider()
+        except Exception:
+            return {}
+        return environment if isinstance(environment, Mapping) else {}
 
     def _cancel_discovery_workers(self) -> None:
         """Invalidate and cancel setup-owned network work without publishing."""
@@ -1267,7 +1350,7 @@ class ProviderStep(SetupStep):
 
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         return get_provider_readiness(
-            provider_key, app_config, environ=self._environ
+            provider_key, app_config, environ=self._environment()
         ).requires_api_key
 
     def _credential_at_request_boundary(self) -> tuple[str, str | None, object]:
@@ -1281,7 +1364,7 @@ class ProviderStep(SetupStep):
         key_input = self.query_one("#setup-provider-api-key", Input)
         typed = key_input.value.strip() if key_input.display else ""
         base_readiness = get_provider_readiness(
-            provider_key, app_config, environ=self._environ
+            provider_key, app_config, environ=self._environment()
         )
         if typed:
             if is_valid_provider_api_key(typed):
@@ -1306,18 +1389,16 @@ class ProviderStep(SetupStep):
             return False
         source, value, _ = self._credential_at_request_boundary()
         previous = self._credential_observations.get(provider_key)
-        if source != "environment" and previous is None:
+        if source not in {"environment", "stored"} and previous is None:
             return False
         digest = hmac.new(
             self._credential_observation_key,
             f"{source}\0{value or ''}".encode("utf-8"),
             hashlib.sha256,
         ).digest()
-        observation = (source, digest)
+        observation = _CredentialObservation(source, digest)
         self._credential_observations[provider_key] = observation
-        if previous is None or (
-            previous[0] == source and hmac.compare_digest(previous[1], digest)
-        ):
+        if previous is None or previous.matches(source, digest):
             return False
         self._credential_decision_generation += 1
         self._credential_revision += 1
@@ -1325,14 +1406,14 @@ class ProviderStep(SetupStep):
         self._capture_provider_ui_draft()
         return True
 
-    def _remember_current_environment_credential(self) -> None:
-        """Rebase rotation tracking after an explicit UI credential decision."""
+    def _remember_current_credential(self) -> None:
+        """Rebase private rotation tracking after an explicit UI decision."""
 
         provider_key = self.selected_provider_key
         if not provider_key or not self._credential_observation_key:
             return
         source, value, _ = self._credential_at_request_boundary()
-        if source != "environment":
+        if source not in {"environment", "stored"}:
             self._credential_observations.pop(provider_key, None)
             return
         digest = hmac.new(
@@ -1340,7 +1421,9 @@ class ProviderStep(SetupStep):
             f"{source}\0{value or ''}".encode("utf-8"),
             hashlib.sha256,
         ).digest()
-        self._credential_observations[provider_key] = (source, digest)
+        self._credential_observations[provider_key] = _CredentialObservation(
+            source, digest
+        )
 
     def _current_provider_readiness(self):
         """Return shared readiness after applying the current transient decision."""
@@ -1367,19 +1450,32 @@ class ProviderStep(SetupStep):
         staged_config = dict(app_config)
         staged_config["api_settings"] = staged_api_settings
         return get_provider_readiness(
-            provider_key, staged_config, environ=self._environ
+            provider_key, staged_config, environ=self._environment()
         )
 
     def _probe_target(self) -> str:
         provider_key = self.selected_provider_key
+        if provider_key not in self._OPENAI_COMPATIBLE_PROBE_PROVIDERS:
+            return ""
+        candidate = ""
         try:
             connection = self.query_one("#setup-provider-connection", Vertical)
-            endpoint = self.query_one("#setup-provider-endpoint", Input).value
-            if connection.display and endpoint.strip():
-                return endpoint
+            if connection.display:
+                candidate = self.query_one("#setup-provider-endpoint", Input).value
+            else:
+                candidate = self._cloud_probe_base_url(provider_key)
         except Exception:
-            pass
-        return self._cloud_probe_base_url(provider_key)
+            return ""
+        if not candidate.strip():
+            return ""
+        from tldw_chatbook.Chat.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+
+        resolution = resolve_provider_endpoint(provider_key, candidate)
+        if resolution.errors or resolution.models_url is None:
+            return ""
+        return candidate
 
     def _provider_current_draft_identity(self):
         """Build a secret-free identity for the exact controls now on screen."""
@@ -1429,7 +1525,7 @@ class ProviderStep(SetupStep):
     def _credential_semantics_changed(self) -> None:
         self._credential_decision_generation += 1
         self._credential_revision += 1
-        self._remember_current_environment_credential()
+        self._remember_current_credential()
         self._invalidate_provider_test()
         self._capture_provider_ui_draft()
         self._refresh_auth_readiness()
@@ -1444,6 +1540,7 @@ class ProviderStep(SetupStep):
 
         from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
 
+        self._sync_live_credential_revision()
         tested = self._last_tested_provider_identity
         current_credential_source, _, _ = self._credential_at_request_boundary()
         credential_source_matches = (
@@ -1532,10 +1629,7 @@ class ProviderStep(SetupStep):
         test_button = self.query_one("#setup-provider-test", Button)
         target = self._probe_target()
         identity = self._provider_current_draft_identity() if target else None
-        connection_editable = self.query_one(
-            "#setup-provider-connection", Vertical
-        ).display
-        test_available = connection_editable or bool(target and identity is not None)
+        test_available = bool(target and identity is not None)
         test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
         if not readiness.ready:
@@ -1575,7 +1669,7 @@ class ProviderStep(SetupStep):
         provider_key = self.selected_provider_key
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         presence = wizard_state.read_provider_secret_presence(
-            app_config, self._environ, provider_key=provider_key
+            app_config, self._environment(), provider_key=provider_key
         )
         key_input = self.query_one("#setup-provider-api-key", Input)
         typed_key = (
@@ -2121,7 +2215,7 @@ class ProviderStep(SetupStep):
         self.selected_provider_key = provider_key
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         presence = read_provider_secret_presence(
-            app_config, self._environ, provider_key=provider_key
+            app_config, self._environment(), provider_key=provider_key
         )
         ui_draft = self._provider_ui_draft(provider_key)
         if not had_saved_draft:
@@ -6145,6 +6239,8 @@ class SetupWizardContainer(WizardContainer):
         self._provider_commit_task: asyncio.Task[bool] | None = None
         self._provider_commit_identity: tuple[int, str] | None = None
         self._provider_commit_write_started = False
+        self._provider_cleanup_requested = False
+        self._provider_dismiss_pending = False
         self._draft_mutation_lock = asyncio.Lock()
         self._draft_mutations_terminal = False
         # (task-2040) MUST be set before ``_create_steps()``: step
@@ -6205,16 +6301,21 @@ class SetupWizardContainer(WizardContainer):
         return self._committed_provider_model
 
     def clear_provider_setup_sensitive_state(self) -> None:
-        """Cancel provider work and release every raw credential reference."""
+        """Fence provider work and release raw state at the valid boundary."""
 
         self._provider_stage_generation += 1
-        self._provider_commit_generation += 1
         task = self._provider_commit_task
-        if task is not None and not task.done():
-            task.cancel()
-        self._provider_commit_task = None
-        self._provider_commit_identity = None
-        self._provider_commit_write_started = False
+        irreversible_write = bool(
+            task is not None and not task.done() and self._provider_commit_write_started
+        )
+        self._provider_cleanup_requested = True
+        if not irreversible_write:
+            self._provider_commit_generation += 1
+            if task is not None and not task.done():
+                task.cancel()
+            self._provider_commit_task = None
+            self._provider_commit_identity = None
+            self._provider_commit_write_started = False
         self._staged_provider_draft = None
         self._provider_setup_committed = False
         self._committed_provider_model = ""
@@ -6257,6 +6358,7 @@ class SetupWizardContainer(WizardContainer):
             return False
         if self._provider_commit_write_started:
             return False
+        self._provider_cleanup_requested = False
         if self._provider_drafts_match(self._staged_provider_draft, provider_draft):
             return True
         self._provider_stage_generation += 1
@@ -6297,6 +6399,12 @@ class SetupWizardContainer(WizardContainer):
         if type(model_id) is not str:
             return False
         normalized_model = model_id.strip()
+        owner = getattr(self, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep) and owner.is_mounted:
+            owner._sync_live_credential_revision()
+            current_draft = owner._effective_provider_draft()
+            if current_draft is None or not self.stage_provider_setup(current_draft):
+                return False
         async with self._provider_commit_lock:
             provider_draft = self._staged_provider_draft
             if provider_draft is None:
@@ -6327,18 +6435,18 @@ class SetupWizardContainer(WizardContainer):
                         lease,
                     )
                 )
-                operation.add_done_callback(self._consume_provider_commit_result)
+                operation.add_done_callback(self._provider_commit_finished)
                 self._provider_commit_task = operation
                 self._provider_commit_identity = identity
         return await asyncio.shield(operation)
 
-    @staticmethod
-    def _consume_provider_commit_result(task: asyncio.Task[bool]) -> None:
+    def _provider_commit_finished(self, task: asyncio.Task[bool]) -> None:
         """Consume a detached result when its awaiting caller was cancelled."""
 
-        if task.cancelled():
-            return
-        task.exception()
+        if not task.cancelled():
+            task.exception()
+        if self._provider_cleanup_requested:
+            self.clear_provider_setup_sensitive_state()
 
     async def _run_provider_setup_commit(
         self,
@@ -6382,8 +6490,9 @@ class SetupWizardContainer(WizardContainer):
             )
             if not saved:
                 return False
-            self._provider_setup_committed = True
-            self._committed_provider_model = model_id
+            if not self._provider_cleanup_requested:
+                self._provider_setup_committed = True
+                self._committed_provider_model = model_id
             return True
         except asyncio.CancelledError:
             raise
@@ -6392,7 +6501,7 @@ class SetupWizardContainer(WizardContainer):
             return False
         finally:
             async with self._provider_commit_lock:
-                if write_started and lease == self._provider_commit_generation:
+                if write_started and self._provider_commit_task is current_task:
                     self._provider_commit_write_started = False
                 if self._provider_commit_task is current_task:
                     self._provider_commit_task = None
@@ -7769,6 +7878,42 @@ class SetupWizardContainer(WizardContainer):
         completed, or any other double-entry into either caller) would
         attempt a second dismiss.
         """
+        if self._finalized or self._provider_dismiss_pending:
+            return
+        task = self._provider_commit_task
+        if task is not None and not task.done() and self._provider_commit_write_started:
+            self._provider_dismiss_pending = True
+            self.run_worker(
+                self._settle_provider_write_then_dismiss(task, result),
+                exclusive=True,
+                group="setup-wizard-provider-dismiss",
+            )
+            return
+        self._complete_dismiss_screen(result)
+
+    async def _settle_provider_write_then_dismiss(
+        self,
+        task: asyncio.Task[bool],
+        result: Optional[dict],
+    ) -> None:
+        """Wait for an irreversible executor write before releasing its draft."""
+
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.done():
+                self._provider_dismiss_pending = False
+                return
+        except Exception:
+            # The task's done callback observes the exact exception. Dismissal
+            # only needs to wait until the writer no longer owns the draft.
+            pass
+        self._provider_dismiss_pending = False
+        self._complete_dismiss_screen(result)
+
+    def _complete_dismiss_screen(self, result: Optional[dict]) -> None:
+        """Clear provider state and dismiss after all irreversible work settles."""
+
         if self._finalized:
             return
         self._finalized = True
@@ -7948,8 +8093,7 @@ class FirstRunSetupWizard(WizardScreen):
                 severity="error",
             )
             return
-        container.clear_provider_setup_sensitive_state()
-        self.dismiss(None)
+        container._dismiss_screen(None)
 
     def _clear_resume_attempt_after_target_mount(
         self,

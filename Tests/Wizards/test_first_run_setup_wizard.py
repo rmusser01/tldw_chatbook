@@ -2111,26 +2111,38 @@ async def test_probe_resolves_exact_credential_only_at_request_boundary(
 
 
 @pytest.mark.parametrize(
-    ("provider", "test_supported"),
+    ("provider", "configured_endpoint", "endpoint_edit", "test_supported"),
     [
-        ("anthropic", False),
-        ("cohere", False),
-        ("deepseek", True),
-        ("google", False),
-        ("groq", True),
-        ("huggingface", False),
-        ("mistral", True),
-        ("mistralai", True),
-        ("moonshot", False),
-        ("openai", True),
-        ("openrouter", True),
-        ("qwencloud", True),
-        ("zai", False),
+        ("anthropic", None, None, False),
+        ("anthropic", "https://api.anthropic.com/v1", None, False),
+        ("cohere", None, None, False),
+        ("deepseek", None, None, True),
+        ("google", None, None, False),
+        ("groq", None, None, True),
+        ("huggingface", None, None, False),
+        ("mistral", None, None, True),
+        ("MistralAI", None, None, True),
+        ("moonshot", None, None, False),
+        ("openai", None, None, True),
+        ("OpenAI", "https://gateway.example.test/openai/v1", None, True),
+        ("openrouter", None, None, True),
+        ("qwencloud", None, None, True),
+        ("qwencloud", None, "", False),
+        ("qwencloud", None, "https://bad host/v1", False),
+        (
+            "QwenCloud",
+            "https://gateway.example.test/qwen/compatible-mode/v1",
+            None,
+            True,
+        ),
+        ("zai", None, None, False),
     ],
 )
 @pytest.mark.asyncio
 async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
     provider: str,
+    configured_endpoint: str | None,
+    endpoint_edit: str | None,
     test_supported: bool,
 ):
     from unittest.mock import AsyncMock
@@ -2140,11 +2152,28 @@ async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
     )
     from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
 
-    env_var = default_api_key_env_var(provider)
+    canonical_provider = ProviderStep._canonical_provider_key(provider)
+    env_var = default_api_key_env_var(canonical_provider)
     assert env_var is not None
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("matrix-model"))
+    app_config = {}
+    if configured_endpoint is not None:
+        app_config = {
+            "api_settings": {canonical_provider: {"api_base_url": configured_endpoint}}
+        }
+    wizard = MagicMock()
+    wizard.app_instance = MagicMock(
+        app_config=app_config,
+        llm_provider_catalog_scope_service=None,
+    )
+    wizard.note_key_entered = MagicMock()
+    wizard.stage_provider_setup = MagicMock(return_value=True)
+    wizard.rerun = False
     step = _provider_step(
+        wizard=wizard,
         environ={env_var: f"{provider}-matrix-secret"},
         discover=AsyncMock(return_value=()),
+        probe=probe,
     )
     app = _StepHost(step)
 
@@ -2152,6 +2181,9 @@ async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
         await pilot.pause()
         step.select_provider(provider)
         await pilot.pause()
+        if endpoint_edit is not None:
+            step.query_one("#setup-provider-endpoint", Input).value = endpoint_edit
+            await pilot.pause()
 
         assert step.query_one("#setup-provider-auth-toggle", Collapsible).title == (
             "Authentication"
@@ -2161,12 +2193,20 @@ async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
         if test_supported:
             assert not test_button.disabled
             assert target
-            resolution = resolve_provider_endpoint(provider, target)
+            resolution = resolve_provider_endpoint(canonical_provider, target)
             assert resolution.models_url is not None
             assert not resolution.errors
+            test_button.press()
+            await pilot.pause(0.1)
+            probe.assert_awaited_once()
+            assert probe.await_args.args[0] == target
+            assert probe.await_args.kwargs["provider"] == canonical_provider
         else:
             assert test_button.disabled
             assert not target
+            test_button.press()
+            await pilot.pause()
+            probe.assert_not_awaited()
             assert (
                 "connection testing is unavailable"
                 in str(
@@ -2594,6 +2634,117 @@ async def test_mounted_stored_key_test_continue_returned_model_save_preserves_ev
             assert secret not in rendered
 
 
+@pytest.mark.parametrize("credential_kind", ["environment", "stored"])
+@pytest.mark.parametrize("rotation_timing", ["before_selection", "before_save"])
+@pytest.mark.asyncio
+async def test_credential_rotation_after_provider_handoff_invalidates_before_save(
+    monkeypatch,
+    credential_kind: str,
+    rotation_timing: str,
+):
+    from unittest.mock import AsyncMock
+
+    first_secret = f"{credential_kind}-handoff-secret-a"
+    rotated_secret = f"{credential_kind}-handoff-secret-b"
+    provider_settings = {"api_url": "https://rotation.example.test/v1/chat/completions"}
+    if credential_kind == "environment":
+        provider_settings["api_key_env_var"] = "CUSTOM_API_KEY"
+        monkeypatch.setenv("CUSTOM_API_KEY", first_secret)
+    else:
+        provider_settings["api_key"] = first_secret
+
+    probe = AsyncMock(return_value=_reachable_endpoint_outcome("rotation-model"))
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_model_discovery_result("custom", "rotation-model")
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {"api_settings": {"custom": provider_settings}}
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.provider_setup_persistence.persist_provider_setup",
+        lambda _mutation: ConfigMutationResult(True, True, None),
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step._probe = probe
+        provider_step.select_provider("custom")
+        await pilot.pause()
+        provider_step.query_one("#setup-provider-test", Button).press()
+        await pilot.pause(0.1)
+        tested = provider_step._last_tested_provider_identity
+        assert tested is not None
+        assert provider_step._provider_evidence_store().evidence_for(tested) is not None
+        observation = provider_step._credential_observations["custom"]
+        assert "b'" not in repr(observation)
+        assert first_secret not in repr(observation)
+
+        await container._advance()
+        assert container.current_step == model_index
+        if rotation_timing == "before_selection":
+            if credential_kind == "environment":
+                monkeypatch.setenv("CUSTOM_API_KEY", rotated_secret)
+            else:
+                provider_settings["api_key"] = rotated_secret
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        target = None
+        for _ in range(20):
+            target = next(
+                (
+                    button
+                    for button in model_step.query(RadioButton)
+                    if getattr(button, "_model_id", "") == "rotation-model"
+                ),
+                None,
+            )
+            if target is not None:
+                break
+            await pilot.pause(0.05)
+        assert target is not None
+        target.value = True
+        await pilot.pause()
+
+        if rotation_timing == "before_save":
+            assert (
+                provider_step._provider_evidence_store().evidence_for(tested)
+                is not None
+            )
+            if credential_kind == "environment":
+                monkeypatch.setenv("CUSTOM_API_KEY", rotated_secret)
+            else:
+                provider_settings["api_key"] = rotated_secret
+
+        await container._advance()
+        assert container.provider_setup_committed
+        assert provider_step._credential_revision > tested.credential_revision
+        assert provider_step._provider_evidence_store().evidence_for(tested) is None
+        assert provider_step._last_tested_provider_identity == tested
+        for rendered in (
+            repr(container.staged_provider_draft),
+            repr(provider_step._provider_evidence_store()),
+            repr(provider_step._selected_provider_models),
+            app.export_screenshot(),
+        ):
+            assert first_secret not in rendered
+            assert rotated_secret not in rendered
+
+
 @pytest.mark.parametrize("save_outcome", ["noop", "partial", "conflict", "cancelled"])
 @pytest.mark.asyncio
 async def test_mounted_incomplete_save_never_rebases_tested_draft_evidence(
@@ -2699,9 +2850,16 @@ async def test_mounted_dismissal_clears_all_staged_provider_secrets_and_tasks(
     from unittest.mock import AsyncMock
 
     secret = f"{dismissal}-staged-provider-secret"
+    environment_secret = f"{dismissal}-environment-sentinel"
+    endpoint_secret = f"{dismissal}-private-endpoint-path"
     wizard = _make_wizard()
-    wizard.app_instance.app_config = {}
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_key_env_var": "CUSTOM_API_KEY"},
+        }
+    }
     wizard.app_instance.llm_provider_catalog_scope_service = None
+    monkeypatch.setenv("CUSTOM_API_KEY", environment_secret)
     monkeypatch.setattr(
         "tldw_chatbook.config.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
@@ -2718,9 +2876,8 @@ async def test_mounted_dismissal_clears_all_staged_provider_secrets_and_tasks(
         provider_step = container.steps[provider_index]
         assert isinstance(provider_step, ProviderStep)
         provider_step.select_provider("custom")
-        provider_step.query_one(
-            "#setup-provider-endpoint", Input
-        ).value = "https://dismiss.example.test/v1"
+        endpoint_input = provider_step.query_one("#setup-provider-endpoint", Input)
+        endpoint_input.value = f"https://dismiss.example.test/{endpoint_secret}/v1"
         key_input = provider_step.query_one("#setup-provider-api-key", Input)
         key_input.value = secret
         await pilot.pause()
@@ -2745,6 +2902,7 @@ async def test_mounted_dismissal_clears_all_staged_provider_secrets_and_tasks(
         assert commit_task.cancelled()
         assert provider_step._provider_drafts == {}
         assert key_input.value == ""
+        assert endpoint_input.value == ""
         assert getattr(container, "_first_run_selected_provider_models", {}) == {}
         for rendered in (
             repr(container.__dict__),
@@ -2752,6 +2910,105 @@ async def test_mounted_dismissal_clears_all_staged_provider_secrets_and_tasks(
             app.export_screenshot(),
         ):
             assert secret not in rendered
+            assert environment_secret not in rendered
+            assert endpoint_secret not in rendered
+
+
+@pytest.mark.parametrize("writer_outcome", ["success", "error"])
+@pytest.mark.asyncio
+async def test_dismissal_waits_for_irreversible_provider_executor_write(
+    monkeypatch,
+    writer_outcome: str,
+):
+    import asyncio
+    import threading
+
+    secret = f"executor-{writer_outcome}-credential"
+    endpoint_secret = f"executor-{writer_outcome}-private-path"
+    writer_started = threading.Event()
+    release_writer = threading.Event()
+    writer_settled = threading.Event()
+    events: list[str] = []
+
+    def blocked_persist(mutation):
+        values = mutation.section_values["api_settings.custom"]
+        assert values["api_key"] == secret
+        writer_started.set()
+        assert release_writer.wait(timeout=5)
+        events.append("writer-settled")
+        writer_settled.set()
+        if writer_outcome == "error":
+            raise RuntimeError("bounded writer failure")
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.provider_setup_persistence.persist_provider_setup",
+        blocked_persist,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {}
+    wizard.app_instance.llm_provider_catalog_scope_service = None
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        provider_step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = f"https://executor.example.test/{endpoint_secret}/v1"
+        provider_step.query_one("#setup-provider-api-key", Input).value = secret
+        await pilot.pause()
+        await container._advance()
+
+        commit_waiter = asyncio.create_task(
+            container.commit_staged_provider_setup("executor-model")
+        )
+        for _ in range(40):
+            if writer_started.is_set():
+                break
+            await pilot.pause(0.025)
+        assert writer_started.is_set()
+        assert container._provider_commit_write_started
+
+        try:
+            container._dismiss_screen(None)
+            await pilot.pause(0.1)
+            assert app.wizard_result == "UNSET"
+            assert not writer_settled.is_set()
+            assert not commit_waiter.done()
+        finally:
+            release_writer.set()
+
+        assert await commit_waiter is (writer_outcome == "success")
+        for _ in range(40):
+            if app.wizard_result is None:
+                break
+            await pilot.pause(0.025)
+        assert app.wizard_result is None
+        events.append("dismissed")
+        assert events == ["writer-settled", "dismissed"]
+        assert container._provider_commit_task is None
+        assert container._provider_commit_identity is None
+        assert not container._provider_commit_write_started
+        assert container.staged_provider_draft is None
+        for rendered in (
+            repr(container.__dict__),
+            repr(provider_step.__dict__),
+            app.export_screenshot(),
+        ):
+            assert secret not in rendered
+            assert endpoint_secret not in rendered
 
 
 @pytest.mark.asyncio
@@ -3415,6 +3672,7 @@ async def test_connection_test_accepts_base_or_full_chat_without_route_duplicati
         await pilot.pause()
         step.select_provider("custom")
         step.query_one("#setup-provider-endpoint", Input).value = typed_endpoint
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await pilot.pause(0.1)
 
@@ -4469,6 +4727,7 @@ async def test_provider_switch_cancels_in_flight_probe_without_late_status():
         step.query_one(
             "#setup-provider-endpoint", Input
         ).value = "https://first.example.test/v1"
+        await pilot.pause()
         step.query_one("#setup-provider-test", Button).press()
         await asyncio.wait_for(started.wait(), timeout=2)
 
