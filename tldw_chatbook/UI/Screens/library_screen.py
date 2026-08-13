@@ -2775,6 +2775,7 @@ class LibraryScreen(BaseAppScreen):
         self._pending_library_source_open: tuple[str, str] | None = None
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
+        self._library_navigation_context_generation: int = 0
         self._library_conversation_query: str = ""
         self._library_conversations_select_mode: bool = False
         self._library_conversations_row_selection = RowSelection("conversations")
@@ -6018,6 +6019,8 @@ class LibraryScreen(BaseAppScreen):
         target_row_id = self._library_navigation_context_target_row(context)
         if target_row_id is None:
             return
+        self._library_navigation_context_generation += 1
+        generation = self._library_navigation_context_generation
         if (
             self.is_mounted
             and target_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -6033,6 +6036,7 @@ class LibraryScreen(BaseAppScreen):
                 self._apply_navigation_context_after_flush(
                     dict(context),
                     target_row_id,
+                    generation,
                 ),
                 exclusive=True,
                 group="library_nav_context",
@@ -6091,6 +6095,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         context: Mapping[str, Any],
         target_row_id: str | None = None,
+        generation: int | None = None,
     ) -> None:
         """Admit every mounted editor/source, then apply navigation context.
 
@@ -6102,7 +6107,14 @@ class LibraryScreen(BaseAppScreen):
             target_row_id = self._library_navigation_context_target_row(context)
         if target_row_id is None:
             return
-        if not await self._flush_active_file_notes():
+        if generation is None:
+            generation = self._library_navigation_context_generation
+        if generation != self._library_navigation_context_generation:
+            return
+        file_notes_flush_allowed = await self._flush_active_file_notes()
+        if generation != self._library_navigation_context_generation:
+            return
+        if not file_notes_flush_allowed:
             return
         release_source = self._acquire_file_notes_transition("source")
         if release_source is False:
@@ -6111,6 +6123,7 @@ class LibraryScreen(BaseAppScreen):
             await self._apply_navigation_context_after_source_admission(
                 context,
                 target_row_id,
+                generation,
             )
         finally:
             if callable(release_source):
@@ -6120,14 +6133,25 @@ class LibraryScreen(BaseAppScreen):
         self,
         context: Mapping[str, Any],
         target_row_id: str,
+        generation: int,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
+        if generation != self._library_navigation_context_generation:
+            return
         note_flush = await self._flush_library_note_save()
+        if generation != self._library_navigation_context_generation:
+            return
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
-        if not await self._flush_library_prompt_save():
+        prompt_flush_allowed = await self._flush_library_prompt_save()
+        if generation != self._library_navigation_context_generation:
             return
-        if not await self._flush_library_skill_save():
+        if not prompt_flush_allowed:
+            return
+        skill_flush_allowed = await self._flush_library_skill_save()
+        if generation != self._library_navigation_context_generation:
+            return
+        if not skill_flush_allowed:
             self._notify_skill_dirty_veto()
             return
         if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
@@ -9081,26 +9105,21 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._reconcile_library_prompt_memberships)
 
     def _library_prompts_focus_identity(self) -> str | None:
-        """Return the focused Prompt control's stable DOM id, when useful."""
+        """Return the current Prompt canvas descendant's stable DOM id."""
         focused = getattr(self, "focused", None)
         focused_id = getattr(focused, "id", None)
-        if not isinstance(focused_id, str):
+        if (
+            not isinstance(focused, Widget)
+            or not focused.is_mounted
+            or not isinstance(focused_id, str)
+            or not focused_id
+        ):
             return None
-        if focused_id.startswith("library-prompt-row-") or focused_id in {
-            "library-prompts-filter",
-            "library-prompts-sort",
-            "library-prompts-import",
-            "library-prompts-export",
-            "library-prompts-select-page",
-            "library-prompts-clear-selection",
-            "library-prompts-selection-done",
-            "library-prompts-export-selected",
-            "library-prompts-retry",
-            "library-prompts-page-previous",
-            "library-prompts-page-next",
-        }:
-            return focused_id
-        return None
+        try:
+            canvas = self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        except (NoMatches, QueryError):
+            return None
+        return focused_id if canvas in focused.ancestors else None
 
     def _restore_library_prompts_focus(
         self,

@@ -2589,6 +2589,52 @@ async def test_prompt_selection_navigation_context_clears_only_after_admission()
 
 
 @pytest.mark.asyncio
+async def test_prompt_selection_new_same_prompt_intent_supersedes_held_navigation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A current-Prompt no-op still supersedes an older admitted route intent."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [{"id": 17, "name": "Selected", "version": 6}]
+    )
+    app.notify = Mock()
+    host = LibraryHarness(app)
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await pilot.pause()
+        captured = screen._library_prompt_selection
+        app.notify.reset_mock()
+
+        async def held_prompt_flush() -> bool:
+            flush_started.set()
+            await release_flush.wait()
+            return True
+
+        monkeypatch.setattr(screen, "_flush_library_prompt_save", held_prompt_flush)
+        screen.apply_navigation_context({"mode": "media"})
+        await asyncio.wait_for(flush_started.wait(), timeout=2)
+
+        screen.apply_navigation_context({"mode": "prompts"})
+        release_flush.set()
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_library_shell_prompts_row_press_renders_list_canvas():
     """Prompt rows come only from exact browse, whose local work is off-loop."""
     ui_thread = threading.get_ident()
@@ -2985,6 +3031,63 @@ async def test_library_prompts_settlement_keeps_newer_surviving_focus():
             await _wait_for_prompt_browse_scope(screen, pilot, scope)
 
             assert screen.focused is screen.query_one("#library-prompts-sort", Button)
+    finally:
+        service.release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus_id", "opener_id"),
+    (
+        ("library-prompts-collection", None),
+        ("library-prompts-import-path", "library-prompts-import"),
+    ),
+    ids=("collection", "dynamic-import-path"),
+)
+async def test_library_prompts_settlement_keeps_any_live_canvas_control_focus(
+    focus_id: str,
+    opener_id: str | None,
+):
+    """Any surviving Prompt-list descendant outranks request-time focus."""
+    service = _HeldQueryPromptService(
+        [{"id": 5, "name": "Alpha prompt", "version": 1}],
+        held_query="alpha prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            with prompt_filter.prevent(Input.Changed):
+                prompt_filter.value = "alpha prompt"
+            scope = PromptBrowseScope(query="alpha prompt")
+            screen._request_library_prompts_browse(scope)
+            for _ in range(100):
+                if service.started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert service.started.is_set()
+            await pilot.pause()
+
+            if opener_id is not None:
+                screen.query_one(f"#{opener_id}", Button).press()
+            target = await _wait_for_selector(screen, pilot, f"#{focus_id}")
+            target.focus()
+            await pilot.pause()
+            service.release.set()
+            await _wait_for_prompt_browse_scope(screen, pilot, scope)
+
+            assert screen.focused is screen.query_one(f"#{focus_id}")
     finally:
         service.release.set()
 
