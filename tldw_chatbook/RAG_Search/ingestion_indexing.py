@@ -41,6 +41,8 @@ import asyncio
 import queue
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1299,6 +1301,28 @@ def reset_ingestion_indexer() -> None:
 
 _hook_installed = False
 _hook_lock = threading.Lock()
+_ingestion_indexing_suppressed: ContextVar[bool] = ContextVar(
+    "ingestion_indexing_suppressed", default=False
+)
+
+
+@contextmanager
+def suppress_ingestion_indexing() -> Iterator[None]:
+    """Temporarily skip post-ingest semantic indexing in this execution context.
+
+    Source persistence stays authoritative. The context-local value is only
+    consulted by the best-effort post-commit hook and is reset even when the
+    surrounding database write raises.
+
+    Yields:
+        None. Post-ingest semantic indexing is suppressed until the context
+        exits, then the previous context-local setting is restored.
+    """
+    token = _ingestion_indexing_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _ingestion_indexing_suppressed.reset(token)
 
 
 def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -> None:
@@ -1309,6 +1333,8 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
     error is swallowed -- ingestion must never be affected (AC #4/#5).
     """
     try:
+        if _ingestion_indexing_suppressed.get():
+            return
         if not semantic_indexing_available():
             return
         media = db.get_media_by_id(media_id)

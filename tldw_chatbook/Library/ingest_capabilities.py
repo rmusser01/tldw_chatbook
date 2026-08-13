@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
@@ -73,6 +73,9 @@ class OptionField:
             stutter, so empty-by-default text fields should set one.
         directory_picker: Whether a text field gets an adjacent directory
             picker action. The text input remains editable and authoritative.
+        backends: Ingestion backends for which this field is meaningful.
+            Keeping this on the field makes the capability schema the one
+            source for both the field's default and its mode visibility.
     """
 
     name: str
@@ -88,6 +91,7 @@ class OptionField:
     option_labels: tuple[tuple[str, str], ...] = ()
     placeholder: str = ""
     directory_picker: bool = False
+    backends: tuple[str, ...] = ("local", "server")
 
 
 @dataclass(frozen=True)
@@ -123,6 +127,46 @@ class TypeGroupCapabilities:
     def field_names(self) -> tuple[str, ...]:
         """Return the machine names of all configured fields."""
         return tuple(f.name for f in self.fields)
+
+
+def field_available_for_backend(field: OptionField, backend: str) -> bool:
+    """Return whether an option can affect the selected ingest backend.
+
+    Args:
+        field: Capability declaration to test.
+        backend: Effective ingestion backend (``local`` or ``server``).
+
+    Returns:
+        True when the field is declared for ``backend``.
+    """
+    return backend in field.backends
+
+
+def capabilities_for_backend(
+    capabilities: TypeGroupCapabilities, backend: str
+) -> TypeGroupCapabilities:
+    """Return the capability view that can affect ``backend``.
+
+    Both canvas composition and the collapsed-title receipt must project the
+    same backend-visible fields. Keeping the projection at the capability
+    boundary prevents a retained value from an unavailable backend leaking
+    into an in-place receipt.
+
+    Args:
+        capabilities: Complete declared capability group.
+        backend: Effective ingestion backend (``local`` or ``server``).
+
+    Returns:
+        A capabilities instance containing only fields available to ``backend``.
+    """
+    return replace(
+        capabilities,
+        fields=tuple(
+            field
+            for field in capabilities.fields
+            if field_available_for_backend(field, backend)
+        ),
+    )
 
 
 def select_option_label(field: OptionField, value: Any) -> str:
@@ -959,9 +1003,9 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     ),
     "generic": TypeGroupCapabilities(
         group="generic",
-        label="Plain text & HTML",
-        noun_singular="plain text & HTML file",
-        noun_plural="plain text & HTML files",
+        label="Import behavior",
+        noun_singular="imported item",
+        noun_plural="imported items",
         required_features=(),
         optional_features=(),
         fields=(
@@ -974,6 +1018,46 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # for and may not have a provider configured for.
                 default=False,
                 depends_on=None,
+            ),
+            OptionField(
+                name="overwrite_existing",
+                label="Overwrite existing",
+                type="checkbox",
+                default=False,
+            ),
+            OptionField(
+                name="custom_prompt",
+                label="Custom prompt",
+                type="textarea",
+                default="",
+                placeholder="Optional instructions for analysis",
+                enabled_when="analyze",
+                disabled_reason="needs Analyze after import on",
+            ),
+            OptionField(
+                name="system_prompt",
+                label="System prompt",
+                type="textarea",
+                default="",
+                placeholder="Optional system instructions for analysis",
+                enabled_when="analyze",
+                disabled_reason="needs Analyze after import on",
+            ),
+            OptionField(
+                name="generate_embeddings",
+                label="Generate embeddings",
+                type="checkbox",
+                # ADR-005 makes ingestion-time indexing the default. Keeping
+                # this on preserves retrieval for users who do not open this
+                # panel before importing.
+                default=True,
+            ),
+            OptionField(
+                name="keep_original_file",
+                label="Keep original file",
+                type="checkbox",
+                default=False,
+                backends=("server",),
             ),
             OptionField(
                 name="chunk",

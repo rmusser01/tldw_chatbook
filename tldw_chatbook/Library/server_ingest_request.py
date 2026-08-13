@@ -403,6 +403,24 @@ def build_server_ingest_kwargs(
         "chunk_overlap": _coerce_int(
             generic.get("chunk_overlap", _generic_default("chunk_overlap", 100)), 100
         ),
+        # Shared generic options cannot depend on the detected type-group
+        # loop below: a PDF/audio/video submission still needs the choices
+        # made in the Import behavior panel.
+        "overwrite_existing": bool(
+            generic.get(
+                "overwrite_existing", _generic_default("overwrite_existing", False)
+            )
+        ),
+        "generate_embeddings": bool(
+            generic.get(
+                "generate_embeddings", _generic_default("generate_embeddings", True)
+            )
+        ),
+        "keep_original_file": bool(
+            generic.get(
+                "keep_original_file", _generic_default("keep_original_file", False)
+            )
+        ),
     }
 
     if is_http_url(source):
@@ -424,6 +442,13 @@ def build_server_ingest_kwargs(
         else bool(perform_analysis)
     )
     kwargs["perform_analysis"] = resolved_analysis
+    if resolved_analysis:
+        kwargs["custom_prompt"] = generic.get(
+            "custom_prompt", _generic_default("custom_prompt", "")
+        )
+        kwargs["system_prompt"] = generic.get(
+            "system_prompt", _generic_default("system_prompt", "")
+        )
 
     # Only the detected group's own options are meaningful to this submission;
     # forwarding another group's would ask the server to transcribe a PDF.
@@ -437,6 +462,11 @@ def build_server_ingest_kwargs(
             continue
         if group == "generic" and name in {
             "analyze",
+            "overwrite_existing",
+            "custom_prompt",
+            "system_prompt",
+            "generate_embeddings",
+            "keep_original_file",
             "chunk",
             "chunk_size",
             "chunk_overlap",

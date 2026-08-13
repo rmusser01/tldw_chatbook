@@ -17,7 +17,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
@@ -41,6 +49,7 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
+    _summarise_option,
 )
 
 
@@ -399,6 +408,7 @@ async def test_error_and_warning_markup_is_escaped():
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_type_group_panels_render_for_detected_groups():
     """One collapsible panel is rendered per detected supported type group."""
     state = build_library_ingest_state(
@@ -431,8 +441,8 @@ async def test_type_group_panels_render_for_detected_groups():
             )
             assert "PDF documents" in str(pdf_panel.title)
             assert str(pdf_panel.title) == "PDF documents"
-            assert "Plain text & HTML" in str(generic_panel.title)
-            assert str(generic_panel.title) == "Plain text & HTML"
+            assert "Import behavior" in str(generic_panel.title)
+            assert str(generic_panel.title) == "Import behavior"
 
             scope = pilot.app.query_one(
                 "#type-group-pdf .type-group-scope", Static
@@ -546,6 +556,109 @@ async def test_chunk_size_disabled_when_chunk_unchecked():
         chunk_overlap_input = pilot.app.query_one("#opt-generic-chunk_overlap", Input)
         assert chunk_size_input.disabled is True
         assert chunk_overlap_input.disabled is True
+
+
+def _import_behavior_state(*, backend: str, analyze: bool = False) -> LibraryIngestCanvasState:
+    """Build one expanded generic panel for a selected effective backend."""
+    form = _default_form()
+    form.expanded_type_groups.add("generic")
+    form.type_options = {"generic": {"analyze": analyze}}
+    return build_library_ingest_state(
+        (),
+        form=form,
+        ingest_backend=backend,
+        runtime_source="server",
+        server_ingest_available=True,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_import_behavior_renders_shared_controls_and_prompt_reasons():
+    """Local mode renders only controls that can affect a local import."""
+    app = _CanvasHost(_import_behavior_state(backend="local"))
+
+    async with app.run_test(size=(80, 50)) as pilot:
+        assert "Import behavior" in str(
+            pilot.app.query_one("#type-group-generic", Collapsible).title
+        )
+        assert pilot.app.query_one("#opt-generic-overwrite_existing", Checkbox)
+        assert pilot.app.query_one("#opt-generic-generate_embeddings", Checkbox)
+        custom_prompt = pilot.app.query_one("#opt-generic-custom_prompt", TextArea)
+        system_prompt = pilot.app.query_one("#opt-generic-system_prompt", TextArea)
+        assert custom_prompt.disabled is True
+        assert system_prompt.disabled is True
+        assert len(pilot.app.query("#opt-generic-keep_original_file")) == 0
+        labels = [str(static.renderable) for static in pilot.app.query(Static)]
+        assert labels.count("Custom prompt — needs Analyze after import on") == 1
+        assert labels.count("System prompt — needs Analyze after import on") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_server_import_behavior_adds_keep_original_file_and_fits_compact_width():
+    """Server-only controls stay inside the compact canvas without clipping."""
+    app = _CanvasHost(_import_behavior_state(backend="server", analyze=True))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        keep_original = pilot.app.query_one(
+            "#opt-generic-keep_original_file", Checkbox
+        )
+        for widget_id in (
+            "#opt-generic-custom_prompt",
+            "#opt-generic-system_prompt",
+            "#opt-generic-keep_original_file",
+        ):
+            assert pilot.app.query_one(widget_id).region.right <= 80
+        assert keep_original.disabled is False
+
+
+def test_populated_multiline_prompt_has_bounded_collapsed_title() -> None:
+    """Prompt bodies must not leak into a collapsed option-panel receipt."""
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    custom_prompt = next(
+        field
+        for field in get_capabilities("generic").fields
+        if field.name == "custom_prompt"
+    )
+
+    summary = _summarise_option(
+        custom_prompt,
+        "Summarize each claim in detail.\n" * 20,
+    )
+
+    assert summary == "Custom prompt: set"
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_option_value_changed_posted_on_multiline_prompt_change():
+    """Editing a prompt forwards its complete multiline value to the owner."""
+    app = _MessageRecordingHost(_import_behavior_state(backend="local", analyze=True))
+
+    async with app.run_test() as pilot:
+        prompt = pilot.app.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.text = "Summarize the key claims.\nPreserve names."
+        await pilot.pause()
+
+    matching = [
+        event
+        for event in app.option_changes
+        if event.group == "generic"
+        and event.name == "custom_prompt"
+        and event.value == "Summarize the key claims.\nPreserve names."
+    ]
+    assert len(matching) == 1
 
 
 @pytest.mark.asyncio
@@ -1361,6 +1474,134 @@ async def test_idle_external_fence_preserves_focused_form_input(
         assert screen.app.focused is title
         assert title.cursor_position == 5
         refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Textarea edits must use the in-place branch rather than remounting the form."""
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: "local"
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.focus()
+        await pilot.press("a", "b", "enter", "c")
+        await pilot.pause()
+
+        assert prompt.text == "ab\nc"
+        assert screen.query_one("#opt-generic-custom_prompt", TextArea) is prompt
+        assert screen.app.focused is prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_prompt_receipt_hides_retained_server_only_keep_original_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Local textarea edit cannot disclose a Server-only retained option."""
+    backend = {"value": "server"}
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda _section, _key, value: backend.__setitem__("value", value) or True,
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: backend["value"]
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen._build_library_ingest_state = lambda: build_library_ingest_state(
+        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
+        runtime_source="server", server_ingest_available=True,
+    )
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+        screen.query_one("#opt-generic-keep_original_file", Checkbox).value = True
+        await pilot.pause()
+        screen.query_one("#library-ingest-backend-switch", Button).press()
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.text = "Summarize this import."
+        await pilot.pause()
+
+        title = str(screen.query_one("#type-group-generic", Collapsible).title)
+        assert backend["value"] == "local"
+        assert "Keep original file" not in title
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+@pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (120, 48)])
+async def test_library_screen_ingest_layout_contains_metadata_and_start_for_local_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    """Normal and compact Library screens contain the local prompt form chrome."""
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: "local"
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.path = "/tmp/notes.txt"
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    screen._library_ingest_form.type_options = {
+        "generic": {"custom_prompt": "Keep headings.\nPreserve citations."}
+    }
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+        screen._sync_library_ingest_rail_for_width(size[0])
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+        metadata = screen.query_one("#library-ingest-metadata-row")
+        start = screen.query_one("#library-ingest-start", Button)
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+
+        assert prompt.text == "Keep headings.\nPreserve citations."
+        assert len(screen.query("#opt-generic-keep_original_file")) == 0
+        assert metadata.region.x >= canvas.region.x
+        assert metadata.region.right <= canvas.region.right
+        assert metadata.region.y >= canvas.region.y
+        assert metadata.region.height > 0
+        assert start.region.x >= canvas.region.x
+        assert start.region.right <= canvas.region.right
+        assert start.region.y >= canvas.region.y
+        assert start.region.bottom <= canvas.region.bottom
 
 
 def test_external_override_defers_submit_until_preparation_finishes() -> None:
@@ -2447,9 +2688,9 @@ async def test_expand_collapse_all_hidden_for_single_panel():
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_generic_scope_line_reworded_when_no_generic_files_staged():
-    """(task-2016) The always-present generic panel claimed "Applies to all
-    Plain text & HTML in this import." even when the import
+    """(task-2016) The always-present generic panel claimed scope even when the import
     contained zero such files."""
     state = build_library_ingest_state(
         (),
@@ -2471,7 +2712,7 @@ async def test_generic_scope_line_reworded_when_no_generic_files_staged():
             str(w.renderable)
             for w in pilot.app.query(".type-group-scope").results(Static)
         ]
-        generic_scope = [s for s in scopes if "plain text" in s.lower()]
+        generic_scope = [s for s in scopes if "imported item" in s.lower()]
         assert generic_scope, f"generic scope line missing: {scopes}"
         assert "if this import contains any" in generic_scope[0]
         assert "in this import." not in generic_scope[0]

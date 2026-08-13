@@ -1780,6 +1780,52 @@ class TestIngestJobOptions:
 class TestIngestJobOptionsWiring:
     """task-3301: the dead controls resolve to real option values."""
 
+    def test_shared_generic_values_are_explicitly_projected_for_local_parser(
+        self,
+    ) -> None:
+        """The parser receives shared form state without relying on its group."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/report.pdf",
+            ingest_options={
+                "generic": {
+                    "analyze": True,
+                    "overwrite_existing": True,
+                    "custom_prompt": "Extract decisions.",
+                    "system_prompt": "Be concise.",
+                    "generate_embeddings": False,
+                    "keep_original_file": True,
+                }
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["overwrite_existing"] is True
+        assert options["custom_prompt"] == "Extract decisions."
+        assert options["system_prompt"] == "Be concise."
+        assert options["generate_embeddings"] is False
+        assert "keep_original_file" not in options
+
+    def test_local_parser_omits_analysis_prompts_when_analysis_is_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/report.pdf",
+            ingest_options={
+                "generic": {
+                    "analyze": False,
+                    "custom_prompt": "Extract decisions.",
+                    "system_prompt": "Be concise.",
+                }
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["perform_analysis"] is False
+        assert "custom_prompt" not in options
+        assert "system_prompt" not in options
+
     def test_untouched_overlap_default_is_schema_default(self) -> None:
         """Local fallback overlap == the generic schema default (100), the
         value the UI displays -- it used to be a hardcoded 50."""
@@ -1824,6 +1870,29 @@ class TestIngestJobOptionsWiring:
         assert (
             local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
         )
+
+    def test_fresh_snapshot_seeds_shared_generic_schema_defaults(self) -> None:
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+
+        snapshot = screen._build_ingest_options_snapshot()
+        defaults = {
+            field.name: field.default
+            for field in get_capabilities("generic").fields
+            if field.name
+            in {
+                "overwrite_existing",
+                "custom_prompt",
+                "system_prompt",
+                "generate_embeddings",
+                "keep_original_file",
+            }
+        }
+
+        assert {
+            name: snapshot["generic"][name]
+            for name in defaults
+        } == defaults
 
     def test_server_request_strips_external_parakeet_path_and_scope(self) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
@@ -2219,6 +2288,35 @@ class TestSubmitLibraryIngestJob:
         assert original.ingest_options["audio_video"]["transcription_provider"] == (
             "transcribe-cpp"
         )
+
+    def test_retry_preserves_shared_generic_snapshot_values(self) -> None:
+        app = _minimal_app(media_db="present")
+        generic = {
+            "analyze": True,
+            "overwrite_existing": True,
+            "custom_prompt": "Extract decisions.",
+            "system_prompt": "Be concise.",
+            "generate_embeddings": False,
+            "keep_original_file": True,
+        }
+        original = app.submit_library_ingest_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "generic": generic,
+                "audio_video": {"transcription_provider": "transcribe-cpp"},
+            },
+        )
+        failed = app.library_ingest_jobs.mark_failed(
+            original.job_id,
+            error="Speech-to-text inference failed.",
+            stt_failure_provenance=_direct_failed_attempt(),
+        )
+
+        retry = app.retry_library_ingest_job_with_provider(
+            failed.job_id, "faster-whisper"
+        )
+
+        assert retry.ingest_options["generic"] == generic
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,10 @@ import re
 
 import pytest
 
+from tldw_chatbook.Library.ingest_capabilities import (
+    field_available_for_backend,
+    get_capabilities,
+)
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
@@ -37,6 +41,25 @@ def _job(**overrides) -> LibraryIngestJob:
 def test_header_is_import_media():
     state = build_library_ingest_state((), form=LibraryIngestFormState())
     assert state.header == "Import media"
+
+
+def test_import_behavior_capabilities_share_controls_across_backends() -> None:
+    """The capability schema is the one visibility/defaults source for modes."""
+    fields = {field.name: field for field in get_capabilities("generic").fields}
+
+    assert get_capabilities("generic").label == "Import behavior"
+    for name in (
+        "overwrite_existing",
+        "custom_prompt",
+        "system_prompt",
+        "generate_embeddings",
+    ):
+        assert field_available_for_backend(fields[name], "local") is True
+        assert field_available_for_backend(fields[name], "server") is True
+
+    assert fields["generate_embeddings"].default is True
+    assert field_available_for_backend(fields["keep_original_file"], "local") is False
+    assert field_available_for_backend(fields["keep_original_file"], "server") is True
 
 
 def test_queue_heading_is_queue():

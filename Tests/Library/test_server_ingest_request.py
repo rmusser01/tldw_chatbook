@@ -87,6 +87,46 @@ class TestServerMediaTypeFor:
 
 
 class TestBuildServerIngestKwargs:
+    def test_shared_generic_options_are_projected_for_every_server_media_type(
+        self,
+    ) -> None:
+        """Shared controls do not depend on the detected type-group loop."""
+        kwargs = build_server_ingest_kwargs(
+            "/tmp/paper.pdf",
+            options={
+                "generic": {
+                    "analyze": True,
+                    "overwrite_existing": True,
+                    "custom_prompt": "Extract decisions.",
+                    "system_prompt": "Be concise.",
+                    "generate_embeddings": False,
+                    "keep_original_file": True,
+                }
+            },
+        )
+
+        assert kwargs["overwrite_existing"] is True
+        assert kwargs["custom_prompt"] == "Extract decisions."
+        assert kwargs["system_prompt"] == "Be concise."
+        assert kwargs["generate_embeddings"] is False
+        assert kwargs["keep_original_file"] is True
+
+    def test_server_omits_analysis_prompts_when_analysis_is_off(self) -> None:
+        kwargs = build_server_ingest_kwargs(
+            "/tmp/notes.txt",
+            options={
+                "generic": {
+                    "analyze": False,
+                    "custom_prompt": "Extract decisions.",
+                    "system_prompt": "Be concise.",
+                }
+            },
+        )
+
+        assert kwargs["perform_analysis"] is False
+        assert "custom_prompt" not in kwargs
+        assert "system_prompt" not in kwargs
+
     def test_local_file_goes_in_file_paths_not_urls(self) -> None:
         kwargs = build_server_ingest_kwargs("/tmp/notes.txt", options={})
 

@@ -22,6 +22,7 @@ from Tests.UI.test_library_prompts_canvas import (
     _wire_empty_non_prompt_services,
 )
 from Tests.UI.test_library_shell import (
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
@@ -32,12 +33,16 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
-from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
+from tldw_chatbook.Library.library_ingest_state import (
+    LibraryIngestFormState,
+    build_library_ingest_state,
+)
 from tldw_chatbook.Library.library_notes_sync_state import auto_sync_label
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
+    LibraryIngestCanvas,
     LibraryMediaCanvas,
     LibraryNotesCanvas,
     LibraryPromptsListCanvas,
@@ -359,6 +364,50 @@ def test_ingest_checkbox_routes_to_ingest_canvas_sync() -> None:
     assert kinds == ["ingest"]
     assert form.analyze is True
     assert form.type_options["generic"]["analyze"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local/Server selection keeps the Library shell, rail, and footer mounted."""
+    backend = {"value": "local"}
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: backend["value"]
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen._build_library_ingest_state = lambda: build_library_ingest_state(
+        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
+        runtime_source="server", server_ingest_available=True,
+    )
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda _section, _key, value: backend.__setitem__("value", value) or True,
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-backend-switch")
+        rail = screen.query_one("#library-rail")
+        footer = screen.query_one("#screen-footer-status")
+        canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+        calls, spy = _screen_recompose_spy()
+
+        with patch.object(BaseAppScreen, "refresh", spy):
+            screen.query_one("#library-ingest-backend-switch", Button).press()
+            await pilot.pause()
+
+        assert backend["value"] == "server"
+        assert calls == []
+        assert screen.query_one("#library-rail") is rail
+        assert screen.query_one("#screen-footer-status") is footer
+        assert screen.query_one("#library-ingest-canvas", LibraryIngestCanvas) is canvas
 
 
 def test_import_status_lines_patch_the_mounted_static_without_recompose() -> None:

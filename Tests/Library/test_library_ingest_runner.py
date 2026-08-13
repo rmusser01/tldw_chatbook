@@ -423,8 +423,70 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
         assert row is not None
         assert row["title"] == "Note A"
         assert "moon's gravity" in row["content"]
-
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence(
+    tmp_path: Path,
+) -> None:
+    """Changing the writer's option forwarding must make this persistence call true."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "embeddings-off.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    with patch.object(
+        _app_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+    ) as persist:
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={"generic": {"generate_embeddings": False}},
+            )
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 777
+    assert persist.call_args.kwargs["generate_embeddings"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_writer_missing_generic_snapshot_uses_capability_defaults(
+    tmp_path: Path,
+) -> None:
+    """Writer fallbacks must delegate to the capability schema, not literals."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "defaults.txt", "Persist this source.")
+    app = _IngestRunnerHarness(db)
+
+    def schema_default(name: str, fallback: object = None) -> object:
+        return {
+            "overwrite_existing": True,
+            "generate_embeddings": False,
+        }.get(name, fallback)
+
+    with (
+        patch.object(_app_module, "generic_option_default", side_effect=schema_default),
+        patch.object(
+            _app_module,
+            "persist_parsed_media",
+            return_value=(778, "media-778", "saved"),
+        ) as persist,
+    ):
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
+            await _wait_for_runner_idle(app, pilot)
+
+    assert done.media_id == 778
+    assert persist.call_args.kwargs["overwrite_existing"] is True
+    assert persist.call_args.kwargs["generate_embeddings"] is False
 
 
 @pytest.mark.asyncio
@@ -3481,6 +3543,55 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
         )
 
         assert second_done.media_id == first_done.media_id
+        await _wait_for_runner_idle(app, pilot)
+
+
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_local_writer_uses_claimed_generic_overwrite_option(tmp_path: Path) -> None:
+    """A job's snapshot, rather than current form state, controls overwrite."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(
+        tmp_path, "overwrite.txt", "Unchanged document body for overwrite testing."
+    )
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Original title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        first_done = await _wait_for_job_state(
+            app, pilot, first.job_id, IngestJobState.DONE
+        )
+        assert first_done.media_id is not None
+
+        skipped = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Skipped title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        await _wait_for_job_state(app, pilot, skipped.job_id, IngestJobState.DONE)
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Original title"
+
+        updated = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Updated title",
+            ingest_options={"generic": {"overwrite_existing": True}},
+        )
+        updated_done = await _wait_for_job_state(
+            app, pilot, updated.job_id, IngestJobState.DONE
+        )
+        assert updated_done.media_id == first_done.media_id
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Updated title"
         await _wait_for_runner_idle(app, pilot)
 
 

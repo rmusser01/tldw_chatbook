@@ -13,11 +13,20 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.Library.ingest_capabilities import (
     TypeGroupCapabilities,
     _is_installed,
+    capabilities_for_backend,
     field_disabled_state,
     get_capabilities,
     select_option_label,
@@ -763,6 +772,8 @@ def _summarise_option(field: Any, value: Any) -> str:
         return f"{field.label}: {'on' if value else 'off'}"
     if field.type == "select":
         return f"{field.label}: {select_option_label(field, value)}"
+    if field.type == "textarea":
+        return f"{field.label}: {'set' if str(value).strip() else 'empty'}"
     return f"{field.label}: {value}"
 
 
@@ -1085,14 +1096,18 @@ class LibraryIngestCanvas(VerticalScroll):
         has_files: bool = True,
     ) -> Collapsible:
         """Build a collapsible options panel for one detected type group."""
+        # A control that does not apply to the effective backend must not
+        # render: this schema filter is the mode-visibility source of truth,
+        # ahead of both the field body and the collapsed summary title.
+        visible_cap = capabilities_for_backend(cap, self.state.ingest_backend)
         # (task-2016) The generic panel is always rendered so global options
         # stay reachable -- but claiming "Applies to all X in this import."
         # with zero such files staged was a false statement.
-        scope_label = ingest_scope_label(cap, has_files)
+        scope_label = ingest_scope_label(visible_cap, has_files)
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
-        cap_fields_by_name = {f.name: f for f in cap.fields}
+        cap_fields_by_name = {f.name: f for f in visible_cap.fields}
 
-        for field in cap.fields:
+        for field in visible_cap.fields:
             value = values.get(field.name, field.default)
             # Two independent reasons a field can be uneditable: its tooling
             # is not installed, or the sibling field that gates it is off.
@@ -1103,7 +1118,7 @@ class LibraryIngestCanvas(VerticalScroll):
             # ``library_ingest_canvas._is_installed`` and the late lookup
             # keeps that seam working.
             disabled, disabled_note = field_disabled_state(
-                field, cap, values, is_installed=_is_installed
+                field, visible_cap, values, is_installed=_is_installed
             )
             control_disabled = disabled or self.external_busy
             widget_id = f"opt-{group}-{field.name}"
@@ -1215,15 +1230,31 @@ class LibraryIngestCanvas(VerticalScroll):
                         markup=False,
                     )
                 )
-                input_widget = Input(
-                    value=str(value),
-                    # (task-3305) Example content when the schema
-                    # provides it; a placeholder repeating the label
-                    # line directly above is stutter.
-                    placeholder=field.placeholder or field.label,
-                    id=widget_id,
-                    disabled=control_disabled,
-                )
+                if field.type == "textarea":
+                    input_widget = TextArea(
+                        str(value),
+                        # Prompts must keep newlines; a single-line Input
+                        # would silently flatten the instructions the user
+                        # supplied.
+                        placeholder=field.placeholder or field.label,
+                        id=widget_id,
+                        disabled=control_disabled,
+                    )
+                    # TextArea defaults to ``height: 1fr``. Bound it inside
+                    # an option panel so two prompts remain compact-viewport
+                    # reachable instead of consuming all available height.
+                    input_widget.styles.height = 4
+                    input_widget.styles.min_width = 0
+                else:
+                    input_widget = Input(
+                        value=str(value),
+                        # (task-3305) Example content when the schema
+                        # provides it; a placeholder repeating the label
+                        # line directly above is stutter.
+                        placeholder=field.placeholder or field.label,
+                        id=widget_id,
+                        disabled=control_disabled,
+                    )
                 if field.directory_picker:
                     input_widget.styles.width = "1fr"
                     input_widget.styles.min_width = 0
@@ -1333,7 +1364,7 @@ class LibraryIngestCanvas(VerticalScroll):
         panel = Vertical(*children, classes="type-group-contents")
         # (task-3305, MI-16) Shared with the screen's in-place receipt
         # update: capped, empty-skipping, changed-values-first.
-        title = build_type_group_title(cap, values)
+        title = build_type_group_title(visible_cap, values)
         return Collapsible(
             panel,
             title=title,
@@ -1681,9 +1712,10 @@ class LibraryIngestCanvas(VerticalScroll):
     @on(Checkbox.Changed)
     @on(Select.Changed)
     @on(Input.Changed)
+    @on(TextArea.Changed)
     def _handle_option_value_changed(
         self,
-        event: Checkbox.Changed | Select.Changed | Input.Changed,
+        event: Checkbox.Changed | Select.Changed | Input.Changed | TextArea.Changed,
     ) -> None:
         """Bubble a genuine option edit up as a message.
 
@@ -1700,8 +1732,12 @@ class LibraryIngestCanvas(VerticalScroll):
         """
         widget = getattr(
             event,
-            "checkbox",
-            getattr(event, "select", getattr(event, "input", None)),
+            "text_area",
+            getattr(
+                event,
+                "checkbox",
+                getattr(event, "select", getattr(event, "input", None)),
+            ),
         )
         if widget is None:
             return
@@ -1716,12 +1752,11 @@ class LibraryIngestCanvas(VerticalScroll):
         if name == "reset":
             return
         key = (group, name)
-        if key in self._reported_option_values and (
-            self._reported_option_values[key] == event.value
-        ):
+        value = widget.text if isinstance(widget, TextArea) else event.value
+        if key in self._reported_option_values and self._reported_option_values[key] == value:
             return
-        self._reported_option_values[key] = event.value
-        self.post_message(self.OptionValueChanged(group, name, event.value))
+        self._reported_option_values[key] = value
+        self.post_message(self.OptionValueChanged(group, name, value))
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)
