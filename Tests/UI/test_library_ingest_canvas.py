@@ -17,7 +17,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
@@ -399,6 +407,7 @@ async def test_error_and_warning_markup_is_escaped():
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_type_group_panels_render_for_detected_groups():
     """One collapsible panel is rendered per detected supported type group."""
     state = build_library_ingest_state(
@@ -431,8 +440,8 @@ async def test_type_group_panels_render_for_detected_groups():
             )
             assert "PDF documents" in str(pdf_panel.title)
             assert str(pdf_panel.title) == "PDF documents"
-            assert "Plain text & HTML" in str(generic_panel.title)
-            assert str(generic_panel.title) == "Plain text & HTML"
+            assert "Import behavior" in str(generic_panel.title)
+            assert str(generic_panel.title) == "Import behavior"
 
             scope = pilot.app.query_one(
                 "#type-group-pdf .type-group-scope", Static
@@ -546,6 +555,91 @@ async def test_chunk_size_disabled_when_chunk_unchecked():
         chunk_overlap_input = pilot.app.query_one("#opt-generic-chunk_overlap", Input)
         assert chunk_size_input.disabled is True
         assert chunk_overlap_input.disabled is True
+
+
+def _import_behavior_state(*, backend: str, analyze: bool = False) -> LibraryIngestCanvasState:
+    """Build one expanded generic panel for a selected effective backend."""
+    form = _default_form()
+    form.expanded_type_groups.add("generic")
+    form.type_options = {"generic": {"analyze": analyze}}
+    return build_library_ingest_state(
+        (),
+        form=form,
+        ingest_backend=backend,
+        runtime_source="server",
+        server_ingest_available=True,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_local_import_behavior_renders_shared_controls_and_prompt_reasons():
+    """Local mode renders only controls that can affect a local import."""
+    app = _CanvasHost(_import_behavior_state(backend="local"))
+
+    async with app.run_test(size=(80, 50)) as pilot:
+        assert "Import behavior" in str(
+            pilot.app.query_one("#type-group-generic", Collapsible).title
+        )
+        assert pilot.app.query_one("#opt-generic-overwrite_existing", Checkbox)
+        assert pilot.app.query_one("#opt-generic-generate_embeddings", Checkbox)
+        custom_prompt = pilot.app.query_one("#opt-generic-custom_prompt", TextArea)
+        system_prompt = pilot.app.query_one("#opt-generic-system_prompt", TextArea)
+        assert custom_prompt.disabled is True
+        assert system_prompt.disabled is True
+        assert len(pilot.app.query("#opt-generic-keep_original_file")) == 0
+        labels = [str(static.renderable) for static in pilot.app.query(Static)]
+        assert labels.count("Custom prompt — needs Analyze after import on") == 1
+        assert labels.count("System prompt — needs Analyze after import on") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_server_import_behavior_adds_keep_original_file_and_fits_compact_width():
+    """Server-only controls stay inside the compact canvas without clipping."""
+    app = _CanvasHost(_import_behavior_state(backend="server", analyze=True))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        keep_original = pilot.app.query_one(
+            "#opt-generic-keep_original_file", Checkbox
+        )
+        for widget_id in (
+            "#opt-generic-custom_prompt",
+            "#opt-generic-system_prompt",
+            "#opt-generic-keep_original_file",
+        ):
+            assert pilot.app.query_one(widget_id).region.right <= 80
+        assert keep_original.disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_option_value_changed_posted_on_multiline_prompt_change():
+    """Editing a prompt forwards its complete multiline value to the owner."""
+    app = _MessageRecordingHost(_import_behavior_state(backend="local", analyze=True))
+
+    async with app.run_test() as pilot:
+        prompt = pilot.app.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.text = "Summarize the key claims.\nPreserve names."
+        await pilot.pause()
+
+    matching = [
+        event
+        for event in app.option_changes
+        if event.group == "generic"
+        and event.name == "custom_prompt"
+        and event.value == "Summarize the key claims.\nPreserve names."
+    ]
+    assert len(matching) == 1
 
 
 @pytest.mark.asyncio
@@ -2447,9 +2541,9 @@ async def test_expand_collapse_all_hidden_for_single_panel():
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_generic_scope_line_reworded_when_no_generic_files_staged():
-    """(task-2016) The always-present generic panel claimed "Applies to all
-    Plain text & HTML in this import." even when the import
+    """(task-2016) The always-present generic panel claimed scope even when the import
     contained zero such files."""
     state = build_library_ingest_state(
         (),
@@ -2471,7 +2565,7 @@ async def test_generic_scope_line_reworded_when_no_generic_files_staged():
             str(w.renderable)
             for w in pilot.app.query(".type-group-scope").results(Static)
         ]
-        generic_scope = [s for s in scopes if "plain text" in s.lower()]
+        generic_scope = [s for s in scopes if "imported item" in s.lower()]
         assert generic_scope, f"generic scope line missing: {scopes}"
         assert "if this import contains any" in generic_scope[0]
         assert "in this import." not in generic_scope[0]
