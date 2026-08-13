@@ -13,6 +13,7 @@ from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDiskUsage,
     ArtifactRef,
@@ -20,14 +21,6 @@ from tldw_chatbook.Model_Artifacts.service import (
     LocalGGUFImportProgress,
     LocalGGUFImportResult,
     ModelArtifactService,
-)
-
-
-_BUNDLED_CSS = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "tldw_cli_modular.tcss"
 )
 
 
@@ -43,7 +36,7 @@ class _InstalledApp(App):
 class _StyledInstalledApp(_InstalledApp):
     """Installed-view harness using the exact production stylesheet bundle."""
 
-    CSS_PATH = _BUNDLED_CSS
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 def _fake_never_cancelled() -> bool:
@@ -172,6 +165,15 @@ async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
 
 def _rendered_static_text(view) -> str:
     return "\n".join(str(widget.renderable) for widget in view.query(Static))
+
+
+def _painted_screen_text(app: App) -> str:
+    """Return text emitted by the real screen compositor."""
+    return "".join(
+        segment.text
+        for strip in app.screen._compositor.render_strips()
+        for segment in strip
+    )
 
 
 @pytest.mark.asyncio
@@ -1473,6 +1475,89 @@ async def test_mounted_install_progress_updates_without_recomposing_inventory(
     assert "encoder.onnx" in text
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_tldwcli_css_finish_slice_restores_terminal_import_focus(
+    tmp_path: Path,
+) -> None:
+    """The production CSS paints consent and terminal success restores focus."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+    from tldw_chatbook.Widgets.ModelArtifacts import LocalGGUFImportConsentModal
+
+    source_dir = tmp_path.joinpath(*(["long-private-directory"] * 12))
+    source_dir.mkdir(parents=True)
+    source = source_dir / "selected-local-model.gguf"
+    source.write_bytes(b"x" * 1_048_577)
+    reference = _import_reference()
+    preference_callback = MagicMock()
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            reference,
+            False,
+        )
+    )
+    view = module.InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        on_root_activated=preference_callback,
+    )
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+    logs: list[str] = []
+    sink_id = module.logger.add(lambda message: logs.append(str(message)))
+
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            assert app.CSS_PATH == TldwCli.CSS_PATH
+            await app.push_screen(LocalGGUFImportConsentModal(source, source.stat().st_size))
+            await pilot.pause()
+            cancel = app.screen.query_one("#local-gguf-import-cancel", Button)
+            confirm = app.screen.query_one("#local-gguf-import-confirm", Button)
+            painted = _painted_screen_text(app)
+            for button, label in ((cancel, "Cancel"), (confirm, "Import")):
+                assert button in app.screen._compositor.visible_widgets
+                assert button.region.right <= app.size.width
+                assert button.region.bottom <= app.size.height
+                assert label in painted
+            for fact in (
+                source.name,
+                "managed copy",
+                "original stays in place",
+                "License and runtime compatibility are not verified",
+            ):
+                assert fact in painted
+
+            await pilot.press("escape")
+            await pilot.pause()
+            view._begin_import(source)
+            await _wait_until(pilot, lambda: service.activation_finished.is_set())
+            await _wait_until(pilot, lambda: service.inventory_reads >= 1)
+            await _wait_until(
+                pilot,
+                lambda: view.query_one(
+                    "#installed-models-import-gguf", Button
+                ).has_focus,
+            )
+
+            assert "Imported and ready" in _rendered_static_text(view)
+            assert str(source) not in " ".join(
+                notification.message for notification in app._notifications
+            )
+            assert all(
+                str(source) not in str(getattr(worker, "description", ""))
+                for worker in app.workers
+            )
+    finally:
+        module.logger.remove(sink_id)
+
+    preference_callback.assert_not_called()
+    assert str(source) not in "".join(logs)
+
+
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_import_progress_updates_without_replacing_focused_cancel(
     tmp_path: Path,
@@ -1519,6 +1604,8 @@ async def test_import_progress_updates_without_replacing_focused_cancel(
         await _wait_until(pilot, lambda: service.activation_finished.is_set())
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_physical_cancel_sets_service_probe_and_preserves_source(
     tmp_path: Path,
@@ -1575,6 +1662,8 @@ async def test_physical_cancel_sets_service_probe_and_preserves_source(
     assert source.stat().st_mtime_ns == before.st_mtime_ns
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_finalizing_disables_cancel_before_promotion(tmp_path: Path) -> None:
     """The synchronous Finalizing callback closes cancellation before commit."""
@@ -1702,6 +1791,8 @@ async def test_import_success_activates_but_does_not_change_source_preference(
     preference_callback.assert_not_called()
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_activation_failure_keeps_installed_row_and_offers_activate(
     tmp_path: Path,
@@ -1783,6 +1874,8 @@ async def test_stale_import_callback_cannot_replace_newer_status(
         assert "Newer import is running" in _rendered_static_text(view)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_import_failure_logs_only_stable_category_and_never_selected_path(
     tmp_path: Path,
@@ -1894,6 +1987,8 @@ async def test_cancelled_and_failed_import_offer_retry_and_choose_another(
         assert str(source) not in _rendered_static_text(view)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_import_lane_disables_every_lifecycle_action_at_80_columns(
     tmp_path: Path,

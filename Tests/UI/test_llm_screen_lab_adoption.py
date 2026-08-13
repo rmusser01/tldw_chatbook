@@ -4102,6 +4102,8 @@ class _Task6HostImportService:
         return ArtifactDiskUsage(0, 0, 64 * 1024 * 1024)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail", (False, True), ids=("success", "failure"))
 async def test_local_import_terminal_releases_host_ownership(tmp_path, fail):
@@ -4131,6 +4133,8 @@ async def test_local_import_terminal_releases_host_ownership(tmp_path, fail):
         screen._run_curated_preflight.assert_called_once_with()
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_selection_unmount_releases_host_ownership(tmp_path):
     """A picker-only lane has no worker and releases immediately on teardown."""
@@ -4151,6 +4155,8 @@ async def test_selection_unmount_releases_host_ownership(tmp_path):
         screen._run_curated_preflight.assert_called_once_with()
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_path):
     """A remounted window cannot steal ownership from a detached live worker."""
@@ -4195,6 +4201,8 @@ async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_pat
         assert str(source) not in str(screen.notify.call_args_list)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_queued_import_unmount_releases_host_before_thread_body(
     tmp_path,
