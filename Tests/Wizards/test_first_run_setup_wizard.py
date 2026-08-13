@@ -26,6 +26,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
 )
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    ModelDiscoveryError,
+    ModelDiscoveryResult,
+)
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
@@ -4346,6 +4350,85 @@ async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key(
 
 
 @pytest.mark.asyncio
+async def test_mounted_clear_and_replaced_endpoint_discovery_never_uses_saved_key():
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        build_first_run_model_discovery_key,
+    )
+
+    saved_canary = "wizard-saved-key-canary-never-send"
+    requests: list[dict[str, object]] = []
+
+    async def record_discovery(**kwargs):
+        requests.append(kwargs)
+        return _typed_model_discovery_result("custom", "keyless-model")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "providers": {"custom": []},
+        "api_settings": {
+            "custom": {
+                "api_url": "https://saved.example.test/v1/chat/completions",
+                "api_key": saved_canary,
+            }
+        },
+    }
+    local_service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"custom": []},
+        settings_loader=lambda: wizard.app_instance.app_config,
+        discovery_client=record_discovery,
+        environ={},
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = (
+        LLMProviderCatalogScopeService(
+            local_service=local_service,
+            server_service=None,
+        )
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await pilot.pause(0.1)
+        prior_keys = set(provider_step._selected_provider_models)
+        assert prior_keys
+
+        provider_step.query_one("#setup-provider-key-clear", Button).press()
+        provider_step.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "https://replacement.example.test/v1/chat/completions"
+        requests.clear()
+        await pilot.pause(0.2)
+        await container._advance()
+        await pilot.pause(0.1)
+
+        assert container.current_step == model_index
+        assert requests
+        assert all(request["api_key"] is None for request in requests)
+        assert saved_canary not in repr(requests)
+        draft = container.staged_provider_draft
+        assert draft is not None
+        key = build_first_run_model_discovery_key(draft)
+        assert key.credential_revision > 0
+        assert key not in prior_keys
+        assert key in container._first_run_selected_provider_models
+
+
+@pytest.mark.asyncio
 async def test_open_wizard_uses_rotated_environment_key_for_next_test(monkeypatch):
     import os
     from unittest.mock import AsyncMock
@@ -6213,6 +6296,147 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_result", "status_selector", "expected_copy"),
+    [
+        (
+            ModelDiscoveryResult(
+                provider="custom",
+                provider_list_key="custom",
+                endpoint_fingerprint="safe-fingerprint",
+                status="unsupported",
+                error=ModelDiscoveryError(
+                    kind="unsupported_endpoint",
+                    message="Models route returned 404.",
+                    recovery_hint="Enter the model manually.",
+                ),
+            ),
+            "#setup-model-listing-unavailable",
+            "Model listing unavailable; enter the model ID used by this endpoint.",
+        ),
+        (
+            ModelDiscoveryResult(
+                provider="custom",
+                provider_list_key="custom",
+                endpoint_fingerprint="safe-fingerprint",
+                status="error",
+                error=ModelDiscoveryError(
+                    kind="request_failed",
+                    message="hostile detail " * 100,
+                    recovery_hint="hostile recovery " * 100,
+                ),
+            ),
+            "#setup-model-connection-failed",
+            "Connection failed (request failed). Retry or enter a model ID below.",
+        ),
+        (
+            RuntimeError("transport detail must not reach the UI"),
+            "#setup-model-connection-failed",
+            "Connection failed (request failed). Retry or enter a model ID below.",
+        ),
+    ],
+)
+async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
+    monkeypatch,
+    initial_result,
+    status_selector: str,
+    expected_copy: str,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"custom": ["curated-model-must-not-appear"]},
+    )
+    succeeded = _typed_model_discovery_result("custom", "retry-exact-model")
+    retry_succeeds = False
+
+    async def discover_models(**_kwargs):
+        if retry_succeeds:
+            return succeeded
+        if isinstance(initial_result, BaseException):
+            raise initial_result
+        return initial_result
+
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://outcome.example.test/v1/chat/completions"}
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        assert provider_index is not None and model_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await pilot.pause(0.1)
+
+        await container._advance()
+        await pilot.pause(0.1)
+
+        model_step = container.steps[model_index]
+        assert isinstance(model_step, ModelStep)
+        status_matches = []
+        for _ in range(20):
+            status_matches = list(model_step.query(status_selector))
+            if status_matches:
+                break
+            await pilot.pause(0.05)
+        assert status_matches, {
+            "rows": [
+                str(button.label)
+                for button in model_step.query_one(
+                    "#setup-model-choice", RadioSet
+                ).query(RadioButton)
+            ],
+            "owner_state": provider_step._selected_discovery_state,
+            "owner_outcomes": provider_step._selected_provider_outcomes,
+            "handoff_outcomes": getattr(
+                container, "_first_run_selected_provider_outcomes", None
+            ),
+            "calls": scope_service.discover_models.await_count,
+        }
+        status = status_matches[0]
+        assert isinstance(status, RadioButton)
+        assert status.disabled
+        assert str(status.label) == expected_copy
+        assert getattr(status, "_model_id", None) is None
+        assert "curated-model-must-not-appear" not in app.export_screenshot()
+        manual = model_step.query_one("#setup-model-custom", Input)
+        assert not manual.disabled and manual.focusable
+
+        if status_selector == "#setup-model-connection-failed":
+            initial_call_count = scope_service.discover_models.await_count
+            first_settings = scope_service.discover_models.await_args_list[0].kwargs[
+                "staged_settings"
+            ]
+            retry_succeeds = True
+            model_step.query_one("#setup-model-retry", Button).press()
+            await pilot.pause(0.1)
+
+            assert scope_service.discover_models.await_count == initial_call_count + 1
+            assert (
+                scope_service.discover_models.await_args.kwargs["staged_settings"]
+                == first_settings
+            )
+            row = model_step.query_one("#setup-model-option-0", RadioButton)
+            assert getattr(row, "_model_id", None) == "retry-exact-model"
+
+
+@pytest.mark.asyncio
 async def test_model_connection_failure_shows_bounded_category_and_retry():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -6401,6 +6625,103 @@ async def test_model_external_unmount_fences_late_discovery_without_widget_acces
         assert not step.is_attached
         assert step._model_load_generation > generation
         assert step.selected_model_id == ""
+
+
+@pytest.mark.asyncio
+async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unmount(
+    monkeypatch,
+):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    navigation_phase = False
+    started = asyncio.Event()
+    navigation_cancelled = asyncio.Event()
+    release_late_result = asyncio.Event()
+    late_result_returned = asyncio.Event()
+
+    async def discover_models(**_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if not navigation_phase:
+                raise
+            navigation_cancelled.set()
+            while not release_late_result.is_set():
+                try:
+                    await release_late_result.wait()
+                except asyncio.CancelledError:
+                    continue
+            late_result_returned.set()
+            return _typed_model_discovery_result("custom", "detached-late-model")
+
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://slow.example.test/v1/chat/completions"}
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(side_effect=discover_models)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        voice_index = container._step_index_for_id(STEP_VOICE)
+        assert None not in {provider_index, model_index, voice_index}
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        await container._advance()
+        await pilot.pause(0.05)
+        assert container.current_step == model_index
+        generation = provider_step.probe_generation
+        navigation_phase = True
+
+        await container._advance()
+        assert container.current_step == voice_index
+        try:
+            await asyncio.wait_for(navigation_cancelled.wait(), timeout=0.5)
+        except TimeoutError:
+            release_late_result.set()
+            pytest.fail("Provider handoff discovery was not cancelled after Model")
+        assert provider_step.probe_generation > generation
+        assert provider_step._selected_discovery_state == "cancelled"
+
+        wizard.dismiss(None)
+        await pilot.pause(0.1)
+        detached_widget_accesses: list[str] = []
+
+        def detached_query(*args, **kwargs):
+            detached_widget_accesses.append(str(args[0]) if args else "query")
+            raise AssertionError("late discovery accessed detached provider widgets")
+
+        monkeypatch.setattr(provider_step, "query_one", detached_query)
+        release_late_result.set()
+        await asyncio.wait_for(late_result_returned.wait(), timeout=2)
+        await pilot.pause(0.1)
+
+        assert not provider_step.is_attached
+        assert detached_widget_accesses == []
+        assert provider_step._selected_provider_models == {}
+        assert provider_step._selected_provider_outcomes == {}
+        assert container._first_run_selected_provider_models == {}
+        assert container._first_run_selected_provider_outcomes == {}
+        assert not [
+            worker
+            for worker in app.workers
+            if worker.node is provider_step
+            and worker.group == "setup-provider-discovery"
+        ]
 
 
 def test_real_discovery_result_extracts_exact_safe_unique_model_ids():

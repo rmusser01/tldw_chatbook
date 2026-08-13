@@ -731,6 +731,30 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
     return tuple(model_ids)
 
 
+def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
+    """Interpret one typed discovery result into bounded Model-step state."""
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryResult,
+    )
+
+    if type(result) is not ModelDiscoveryResult:
+        raise ValueError("Model discovery result is invalid.")
+    if result.status == "success":
+        return list(_model_ids_from_discovery_result(result)), "available", ""
+    if result.status == "unsupported" or (
+        result.error is not None
+        and result.error.kind in {"unsupported_endpoint", "invalid_response"}
+    ):
+        return [], "listing_unavailable", ""
+    category = (
+        "authentication"
+        if result.error is not None and result.error.kind == "missing_credentials"
+        else "request failed"
+    )
+    return [], "connection_failed", category
+
+
 def _first_run_discovery_staged_settings(
     provider_draft: wizard_state.FirstRunProviderDraft,
     discovery_key: wizard_state.FirstRunModelDiscoveryKey,
@@ -743,10 +767,12 @@ def _first_run_discovery_staged_settings(
     settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
     credential = provider_draft.credential
     credential_value = wizard_state._credential_value_for_boundary(credential)
-    if credential.source == "draft" and credential_value:
+    if credential.source == "draft":
         settings["api_key"] = credential_value
     elif credential.source == "environment":
         settings["api_key_env_var"] = credential_value
+    elif credential.source == "none":
+        settings["api_key"] = ""
     return {"api_settings": {discovery_key.provider_key: settings}}
 
 
@@ -849,6 +875,9 @@ class ProviderStep(SetupStep):
         )
         self._selected_provider_models: dict[
             wizard_state.FirstRunModelDiscoveryKey, tuple[str, ...]
+        ] = {}
+        self._selected_provider_outcomes: dict[
+            wizard_state.FirstRunModelDiscoveryKey, object
         ] = {}
         self._selected_discovery_done: asyncio.Event | None = None
         self.selected_provider_key: str = ""
@@ -1092,6 +1121,7 @@ class ProviderStep(SetupStep):
         self._selected_discovery_credential_decision = None
         self._selected_discovery_key = None
         self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
         self._credential_observations.clear()
         self._credential_observation_key = b""
         self._environment_provider = _empty_environment
@@ -1180,6 +1210,15 @@ class ProviderStep(SetupStep):
             self._local_discovery_state = "cancelled"
         self._local_discovery_generation += 1
         self._cancel_worker_groups("setup-provider-local-discovery")
+
+    def cancel_selected_discovery_handoff(self) -> None:
+        """Fence Provider-owned discovery once Model no longer consumes it."""
+
+        self._obsolete_provider_generation("setup-provider-discovery")
+        self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
+        self.wizard._first_run_selected_provider_models = {}
+        self.wizard._first_run_selected_provider_outcomes = {}
 
     def _cancel_worker_groups(self, *groups: str) -> None:
         try:
@@ -1459,6 +1498,7 @@ class ProviderStep(SetupStep):
         self._selected_discovery_credential_decision = None
         self._selected_discovery_state = "cancelled"
         self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
         self._capture_provider_ui_draft()
         provider_draft = self._effective_provider_draft()
         stage_provider = getattr(self.wizard, "stage_provider_setup", None)
@@ -1925,6 +1965,9 @@ class ProviderStep(SetupStep):
             self._selected_discovery_key = None
             self._selected_discovery_state = "idle"
             self._selected_provider_models.clear()
+            self._selected_provider_outcomes.clear()
+            self.wizard._first_run_selected_provider_models = {}
+            self.wizard._first_run_selected_provider_outcomes = {}
             return
         generation = self._obsolete_provider_generation(
             "setup-provider-discovery",
@@ -1935,6 +1978,9 @@ class ProviderStep(SetupStep):
         self._selected_discovery_generation = generation
         self._selected_discovery_state = "in_progress"
         self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
+        self.wizard._first_run_selected_provider_models = {}
+        self.wizard._first_run_selected_provider_outcomes = {}
         self._selected_discovery_done = asyncio.Event()
         self.query_one("#setup-provider-probe-status", Static).update(
             "Checking the selected provider…"
@@ -1955,19 +2001,20 @@ class ProviderStep(SetupStep):
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         generation: int,
     ) -> bool:
-        if not self.is_mounted:
+        if (
+            not self.is_attached
+            or generation != self.probe_generation
+            or generation != self._selected_discovery_generation
+            or discovery_key != self._selected_discovery_key
+            or discovery_key.provider_key != self.selected_provider_key
+        ):
             return False
         current_key = self._model_discovery_key(self._effective_provider_draft())
         staged_key = self._model_discovery_key(
             getattr(self.wizard, "staged_provider_draft", None)
         )
-        return (
-            generation == self.probe_generation
-            and generation == self._selected_discovery_generation
-            and discovery_key == self._selected_discovery_key
-            and discovery_key == current_key
-            and discovery_key.provider_key == self.selected_provider_key
-            and (self.is_active or discovery_key == staged_key)
+        return discovery_key == current_key and (
+            self.is_active or discovery_key == staged_key
         )
 
     def _can_handoff_selected_discovery(self) -> bool:
@@ -1987,6 +2034,7 @@ class ProviderStep(SetupStep):
         provider_key = discovery_key.provider_key
         provider_result: tuple[Any, ...] = ()
         models: tuple[str, ...] = ()
+        model_outcome: object | None = None
         attempted = False
         failed = False
         try:
@@ -2031,6 +2079,7 @@ class ProviderStep(SetupStep):
                         timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                     )
                     models = _model_ids_from_discovery_result(result)
+                    model_outcome = result
                     if result.status != "success":
                         failed = True
                 except asyncio.CancelledError:
@@ -2045,10 +2094,15 @@ class ProviderStep(SetupStep):
                 return
 
             self._selected_provider_models[discovery_key] = models
+            if model_outcome is not None:
+                self._selected_provider_outcomes[discovery_key] = model_outcome
             setattr(
                 self.wizard,
                 "_first_run_selected_provider_models",
                 dict(self._selected_provider_models),
+            )
+            self.wizard._first_run_selected_provider_outcomes = dict(
+                self._selected_provider_outcomes
             )
             discovered_server = next(
                 (
@@ -2109,6 +2163,29 @@ class ProviderStep(SetupStep):
         await done.wait()
         return self._selected_provider_models.get(discovery_key)
 
+    async def _outcome_from_selected_discovery(
+        self,
+        provider_key: str,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+    ) -> object | None:
+        """Return this generation's typed result without starting a request."""
+
+        canonical_key = self._canonical_provider_key(provider_key)
+        if canonical_key != self.selected_provider_key:
+            return None
+        staged_key = self._model_discovery_key(
+            getattr(self.wizard, "staged_provider_draft", None)
+        )
+        if discovery_key != staged_key:
+            return None
+        if discovery_key in self._selected_provider_outcomes:
+            return self._selected_provider_outcomes[discovery_key]
+        done = self._selected_discovery_done
+        if done is None:
+            return None
+        await done.wait()
+        return self._selected_provider_outcomes.get(discovery_key)
+
     def _test_evidence_for_discovery_key(
         self, discovery_key: wizard_state.FirstRunModelDiscoveryKey
     ):
@@ -2155,6 +2232,7 @@ class ProviderStep(SetupStep):
         self._invalidate_provider_test()
         self._selected_discovery_key = None
         self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
         self._capture_provider_ui_draft()
         self._refresh_auth_readiness()
 
@@ -2258,6 +2336,7 @@ class ProviderStep(SetupStep):
         self._detected_endpoint_provider_key = ""
         self._detected_servers = ()
         self._selected_provider_models.clear()
+        self._selected_provider_outcomes.clear()
         try:
             banner = self.query_one("#setup-provider-detected", Static)
             banner.update("")
@@ -2950,10 +3029,16 @@ class ModelStep(SetupStep):
     def on_hide(self) -> None:
         super().on_hide()
         self._cancel_model_discovery()
+        owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            owner.cancel_selected_discovery_handoff()
         self._explicit_provider_draft = None
 
     def on_unmount(self) -> None:
         self._cancel_model_discovery()
+        owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        if isinstance(owner, ProviderStep):
+            owner.cancel_selected_discovery_handoff()
         self._explicit_provider_draft = None
 
     async def _load_models(
@@ -2979,8 +3064,24 @@ class ModelStep(SetupStep):
         discover = self._discover_models
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
         handed_off = getattr(self.wizard, "_first_run_selected_provider_models", {})
-        if isinstance(handed_off, Mapping) and discovery_key in handed_off:
+        handed_outcomes = getattr(
+            self.wizard, "_first_run_selected_provider_outcomes", {}
+        )
+        if isinstance(handed_outcomes, Mapping) and discovery_key in handed_outcomes:
+            models, discovery_state, failure_category = _model_discovery_ui_outcome(
+                handed_outcomes[discovery_key]
+            )
+            discover = None
+        elif isinstance(handed_off, Mapping) and discovery_key in handed_off:
             models = list(handed_off[discovery_key])
+            if (
+                not models
+                and isinstance(owner, ProviderStep)
+                and owner._selected_discovery_key == discovery_key
+                and owner._selected_discovery_state == "failed"
+            ):
+                discovery_state = "connection_failed"
+                failure_category = "request failed"
             discover = None
         elif (
             isinstance(owner, ProviderStep)
@@ -2988,14 +3089,22 @@ class ModelStep(SetupStep):
             and owner.app is self.app
         ):
             try:
-                selected_models = await asyncio.wait_for(
-                    owner._models_from_selected_discovery(provider_key, discovery_key),
+                selected_outcome = await asyncio.wait_for(
+                    owner._outcome_from_selected_discovery(provider_key, discovery_key),
                     timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                 )
             except Exception:
-                selected_models = None
-            if selected_models is not None:
-                models = list(selected_models)
+                selected_outcome = None
+            if selected_outcome is not None:
+                models, discovery_state, failure_category = _model_discovery_ui_outcome(
+                    selected_outcome
+                )
+            elif (
+                owner._selected_discovery_key == discovery_key
+                and owner._selected_discovery_state == "failed"
+            ):
+                discovery_state = "connection_failed"
+                failure_category = "request failed"
             # ProviderStep owns setup network work for this selection. If the
             # user advances before it finishes, use curated fallback rather
             # than issuing the same provider catalog request from ModelStep.
@@ -3048,28 +3157,11 @@ class ModelStep(SetupStep):
                     ),
                     timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                 )
-                from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
-                    ModelDiscoveryResult,
-                )
-
-                if type(result) is ModelDiscoveryResult:
-                    if result.status == "success":
-                        models = list(_model_ids_from_discovery_result(result))
-                    elif result.status == "unsupported" or (
-                        result.error is not None
-                        and result.error.kind
-                        in {"unsupported_endpoint", "invalid_response"}
-                    ):
-                        discovery_state = "listing_unavailable"
-                    else:
-                        discovery_state = "connection_failed"
-                        failure_category = (
-                            "authentication"
-                            if result.error is not None
-                            and result.error.kind == "missing_credentials"
-                            else "request failed"
-                        )
-                else:
+                try:
+                    models, discovery_state, failure_category = (
+                        _model_discovery_ui_outcome(result)
+                    )
+                except ValueError:
                     models = list(_legacy_model_ids(result))
             except TimeoutError:
                 discovery_state = "connection_failed"
@@ -3198,6 +3290,13 @@ class ModelStep(SetupStep):
             return
         event.button.add_class("hidden")
         self._rendered_discovery_key = None
+        owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        provider_draft = self._current_provider_draft()
+        if isinstance(owner, ProviderStep) and provider_draft is not None:
+            owner._begin_selected_provider_discovery(
+                provider_draft,
+                sync_live_credential=False,
+            )
         self.on_show()
 
     @on(RadioSet.Changed, "#setup-model-choice")
@@ -6501,6 +6600,12 @@ class SetupWizardContainer(WizardContainer):
         self._provider_cleanup_requested = False
         self._provider_dismiss_pending = False
         self._provider_ui_detached = False
+        self._first_run_selected_provider_models: dict[
+            wizard_state.FirstRunModelDiscoveryKey, tuple[str, ...]
+        ] = {}
+        self._first_run_selected_provider_outcomes: dict[
+            wizard_state.FirstRunModelDiscoveryKey, object
+        ] = {}
         self._provider_dismiss_warning_seconds = max(
             0.0, float(provider_dismiss_warning_seconds)
         )
@@ -6567,6 +6672,7 @@ class SetupWizardContainer(WizardContainer):
         """Clear model state derived from a superseded provider credential."""
 
         self._first_run_selected_provider_models = {}
+        self._first_run_selected_provider_outcomes = {}
         self.wizard_data.pop(wizard_state.STEP_MODEL, None)
         model_index = self._step_index_for_id(wizard_state.STEP_MODEL)
         if model_index is None:
@@ -6597,6 +6703,7 @@ class SetupWizardContainer(WizardContainer):
         self._provider_setup_committed = False
         self._committed_provider_model = ""
         self._first_run_selected_provider_models = {}
+        self._first_run_selected_provider_outcomes = {}
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
             if not self._provider_ui_detached:

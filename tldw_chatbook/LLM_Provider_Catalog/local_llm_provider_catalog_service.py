@@ -331,7 +331,9 @@ class LocalLLMProviderCatalogService:
         except ProviderSettingsError:
             return None
         staged_key = self._api_key_from_provider_settings(staged_provider_settings)
-        if staged_key:
+        if "api_key" in staged_provider_settings or (
+            "api_key_env_var" in staged_provider_settings
+        ):
             return staged_key
         saved_key = self._api_key_from_provider_settings(saved_provider_settings)
         if saved_key:
