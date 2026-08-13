@@ -1063,7 +1063,7 @@ def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
                 "percent": 42.0,
             },
             IngestJobState.PARSING,
-            "42% Â· Extracting page 21 of 50",
+            "42% · Extracting page 21 of 50",
         ),
         (
             {"phase": "transcribing"},
@@ -1085,7 +1085,9 @@ def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
 )
 def test_format_ingest_progress_line(progress, state, expected):
     """State prefixes or invented values would make the reserved detail lie."""
-    assert format_ingest_progress_line(progress, state=state) == expected
+    rendered = format_ingest_progress_line(progress, state=state)
+    assert rendered == expected
+    assert "Â·" not in rendered
 
 
 @pytest.mark.parametrize(

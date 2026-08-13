@@ -1583,7 +1583,7 @@ def format_ingest_progress_line(
         and 0 <= percent <= 100
         and math.isfinite(percent)
     ):
-        return f"{round(percent)}% Â· {text}"
+        return f"{round(percent)}% · {text}"
     return text
 
 

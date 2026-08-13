@@ -893,7 +893,9 @@ async def test_progress_line_uses_formatter_without_repeating_state():
         progress = pilot.app.query_one(
             "#library-ingest-progress-ingest-job-1", Static
         )
-        assert str(progress.renderable) == "40% Â· Extracting page 2 of 5"
+        rendered = str(progress.renderable)
+        assert rendered == "40% · Extracting page 2 of 5"
+        assert "Â·" not in rendered
 
 
 @pytest.mark.asyncio

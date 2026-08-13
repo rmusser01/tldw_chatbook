@@ -16632,9 +16632,9 @@ async def test_library_ingest_progress_tick_updates_only_reserved_line_in_place(
         assert screen.focused is path_input
         assert path_input.cursor_position == 7
         assert canvas.scroll_y == scroll_y
-        assert str(progress_line.renderable) == (
-            "40% Â· Transcribing minute 2 of 5"
-        )
+        rendered = str(progress_line.renderable)
+        assert rendered == "40% · Transcribing minute 2 of 5"
+        assert "Â·" not in rendered
 
 
 @pytest.mark.asyncio
