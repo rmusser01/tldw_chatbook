@@ -114,7 +114,6 @@ class CharacterCardTTSInspection:
     portable_profile: PortableTTSProfile | None = None
     warning_code: PortableProfileWarningCode | None = None
 
-
 # Image metadata keys that carry embedded character-card JSON:
 # 'chara' holds V1/V2 cards, 'ccv3' holds V3 cards (PNG tEXt/zTXt/iTXt chunks).
 _CARD_IMAGE_METADATA_KEYS = ("chara", "ccv3")
@@ -126,7 +125,6 @@ def _bounded_card_source_type(source: object) -> str:
 
     suffix = Path(str(source)).suffix.lower()
     return suffix if suffix in _CARD_SOURCE_TYPES else "other"
-
 
 # Upper bound on image dimensions for the full decode used to reveal trailing
 # (post-IDAT) PNG metadata chunks. Character card images are typically well
@@ -564,8 +562,8 @@ def replace_placeholders(
         "{{random_user}}": user_name_actual,  # As per original logic
         "<USER>": user_name_actual,  # Common alternative
         "<CHAR>": char_name_actual,  # Common alternative
-        "{{character}}": char_name_actual,  # task-442 alias: the AI character's name
-        "{{persona}}": char_name_actual,  # task-442 alias: the AI character's name (NEVER the user)
+        "{{character}}": char_name_actual,   # task-442 alias: the AI character's name
+        "{{persona}}": char_name_actual,     # task-442 alias: the AI character's name (NEVER the user)
     }
 
     processed_text = text
@@ -786,11 +784,8 @@ def get_character_page_for_ui(
     """
     try:
         rows = db.list_character_cards_page(
-            limit=limit,
-            offset=offset,
-            order_by=order_by,
-            search_term=search_term,
-            tag=tag,
+            limit=limit, offset=offset, order_by=order_by,
+            search_term=search_term, tag=tag,
         )
     except Exception as exc:
         logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
@@ -1491,9 +1486,7 @@ def extract_json_from_image_file(
 
         # Primarily for PNG cards (TavernAI, SillyTavern convention)
         if img_obj.format != "PNG":
-            logger.warning(
-                "Character-card image is not PNG; probing alternate metadata."
-            )
+            logger.warning("Character-card image is not PNG; probing alternate metadata.")
 
         # 'text' attribute in Pillow Image objects holds metadata chunks.
         # For PNGs, these are tEXt, zTXt, or iTXt chunks.
@@ -1515,7 +1508,9 @@ def extract_json_from_image_file(
         if metadata_key is None and img_obj.format == "PNG":
             width, height = img_obj.size
             if width * height > _MAX_CARD_DECODE_PIXELS:
-                logger.warning("Skipping full decode of oversized character-card PNG.")
+                logger.warning(
+                    "Skipping full decode of oversized character-card PNG."
+                )
             else:
                 try:
                     img_obj.load()
@@ -1565,7 +1560,9 @@ def extract_json_from_image_file(
                     "utf-8"
                 )
                 json.loads(decoded_chara_json_str)  # Validate it's JSON
-                logger.info("Character-card image metadata decoded successfully.")
+                logger.info(
+                    "Character-card image metadata decoded successfully."
+                )
                 return decoded_chara_json_str
             except (
                 binascii.Error,
@@ -1739,7 +1736,9 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             ),
             "tags": _coerce_card_str_list(data_node.get("tags")),
             "creator": _coerce_card_text(data_node.get("creator")),
-            "character_version": _coerce_card_text(data_node.get("character_version")),
+            "character_version": _coerce_card_text(
+                data_node.get("character_version")
+            ),
             # Shallow copy so the character_book insertion below can never
             # mutate the caller's original card dict.
             "extensions": dict(data_node["extensions"])
@@ -2250,10 +2249,13 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     if "data" not in card_data or not isinstance(card_data.get("data"), dict):
         # Fatal only when the card *claims* to be V2/V3; a flat card without a
         # 'data' node may be a V1 card and is handled by the V1 parser.
-        claims_v2 = card_data.get("spec") in ("chara_card_v2", "chara_card_v3") or str(
-            card_data.get("spec_version", "")
-        ).startswith(("2.", "3."))
-        msg = "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
+        claims_v2 = (
+            card_data.get("spec") in ("chara_card_v2", "chara_card_v3")
+            or str(card_data.get("spec_version", "")).startswith(("2.", "3."))
+        )
+        msg = (
+            "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
+        )
         if claims_v2:
             errors.append(f"ERROR: {msg}")
         else:
@@ -2660,7 +2662,8 @@ def inspect_character_card_tts_attachment(
                 )
             except ValueError:
                 logger.error(
-                    "Character inspection source path was rejected (source_type={}).",
+                    "Character inspection source path was rejected "
+                    "(source_type={}).",
                     source_kind,
                 )
                 return None
@@ -2889,7 +2892,8 @@ def import_and_save_character_from_file_with_outcome(
                     card_json_str = stream_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     logger.error(
-                        "Character import stream is not UTF-8 text (source_type={}).",
+                        "Character import stream is not UTF-8 text "
+                        "(source_type={}).",
                         source_kind,
                     )
                     return None
@@ -2911,7 +2915,8 @@ def import_and_save_character_from_file_with_outcome(
         parsed_card_dict = load_character_card_from_string_content(card_json_str)
         if not parsed_card_dict:  # This means parsing or validation failed.
             logger.error(
-                "Character import failed parsing or validation (source_type={}).",
+                "Character import failed parsing or validation "
+                "(source_type={}).",
                 source_kind,
             )
             return None
@@ -2957,7 +2962,8 @@ def import_and_save_character_from_file_with_outcome(
                 logger.debug("Decoded base64 image from card JSON.")
             except Exception as e_b64:
                 logger.warning(
-                    "Character card image payload could not be decoded (category={}).",
+                    "Character card image payload could not be decoded "
+                    "(category={}).",
                     type(e_b64).__name__,
                 )
                 # Keep image_bytes_for_db as None
@@ -2995,7 +3001,9 @@ def import_and_save_character_from_file_with_outcome(
         if char_id:
             logger.info("Character import persisted (disposition=created).")
         else:
-            logger.error("Character import persistence returned no identifier.")
+            logger.error(
+                "Character import persistence returned no identifier."
+            )
         if char_id is None:
             return None
         return CharacterCardImportOutcome(
@@ -3022,7 +3030,8 @@ def import_and_save_character_from_file_with_outcome(
         return None
     except (CharactersRAGDBError, InputError) as db_e:
         logger.error(
-            "Character import database/input failure (source_type={}, category={}).",
+            "Character import database/input failure "
+            "(source_type={}, category={}).",
             source_kind,
             type(db_e).__name__,
         )
@@ -3034,7 +3043,8 @@ def import_and_save_character_from_file_with_outcome(
         raise
     except Exception as e:
         logger.error(
-            "Unexpected character import failure (source_type={}, category={}).",
+            "Unexpected character import failure "
+            "(source_type={}, category={}).",
             source_kind,
             type(e).__name__,
         )
@@ -3167,7 +3177,9 @@ def load_chat_history_from_file_and_save_to_db(
                 or not isinstance(projected_history, list)
                 or not projected_history
                 or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
-                or not all(isinstance(message, dict) for message in projected_history)
+                or not all(
+                    isinstance(message, dict) for message in projected_history
+                )
             ):
                 raise ValueError("Invalid exported chat history.")
             staged_messages: list[dict[str, Any]] = []
@@ -4233,7 +4245,9 @@ def export_character_card_to_json(
         if portable_tts_profile is not None:
             if extensions is not None and type(extensions) is not dict:
                 raise ValueError("invalid_extensions")
-            export_extensions = {} if extensions is None else copy.deepcopy(extensions)
+            export_extensions = (
+                {} if extensions is None else copy.deepcopy(extensions)
+            )
             if CHARACTER_CARD_TTS_EXTENSION_KEY in export_extensions:
                 raise ValueError("reserved_extension_occupied")
             export_extensions[CHARACTER_CARD_TTS_EXTENSION_KEY] = (

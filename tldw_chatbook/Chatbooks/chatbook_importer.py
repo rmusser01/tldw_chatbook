@@ -456,7 +456,8 @@ class ChatbookImporter:
         db = CharactersRAGDB(db_path, "chatbook_importer")
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir()
+            / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(
@@ -884,7 +885,9 @@ class ChatbookImporter:
             for dependent in dependents[message_id]:
                 indegrees[dependent] -= 1
                 if indegrees[dependent] == 0:
-                    heapq.heappush(ready, (int(by_id[dependent]["order"]), dependent))
+                    heapq.heappush(
+                        ready, (int(by_id[dependent]["order"]), dependent)
+                    )
         if len(ordered) != len(messages):
             raise ValueError("Invalid V2 conversation graph.")
         return ordered
@@ -1662,17 +1665,12 @@ class ChatbookImporter:
         different moments must still skip as already-present rather than
         spam a conflict.
         """
-        plain_fields = (
-            "preset_name",
-            "roster_snapshot_json",
-            "turns_json",
-            "model_used",
-        )
+        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
         if any(existing.get(f) != payload.get(f) for f in plain_fields):
             return False
-        return cls._kept_dt_key(
-            existing.get("original_created_at")
-        ) == cls._kept_dt_key(payload.get("original_created_at"))
+        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
+            payload.get("original_created_at")
+        )
 
     @staticmethod
     def _kept_briefing_file_path(
@@ -1759,7 +1757,9 @@ class ChatbookImporter:
                         source_briefing_id=source_briefing_id,
                         watchlist_name=payload.get("watchlist_name"),
                         body_markdown=payload["body_markdown"],
-                        covers_through_item_id=payload.get("covers_through_item_id"),
+                        covers_through_item_id=payload.get(
+                            "covers_through_item_id"
+                        ),
                         covers_from_ts=payload.get("covers_from_ts"),
                         selection_mode=payload.get("selection_mode"),
                         model_used=payload.get("model_used"),
@@ -1864,7 +1864,9 @@ class ChatbookImporter:
 
             except Exception as e:
                 status.failed_items += 1
-                status.add_error(f"Error importing kept briefing {kept_id}: {str(e)}")
+                status.add_error(
+                    f"Error importing kept briefing {kept_id}: {str(e)}"
+                )
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
                     kept_id,

@@ -498,7 +498,8 @@ class ChatbookCreator:
         db = CharactersRAGDB(db_path, "chatbook_creator")
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir()
+            / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = work_dir / "content" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
@@ -1594,7 +1595,9 @@ class ChatbookCreator:
 
                 title = kept.get("watchlist_name") or f"Kept briefing {kept_id}"
                 report_file = kept_dir / f"kept_briefing_{kept_id}.md"
-                self._write_kept_briefing_report(report_file, kept_id, title, kept_data)
+                self._write_kept_briefing_report(
+                    report_file, kept_id, title, kept_data
+                )
 
                 content.kept_briefings.append(kept_data)
 
@@ -1620,7 +1623,9 @@ class ChatbookCreator:
                 )
 
             except Exception as e:
-                logger.error(f"Error collecting kept briefing {kept_id_raw}: {e}")
+                logger.error(
+                    f"Error collecting kept briefing {kept_id_raw}: {e}"
+                )
 
     def _write_kept_briefing_report(
         self,
@@ -1637,7 +1642,9 @@ class ChatbookCreator:
         with open(report_file, "w", encoding="utf-8") as f:
             f.write(f"# Kept Briefing: {self._markdown_report_text(title)}\n\n")
             f.write(f"- Kept briefing id (local): {kept_id}\n")
-            f.write(f"- Source briefing id: {kept_data['source_briefing_id']}\n")
+            f.write(
+                f"- Source briefing id: {kept_data['source_briefing_id']}\n"
+            )
             f.write(f"- Origin: {self._markdown_report_text(kept_data['origin'])}\n")
             if kept_data.get("model_used"):
                 f.write(
