@@ -875,18 +875,10 @@ def test_sensitive_openai_compatible_error_bodies_are_not_logged(
     provider: str,
 ) -> None:
     session = _FakeSession(_FakeResponse({}, status_code=500, text="ERROR-BODY-CANARY"))
+    monkeypatch.setattr(hosted_chat.requests, "Session", lambda: session)
     if provider == "moonshot":
-        monkeypatch.setattr(hosted_chat.requests, "Session", lambda: session)
         call: Callable[..., object] = cloud_adapters.chat_with_moonshot
     else:
-        monkeypatch.setattr(cloud_adapters.requests, "Session", lambda: session)
-        monkeypatch.setattr(
-            cloud_adapters,
-            "get_runtime_config_snapshot",
-            lambda: _runtime_config(
-                "zai", {"api_key": "key", "api_base_url": "https://zai.test"}
-            ),
-        )
         call = cloud_adapters.chat_with_zai
 
     with _captured_logs() as logs, sensitive_llm_request():

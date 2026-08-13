@@ -154,7 +154,7 @@ class HostedChatStream(Iterator[dict[str, Any]]):
             raise HostedChatProtocolError("Hosted Chat stream JSON is malformed.")
         try:
             safe_event = self._consume_event(cast(Mapping[str, Any], event))
-        except HostedChatProtocolError:
+        except (HostedChatProtocolError, ChatProviderError):
             self.close()
             raise
         except Exception:
@@ -625,7 +625,7 @@ def _validate_reasoning(
 ) -> str | None:
     try:
         reasoning = policy.validate_reasoning_content(value)
-    except HostedChatProtocolError:
+    except (HostedChatProtocolError, ChatProviderError):
         raise
     except Exception:
         raise HostedChatProtocolError(
@@ -649,7 +649,7 @@ def _validate_finish(
             has_text=has_text,
             has_calls=has_calls,
         )
-    except HostedChatProtocolError:
+    except (HostedChatProtocolError, ChatProviderError):
         raise
     except Exception:
         raise HostedChatProtocolError(

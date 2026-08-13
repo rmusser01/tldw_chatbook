@@ -734,6 +734,11 @@ PROVIDER_PARAM_MAP = {
         "model": "model",
         "max_tokens": "max_tokens",
         "tools": "tools",
+        "tool_choice": "tool_choice",
+        "stop": "stop",
+        "response_format": "response_format",
+        "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
     },
     # Add other providers here
 }
