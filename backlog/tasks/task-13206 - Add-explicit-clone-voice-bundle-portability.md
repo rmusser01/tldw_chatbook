@@ -90,8 +90,25 @@ Reason: ADR-051 already owns clone-reference storage, migration, privacy, runtim
   generation returned a valid PCM16 mono 24 kHz WAV, both reference and result
   playback exited 0, the user confirmed the expected voice was audible, and
   shutdown left no owned process/materialization/generated artifact.
-- Status remains **In Progress** until the planned rebase, post-rebase scoped
-  and full-suite verification, and final review are complete. Acceptance
-  criteria remain unchecked until that evidence is available.
+- A terminal full repository run on feature `8821c3293` / exact base
+  `a4b16b1e2` completed with 41,064 passed, 241 skipped, 4 xfailed, 383 failed,
+  and 59 errors in 1:54:00. Exact-base reruns and focused corrections removed
+  every base-green/feature-red node. The 411 baseline-red node IDs and artifact
+  hashes are preserved in the QA evidence for a separate follow-up task/PR;
+  this is not represented as a green full suite.
+- Rebased final code/test commit `77a5e22b2` has clean merge-base
+  `f7fe006ca`. All 11 intervening upstream commits were inspected. Their 10
+  changed test files passed 804 tests; the only shared production path was
+  `app.py`, with non-overlapping library-ingest versus TTS ownership/shutdown
+  hunks. The rebased feature matrix closed at 2,281 passed / 2 skipped across
+  sandbox and exact host rerun. Changed-file Ruff, planned format, 17-source
+  mypy, normalized merge-base mypy comparison (zero new diagnostics), CSS
+  sync, diff-check, and task-ID uniqueness all passed. Relevant inventories
+  passed 88 tests; the remaining two persistent-diagnostic census failures
+  reproduced on exact `f7fe006ca`.
+- Status remains **In Progress** until the fresh independent final review is
+  accepted. Acceptance criteria remain unchecked until that evidence is
+  available; the repository-wide baseline failures are explicitly delegated
+  to the follow-up work rather than hidden or relabeled.
 
 Detailed test-first steps, file ownership, commands, review checkpoints, and commit boundaries are in `Docs/superpowers/plans/2026-08-11-task-13206-clone-voice-bundle-portability.md`.

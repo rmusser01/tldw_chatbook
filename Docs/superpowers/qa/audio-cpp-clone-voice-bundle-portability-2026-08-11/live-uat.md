@@ -1,8 +1,9 @@
 # TASK-13206 clone voice bundle portability UAT
 
 Date: 2026-08-12
-Result: Audible UAT passed — post-rebase closeout verification pending
-Commit under test: `6eab86144`
+Result: Audible UAT passed — final independent review pending
+Mounted UAT commit under test: `6eab86144`
+Final automated code/test commit under test: `77a5e22b2`
 
 This artifact contains sanitized engineering evidence only. It retains no
 audio, transcript, source/bundle/staging path, checksum, credential, provider
@@ -35,7 +36,7 @@ claims are intentionally excluded from this layer.
 
 ## Production-mounted Pilot journey
 
-The exact commit above was then exercised through mounted production
+The mounted-UAT commit above was then exercised through mounted production
 `TldwCli`, `STTSScreen`, `STTSWindow`, and `STTSProfileLibrary` instances with
 the real app-owned profile repository and bundle portability service. The
 production warning, export-choice, review, inactive-consent, library-detail,
@@ -133,6 +134,75 @@ The official `audio-cpp/audio.cpp-gguf` PocketTTS English bf16 package was
   materialization, or generated configuration artifact.
 
 The evidence intentionally retains no private path, transcript, audio bytes,
-or audio checksum. The task remains In Progress only until the planned rebase,
-post-rebase automated verification, full repository suite, and final review are
-complete.
+or audio checksum.
+
+## Full-suite terminal result and exact-base classification
+
+A complete repository run finished on feature revision `8821c3293`, based on
+exact `origin/dev` revision `a4b16b1e2`, with:
+
+```text
+383 failed, 41064 passed, 241 skipped, 4 xfailed, 59 errors
+6840.46s (1:54:00)
+```
+
+The raw terminal output SHA-256 was
+`6ac513ac3b83a87f36751f568bcd26c297cfc3fcb7ff9f7e7de8f947dfb0aa63`;
+the JUnit SHA-256 was
+`8a976be39ab3be0473209d2d723b46fc9908bcf6b8935d155f21fb3e23a05cc1`.
+JUnit contained 441 unique failure/error node IDs. Five overlapped files
+changed by this feature: three were the sandbox-blocked real-child nodes and
+passed on the host; two exposed stale test contracts and were corrected in
+`8512b5537`, then passed both focused and full-file reruns. Exact-node execution
+of the other 436 nodes on detached base `a4b16b1e2` produced `373 failed, 59
+passed, 2 skipped, 25 errors in 193.69s`. The feature/base comparison left one
+reference-free UAT fixture mismatch, corrected in `285399506`; its exact node
+and complete file then passed. No base-green, feature-red node remained.
+
+The consolidated 411 baseline-red node IDs are checked in beside this report
+as `baseline-red-nodes.txt`. The SHA-256 of its node-only lines is
+`2894b62c20d160c916354c6b2da90077b6c2df9ad6c774398c8acc89280f8f2f`.
+This inventory includes 397 nodes directly red on the detached base plus 14
+nodes whose sequential base rerun passed the call but reproduced the same
+blocked-Hugging-Face-egress teardown error (`14 passed, 14 errors in 29.62s`).
+The largest file-level families are OpenAI realtime sessions (34), feed server
+(33), default-assistant migration (19), Library shell (15), Library file/notes
+Git (15), media-state ownership (13), model stream fetch (12), model provision
+fetch (10), and QwenCloud (10). The checked-in list retains every exact node,
+including smaller families. It is follow-up evidence, not a claim that the
+repository suite is green.
+
+## Latest-dev rebase bridge and final feature gates
+
+The final automated code/test tree `77a5e22b2` has clean merge-base
+`f7fe006ca` and is 71 feature commits ahead. Every one of the 11 intervening
+upstream commits from `a4b16b1e2..f7fe006ca` was inspected. Their net delta is
+the library-ingest option parity feature: 20 files, including 10 test files.
+The sole path overlap with Task 13206 is `tldw_chatbook/app.py`; upstream
+changes are confined to library-ingest option projection and persistence,
+while Task 13206 changes are confined to app-owned TTS service construction
+and audio shutdown. There is no shared hunk or semantic contract.
+
+- All 10 upstream-changed test files passed: `804 passed in 32.58s` (JUnit
+  SHA-256
+  `45cb06af28b35f2dbd3917e1d43e49791e8bd4205ef601de3035a3a68ce374b2`).
+- The exact 20-module Task 13206 matrix produced `2278 passed, 2 skipped, 3
+  failed in 361.67s` in the sandbox. The three failures were only the known
+  loopback-denied real-child nodes; their exact host rerun passed `3 passed in
+  2.05s`. Aggregate: `2281 passed, 2 skipped`.
+- Changed-Python Ruff check passed; the planned plus final-review Ruff format
+  set passed; the format-touched test file passed `56 passed`; scoped mypy
+  passed all 17 sources; CSS bundle sync and `git diff --check` passed.
+- The detached exact-merge-base normalized legacy mypy inventory contained 10
+  diagnostics, the feature inventory contained 9, and the new-diagnostic set
+  was empty.
+- Relevant inventories produced `88 passed` and the two persistent-diagnostic
+  census failures. Both exact nodes reproduced on detached `f7fe006ca`, so
+  they are current-base failures rather than a Task 13206 regression.
+- Task-ID uniqueness checked 524 refs and 86 worktrees with zero duplicate-ID
+  violations.
+
+The audible requirement and requested affected/scoped/static verification are
+complete. The task remains In Progress and its acceptance criteria remain
+unchecked until the fresh independent final review is accepted; the full-suite
+baseline failures above are preserved for the separate follow-up task/PR.
