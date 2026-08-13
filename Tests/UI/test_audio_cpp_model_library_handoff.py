@@ -1030,3 +1030,62 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
         app.pending_handoffs.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry(
+    monkeypatch,
+) -> None:
+    from textual.widgets import Button, Static
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_ollama_api_available",
+        lambda _self: asyncio.sleep(0, result=False),
+    )
+    attempts: list[CuratedView] = []
+
+    def remain_loading(view, *, force=False):
+        if view._loading:
+            return
+        attempts.append(view)
+        view._loading = True
+        view.refresh(recompose=True)
+
+    monkeypatch.setattr(CuratedView, "ensure_loaded", remain_loading)
+    app = _build_test_app()
+    request = AudioCppModelLibraryRequest("slow-presentation", 15)
+    app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        assert await _wait_for(
+            lambda: (
+                screen.llm_window is not None
+                and screen.llm_window.active_view == "curated"
+            ),
+            pilot,
+        )
+        view = screen.query_one(CuratedView)
+        assert attempts == [view]
+        assert view._consumer_filter == "audio_cpp"
+        assert "Loading curated models…" in "\n".join(
+            str(item.renderable) for item in view.query(Static)
+        )
+        await asyncio.sleep(2.1)
+        assert attempts == [view]
+        assert screen.llm_window.active_view == "curated"
+
+        view._apply_rows((), "The curated model catalog could not be loaded.")
+        await pilot.pause()
+        error_text = "\n".join(str(item.renderable) for item in view.query(Static))
+        assert "The curated model catalog could not be loaded." in error_text
+        assert view.query_one("#curated-models-refresh", Button)
+        assert screen._audio_cpp_model_request_claim is not None
+        assert screen._audio_cpp_model_request_claim.value == request

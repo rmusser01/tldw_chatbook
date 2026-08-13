@@ -333,14 +333,8 @@ class LLMScreen(LabScreen):
             if view is not None and window is not None:
                 view.set_consumer_filter("audio_cpp", allow_installed_return=True)
                 view.ensure_loaded()
-                if view._load_error is not None:
-                    logger.warning(
-                        "Audio.cpp Model Library presentation failed to load"
-                    )
-                    return
-                if view._loaded:
-                    window.active_view = "curated"
-                    return
+                window.active_view = "curated"
+                return
             await asyncio.sleep(0.01)
         logger.warning("Audio.cpp Model Library presentation timed out")
 
