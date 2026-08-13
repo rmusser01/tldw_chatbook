@@ -421,6 +421,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
 )
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
+from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
 from .UI.Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
@@ -5457,6 +5458,7 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        self.audio_cpp_model_install_owner = AudioCppModelInstallOwner()
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         #: TASK-1143 (F5): count of Console agent runs/rounds the last
@@ -10955,6 +10957,7 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
 

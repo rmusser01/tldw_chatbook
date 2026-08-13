@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+import logging
 from pathlib import PurePosixPath, PureWindowsPath
 import re
+import threading
+from typing import Awaitable, Callable
 import unicodedata
 
 from ...Model_Artifacts.service import ArtifactRef
 
 
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z", re.ASCII)
+_LOGGER = logging.getLogger(__name__)
 
 
 def _validate_token(value: object) -> None:
@@ -35,6 +40,9 @@ def _validate_canonical_root(value: object) -> None:
             for character in value
         )
     ):
+        raise ValueError("audio.cpp Model Library root is invalid")
+    windows_spelling = value.replace("/", "\\")
+    if windows_spelling.startswith(("\\\\?\\", "\\\\.\\")):
         raise ValueError("audio.cpp Model Library root is invalid")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
@@ -78,3 +86,103 @@ class AudioCppModelLibraryResult:
         _validate_draft_revision(self.draft_revision)
         ArtifactRef(self.artifact_id, self.revision, self.variant)
         _validate_canonical_root(self.canonical_root)
+
+
+AudioCppInstallRunner = Callable[
+    [threading.Event], Awaitable[AudioCppModelLibraryResult | None]
+]
+AudioCppInstallSettled = Callable[
+    [AudioCppModelLibraryResult | None, BaseException | None, bool], None
+]
+
+
+@dataclass(eq=False, slots=True)
+class AudioCppModelInstallOperation:
+    """One app-owned audio.cpp install and its cooperative cancellation."""
+
+    cancel_event: threading.Event
+    task: asyncio.Task[None] = field(init=False, repr=False)
+
+
+class AudioCppModelInstallOwner:
+    """Retain audio.cpp installation work through screen and app teardown."""
+
+    def __init__(self) -> None:
+        self._active: set[AudioCppModelInstallOperation] = set()
+        self._sealed = False
+
+    @property
+    def active_count(self) -> int:
+        """Return the number of actual operations not yet settled."""
+
+        return len(self._active)
+
+    def start(
+        self,
+        runner: AudioCppInstallRunner,
+        on_settled: AudioCppInstallSettled,
+    ) -> AudioCppModelInstallOperation:
+        """Start and retain one operation until its runner truly settles."""
+
+        if self._sealed:
+            raise RuntimeError("audio.cpp install owner is shut down")
+        if not callable(runner) or not callable(on_settled):
+            raise TypeError("audio.cpp install runner and callback must be callable")
+        operation = AudioCppModelInstallOperation(threading.Event())
+
+        async def owned() -> None:
+            result: AudioCppModelLibraryResult | None = None
+            error: BaseException | None = None
+            try:
+                result = await runner(operation.cancel_event)
+            except BaseException as exc:
+                error = exc
+            cancelled = operation.cancel_event.is_set() or isinstance(
+                error, asyncio.CancelledError
+            )
+            if cancelled:
+                result = None
+                if isinstance(error, asyncio.CancelledError):
+                    error = None
+            try:
+                on_settled(result, error, cancelled)
+            except Exception as exc:  # pragma: no cover - containment seam
+                _LOGGER.error(
+                    "audio.cpp install settlement callback failed; error_type=%s",
+                    type(exc).__name__,
+                )
+            finally:
+                self._active.discard(operation)
+
+        operation.task = asyncio.create_task(owned(), name="audio-cpp-model-install")
+        self._active.add(operation)
+        return operation
+
+    def request_cancel(self, operation: AudioCppModelInstallOperation) -> None:
+        """Request cooperative cancellation without detaching the runner."""
+
+        if type(operation) is not AudioCppModelInstallOperation:
+            raise TypeError("invalid audio.cpp install operation")
+        operation.cancel_event.set()
+
+    async def wait(self, operation: AudioCppModelInstallOperation) -> None:
+        """Wait for definitive runner and settlement-callback completion."""
+
+        if type(operation) is not AudioCppModelInstallOperation:
+            raise TypeError("invalid audio.cpp install operation")
+        await asyncio.shield(operation.task)
+
+    async def shutdown(self) -> None:
+        """Seal the owner, request cancellation, and drain every operation."""
+
+        self._sealed = True
+        operations = tuple(self._active)
+        for operation in operations:
+            operation.cancel_event.set()
+        if operations:
+            await asyncio.shield(
+                asyncio.gather(
+                    *(operation.task for operation in operations),
+                    return_exceptions=True,
+                )
+            )

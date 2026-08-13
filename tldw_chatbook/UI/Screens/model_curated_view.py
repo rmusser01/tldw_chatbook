@@ -185,6 +185,7 @@ class CuratedView(Widget):
         self._operation_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
         self._consumer_filter: str | None = None
+        self._allow_installed_return = False
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -211,18 +212,20 @@ class CuratedView(Widget):
     def _row_widget(self, row: CuratedRow) -> Vertical:
         """Build one curated model row."""
         descriptor = row.descriptor
-        audio_cpp = descriptor.consumer == "audio_cpp"
+        audio_cpp_return = (
+            descriptor.consumer == "audio_cpp" and self._allow_installed_return
+        )
         install = Button(
             (
                 "Use installed package"
-                if row.installed and audio_cpp
+                if row.installed and audio_cpp_return
                 else "Installed"
                 if row.installed
                 else "Review and install…"
             ),
             classes="curated-install",
             variant="primary",
-            disabled=(row.installed and not audio_cpp)
+            disabled=(row.installed and not audio_cpp_return)
             or self._operation_reference is not None,
         )
         install.reference = descriptor.reference
@@ -256,7 +259,7 @@ class CuratedView(Widget):
                 markup=False,
             ),
         ]
-        if audio_cpp:
+        if descriptor.consumer == "audio_cpp":
             details.extend(self._audio_cpp_facts(descriptor))
         details.append(Horizontal(*actions, classes="curated-actions"))
         return Vertical(*details, classes="curated-model-row")
@@ -332,14 +335,27 @@ class CuratedView(Widget):
             ),
         )
 
-    def set_consumer_filter(self, consumer: str | None) -> None:
+    def set_consumer_filter(
+        self,
+        consumer: str | None,
+        *,
+        allow_installed_return: bool = False,
+    ) -> None:
         """Select the optional audio.cpp presentation context."""
 
         if consumer not in (None, "audio_cpp"):
             raise ValueError("unsupported curated consumer filter")
-        if consumer == self._consumer_filter:
+        if type(allow_installed_return) is not bool:
+            raise TypeError("allow_installed_return must be a bool")
+        if consumer is None and allow_installed_return:
+            raise ValueError("installed return requires the audio.cpp filter")
+        if (
+            consumer == self._consumer_filter
+            and allow_installed_return == self._allow_installed_return
+        ):
             return
         self._consumer_filter = consumer
+        self._allow_installed_return = allow_installed_return
         if self._loaded:
             self.ensure_loaded(force=True)
 

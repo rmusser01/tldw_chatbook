@@ -553,7 +553,7 @@ async def test_installed_audio_cpp_row_uses_shared_install_message_for_return(
         service_factory=lambda: service,
         registry_factory=lambda: registry,
     )
-    view.set_consumer_filter("audio_cpp")
+    view.set_consumer_filter("audio_cpp", allow_installed_return=True)
 
     class _CapturingApp(App[None]):
         def __init__(self) -> None:
@@ -580,3 +580,32 @@ async def test_installed_audio_cpp_row_uses_shared_install_message_for_return(
     assert len(app.requests) == 1
     assert app.requests[0].reference == descriptor.reference
     assert app.requests[0].already_installed is True
+
+
+@pytest.mark.asyncio
+async def test_installed_audio_cpp_row_outside_handoff_is_not_a_return_action(
+    tmp_path: Path,
+) -> None:
+    descriptor = _descriptor(
+        ArtifactRef("audio-cpp-model", "a" * 40, "f16"),
+        b"audio-package",
+        consumer="audio_cpp",
+    )
+    registry = _registry_with(descriptor)
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.bin").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    view = CuratedView(
+        service_factory=lambda: service,
+        registry_factory=lambda: registry,
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        button = _install_buttons(app)[0]
+        assert str(button.label) == "Installed"
+        assert button.disabled is True

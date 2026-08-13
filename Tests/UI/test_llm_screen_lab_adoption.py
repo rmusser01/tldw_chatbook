@@ -193,6 +193,113 @@ def test_audio_cpp_terminal_result_is_one_time_and_skips_runtime_mutation(
     app_instance.set_default_model.assert_not_called()
 
 
+def test_audio_cpp_standalone_terminal_is_installed_without_false_return() -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    store = PendingHandoffStore()
+    app_instance = MagicMock(pending_handoffs=store)
+    screen = module.LLMScreen(app_instance)
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._curated_view = MagicMock(return_value=None)
+    screen._model_install_kind = "curated"
+    screen._model_install_reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = object()
+
+    module.LLMScreen._apply_audio_cpp_standalone_result(screen)
+
+    assert store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT) is None
+    screen.notify.assert_called_once_with("Installed", severity="information")
+    app_instance._ensure_parakeet_source_service.assert_not_called()
+
+
+def test_audio_cpp_terminal_rejects_a_foreign_result_without_staging() -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
+        AudioCppModelLibraryRequest,
+        AudioCppModelLibraryResult,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    store = PendingHandoffStore()
+    store.stage(
+        HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST,
+        AudioCppModelLibraryRequest("expected-token", 4),
+    )
+    claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    assert claim is not None
+    screen = module.LLMScreen(MagicMock(pending_handoffs=store))
+    screen._audio_cpp_model_request_claim = claim
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._curated_view = MagicMock(return_value=None)
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    screen._model_install_kind = "curated"
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_registry = MagicMock()
+    screen._model_install_sources = {}
+    screen._model_install_pending_report = object()
+    foreign = AudioCppModelLibraryResult(
+        "foreign-token",
+        4,
+        reference.artifact_id,
+        reference.revision,
+        reference.variant,
+        "/managed/audio-cpp-model",
+    )
+
+    module.LLMScreen._apply_audio_cpp_provision_result(screen, foreign, None)
+
+    assert store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT) is None
+    replay = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST)
+    assert replay is not None
+    assert replay.value.token == "expected-token"
+    screen.notify.assert_called_once_with(
+        "Model installed, but it could not be returned for review.",
+        severity="error",
+    )
+
+
+def test_audio_cpp_owner_failure_keeps_private_details_out_of_logs(monkeypatch) -> None:
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_logger = MagicMock()
+    monkeypatch.setattr(module, "logger", fake_logger)
+    screen = module.LLMScreen(MagicMock())
+    screen._model_install_reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    screen._audio_cpp_operation_expects_return = True
+    screen._apply_audio_cpp_provision_result = MagicMock()
+
+    module.LLMScreen._audio_cpp_operation_settled(
+        screen,
+        None,
+        RuntimeError("PRIVATE-AUDIO-PATH-/secret/model"),
+        False,
+    )
+
+    logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
+    assert "RuntimeError" in logged
+    assert "PRIVATE-AUDIO-PATH" not in logged
+    screen._apply_audio_cpp_provision_result.assert_called_once()
+    assert "PRIVATE-AUDIO-PATH" not in str(
+        screen._apply_audio_cpp_provision_result.call_args
+    )
+
+
 def test_detached_audio_cpp_failure_releases_request_and_settles_lifecycle():
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
