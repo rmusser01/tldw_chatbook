@@ -537,15 +537,17 @@ class _SampleEvidenceCandidate:
     """Saved provider identity captured before one synthesis operation."""
 
     fingerprint: ProviderTestFingerprint
+    runtime_revision: int
     saved_selection: TTSPreferencesSnapshot | None
 
 
 @dataclass(frozen=True, slots=True)
 class _SampleGenerationFacts:
-    """Provider revision and source eligibility returned by effective resolution."""
+    """Publication/runtime identities and effective-source eligibility."""
 
-    provider_configuration_revision: int
+    runtime_revision: int
     certifies_saved_configuration: bool
+    saved_publication_revision: int | None = None
     saved_selection: TTSPreferencesSnapshot | None = None
 
 
@@ -604,12 +606,26 @@ class STTSEventHandler:
 
         service = self._stts_service
         saved_revision = getattr(service, "saved_configuration_revision", None)
+        applied_revision = getattr(service, "applied_configuration_revision", None)
         configuration_revision = getattr(service, "configuration_revision", None)
-        if not callable(saved_revision) or not callable(configuration_revision):
+        if (
+            not callable(saved_revision)
+            or not callable(applied_revision)
+            or not callable(configuration_revision)
+        ):
             return None
         try:
             saved = saved_revision(request.provider_id)
-            if configuration_revision(request.provider_id) != saved:
+            applied = applied_revision(request.provider_id)
+            runtime = configuration_revision(request.provider_id)
+            if (
+                type(saved) is not int
+                or type(applied) is not int
+                or type(runtime) is not int
+                or saved < 0
+                or applied != saved
+                or runtime < 0
+            ):
                 return None
             values = get_runtime_config_snapshot().values
             state = load_global_speech_tts_state(
@@ -621,12 +637,18 @@ class STTSEventHandler:
             )
             if type(saved_selection) is not TTSPreferencesSnapshot:
                 saved_selection = None
+            if (
+                saved_selection is not None
+                and saved_selection.provider_id != request.provider_id
+            ):
+                return None
             return _SampleEvidenceCandidate(
                 fingerprint=build_provider_test_fingerprint(
                     state,
                     provider_id=request.provider_id,
                     saved_revision=saved,
                 ),
+                runtime_revision=runtime,
                 saved_selection=saved_selection,
             )
         except Exception:  # noqa: BLE001 - evidence cannot block synthesis
@@ -658,9 +680,27 @@ class STTSEventHandler:
             and request.studio_preferences is None
         )
         return _SampleGenerationFacts(
-            provider_configuration_revision=candidate.fingerprint.saved_revision,
+            runtime_revision=candidate.runtime_revision,
             certifies_saved_configuration=certifies,
+            saved_publication_revision=candidate.fingerprint.saved_revision,
             saved_selection=saved,
+        )
+
+    @staticmethod
+    def _requested_selection_matches_sample_request(
+        selection: TTSRequestedSelectionSnapshot | None,
+        request: STTSPlaygroundRequest,
+    ) -> bool:
+        """Match admitted/effective provenance to one immutable sample request."""
+
+        return bool(
+            type(selection) is TTSRequestedSelectionSnapshot
+            and selection.provider_id == request.provider_id
+            and selection.model_id == request.model_id
+            and selection.voice_id == request.voice_id
+            and selection.response_format == request.response_format.lower()
+            and selection.speed == request.speed
+            and dict(selection.options) == dict(request.options)
         )
 
     def _record_successful_sample_evidence(
@@ -677,19 +717,29 @@ class STTSEventHandler:
         if (
             not facts.certifies_saved_configuration
             or artifact.provider_id != fingerprint.provider_id
-            or facts.provider_configuration_revision != fingerprint.saved_revision
+            or facts.runtime_revision != candidate.runtime_revision
+            or (
+                facts.saved_publication_revision is not None
+                and facts.saved_publication_revision != fingerprint.saved_revision
+            )
         ):
             return False
         service = self._stts_service
         saved_revision = getattr(service, "saved_configuration_revision", None)
+        applied_revision = getattr(service, "applied_configuration_revision", None)
         configuration_revision = getattr(service, "configuration_revision", None)
-        if not callable(saved_revision) or not callable(configuration_revision):
+        if (
+            not callable(saved_revision)
+            or not callable(applied_revision)
+            or not callable(configuration_revision)
+        ):
             return False
         try:
             if (
                 saved_revision(artifact.provider_id) != fingerprint.saved_revision
+                or applied_revision(artifact.provider_id) != fingerprint.saved_revision
                 or configuration_revision(artifact.provider_id)
-                != fingerprint.saved_revision
+                != candidate.runtime_revision
             ):
                 return False
             if facts.saved_selection is not None:
@@ -1339,14 +1389,16 @@ class STTSEventHandler:
             )
             self._sample_generation_facts[snapshot.operation_id] = (
                 _SampleGenerationFacts(
-                    provider_configuration_revision=(
-                        effective.revisions.provider_configuration
-                    ),
+                    runtime_revision=(effective.revisions.provider_configuration),
                     certifies_saved_configuration=bool(
                         not getattr(effective, "studio_preview", False)
                         and snapshot.profile_preview is None
                         and snapshot.clone_audition is None
                         and TTSSelectionSource.STUDIO_DRAFT not in sources
+                        and self._requested_selection_matches_sample_request(
+                            requested_selection,
+                            snapshot,
+                        )
                     ),
                 )
             )
@@ -1477,10 +1529,15 @@ class STTSEventHandler:
                 and artifact.requested_selection is not None
             ):
                 sample_facts = _SampleGenerationFacts(
-                    provider_configuration_revision=(
+                    runtime_revision=(
                         artifact.requested_selection.configuration_revision
                     ),
-                    certifies_saved_configuration=True,
+                    certifies_saved_configuration=(
+                        self._requested_selection_matches_sample_request(
+                            artifact.requested_selection,
+                            snapshot,
+                        )
+                    ),
                 )
             self._record_successful_sample_evidence(
                 artifact,
