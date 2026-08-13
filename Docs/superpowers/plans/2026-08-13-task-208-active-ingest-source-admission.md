@@ -1126,7 +1126,6 @@ async def test_active_ingest_confirm_copy_fits_fixed_gate_at_72x18(copy):
         await pilot.pause()
         quiet = app.query_one("#library-ingest-start-quiet-line", Static)
         start = app.query_one("#library-ingest-start", Button)
-        start_position = start.region
         strips = app.screen._compositor.render_strips()
         painted = "".join(
             strip.text
@@ -1137,7 +1136,6 @@ async def test_active_ingest_confirm_copy_fits_fixed_gate_at_72x18(copy):
         assert copy in painted
         assert "…" not in painted
         assert quiet.region.bottom <= start.region.y
-        assert start.region == start_position
 ```
 
 Add a mounted in-place stability test that captures actual widget identities and interaction state before arming:
