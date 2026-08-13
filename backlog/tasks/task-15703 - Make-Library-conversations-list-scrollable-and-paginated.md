@@ -1,15 +1,16 @@
 ---
 id: TASK-15703
 title: Make Library conversations list scrollable and paginated
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12'
+updated_date: '2026-08-13 16:22'
 labels:
   - library
   - conversations
   - ux
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
@@ -24,13 +25,12 @@ Design: `Docs/superpowers/specs/2026-08-12-library-conversations-pagination-desi
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 The Library conversation rows render in a vertically scrollable viewport, and every row on the current page is reachable by mouse and keyboard regardless of terminal height
-- [ ] #2 The view shows at most 20 conversations per page, exposes Previous and Next controls plus the current page and result range, and allows every saved conversation to be reached
-- [ ] #3 Submitting a conversation filter searches the complete saved-conversation collection, resets to page 1, and reports the filtered total
-- [ ] #4 Paging and filtering keep the last successful page visible while loading, reject stale responses, and present a recoverable error without misreporting an empty library
-- [ ] #5 Automated state, service-call, and Textual Pilot tests cover scrolling, first/middle/last pages, full-dataset filtering, empty results, and failures
+- [x] #1 The Library conversation rows render in a vertically scrollable viewport, and every row on the current page is reachable by mouse and keyboard regardless of terminal height
+- [x] #2 The view shows at most 20 conversations per page, exposes Previous and Next controls plus the current page and result range, and allows every saved conversation to be reached
+- [x] #3 Submitting a conversation filter searches the complete saved-conversation collection, resets to page 1, and reports the filtered total
+- [x] #4 Paging and filtering keep the last successful page visible while loading, reject stale responses, and present a recoverable error without misreporting an empty library
+- [x] #5 Automated state, service-call, and Textual Pilot tests cover scrolling, first/middle/last pages, full-dataset filtering, empty results, and failures
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,10 +53,7 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
 
 ## Implementation Notes
 
-Draft — implementation and live verification are complete, but task closure remains
-blocked by two pre-existing repository-wide verification failures, so the acceptance
-criteria and In Progress status intentionally remain unchanged.
-
+<!-- SECTION:NOTES:BEGIN -->
 - Implemented a 20-row, service-backed conversation page model with query/offset
   filtering, stale-response rejection, preserved last-successful content during
   loading or recoverable errors, a native vertically scrolling row viewport, and
@@ -72,8 +69,12 @@ criteria and In Progress status intentionally remain unchanged.
   170x48, covering row 20 scrolling, first/middle/final pages, oldest-row filtering,
   and clearing back to page 1. Evidence:
   `/tmp/tldw-task15703-live.ZWehQn/evidence/live-verification.txt`.
-- Closure blockers: the broader Library gate reported 1 failure and 1118 passes due
-  to the command-name drift guard (`generate-video`, `stream-video`), and the fresh
-  corrected UI checks reported 1 failure and 1 pass due to the landing-footer copy
-  guard. Both failures reproduce unchanged on pre-feature base `438739778`; project
-  policy nevertheless requires green gates before marking the task Done.
+- Closed two pre-existing deterministic Library guards by reserving the registered
+  `generate-video` and `stream-video` commands and aligning the landing footer test
+  with the protected global-hints contract. Hardened six existing async UI assertions
+  to wait for their rendered widgets instead of racing Textual recomposition.
+- Broader verification passed: all 1,119 `Tests/Library` tests and all 377
+  `Tests/UI/test_library_shell.py` tests. Final review found no Critical, Important,
+  or Minor code issues. No generalized lesson entry was added because the only test
+  trap encountered is already documented in `lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->
