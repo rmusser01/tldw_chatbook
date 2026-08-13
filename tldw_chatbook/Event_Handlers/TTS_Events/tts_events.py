@@ -321,6 +321,9 @@ class TTSPlaybackLifecycle:
             return self._state
 
     def is_current(self) -> bool:
+        with self._lock:
+            if self._state in {"stopped", "failed"}:
+                return False
         try:
             return self._validator() is True
         except Exception:
@@ -331,6 +334,20 @@ class TTSPlaybackLifecycle:
             raise ValueError("unsupported playback lifecycle state")
         if not self.is_current():
             return False
+        return self._transition(state)
+
+    def report_terminal(self, state: Literal["stopped", "failed"]) -> bool:
+        """Settle an exact handler-owned lifecycle after ownership matched.
+
+        Terminal acknowledgements must survive a screen/session validator
+        becoming stale while the handler is physically stopping its owner.
+        Admission and playback-start signals still use :meth:`report`.
+        """
+        if state not in {"stopped", "failed"}:
+            raise ValueError("terminal playback state must be stopped or failed")
+        return self._transition(state)
+
+    def _transition(self, state: PlaybackLifecycleState) -> bool:
         with self._lock:
             current = self._state
             if current in {"stopped", "failed"}:
@@ -2399,6 +2416,13 @@ class TTSEventHandler:
             if self._active_stream_playback_owner is playback_lifecycle:
                 self._active_stream_playback_owner = None
 
+        if (
+            playback_lifecycle is not None
+            and playback_started.is_set()
+            and playback_lifecycle.state == "generating"
+        ):
+            playback_lifecycle.report("playing")
+
         # Fix-round M2: report on utterance end, regardless of terminal
         # outcome -- an underrun can happen on the way to ANY of them, not
         # just a successful drain. Minimal and honest: one INFO log line
@@ -2430,12 +2454,6 @@ class TTSEventHandler:
         # branch) -- listed together here as the closed set this method
         # can produce, for anyone auditing metric label cardinality.
         if result.outcome in ("drained", "stopped"):
-            if (
-                playback_lifecycle is not None
-                and playback_started.is_set()
-                and playback_lifecycle.state == "generating"
-            ):
-                playback_lifecycle.report("playing")
             await self._post_tts_message(
                 TTSProgressEvent(
                     message_id=message_id,
@@ -2457,9 +2475,9 @@ class TTSEventHandler:
             if result.outcome == "drained":
                 if playback_lifecycle is not None:
                     if playback_lifecycle.state == "playing":
-                        playback_lifecycle.report("stopped")
+                        playback_lifecycle.report_terminal("stopped")
                     elif playback_lifecycle.state == "generating":
-                        playback_lifecycle.report("failed")
+                        playback_lifecycle.report_terminal("failed")
                 if on_finished is not None:
                     on_finished(True)
                 return "success"
@@ -2471,6 +2489,8 @@ class TTSEventHandler:
             # labeled distinctly in the metric rather than folded into
             # "success", which would misrepresent playback that was cut
             # short as if it had played out in full.
+            if playback_lifecycle is not None:
+                playback_lifecycle.report_terminal("stopped")
             if on_finished is not None:
                 on_finished(False)
             return "interrupted"
@@ -2485,7 +2505,7 @@ class TTSEventHandler:
         if fallback_on_failure:
             return None
         if playback_lifecycle is not None:
-            playback_lifecycle.report("failed")
+            playback_lifecycle.report_terminal("failed")
         await self._post_tts_message(
             TTSCompleteEvent(
                 message_id=message_id,
@@ -2497,7 +2517,7 @@ class TTSEventHandler:
             on_finished(False)
         return "streaming_failed"
 
-    async def _stop_prior_legacy_clip(self, *, bare_stop: bool = False) -> None:
+    async def _stop_prior_legacy_clip(self, *, bare_stop: bool = False) -> bool:
         """Silence any currently-playing legacy file clip before streaming.
 
         The streaming sink plays through its own `sounddevice.OutputStream`,
@@ -2566,13 +2586,14 @@ class TTSEventHandler:
             await asyncio.to_thread(get_audio_player().stop)
             async with self._audio_files_lock:
                 self._last_played = None
-            return
+            return True
 
         async with self._audio_files_lock:
             last_played = self._last_played
             self._last_played = None
         if last_played is not None:
-            stop_audio_playback_if_current(last_played[1])
+            return stop_audio_playback_if_current(last_played[1])
+        return False
 
     async def _play_utterance_legacy_artifact(
         self,
@@ -3053,6 +3074,16 @@ class TTSEventHandler:
             async with self._audio_files_lock:
                 self._artifact_cleanup_retry.discard(artifact_path)
 
+    async def discard_stale_console_completion(
+        self,
+        message_id: str,
+        artifact_path: Path | None,
+        lifecycle: TTSPlaybackLifecycle,
+    ) -> None:
+        """Discard a completion that lost Console playback ownership."""
+        await self._discard_tts_artifact(message_id, artifact_path)
+        lifecycle.report_terminal("stopped")
+
     @staticmethod
     def _response_audio_format(audio_format: object) -> str:
         """Return one safe canonical extension from response-owned metadata."""
@@ -3163,17 +3194,17 @@ class TTSEventHandler:
             )
             await asyncio.sleep(0)
             if stop_requested.is_set():
-                lifecycle.report("stopped")
+                lifecycle.report_terminal("stopped")
             elif finished:
-                lifecycle.report("stopped")
+                lifecycle.report_terminal("stopped")
             else:
-                lifecycle.report("failed")
+                lifecycle.report_terminal("failed")
         except asyncio.CancelledError:
             stop_requested.set()
-            lifecycle.report("stopped")
+            lifecycle.report_terminal("stopped")
             raise
         except Exception:
-            lifecycle.report("failed")
+            lifecycle.report_terminal("failed")
         finally:
             current_task = asyncio.current_task()
             if self._active_file_playback_task is current_task:
@@ -3195,55 +3226,71 @@ class TTSEventHandler:
 
         stream_stop_accepted = False
         generation_stop_accepted = False
+        file_stop_accepted = False
         if event.action == "stop":
+            generation_owner = self._console_generation_owner
             generation_stop_accepted = await self._cancel_console_generation(
                 message_id=event.message_id,
                 lifecycle=event.playback_lifecycle,
                 superseded=True,
             )
-            # task-4: stop whatever streaming-sink utterance is currently
-            # live, for BOTH the message-scoped stop below AND the global/
-            # bare stop (`message_id=None`, e.g. the one
-            # `chat_screen.py`'s dictation-start posts to silence spoken
-            # feedback before a mic capture opens). The sink has no
-            # per-message identity of its own -- its one-voice registry
-            # only ever tracks a single live sink system-wide -- so this
-            # runs unconditionally on ANY stop request, independent of the
-            # message-scoped legacy-file-stop logic below. A no-op when
-            # nothing is currently live.
+            if generation_stop_accepted and generation_owner is not None:
+                generation_owner.lifecycle.report_terminal("stopped")
+
             stream_owner = self._active_stream_playback_owner
-            stream_stop_accepted = bool(
+            bare_stop = not event.message_id
+            stream_owner_matches = bool(
                 stream_owner is not None
+                and (bare_stop or stream_owner.message_id == event.message_id)
                 and (
-                    not event.message_id
-                    or stream_owner.message_id == event.message_id
+                    event.playback_lifecycle is None
+                    or stream_owner is event.playback_lifecycle
                 )
             )
-            stop_live_sink()
-            if not event.message_id:
-                # Fix-round F4: the bare/global stop -- e.g.
-                # `chat_screen.py`'s dictation-start, unconditionally
-                # posted before opening the mic, specifically to protect
-                # the mic/speaker mutual-exclusion invariant -- silenced
-                # the sink above but, before this fix, left legacy FILE
-                # playback untouched: every branch below requires a truthy
-                # `message_id`, so a bare stop was always a no-op for the
-                # legacy player. `_stop_prior_legacy_clip` unconditionally
-                # silences whatever the single-slot legacy player
-                # currently owns, which is exactly the "stop everything"
-                # semantics a bare stop needs. Deliberately scoped to ONLY
-                # the bare/global stop: a message-scoped stop keeps its
-                # own more careful message-id-matched logic below,
-                # unchanged (task-559 unit 2) -- stopping message A must
-                # never silence a different, still-playing message B.
-                # `not event.message_id` (fix-round N3), not `is None`:
-                # `message_id=""` is falsy too, and the message-scoped
-                # branch below already requires a TRUTHY `message_id`
-                # (`event.action == "stop" and event.message_id`) -- an
-                # `is None` check here left an empty string falling
-                # between both branches, silencing neither the sink's
-                # OWN legacy-clip guard nor anything else.
-                await self._stop_prior_legacy_clip(bare_stop=True)
+            if bare_stop or stream_owner_matches:
+                stop_live_sink()
+            if stream_owner_matches and stream_owner is not None:
+                stream_stop_accepted = True
+                if self._active_stream_playback_owner is stream_owner:
+                    self._active_stream_playback_owner = None
+                stream_owner.report_terminal("stopped")
+
+            file_owner = self._active_file_playback_owner
+            file_owner_matches = bool(
+                file_owner is not None
+                and (bare_stop or file_owner.message_id == event.message_id)
+                and (
+                    event.playback_lifecycle is None
+                    or file_owner is event.playback_lifecycle
+                )
+            )
+            if file_owner_matches and file_owner is not None:
+                handoff = self._active_file_playback_stop
+                if handoff is not None and handoff[0] == file_owner.message_id:
+                    handoff[1].set()
+                async with self._audio_files_lock:
+                    last_played = self._last_played
+                    if (
+                        last_played is not None
+                        and last_played[0] == file_owner.message_id
+                    ):
+                        self._last_played = None
+                    else:
+                        last_played = None
+                if last_played is not None:
+                    stop_audio_playback_if_current(last_played[1])
+                file_stop_accepted = True
+                if self._active_file_playback_owner is file_owner:
+                    self._active_file_playback_owner = None
+                if self._active_file_playback_stop == handoff:
+                    self._active_file_playback_stop = None
+                file_owner.report_terminal("stopped")
+
+            if bare_stop:
+                file_stop_accepted = (
+                    await self._stop_prior_legacy_clip(bare_stop=True)
+                    or file_stop_accepted
+                )
 
         if (
             event.action == "play"
@@ -3257,14 +3304,20 @@ class TTSEventHandler:
             async with self._audio_files_lock:
                 audio_file = self._audio_files.get(event.message_id)
             if audio_file is None or not audio_file.exists():
-                lifecycle.report("failed")
+                lifecycle.report_terminal("failed")
                 event.report_outcome(False)
                 return
 
             stop_live_sink()
             prior_owner = self._active_file_playback_owner
             if prior_owner is not None and prior_owner is not lifecycle:
-                prior_owner.report("stopped")
+                prior_handoff = self._active_file_playback_stop
+                if (
+                    prior_handoff is not None
+                    and prior_handoff[0] == prior_owner.message_id
+                ):
+                    prior_handoff[1].set()
+                prior_owner.report_terminal("stopped")
             stop_requested = threading.Event()
             self._active_file_playback_owner = lifecycle
             self._active_file_playback_stop = (event.message_id, stop_requested)
@@ -3343,16 +3396,20 @@ class TTSEventHandler:
             # correct even after the file itself was deleted, since
             # deletion doesn't rewrite the player's recorded Path).
             normalized_id = event.message_id or "adhoc"
-            async with self._audio_files_lock:
-                last_played = self._last_played
-                if last_played is not None and last_played[0] == normalized_id:
-                    self._last_played = None
-                else:
-                    last_played = None
+            last_played = None
+            if self._active_file_playback_owner is None:
+                async with self._audio_files_lock:
+                    last_played = self._last_played
+                    if last_played is not None and last_played[0] == normalized_id:
+                        self._last_played = None
+                    else:
+                        last_played = None
             stopped = False
             handoff = self._active_file_playback_stop
             handoff_accepted = bool(
-                handoff is not None and handoff[0] == event.message_id
+                self._active_file_playback_owner is None
+                and handoff is not None
+                and handoff[0] == event.message_id
             )
             if handoff_accepted and handoff is not None:
                 handoff[1].set()
@@ -3361,6 +3418,7 @@ class TTSEventHandler:
             accepted = (
                 stopped
                 or handoff_accepted
+                or file_stop_accepted
                 or stream_stop_accepted
                 or generation_stop_accepted
             )
@@ -3374,12 +3432,16 @@ class TTSEventHandler:
             # Clean up the (likely already-gone) cached file entry too.
             await self._cleanup_audio_file(event.message_id)
             if event.playback_lifecycle is not None:
-                event.playback_lifecycle.report(
+                event.playback_lifecycle.report_terminal(
                     "stopped" if accepted else "failed"
                 )
             event.report_outcome(accepted)
         elif event.action == "stop":
-            event.report_outcome(stream_stop_accepted or generation_stop_accepted)
+            event.report_outcome(
+                stream_stop_accepted
+                or file_stop_accepted
+                or generation_stop_accepted
+            )
 
     async def handle_tts_export(self, event: TTSExportEvent) -> None:
         """Handle TTS audio export"""

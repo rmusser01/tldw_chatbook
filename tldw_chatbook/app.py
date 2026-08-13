@@ -8862,6 +8862,31 @@ class TldwCli(
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
         playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
+        lifecycle_failure_completion = bool(
+            event.error
+            and playback_lifecycle is not None
+            and playback_lifecycle.state == "failed"
+        )
+        if (
+            playback_lifecycle is not None
+            and not playback_lifecycle.is_current()
+            and not lifecycle_failure_completion
+        ):
+            handler = getattr(self, "_tts_handler", None)
+            discard = getattr(handler, "discard_stale_console_completion", None)
+            if callable(discard):
+                try:
+                    await discard(
+                        event.message_id,
+                        event.audio_file,
+                        playback_lifecycle,
+                    )
+                except Exception:
+                    playback_lifecycle.report_terminal("failed")
+            else:
+                playback_lifecycle.report_terminal("stopped")
+            return
+
         if event.error:
             if playback_lifecycle is not None:
                 playback_lifecycle.report("failed")
@@ -9046,6 +9071,10 @@ class TldwCli(
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
+        await self.control_tts_playback(event)
+
+    async def control_tts_playback(self, event: TTSPlaybackEvent) -> None:
+        """Run playback control directly and preserve handler callback order."""
         try:
             handler = await self._ensure_tts_handler()
             if handler:
@@ -9053,14 +9082,14 @@ class TldwCli(
             else:
                 event.report_outcome(False)
                 if event.playback_lifecycle is not None:
-                    event.playback_lifecycle.report("failed")
+                    event.playback_lifecycle.report_terminal("failed")
         except asyncio.CancelledError:
             event.report_outcome(False)
             raise
         except Exception:
             event.report_outcome(False)
             if event.playback_lifecycle is not None:
-                event.playback_lifecycle.report("failed")
+                event.playback_lifecycle.report_terminal("failed")
 
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(
