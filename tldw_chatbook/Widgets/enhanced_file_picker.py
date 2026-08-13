@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
+from rich.style import Style
 from rich.table import Table
 from textual import events, on, work
 from textual.app import ComposeResult
@@ -491,6 +492,7 @@ class FormattedDirectoryEntry(DirectoryEntry):
             marker = "✓" if self.selected else " "
         return _ResponsiveDirectoryRow(
             marker=marker,
+            selected=self.selected,
             icon=self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
             name=self._name(location),
             size=self._size(location),
@@ -515,6 +517,7 @@ class _ResponsiveDirectoryRow:
         self,
         *,
         marker: Optional[str],
+        selected: bool,
         icon: RenderableType,
         name: RenderableType,
         size: RenderableType,
@@ -524,6 +527,7 @@ class _ResponsiveDirectoryRow:
         time_style: Any = None,
     ) -> None:
         self.marker = marker
+        self.selected = selected
         self.icon = icon
         self.name = name
         self.size = size
@@ -539,18 +543,21 @@ class _ResponsiveDirectoryRow:
     ) -> RenderResult:
         show_size = options.max_width >= self.SHOW_SIZE_AT
         show_timestamp = options.max_width >= self.SHOW_TIMESTAMP_AT
+        name_style = self.name_style or Style()
+        if self.selected:
+            name_style += Style(bold=True)
         grid = Table.grid(expand=True)
         grid.add_column(no_wrap=True, width=1)
         cells: list[RenderableType] = [""]
         if self.marker is not None:
-            grid.add_column(no_wrap=True, width=1, style=self.name_style)
+            grid.add_column(no_wrap=True, width=1, style=name_style)
             cells.append(self.marker)
         grid.add_column(no_wrap=True, width=3)
         grid.add_column(
             no_wrap=True,
             overflow="ellipsis",
             ratio=1,
-            style=self.name_style,
+            style=name_style,
         )
         cells.extend((self.icon, self.name))
         if show_size:
@@ -614,30 +621,6 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         # Enter opens the highlighted entry instead of merely selecting it.
         Binding("enter", "open_highlighted", "Open", show=False),
     ]
-
-    COMPONENT_CLASSES = {
-        "-focused",
-        "-selected",
-        "-focused-selected",
-    }
-
-    DEFAULT_CSS = """
-    EnhancedDirectoryNavigation > .-focused {
-        text-style: bold underline;
-    }
-
-    EnhancedDirectoryNavigation > .-selected {
-        background: $success 20%;
-        color: $text;
-        text-style: bold;
-    }
-
-    EnhancedDirectoryNavigation > .-focused-selected {
-        background: $success 35%;
-        color: $text;
-        text-style: bold underline;
-    }
-    """
 
     search_filter = reactive("")
     """Free-text filter applied to entry names."""
@@ -728,26 +711,6 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         """Debounce timer callback: run the deferred repopulation."""
         self._search_debounce_timer = None
         self._repopulate_display()
-
-    def row_state_classes(self, option_index: int) -> set[str]:
-        """Return independent focus and selection classes for one option."""
-        try:
-            option = self.get_option_at_index(option_index)
-        except Exception:
-            return set()
-        if not isinstance(option, DirectoryEntry):
-            return set()
-
-        classes: set[str] = set()
-        if self.has_focus and self.highlighted == option_index:
-            classes.add("-focused")
-
-        screen = self.screen
-        selected_paths = getattr(screen, "_selected_paths", set())
-        selected_path = getattr(screen, "_selected_path", None)
-        if option.location in selected_paths or option.location == selected_path:
-            classes.add("-selected")
-        return classes
 
     def refresh_selection_markers(self) -> None:
         """Refresh selection prompts through OptionList's public API."""
@@ -2146,6 +2109,7 @@ class EnhancedFileDialog(BaseFileDialog):
         )
         return _ResponsiveDirectoryRow(
             marker="" if show_selection_marker else None,
+            selected=False,
             icon="",
             name="Name",
             size="Size",
