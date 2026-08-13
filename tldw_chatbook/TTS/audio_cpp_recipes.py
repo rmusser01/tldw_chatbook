@@ -96,9 +96,11 @@ class AudioCppReferenceRequirement(StrEnum):
 class AudioCppVoiceReferencePolicy(StrEnum):
     """Exact native-voice/reference combinations admitted by one recipe."""
 
+    TEXT_ONLY = "text_only"
     NATIVE_ONLY = "native_only"
     REFERENCE_ONLY = "reference_only"
     OPTIONAL_REFERENCE_ONLY = "optional_reference_only"
+    VOICE_OR_REFERENCE_REQUIRED = "voice_or_reference_required"
     EITHER = "either"
     BOTH_REQUIRED_COMBINED = "both_required_combined"
 
@@ -321,6 +323,10 @@ class AudioCppPackageRecipe:
         if len(self.capabilities) != len(set(self.capabilities)):
             raise ValueError("audio.cpp recipe capabilities must be unique")
         expected_reference_contracts = {
+            AudioCppVoiceReferencePolicy.TEXT_ONLY: (
+                AudioCppReferenceRequirement.NONE,
+                False,
+            ),
             AudioCppVoiceReferencePolicy.NATIVE_ONLY: (
                 AudioCppReferenceRequirement.NONE,
                 False,
@@ -330,6 +336,10 @@ class AudioCppPackageRecipe:
                 True,
             ),
             AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY: (
+                AudioCppReferenceRequirement.OPTIONAL,
+                True,
+            ),
+            AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED: (
                 AudioCppReferenceRequirement.OPTIONAL,
                 True,
             ),
@@ -379,6 +389,8 @@ class AudioCppPackageRecipe:
 
         if type(has_voice) is not bool or type(has_reference) is not bool:
             raise TypeError("audio.cpp voice/reference markers must be boolean")
+        if self.voice_reference_policy is AudioCppVoiceReferencePolicy.TEXT_ONLY:
+            return not has_voice and not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.NATIVE_ONLY:
             return not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.REFERENCE_ONLY:
@@ -388,6 +400,11 @@ class AudioCppPackageRecipe:
             is AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY
         ):
             return not has_voice
+        if (
+            self.voice_reference_policy
+            is AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED
+        ):
+            return has_voice is not has_reference
         if self.voice_reference_policy is AudioCppVoiceReferencePolicy.EITHER:
             return not (has_voice and has_reference)
         return has_voice and has_reference
@@ -962,11 +979,14 @@ _INITIAL_RECIPES = (
         ),
         model_relative_path=None,
         language="english",
+        voice_reference_policy=(
+            AudioCppVoiceReferencePolicy.VOICE_OR_REFERENCE_REQUIRED
+        ),
     ),
 )
 
 
-_ADDITIONAL_OPTIONAL_VOICE_POLICIES = {
+_ADDITIONAL_VOICE_POLICIES = {
     "dramabox_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "vibevoice_1_5b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "vibevoice_1_5b_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
@@ -992,6 +1012,7 @@ _ADDITIONAL_OPTIONAL_VOICE_POLICIES = {
     "moss_tts_local_v1_5_bf16": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "outetts_1_0_1b_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
     "vietneu_tts_v3_turbo_q8_0": AudioCppVoiceReferencePolicy.OPTIONAL_REFERENCE_ONLY,
+    "inflect_micro_v2_orig": AudioCppVoiceReferencePolicy.TEXT_ONLY,
 }
 
 
@@ -1382,7 +1403,7 @@ _ADDITIONAL_RECIPES = (
             required_files=(_gguf_file(model_path),),
             model_relative_path=model_path,
             reference_requirement=reference_requirement,
-            voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES.get(variant),
+            voice_reference_policy=_ADDITIONAL_VOICE_POLICIES.get(variant),
             task=task,
         )
         for (
@@ -1414,9 +1435,7 @@ _ADDITIONAL_RECIPES = (
         ),
         model_relative_path=None,
         reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
-        voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES[
-            "omnivoice_safetensors"
-        ],
+        voice_reference_policy=_ADDITIONAL_VOICE_POLICIES["omnivoice_safetensors"],
     ),
     _recipe(
         family="voxcpm2",
@@ -1435,9 +1454,7 @@ _ADDITIONAL_RECIPES = (
         ),
         model_relative_path=None,
         reference_requirement=AudioCppReferenceRequirement.OPTIONAL,
-        voice_reference_policy=_ADDITIONAL_OPTIONAL_VOICE_POLICIES[
-            "voxcpm2_safetensors"
-        ],
+        voice_reference_policy=_ADDITIONAL_VOICE_POLICIES["voxcpm2_safetensors"],
     ),
     _recipe(
         family="index_tts2",
@@ -1484,7 +1501,7 @@ def audio_cpp_guided_default_is_text_ready(
     *,
     registry: AudioCppRecipeRegistry = AUDIO_CPP_RECIPE_REGISTRY,
 ) -> bool:
-    """Return whether the exact Guided default can generate without a reference.
+    """Return whether the exact Guided default can generate without voice inputs.
 
     Args:
         settings: Validated full audio.cpp Settings snapshot.
@@ -1492,7 +1509,7 @@ def audio_cpp_guided_default_is_text_ready(
 
     Returns:
         ``True`` only when the exact default package is a reviewed text-to-speech
-        recipe that does not require a voice reference.
+        recipe that admits a request with neither a native voice nor a reference.
     """
 
     default_model_id = settings.guided_default_model_id
@@ -1507,8 +1524,10 @@ def audio_cpp_guided_default_is_text_ready(
             return False
         return bool(
             recipe.projection.task == "tts"
-            and recipe.reference_requirement
-            is not AudioCppReferenceRequirement.REQUIRED
+            and recipe.admits_voice_reference(
+                has_voice=False,
+                has_reference=False,
+            )
         )
     return False
 

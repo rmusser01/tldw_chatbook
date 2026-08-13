@@ -235,7 +235,7 @@ EXPECTED_NEW_RECIPES = {
         "tts",
         ("tts",),
         "none",
-        "native_only",
+        "text_only",
         "inflect-micro-v2-orig.gguf",
         "gguf",
         "orig",
@@ -731,7 +731,10 @@ def test_initial_tasks_and_pocket_language_options_follow_the_pinned_specs() -> 
             )
         else:
             assert recipe.reference_requirement is reference_requirement.OPTIONAL
-            assert recipe.voice_reference_policy is voice_reference_policy.EITHER
+            assert (
+                recipe.voice_reference_policy
+                is voice_reference_policy.VOICE_OR_REFERENCE_REQUIRED
+            )
 
 
 def test_every_new_approved_recipe_equals_the_independent_pinned_matrix() -> None:
@@ -809,6 +812,31 @@ def test_optional_reference_only_recipes_admit_exact_combinations(
 
 
 @pytest.mark.parametrize(
+    ("has_voice", "has_reference", "accepted"),
+    (
+        (False, False, True),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+    ),
+)
+def test_inflect_text_only_policy_admits_no_voice_or_reference(
+    has_voice: bool,
+    has_reference: bool,
+    accepted: bool,
+) -> None:
+    recipe = _api()["AUDIO_CPP_RECIPE_REGISTRY"].for_package("inflect_micro_v2_orig")
+
+    assert (
+        recipe.admits_voice_reference(
+            has_voice=has_voice,
+            has_reference=has_reference,
+        )
+        is accepted
+    )
+
+
+@pytest.mark.parametrize(
     ("package_variant", "voice", "has_reference", "accepted"),
     (
         ("supertonic_3_orig", None, False, True),
@@ -817,7 +845,7 @@ def test_optional_reference_only_recipes_admit_exact_combinations(
         ("pocket_tts_english_q8_0", None, True, True),
         ("pocket_tts_english_q8_0", "alba", True, False),
         ("pocket_tts_english_q8_0", None, False, False),
-        ("pocket_tts_english_safetensors", None, False, True),
+        ("pocket_tts_english_safetensors", None, False, False),
         ("pocket_tts_english_safetensors", "alba", False, True),
         ("pocket_tts_english_safetensors", None, True, True),
         ("pocket_tts_english_safetensors", "alba", True, False),
@@ -838,6 +866,52 @@ def test_recipe_policy_admits_only_declared_voice_reference_combinations(
         )
         is accepted
     )
+
+
+@pytest.mark.parametrize(
+    ("package_variant", "expected"),
+    (
+        ("pocket_tts_english_safetensors", False),
+        ("pocket_tts_english_q8_0", False),
+        ("inflect_micro_v2_orig", True),
+        ("dramabox_q8_0", True),
+    ),
+)
+def test_guided_default_readiness_uses_exact_no_input_admission(
+    package_variant: str,
+    expected: bool,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppAcceptedPackage,
+        AudioCppSettingsConfig,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import (
+        AUDIO_CPP_RECIPE_REGISTRY,
+        audio_cpp_guided_default_is_text_ready,
+    )
+
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package(package_variant)
+    accepted = AudioCppAcceptedPackage(
+        package_uuid="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        recipe_id=recipe.recipe_id,
+        recipe_revision=recipe.recipe_revision,
+        package_variant=recipe.package_variant,
+        public_model_id="default-model",
+        canonical_root="/private/model",
+        canonical_root_identity="1" * 64,
+        configuration_identity="2" * 64,
+        weight_identity="3" * 64,
+        projection=recipe.projection,
+    )
+    settings = AudioCppSettingsConfig(
+        mode="managed",
+        managed_setup_source="guided",
+        guided_binary_path="/private/audiocpp",
+        guided_packages=(accepted,),
+        guided_default_model_id="default-model",
+    )
+
+    assert audio_cpp_guided_default_is_text_ready(settings) is expected
 
 
 def test_reserved_combined_policy_requires_and_emits_both_fields() -> None:
