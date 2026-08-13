@@ -985,18 +985,31 @@ class ConsoleAutoSpeakCoordinator:
 
         settled = False
 
+        def failed_retry_is_current() -> bool:
+            if not self._operation_is_current(
+                operation_generation, session_id, active_epoch
+            ):
+                return False
+            try:
+                active = self._active_session()
+                return (
+                    active is not None
+                    and active.id == session_id
+                    and store.speech_preference_epoch(session_id)
+                    == preference_epoch
+                    and self.failed_message_ids.get(session_id) == message_id
+                    and active.speech_preferences.auto_speak is True
+                    and active.speech_preferences.paused is True
+                )
+            except KeyError:
+                return False
+
         def on_outcome(ok: bool) -> None:
             nonlocal settled
             if settled:
                 return
             settled = True
-            if (
-                ok is not True
-                and self._mounted
-                and self._operation_is_current(
-                    operation_generation, session_id, active_epoch
-                )
-            ):
+            if ok is not True and failed_retry_is_current():
                 self._notify(
                     "Retry speech failed. Automatic speech remains paused.",
                     "warning",

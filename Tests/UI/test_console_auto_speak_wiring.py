@@ -497,6 +497,27 @@ async def test_retry_uses_trusted_path_for_failed_message_without_resuming() -> 
 
 
 @pytest.mark.asyncio
+async def test_retry_failure_after_resume_does_not_notify_stale_paused_state() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("Resume before retry settles.")
+    harness.outcomes.pop()(False)
+
+    harness.coordinator.request_retry()
+    await harness.drain()
+    retry_outcome = harness.outcomes.pop()
+    notice_count = len(harness.notices)
+
+    harness.coordinator.request_resume()
+    await harness.drain()
+    retry_outcome(False)
+
+    assert harness.session.speech_preferences.paused is False
+    assert message.id not in harness.coordinator.failed_message_ids.values()
+    assert len(harness.notices) == notice_count
+
+
+@pytest.mark.asyncio
 async def test_retry_drops_when_auto_speak_resumes_during_destination_lookup() -> None:
     harness = AutoSpeakHarness()
     await harness.enable()

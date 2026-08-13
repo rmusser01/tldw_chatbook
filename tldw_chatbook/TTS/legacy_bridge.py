@@ -224,6 +224,17 @@ def legacy_provider_config(
             section.pop("ALLTALK_TTS_URL_DEFAULT", None)
 
     if provider_id == "openai":
+        # Admission resolves the canonical endpoint from ``app_tts``. Remove
+        # model-level endpoint overrides before the production manager applies
+        # its highest-precedence section so synthesis uses that same authority.
+        for section_name, section in projected.items():
+            if (
+                section_name == "app_tts"
+                or not section_name.startswith("openai_official")
+                or not isinstance(section, dict)
+            ):
+                continue
+            section.pop("OPENAI_BASE_URL", None)
         endpoint = normalize_openai_compatible_endpoint(
             effective_tts.get(
                 "OPENAI_BASE_URL",

@@ -7,6 +7,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
+import httpx
 import pytest
 
 from tldw_chatbook.TTS.adapter_registry import (
@@ -19,6 +20,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.backends import openai as openai_module
 from tldw_chatbook.TTS.legacy_bridge import (
     LEGACY_PROVIDER_IDS,
     LEGACY_ROUTES,
@@ -31,6 +33,8 @@ from tldw_chatbook.TTS.legacy_bridge import (
     resolve_legacy_route,
 )
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 ProgressCallback = Callable[[Mapping[str, Any]], Awaitable[None]]
 
@@ -838,6 +842,83 @@ async def test_default_openai_manager_does_not_resolve_credentials_in_none_mode(
     assert prepared["OPENAI_AUTH_MODE"] == "none"
     assert prepared["OPENAI_BASE_URL"] == "http://127.0.0.1:8765/v1/audio/speech"
     assert "OPENAI_API_KEY" not in prepared
+
+
+@pytest.mark.asyncio
+async def test_openai_production_manager_authorizes_actual_effective_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    canonical = "https://canonical-openai.example.test/v1/audio/speech"
+    conflicting = "https://model-override.example.test/v1/audio/speech"
+    requested: list[str] = []
+    authorized: list[tuple[str, str]] = []
+    real_async_client = httpx.AsyncClient
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, content=b"audio")
+
+    def client_factory(*args, **kwargs) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handle)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(openai_module.httpx, "AsyncClient", client_factory)
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            {
+                "COMPREHENSIVE_CONFIG_RAW": {
+                    "app_tts": {
+                        "OPENAI_BASE_URL": canonical,
+                        "OPENAI_AUTH_MODE": "api_key",
+                    },
+                    "openai_api": {"api_key": "test-key"},
+                    "openai_official_tts-1": {
+                        "OPENAI_BASE_URL": conflicting,
+                    },
+                }
+            }
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("openai")
+    adapter = lease.adapter
+    await lease.release()
+    manager = await adapter.host._get_manager()
+    assert type(manager) is TTSBackendManager
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+        ),
+    )
+
+    def authorize(provider_id: str, endpoint: str) -> bool:
+        authorized.append((provider_id, endpoint))
+        return True
+
+    try:
+        response = await service.synthesize_default(
+            text="Production OpenAI manager route.",
+            admission_authorizer=authorize,
+        )
+        audio = await collect(response.byte_stream)
+        await response.aclose()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+    assert audio == b"audio"
+    assert authorized == [("openai", canonical)]
+    assert requested == [canonical]
 
 
 @pytest.mark.parametrize(
