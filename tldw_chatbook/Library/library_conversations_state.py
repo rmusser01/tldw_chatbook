@@ -46,12 +46,12 @@ class LibraryConversationsCanvasState:
     selected_id: str
     preview_lines: tuple[str, ...]
     query: str
+    select_mode: bool = False
+    selected_count: int = 0
     range_copy: str = ""
     page_copy: str = ""
     previous_disabled: bool = True
     next_disabled: bool = True
-    select_mode: bool = False
-    selected_count: int = 0
     loading: bool = False
     error_copy: str = ""
 

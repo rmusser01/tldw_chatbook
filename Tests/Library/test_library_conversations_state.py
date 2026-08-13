@@ -30,6 +30,17 @@ def test_canvas_state_direct_construction_keeps_safe_pager_defaults():
     assert state.next_disabled is True
 
 
+def test_canvas_state_positional_construction_keeps_original_optional_slots():
+    state = LibraryConversationsCanvasState((), "", "", "", (), "", True, 2)
+
+    assert state.select_mode is True
+    assert state.selected_count == 2
+    assert state.range_copy == ""
+    assert state.page_copy == ""
+    assert state.previous_disabled is True
+    assert state.next_disabled is True
+
+
 def test_rows_are_sorted_by_recency_with_age_labels_and_missing_last():
     records = [
         {
@@ -85,6 +96,20 @@ def test_query_uses_supplied_matching_page_with_status_copy_singular_and_plural(
     )
     assert [row.conversation_id for row in singular_state.rows] == ["3"]
     assert singular_state.status_copy == "1 match for 'Beta'"
+
+
+def test_query_keeps_nonmatching_rows_from_the_supplied_service_page():
+    state = build_library_conversations_state(
+        [
+            {"id": "alpha", "title": "Alpha Chat"},
+            {"id": "beta", "title": "Beta Chat"},
+        ],
+        query="alpha",
+        total_count=2,
+        now=NOW,
+    )
+
+    assert [row.conversation_id for row in state.rows] == ["alpha", "beta"]
 
 
 def test_query_with_no_matches_returns_empty_copy_and_zero_status_copy():
@@ -242,6 +267,21 @@ def test_final_page_disables_next_without_dropping_supplied_rows():
     assert state.page_copy == "Page 3 of 3"
     assert state.previous_disabled is False
     assert state.next_disabled is True
+
+
+def test_page_size_does_not_truncate_supplied_service_page_rows():
+    state = build_library_conversations_state(
+        [
+            {"id": "one", "title": "One"},
+            {"id": "two", "title": "Two"},
+            {"id": "three", "title": "Three"},
+        ],
+        page_size=2,
+        total_count=3,
+        now=NOW,
+    )
+
+    assert [row.conversation_id for row in state.rows] == ["one", "two", "three"]
 
 
 def test_empty_filtered_page_reports_zero_matches_and_page_one_of_one():
