@@ -14338,7 +14338,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle, variant="quiet")
+                yield self._frame_console_region(right_handle)
             # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
             # flag below -- compose the cost chip correctly on the very
             # first frame rather than waiting for a post-mount sync call.

@@ -10,9 +10,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button, OptionList
+from textual.widgets import Button, OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_internals_decomposition import (
+    _configure_native_ready_console,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 if TYPE_CHECKING:
@@ -156,6 +159,24 @@ def _assert_visible_ancestors(widget) -> None:
         current = getattr(current, "parent", None)
 
 
+def _assert_solid_border(widget) -> None:
+    border = widget.styles.border
+    assert border.top[0] == "solid"
+    assert border.right[0] == "solid"
+    assert border.bottom[0] == "solid"
+    assert border.left[0] == "solid"
+
+
+def _painted_region_rows(screen, region) -> list[str]:
+    """Return non-empty text rows painted inside an exact screen region."""
+    strips = list(screen._compositor.render_strips())
+    return [
+        text
+        for y in range(region.y, region.bottom)
+        if (text := strips[y].crop(region.x, region.right).text.strip())
+    ]
+
+
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -176,6 +197,109 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
             )
             _assert_svg_healthy(svg)
             _assert_console_density_evidence(svg)
+
+
+@pytest.mark.parametrize("size", ((130, 30), (140, 42), (160, 45)))
+@pytest.mark.parametrize("approval_count", (0, 3))
+@pytest.mark.asyncio
+async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
+    size: tuple[int, int], approval_count: int
+) -> None:
+    app = _build_test_app(configured_default="home")
+    app.console_pending_approval_count = approval_count
+    _mark_console_onboarding_complete(app)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            _configure_native_ready_console(app)
+            await _open_console(app, pilot)
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.screen.query_one("#console-workspace-grid").region.height > 0
+                    and app.screen.query_one(
+                        "#console-inspector-rail-handle"
+                    ).region.width
+                    > 0
+                ),
+                context=f"collapsed Inspector handle at {size}",
+            )
+            await pilot.pause(0.5)
+
+            screen = app.screen
+            workspace = screen.query_one("#console-workspace-grid")
+            context_handle = screen.query_one("#console-context-rail-handle")
+            inspector_handle = screen.query_one("#console-inspector-rail-handle")
+            inspector_button = screen.query_one("#console-inspector-rail-open", Button)
+            transcript = screen.query_one("#console-transcript-region")
+
+            assert inspector_handle.display is True
+            assert _painted_region_rows(screen, inspector_button.region) == ["Inspect"]
+            assert inspector_button.label == "Inspect"
+            assert inspector_button.tooltip == "Open Inspector rail"
+            assert workspace.content_region.contains_region(inspector_handle.region), (
+                f"Inspector handle escapes workspace at {size}: "
+                f"handle={inspector_handle.region}, "
+                f"workspace={workspace.content_region}"
+            )
+            assert inspector_handle.region.height == workspace.content_region.height
+            assert inspector_handle.region.width == 11
+            assert inspector_handle.content_region.width == 9
+            assert inspector_handle.styles.background.a > 0
+            _assert_solid_border(inspector_handle)
+            assert transcript.region.width > 0
+
+            assert (
+                inspector_handle.styles.background == context_handle.styles.background
+            )
+            inspector_border = inspector_handle.styles.border
+            context_border = context_handle.styles.border
+            assert inspector_border.top == context_border.top
+            assert inspector_border.right == context_border.right
+            assert inspector_border.bottom == context_border.bottom
+            assert inspector_border.left == context_border.left
+
+            badge_rows = list(screen.query("#console-inspector-rail-badge"))
+            available_bottom = inspector_handle.content_region.bottom
+            if approval_count:
+                assert len(badge_rows) == 1
+                badge = screen.query_one("#console-inspector-rail-badge", Static)
+                assert str(badge.renderable) == "3 appr"
+                assert inspector_button.region.bottom <= badge.region.y
+                assert (
+                    inspector_button.region.height
+                    == inspector_handle.content_region.height - badge.region.height
+                )
+                assert badge.region.right <= inspector_handle.content_region.right
+                assert badge.region.bottom <= inspector_handle.content_region.bottom
+                available_bottom = badge.region.y
+            else:
+                assert badge_rows == []
+
+            assert inspector_button.region.x >= inspector_handle.content_region.x
+            assert (
+                inspector_button.region.right <= inspector_handle.content_region.right
+            )
+            assert inspector_button.region.y >= inspector_handle.content_region.y
+            assert inspector_button.region.bottom <= available_bottom
+            assert (
+                inspector_button.region.x + inspector_button.region.right
+                == inspector_handle.content_region.x
+                + inspector_handle.content_region.right
+            )
+            assert (
+                inspector_button.region.y + inspector_button.region.bottom
+                == inspector_handle.content_region.y + available_bottom
+            )
+
+            svg = app.export_screenshot(
+                title=(
+                    f"TASK-15783 Inspector Rail Parity {size[0]}x{size[1]} "
+                    f"approvals={approval_count}"
+                ),
+                simplify=True,
+            )
+            _assert_svg_healthy(svg)
 
 
 @pytest.mark.asyncio
