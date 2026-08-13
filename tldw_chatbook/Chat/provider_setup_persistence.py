@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 import re
-from collections.abc import Mapping
+import secrets
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from threading import RLock
 from types import MappingProxyType
-from typing import Callable, Iterator, Literal
+from typing import Literal
 from unicodedata import category as unicode_category
 from urllib.parse import urlsplit, urlunsplit
 from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
+    AtomicConfigSnapshot,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
@@ -47,9 +52,19 @@ _ENDPOINT_KEY_PRECEDENCE = (
 )
 _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+_ROUTING_SETTING_KEYS = (
+    *_ENDPOINT_KEY_PRECEDENCE,
+    "api_endpoint",
+    "router_base_url",
+    "huggingface_router_base_url",
+    "api_region",
+    "use_router_url_format",
+    "huggingface_use_router_url_format",
+)
 _ISSUED_MUTATION_LOCK = RLock()
 _ISSUED_MUTATIONS: dict[int, ReferenceType[ProviderSetupMutation]] = {}
 _WRITE_EXPECTATIONS: dict[int, _ProviderSetupWriteBinding] = {}
+_CREDENTIAL_OBSERVATION_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,7 +336,9 @@ class ProviderSetupWriteGuard:
         self._generation = 0
         self._identity: ProviderSetupWriteIdentity | None = None
 
-    def arm(self, identity: ProviderSetupWriteIdentity) -> ProviderSetupWriteExpectation:
+    def arm(
+        self, identity: ProviderSetupWriteIdentity
+    ) -> ProviderSetupWriteExpectation:
         if type(identity) is not ProviderSetupWriteIdentity:
             raise ValueError("Provider setup write identity is invalid.")
         with self._lock:
@@ -350,24 +367,168 @@ class ProviderSetupWriteGuard:
     def matches(
         self,
         expectation: ProviderSetupWriteExpectation,
-        current_identity: Callable[[], ProviderSetupWriteIdentity | None],
     ) -> bool:
         """Evaluate one expectation while the caller owns the guard lease."""
 
-        if type(expectation) is not ProviderSetupWriteExpectation or not callable(
-            current_identity
-        ):
+        if type(expectation) is not ProviderSetupWriteExpectation:
             raise ValueError("Provider setup write expectation is invalid.")
         with self._lock:
-            try:
-                observed = current_identity()
-            except Exception:
-                observed = None
             return bool(
                 self._generation == expectation.generation
                 and self._identity == expectation.identity
-                and observed == expectation.identity
             )
+
+
+class _ProviderCredentialObservation:
+    """Private process-local equality token for one effective credential."""
+
+    __slots__ = ("_tag", "source")
+
+    def __init__(self, source: CredentialSource, payload: str) -> None:
+        self.source = source
+        self._tag = hmac.new(
+            _CREDENTIAL_OBSERVATION_KEY,
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+
+    def matches(self, other: object) -> bool:
+        return bool(
+            type(other) is _ProviderCredentialObservation
+            and self.source == other.source
+            and hmac.compare_digest(self._tag, other._tag)
+        )
+
+    def __repr__(self) -> str:
+        return f"_ProviderCredentialObservation(source={self.source!r})"
+
+
+class ExpectedProviderSetupState:
+    """Immutable secret-free CAS state captured from authoritative config."""
+
+    __slots__ = (
+        "__credential_observation",
+        "config_generation",
+        "configured_connection_identity",
+        "configured_model_state",
+        "configured_routing_state",
+        "identity",
+    )
+
+    def __init__(
+        self,
+        *,
+        config_generation: int,
+        identity: ProviderSetupWriteIdentity,
+        configured_connection_identity: tuple[str, str] | None,
+        configured_routing_state: tuple[tuple[str, str], ...],
+        configured_model_state: tuple[str | None, str | None, str | None],
+        credential_observation: _ProviderCredentialObservation,
+    ) -> None:
+        if type(config_generation) is not int or config_generation < 0:
+            raise ValueError("Provider setup expected generation is invalid.")
+        if type(identity) is not ProviderSetupWriteIdentity:
+            raise ValueError("Provider setup expected identity is invalid.")
+        if not (
+            configured_connection_identity is None
+            or (
+                type(configured_connection_identity) is tuple
+                and len(configured_connection_identity) == 2
+                and all(type(item) is str for item in configured_connection_identity)
+            )
+        ):
+            raise ValueError("Provider setup expected route is invalid.")
+        if (
+            type(configured_routing_state) is not tuple
+            or any(
+                type(item) is not tuple
+                or len(item) != 2
+                or any(type(value) is not str for value in item)
+                for item in configured_routing_state
+            )
+            or type(configured_model_state) is not tuple
+            or len(configured_model_state) != 3
+            or any(
+                item is not None and type(item) is not str
+                for item in configured_model_state
+            )
+            or type(credential_observation) is not _ProviderCredentialObservation
+        ):
+            raise ValueError("Provider setup expected state is invalid.")
+        object.__setattr__(self, "config_generation", config_generation)
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(
+            self,
+            "configured_connection_identity",
+            configured_connection_identity,
+        )
+        object.__setattr__(self, "configured_routing_state", configured_routing_state)
+        object.__setattr__(self, "configured_model_state", configured_model_state)
+        object.__setattr__(
+            self,
+            "_ExpectedProviderSetupState__credential_observation",
+            credential_observation,
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        del name, value
+        raise AttributeError("Provider setup expected state is immutable.")
+
+    def __repr__(self) -> str:
+        return (
+            "ExpectedProviderSetupState("
+            f"config_generation={self.config_generation!r}, "
+            f"identity={self.identity!r}, "
+            "configured_connection_identity="
+            f"{self.configured_connection_identity!r}, "
+            f"configured_routing_state={self.configured_routing_state!r}, "
+            f"configured_model_state={self.configured_model_state!r})"
+        )
+
+    def _matches_snapshot(self, snapshot: AtomicConfigSnapshot) -> bool:
+        try:
+            current_route, current_routing, current_models, current_credential = (
+                _provider_setup_observations(
+                    snapshot.values, self.identity.provider_key
+                )
+            )
+            expected_credential = object.__getattribute__(
+                self,
+                "_ExpectedProviderSetupState__credential_observation",
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return bool(
+            current_route == self.configured_connection_identity
+            and current_routing == self.configured_routing_state
+            and current_models == self.configured_model_state
+            and expected_credential.matches(current_credential)
+        )
+
+
+def capture_expected_provider_setup_state(
+    snapshot: AtomicConfigSnapshot,
+    *,
+    identity: ProviderSetupWriteIdentity,
+) -> ExpectedProviderSetupState:
+    """Capture relevant provider state from one authoritative config snapshot."""
+
+    if type(snapshot) is not AtomicConfigSnapshot:
+        raise ValueError("Provider setup config snapshot is invalid.")
+    if type(identity) is not ProviderSetupWriteIdentity:
+        raise ValueError("Provider setup write identity is invalid.")
+    route, routing, models, credential = _provider_setup_observations(
+        snapshot.values,
+        identity.provider_key,
+    )
+    return ExpectedProviderSetupState(
+        config_generation=snapshot.generation,
+        identity=identity,
+        configured_connection_identity=route,
+        configured_routing_state=routing,
+        configured_model_state=models,
+        credential_observation=credential,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,9 +536,7 @@ class _ProviderSetupWriteBinding:
     mutation_ref: ReferenceType[ProviderSetupMutation]
     guard: ProviderSetupWriteGuard
     expectation: ProviderSetupWriteExpectation
-    current_identity: Callable[[], ProviderSetupWriteIdentity | None] = field(
-        repr=False
-    )
+    expected_state: ExpectedProviderSetupState
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
@@ -585,6 +744,8 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
 
     def persist(
         mutation_precondition: Callable[[], bool] | None = None,
+        locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool]
+        | None = None,
     ) -> ConfigMutationResult:
         return persist_provider_settings_atomic(
             mutation,
@@ -593,15 +754,17 @@ def persist_provider_setup(mutation: ProviderSetupMutation) -> ConfigMutationRes
             section_values=mutation.section_values,
             delete_keys=mutation.delete_keys,
             mutation_precondition=mutation_precondition,
+            locked_snapshot_precondition=locked_snapshot_precondition,
         )
 
     if binding is None:
         return persist()
     with binding.guard.hold():
         return persist(
-            lambda: binding.guard.matches(
-                binding.expectation,
-                binding.current_identity,
+            locked_snapshot_precondition=lambda snapshot: (
+                binding.guard.matches(binding.expectation)
+                and binding.expected_state.identity == binding.expectation.identity
+                and binding.expected_state._matches_snapshot(snapshot)
             )
         )
 
@@ -611,7 +774,7 @@ def bind_provider_setup_write_expectation(
     *,
     guard: ProviderSetupWriteGuard,
     expectation: ProviderSetupWriteExpectation,
-    current_identity: Callable[[], ProviderSetupWriteIdentity | None],
+    expected_state: ExpectedProviderSetupState,
 ) -> None:
     """Bind a first-run CAS expectation without changing the writer call API."""
 
@@ -623,7 +786,8 @@ def bind_provider_setup_write_expectation(
     if (
         type(guard) is not ProviderSetupWriteGuard
         or type(expectation) is not ProviderSetupWriteExpectation
-        or not callable(current_identity)
+        or type(expected_state) is not ExpectedProviderSetupState
+        or expected_state.identity != expectation.identity
     ):
         raise ValueError("Provider setup write expectation is invalid.")
     mutation_id = id(mutation)
@@ -635,7 +799,7 @@ def bind_provider_setup_write_expectation(
             reference,
             guard,
             expectation,
-            current_identity,
+            expected_state,
         )
 
 
@@ -657,6 +821,7 @@ def persist_provider_settings_atomic(
     section_values: Mapping[str, Mapping[str, object]],
     delete_keys: Mapping[str, tuple[str, ...]],
     mutation_precondition: Callable[[], bool] | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
 ) -> ConfigMutationResult:
     """Validate and persist one combined provider Settings mutation."""
 
@@ -671,16 +836,29 @@ def persist_provider_settings_atomic(
         delete_keys,
     )
     try:
-        if mutation_precondition is None:
+        if mutation_precondition is None and locked_snapshot_precondition is None:
             result = apply_settings_mutation_to_cli_config(
                 section_values,
                 delete_keys=delete_keys,
+            )
+        elif locked_snapshot_precondition is None:
+            result = apply_settings_mutation_to_cli_config(
+                section_values,
+                delete_keys=delete_keys,
+                mutation_precondition=mutation_precondition,
+            )
+        elif mutation_precondition is None:
+            result = apply_settings_mutation_to_cli_config(
+                section_values,
+                delete_keys=delete_keys,
+                locked_snapshot_precondition=locked_snapshot_precondition,
             )
         else:
             result = apply_settings_mutation_to_cli_config(
                 section_values,
                 delete_keys=delete_keys,
                 mutation_precondition=mutation_precondition,
+                locked_snapshot_precondition=locked_snapshot_precondition,
             )
     except Exception:  # noqa: BLE001 - persistence must fail closed on writer errors.
         return ConfigMutationResult(False, False, "before_replace")
@@ -765,6 +943,99 @@ def _provider_settings(
             continue
         return settings if isinstance(settings, Mapping) else {}
     return {}
+
+
+def _provider_setup_observations(
+    app_config: Mapping[object, object],
+    provider: object,
+) -> tuple[
+    tuple[str, str] | None,
+    tuple[tuple[str, str], ...],
+    tuple[str | None, str | None, str | None],
+    _ProviderCredentialObservation,
+]:
+    """Derive the non-secret provider CAS state from one config snapshot."""
+
+    from .console_provider_endpoints import effective_provider_discovery_endpoint
+    from .provider_readiness import default_api_key_env_var
+
+    if not isinstance(app_config, Mapping):
+        raise TypeError("Provider setup config snapshot is invalid.")
+    ownership = _ownership_for(provider)
+    provider_settings = _provider_settings(app_config, ownership)
+    endpoint = effective_provider_discovery_endpoint(
+        ownership.provider_key,
+        None,
+        provider_settings,
+    )
+    route_identity = None
+    if endpoint:
+        route_identity = canonical_connection_identity(
+            ownership.provider_key,
+            endpoint,
+        )
+        if route_identity is None:
+            raise ValueError("Provider setup configured route is invalid.")
+    routing_state = tuple(
+        (key, _safe_routing_setting(provider_settings.get(key)))
+        for key in _ROUTING_SETTING_KEYS
+        if key in provider_settings
+    )
+
+    provider_model = _safe_model(provider_settings.get(ownership.model_key))
+    chat_provider = None
+    chat_model = None
+    chat_defaults = app_config.get("chat_defaults")
+    if isinstance(chat_defaults, Mapping):
+        try:
+            chat_provider = _ownership_for(chat_defaults.get("provider")).provider_key
+        except ValueError:
+            chat_provider = None
+        chat_model = _safe_model(chat_defaults.get("model"))
+
+    stored_key, environment_key = ownership.credential_keys
+    stored_value = _existing_credential_value(provider_settings.get(stored_key))
+    configured_env = _existing_environment_name(provider_settings.get(environment_key))
+    env_var = configured_env or default_api_key_env_var(ownership.provider_key) or ""
+    env_value = _existing_credential_value(os.environ.get(env_var)) if env_var else None
+    if stored_value is not None:
+        credential = _ProviderCredentialObservation(
+            "stored",
+            f"stored\0{stored_value}",
+        )
+    elif env_value is not None:
+        credential = _ProviderCredentialObservation(
+            "environment",
+            f"environment\0{env_var}\0{env_value}",
+        )
+    else:
+        credential = _ProviderCredentialObservation("none", f"none\0{env_var}")
+    return (
+        route_identity,
+        routing_state,
+        (provider_model, chat_provider, chat_model),
+        credential,
+    )
+
+
+def _safe_routing_setting(value: object) -> str:
+    """Normalize one bounded non-secret routing value for CAS comparison."""
+
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is not str:
+        raise ValueError("Provider setup routing setting is invalid.")
+    normalized = value.strip()
+    if (
+        len(normalized) > 2048
+        or not normalized.isprintable()
+        or any(
+            unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
+            for character in normalized
+        )
+    ):
+        raise ValueError("Provider setup routing setting is invalid.")
+    return normalized
 
 
 def _selected_endpoint_key(

@@ -2,12 +2,12 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
 import tomllib
+from pathlib import Path
 
 import pytest
 import toml
@@ -895,6 +895,42 @@ def test_settings_mutation_precondition_rejects_inside_atomic_writer(
     )
     assert checks == ["checked"]
     assert config_path.read_bytes() == original
+
+
+def test_settings_locked_snapshot_precondition_observes_authoritative_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"api_settings": {"moonshot": {"api_region": "china"}}},
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    snapshot = config_module.get_atomic_config_snapshot()
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.moonshot": {"api_region": "global"}}
+    ).fully_applied
+    observed = []
+
+    result = config_module.apply_settings_mutation_to_cli_config(
+        {"chat_defaults": {"model": "stale-model"}},
+        locked_snapshot_precondition=lambda current: observed.append(current) or False,
+    )
+
+    assert result == config_module.ConfigMutationResult(
+        False,
+        False,
+        None,
+        conflict=True,
+        conflict_reason="identity_changed",
+    )
+    assert len(observed) == 1
+    assert observed[0].generation > snapshot.generation
+    assert observed[0].values["api_settings"]["moonshot"]["api_region"] == "global"
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["moonshot"]["api_region"] == "global"
+    assert "stale-model" not in config_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("serialized", [False, True])

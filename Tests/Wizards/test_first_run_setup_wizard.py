@@ -1604,10 +1604,12 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         voice_index = container._step_index_for_id(STEP_VOICE)
         assert provider_index is not None and model_index is not None
         assert voice_index is not None
-        container.show_step(provider_index)
         provider_step = container.steps[provider_index]
         assert isinstance(provider_step, ProviderStep)
+        provider_step._environment_provider = dict
+        container.show_step(provider_index)
         provider_step.select_provider("custom")
+        provider_step._on_clear()
         await container._advance()
 
         model_step = container.steps[model_index]
@@ -1633,6 +1635,7 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         await container._advance()
         assert container.current_step == voice_index
         assert writes == ["stable-radio-model"]
+        assert model_step.selected_model_id == "stable-radio-model"
 
         container.show_step(provider_index)
         await container._advance()
@@ -1641,7 +1644,7 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         radio_set = model_step.query_one("#setup-model-choice", RadioSet)
         pressed = radio_set.pressed_button
         assert pressed is not None
-        assert pressed in radio_set.query(RadioButton)
+        assert pressed in list(radio_set.query(RadioButton))
         assert pressed.value is True
         assert getattr(pressed, "_model_id", "") == "stable-radio-model"
         assert model_step._effective_model_id() == "stable-radio-model"
@@ -2544,6 +2547,7 @@ async def test_mounted_stored_key_test_continue_returned_model_save_preserves_ev
 ):
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 
     secret = "preexisting-inline-boundary-secret"
@@ -2561,6 +2565,14 @@ async def test_mounted_stored_key_test_continue_returned_model_save_preserves_ev
             }
         }
     }
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {
+            "api_settings.custom": {
+                "api_url": "https://stored.example.test/v1/chat/completions",
+                "api_key": secret,
+            }
+        }
+    ).fully_applied
     wizard.app_instance.llm_provider_catalog_scope_service = scope_service
     monkeypatch.setattr(
         "tldw_chatbook.config.save_settings_to_cli_config",
@@ -2654,6 +2666,8 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
     import asyncio
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook import config as config_module
+
     first_secret = f"{credential_kind}-handoff-secret-a"
     rotated_secret = f"{credential_kind}-handoff-secret-b"
     provider_settings = {"api_url": "https://rotation.example.test/v1/chat/completions"}
@@ -2681,6 +2695,9 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
     scope_service.discover_models = AsyncMock(side_effect=discover_models)
     wizard = _make_wizard()
     wizard.app_instance.app_config = {"api_settings": {"custom": provider_settings}}
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.custom": provider_settings}
+    ).fully_applied
     wizard.app_instance.llm_provider_catalog_scope_service = scope_service
     monkeypatch.setattr(
         "tldw_chatbook.config.save_settings_to_cli_config",
@@ -2730,6 +2747,9 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
                 monkeypatch.setenv("CUSTOM_API_KEY", rotated_secret)
             else:
                 provider_settings["api_key"] = rotated_secret
+                assert config_module.apply_settings_mutation_to_cli_config(
+                    {"api_settings.custom": {"api_key": rotated_secret}}
+                ).fully_applied
 
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
@@ -2759,6 +2779,9 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
                 monkeypatch.setenv("CUSTOM_API_KEY", rotated_secret)
             else:
                 provider_settings["api_key"] = rotated_secret
+                assert config_module.apply_settings_mutation_to_cli_config(
+                    {"api_settings.custom": {"api_key": rotated_secret}}
+                ).fully_applied
 
             await container._advance()
             assert container.current_step == model_index
@@ -4765,6 +4788,7 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
     """A model discovered for endpoint A cannot be atomically saved under B."""
     import httpx
 
+    from tldw_chatbook import config as config_module
     from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
         LLMProviderCatalogScopeService,
     )
@@ -4796,6 +4820,14 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             }
         },
     }
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {
+            f"api_settings.{provider_key}": {
+                setting_name: initial_setting,
+                "api_key": "save-boundary-credential-canary",
+            }
+        }
+    ).fully_applied
     writes: list[object] = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
 
@@ -4870,6 +4902,13 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             wizard.app_instance.app_config["api_settings"][provider_key][
                 setting_name
             ] = changed_setting
+            assert config_module.apply_settings_mutation_to_cli_config(
+                {
+                    f"api_settings.{provider_key}": {
+                        setting_name: changed_setting,
+                    }
+                }
+            ).fully_applied
             await container._advance()
 
             assert container.current_step == model_index
@@ -5320,18 +5359,21 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
     import threading
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
 
     if identity_change == "moonshot_region":
         provider_key = "moonshot"
         provider_settings = {
             "api_region": "china",
+            "api_base_url": "https://api.moonshot.cn/v1",
             "api_key": "writer-entry-saved-canary",
         }
     elif identity_change == "huggingface_router":
         provider_key = "huggingface"
         provider_settings = {
             "use_router_url_format": "true",
+            "api_base_url": "https://router.huggingface.co/v1",
             "api_key": "writer-entry-saved-canary",
         }
     else:
@@ -5341,6 +5383,10 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
             "api_key": "writer-entry-saved-canary",
         }
 
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {f"api_settings.{provider_key}": provider_settings}
+    ).fully_applied
+
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
         "api_settings": {provider_key: provider_settings}
@@ -5349,26 +5395,6 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
         discover_models=AsyncMock(
             return_value=_typed_model_discovery_result(provider_key, "writer-model")
         )
-    )
-    writes = []
-
-    def writer(*_args, mutation_precondition=None, **_kwargs):
-        assert callable(mutation_precondition)
-        if not mutation_precondition():
-            return ConfigMutationResult(
-                False,
-                False,
-                None,
-                conflict=True,
-                conflict_reason="identity_changed",
-            )
-        writes.append(True)
-        return ConfigMutationResult(True, True, None)
-
-    monkeypatch.setattr(
-        persistence_module,
-        "apply_settings_mutation_to_cli_config",
-        writer,
     )
     real_persist = persistence_module.persist_provider_setup
     writer_entered = threading.Event()
@@ -5417,23 +5443,36 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
         save = asyncio.create_task(container._advance())
         assert await asyncio.to_thread(writer_entered.wait, 2)
         if identity_change == "moonshot_region":
-            provider_settings["api_region"] = "global"
+            changed_values = {
+                "api_region": "global",
+                "api_base_url": "https://api.moonshot.ai/v1",
+            }
         elif identity_change == "huggingface_router":
-            provider_settings["use_router_url_format"] = "false"
+            changed_values = {
+                "use_router_url_format": "false",
+                "api_base_url": "https://api-inference.huggingface.co/v1",
+            }
         elif identity_change == "custom_endpoint":
-            provider_step.query_one("#setup-provider-endpoint", Input).value = (
-                "https://writer-b.example/v1/chat/completions"
-            )
-            await pilot.pause()
+            changed_values = {
+                "api_url": "https://writer-b.example/v1/chat/completions"
+            }
         else:
-            provider_step.query_one("#setup-provider-api-key", Input).value = (
-                "writer-entry-replacement-canary"
-            )
-            await pilot.pause()
+            changed_values = {"api_key": "writer-entry-replacement-canary"}
+        provider_settings.update(changed_values)
+        shared_write = await asyncio.to_thread(
+            config_module.apply_settings_mutation_to_cli_config,
+            {f"api_settings.{provider_key}": changed_values},
+        )
+        assert shared_write.fully_applied
         release_writer.set()
         await asyncio.wait_for(save, timeout=3)
 
-        assert writes == []
+        authoritative = config_module.get_atomic_config_snapshot().values
+        current_settings = authoritative["api_settings"][provider_key]
+        assert all(
+            current_settings[key] == value for key, value in changed_values.items()
+        )
+        assert authoritative["chat_defaults"]["model"] != "writer-model"
         assert container.current_step == model_index
         assert not container.provider_setup_committed
         assert model_step.selected_model_id == ""
@@ -5451,34 +5490,25 @@ async def test_mounted_executor_entry_unchanged_identity_writes_once(monkeypatch
     import threading
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
 
+    provider_settings = {
+        "api_region": "china",
+        "api_base_url": "https://api.moonshot.cn/v1",
+        "api_key": "writer-entry-unchanged-canary",
+    }
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"api_settings.moonshot": provider_settings}
+    ).fully_applied
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
-        "api_settings": {
-            "moonshot": {
-                "api_region": "china",
-                "api_key": "writer-entry-unchanged-canary",
-            }
-        }
+        "api_settings": {"moonshot": provider_settings}
     }
     wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(
             return_value=_typed_model_discovery_result("moonshot", "writer-model")
         )
-    )
-    writes = []
-
-    def writer(section_values, *, delete_keys=None, mutation_precondition=None):
-        assert callable(mutation_precondition)
-        assert mutation_precondition()
-        writes.append((section_values, delete_keys))
-        return ConfigMutationResult(True, True, None)
-
-    monkeypatch.setattr(
-        persistence_module,
-        "apply_settings_mutation_to_cli_config",
-        writer,
     )
     real_persist = persistence_module.persist_provider_setup
     writer_entered = threading.Event()
@@ -5525,10 +5555,24 @@ async def test_mounted_executor_entry_unchanged_identity_writes_once(monkeypatch
 
         save = asyncio.create_task(container._advance())
         assert await asyncio.to_thread(writer_entered.wait, 2)
+        real_apply = persistence_module.apply_settings_mutation_to_cli_config
+        provider_writes = []
+
+        def counting_write(section_values, **kwargs):
+            chat_defaults = section_values.get("chat_defaults", {})
+            if chat_defaults.get("model") == "writer-model":
+                provider_writes.append(True)
+            return real_apply(section_values, **kwargs)
+
+        monkeypatch.setattr(
+            persistence_module,
+            "apply_settings_mutation_to_cli_config",
+            counting_write,
+        )
         release_writer.set()
         await asyncio.wait_for(save, timeout=3)
 
-        assert len(writes) == 1
+        assert provider_writes == [True]
         assert container.provider_setup_committed
         assert container.committed_provider_model == "writer-model"
 

@@ -1,5 +1,5 @@
-from dataclasses import fields, replace
 import threading
+from dataclasses import fields, replace
 from types import MappingProxyType
 
 import pytest
@@ -32,6 +32,64 @@ def _draft(**overrides) -> ProviderSetupDraft:
     }
     values.update(overrides)
     return ProviderSetupDraft(**values)
+
+
+def _bind_atomic_expectation(
+    mutation,
+    *,
+    snapshot,
+    identity,
+):
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expectation = guard.arm(identity)
+    expected_state = persistence_module.capture_expected_provider_setup_state(
+        snapshot,
+        identity=identity,
+    )
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expectation,
+        expected_state=expected_state,
+    )
+    return guard, expected_state
+
+
+def _build_bound_first_run_mutation(
+    *,
+    snapshot,
+    provider: str,
+    endpoint: str,
+    model: str = "selected-model",
+):
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    draft = wizard_state.FirstRunProviderDraft(
+        provider,
+        endpoint,
+        wizard_state.ProviderCredentialDraft("stored", "", 7),
+    )
+    effective = wizard_state.resolve_first_run_provider_draft(draft, snapshot.values)
+    discovery_key = wizard_state.build_first_run_model_discovery_key(effective)
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key=discovery_key.provider_key,
+        connection_identity=discovery_key.connection_identity,
+        credential_source=discovery_key.credential_source,
+        credential_revision=discovery_key.credential_revision,
+        model_id=model,
+        model_provenance="discovered",
+    )
+    mutation = wizard_state.build_first_run_provider_commit(
+        draft,
+        model,
+        snapshot.values,
+    )
+    guard, expected_state = _bind_atomic_expectation(
+        mutation,
+        snapshot=snapshot,
+        identity=identity,
+    )
+    return mutation, guard, expected_state
 
 
 @pytest.mark.parametrize(
@@ -1130,6 +1188,13 @@ def _write_identity(
     )
 
 
+def _mock_atomic_snapshot():
+    return config_module.AtomicConfigSnapshot(
+        0,
+        {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8080"}}},
+    )
+
+
 @pytest.mark.parametrize(
     "changed_identity",
     [
@@ -1147,9 +1212,11 @@ def test_guarded_provider_setup_rejects_changed_identity_before_atomic_writer(
 ):
     writes = []
 
-    def writer(*_args, mutation_precondition=None, **_kwargs):
-        assert callable(mutation_precondition)
-        if not mutation_precondition():
+    snapshot = _mock_atomic_snapshot()
+
+    def writer(*_args, locked_snapshot_precondition=None, **_kwargs):
+        assert callable(locked_snapshot_precondition)
+        if not locked_snapshot_precondition(snapshot):
             return ConfigMutationResult(
                 False,
                 False,
@@ -1167,13 +1234,19 @@ def test_guarded_provider_setup_rejects_changed_identity_before_atomic_writer(
     )
     mutation = build_provider_setup_mutation(_draft(), {})
     guard = persistence_module.ProviderSetupWriteGuard()
-    expected = guard.arm(_write_identity())
+    identity = _write_identity()
+    expected = guard.arm(identity)
+    expected_state = persistence_module.capture_expected_provider_setup_state(
+        snapshot,
+        identity=identity,
+    )
     persistence_module.bind_provider_setup_write_expectation(
         mutation,
         guard=guard,
         expectation=expected,
-        current_identity=lambda: changed_identity,
+        expected_state=expected_state,
     )
+    guard.arm(changed_identity)
 
     result = persist_provider_setup(mutation)
 
@@ -1189,10 +1262,11 @@ def test_guarded_provider_setup_rejects_changed_identity_before_atomic_writer(
 
 def test_guarded_provider_setup_rejects_invalidated_generation(monkeypatch):
     writes = []
+    snapshot = _mock_atomic_snapshot()
 
-    def writer(*_args, mutation_precondition=None, **_kwargs):
-        assert callable(mutation_precondition)
-        if not mutation_precondition():
+    def writer(*_args, locked_snapshot_precondition=None, **_kwargs):
+        assert callable(locked_snapshot_precondition)
+        if not locked_snapshot_precondition(snapshot):
             return ConfigMutationResult(
                 False,
                 False,
@@ -1212,11 +1286,15 @@ def test_guarded_provider_setup_rejects_invalidated_generation(monkeypatch):
     identity = _write_identity()
     guard = persistence_module.ProviderSetupWriteGuard()
     expected = guard.arm(identity)
+    expected_state = persistence_module.capture_expected_provider_setup_state(
+        snapshot,
+        identity=identity,
+    )
     persistence_module.bind_provider_setup_write_expectation(
         mutation,
         guard=guard,
         expectation=expected,
-        current_identity=lambda: identity,
+        expected_state=expected_state,
     )
     guard.invalidate()
 
@@ -1230,10 +1308,17 @@ def test_guarded_provider_setup_rejects_invalidated_generation(monkeypatch):
 def test_guarded_provider_setup_unchanged_identity_writes_once(monkeypatch):
     expected_result = ConfigMutationResult(True, True, None)
     writes = []
+    snapshot = _mock_atomic_snapshot()
 
-    def writer(section_values, *, delete_keys=None, mutation_precondition=None):
-        assert callable(mutation_precondition)
-        assert mutation_precondition()
+    def writer(
+        section_values,
+        *,
+        delete_keys=None,
+        locked_snapshot_precondition=None,
+        **_kwargs,
+    ):
+        assert callable(locked_snapshot_precondition)
+        assert locked_snapshot_precondition(snapshot)
         writes.append((section_values, delete_keys))
         return expected_result
 
@@ -1246,11 +1331,15 @@ def test_guarded_provider_setup_unchanged_identity_writes_once(monkeypatch):
     identity = _write_identity()
     guard = persistence_module.ProviderSetupWriteGuard()
     expected = guard.arm(identity)
+    expected_state = persistence_module.capture_expected_provider_setup_state(
+        snapshot,
+        identity=identity,
+    )
     persistence_module.bind_provider_setup_write_expectation(
         mutation,
         guard=guard,
         expectation=expected,
-        current_identity=lambda: identity,
+        expected_state=expected_state,
     )
 
     result = persist_provider_setup(mutation)
@@ -1265,11 +1354,18 @@ def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
     writer_entered = threading.Event()
     release_writer = threading.Event()
     invalidation_finished = threading.Event()
+    snapshot = _mock_atomic_snapshot()
 
-    def writer(_section_values, *, delete_keys=None, mutation_precondition=None):
+    def writer(
+        _section_values,
+        *,
+        delete_keys=None,
+        locked_snapshot_precondition=None,
+        **_kwargs,
+    ):
         del delete_keys
-        assert callable(mutation_precondition)
-        assert mutation_precondition()
+        assert callable(locked_snapshot_precondition)
+        assert locked_snapshot_precondition(snapshot)
         writer_entered.set()
         assert release_writer.wait(timeout=2)
         return ConfigMutationResult(True, True, None)
@@ -1283,11 +1379,15 @@ def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
     identity = _write_identity()
     guard = persistence_module.ProviderSetupWriteGuard()
     expected = guard.arm(identity)
+    expected_state = persistence_module.capture_expected_provider_setup_state(
+        snapshot,
+        identity=identity,
+    )
     persistence_module.bind_provider_setup_write_expectation(
         mutation,
         guard=guard,
         expectation=expected,
-        current_identity=lambda: identity,
+        expected_state=expected_state,
     )
 
     result_holder = []
@@ -1313,6 +1413,178 @@ def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
     assert not invalidator.is_alive()
     assert invalidation_finished.is_set()
     assert result_holder == [ConfigMutationResult(True, True, None)]
+
+
+@pytest.mark.parametrize(
+    ("provider", "endpoint", "initial_settings", "changed_values", "changed_key"),
+    [
+        (
+            "moonshot",
+            "",
+            {"api_region": "china", "api_key": "locked-route-key"},
+            {"api_region": "global"},
+            "api_region",
+        ),
+        (
+            "huggingface",
+            "",
+            {
+                "use_router_url_format": "true",
+                "api_key": "locked-route-key",
+            },
+            {"use_router_url_format": "false"},
+            "use_router_url_format",
+        ),
+        (
+            "custom",
+            "https://first.example/v1/chat/completions",
+            {
+                "api_url": "https://first.example/v1/chat/completions",
+                "api_key": "locked-route-key",
+            },
+            {"api_url": "https://second.example/v1/chat/completions"},
+            "api_url",
+        ),
+    ],
+    ids=["moonshot-region", "huggingface-router", "custom-endpoint"],
+)
+def test_guarded_setup_rejects_completed_relevant_config_write(
+    tmp_path,
+    monkeypatch,
+    provider,
+    endpoint,
+    initial_settings,
+    changed_values,
+    changed_key,
+):
+    import tomllib
+
+    import toml
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps({"api_settings": {provider: initial_settings}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    snapshot = config_module.get_atomic_config_snapshot()
+    mutation, _guard, _expected_state = _build_bound_first_run_mutation(
+        snapshot=snapshot,
+        provider=provider,
+        endpoint=endpoint,
+    )
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {f"api_settings.{provider}": changed_values}
+    ).fully_applied
+
+    result = persist_provider_setup(mutation)
+
+    assert result.conflict is True
+    assert result.conflict_reason == "identity_changed"
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"][provider][changed_key] == changed_values[changed_key]
+    assert saved.get("chat_defaults", {}).get("model") != "selected-model"
+
+
+def test_guarded_setup_rejects_completed_stored_credential_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    import tomllib
+
+    import toml
+    from loguru import logger as loguru_logger
+
+    first_secret = "locked-stored-credential-a"
+    second_secret = "locked-stored-credential-b"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://credential.example/v1/chat/completions",
+                        "api_key": first_secret,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        snapshot = config_module.get_atomic_config_snapshot()
+        mutation, _guard, expected_state = _build_bound_first_run_mutation(
+            snapshot=snapshot,
+            provider="custom",
+            endpoint="https://credential.example/v1/chat/completions",
+        )
+        assert config_module.apply_settings_mutation_to_cli_config(
+            {"api_settings.custom": {"api_key": second_secret}}
+        ).fully_applied
+        result = persist_provider_setup(mutation)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result.conflict is True
+    rendered = "\n".join(
+        (
+            repr(expected_state),
+            repr(mutation),
+            repr(result),
+            *(str(item) for item in messages),
+        )
+    )
+    assert first_secret not in rendered
+    assert second_secret not in rendered
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["custom"]["api_key"] == second_secret
+    assert first_secret not in config_path.read_text(encoding="utf-8")
+    assert saved.get("chat_defaults", {}).get("model") != "selected-model"
+
+
+def test_guarded_setup_allows_unrelated_generation_advance(
+    tmp_path,
+    monkeypatch,
+):
+    import tomllib
+
+    import toml
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://stable.example/v1/chat/completions",
+                        "api_key": "stable-credential",
+                    }
+                },
+                "general": {"users_name": "before"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    snapshot = config_module.get_atomic_config_snapshot()
+    mutation, _guard, _expected_state = _build_bound_first_run_mutation(
+        snapshot=snapshot,
+        provider="custom",
+        endpoint="https://stable.example/v1/chat/completions",
+    )
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"general": {"users_name": "after"}}
+    ).fully_applied
+
+    result = persist_provider_setup(mutation)
+
+    assert result.fully_applied is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["general"]["users_name"] == "after"
+    assert saved["chat_defaults"]["model"] == "selected-model"
 
 
 def test_combined_provider_settings_boundary_validates_setup_and_writes_once(

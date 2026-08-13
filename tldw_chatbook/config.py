@@ -4759,6 +4759,37 @@ class RuntimeConfigSnapshot(NamedTuple):
     values: Dict[str, Any]
 
 
+class AtomicConfigSnapshot(NamedTuple):
+    """A locked authoritative config view paired with its published generation."""
+
+    generation: int
+    values: Dict[str, Any]
+
+
+def _atomic_config_values_from_raw(
+    config_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Merge and decrypt the exact raw mapping already read under the write lock."""
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    decryption = _decrypt_config_section_with_status(merged, strict=True)
+    if not decryption.succeeded:
+        raise ValueError("Authoritative configuration could not be decrypted")
+    return decryption.config
+
+
+def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
+    """Read the authoritative config through the same lock used by mutations."""
+
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        raw = _read_raw_cli_config_unlocked(config_path)
+        return AtomicConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=_atomic_config_values_from_raw(raw),
+        )
+
+
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
@@ -5244,6 +5275,8 @@ def apply_settings_mutation_to_cli_config(
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
     mutation_precondition: Callable[[], bool] | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool]
+    | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -5251,6 +5284,10 @@ def apply_settings_mutation_to_cli_config(
     try:
         if mutation_precondition is not None and not callable(mutation_precondition):
             raise TypeError("Configuration mutation precondition must be callable")
+        if locked_snapshot_precondition is not None and not callable(
+            locked_snapshot_precondition
+        ):
+            raise TypeError("Locked configuration precondition must be callable")
         config_path = _get_effective_config_path()
     except Exception as error:
         logger.error(
@@ -5309,6 +5346,30 @@ def apply_settings_mutation_to_cli_config(
                 logger.error(
                     "Configuration mutation failed "
                     "(phase=precondition, config_path={}, error_type={}).",
+                    config_path,
+                    type(error).__name__,
+                )
+                return ConfigMutationResult(False, False, "before_replace")
+            if is_current is not True:
+                return ConfigMutationResult(
+                    False,
+                    False,
+                    None,
+                    conflict=True,
+                    conflict_reason="identity_changed",
+                )
+
+        if locked_snapshot_precondition is not None:
+            try:
+                locked_snapshot = AtomicConfigSnapshot(
+                    generation=_CONFIG_GENERATION,
+                    values=_atomic_config_values_from_raw(config_data),
+                )
+                is_current = locked_snapshot_precondition(locked_snapshot)
+            except Exception as error:
+                logger.error(
+                    "Configuration mutation failed "
+                    "(phase=locked_precondition, config_path={}, error_type={}).",
                     config_path,
                     type(error).__name__,
                 )

@@ -3013,6 +3013,8 @@ class ModelStep(SetupStep):
             and discovery_key == self._rendered_discovery_key
             and any(getattr(button, "_model_id", "") for button in live_radios)
         )
+        if rendered_is_current:
+            self._restore_model_radio_selection(discovery_key)
         if provider_key and not rendered_is_current:
             self.run_worker(
                 partial(
@@ -3240,6 +3242,11 @@ class ModelStep(SetupStep):
             radio_set = self.query_one("#setup-model-choice", RadioSet)
         except Exception:
             return
+        # Textual does not clear these owner pointers when children are
+        # removed. Reset them before rebuilding so a restored selection can
+        # only reference one of the newly mounted rows.
+        radio_set._pressed_button = None
+        radio_set._selected = None
         # remove_children()/mount() are message-queue operations -- both
         # return awaitables that must be awaited before the DOM change is
         # actually applied. Without awaiting the removal, a second call (e.g.
@@ -3276,10 +3283,7 @@ class ModelStep(SetupStep):
                 else ""
             )
             if selected:
-                for button in radio_set.query(RadioButton):
-                    if getattr(button, "_model_id", "") == selected:
-                        button.value = True
-                        break
+                self._restore_model_radio_selection(discovery_key)
         elif discovery_state == "listing_unavailable":
             await radio_set.mount(
                 SetupRadioButton(
@@ -3391,6 +3395,36 @@ class ModelStep(SetupStep):
         ):
             radio_set._pressed_button = None
             pressed.value = False
+
+    def _restore_model_radio_selection(
+        self,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey | None,
+    ) -> None:
+        """Point RadioSet state only at the live row for this selection."""
+
+        if (
+            self._model_id_from_custom_input
+            or self._selection_discovery_key != discovery_key
+        ):
+            return
+        try:
+            radio_set = self.query_one("#setup-model-choice", RadioSet)
+        except Exception:
+            return
+        buttons = list(radio_set.query(RadioButton))
+        selected = next(
+            (
+                button
+                for button in buttons
+                if getattr(button, "_model_id", "") == self.selected_model_id
+            ),
+            None,
+        )
+        with radio_set.prevent(RadioButton.Changed):
+            for button in buttons:
+                button.value = button is selected
+        radio_set._pressed_button = selected
+        radio_set._selected = buttons.index(selected) if selected is not None else None
 
     @on(Input.Changed, "#setup-model-custom")
     def _on_custom_model(self, event: Input.Changed) -> None:
@@ -3545,7 +3579,15 @@ class ModelStep(SetupStep):
         if ok:
             self.selected_model_id = model_id
             self._selection_discovery_key = self._current_discovery_key()
-        elif selection_key != self._current_discovery_key():
+        elif (
+            getattr(
+                getattr(self.wizard, "_provider_last_config_result", None),
+                "conflict_reason",
+                None,
+            )
+            == "identity_changed"
+            or selection_key != self._current_discovery_key()
+        ):
             return (
                 False,
                 "Connection settings changed. Models were refreshed; select a "
@@ -7062,16 +7104,18 @@ class SetupWizardContainer(WizardContainer):
                 if changed_draft is not None:
                     mutation = None
                 else:
-                    app_config = getattr(self.app_instance, "app_config", {}) or {}
                     try:
+                        from tldw_chatbook.config import get_atomic_config_snapshot
+
+                        config_snapshot = get_atomic_config_snapshot()
                         mutation = wizard_state.build_first_run_provider_commit(
                             provider_draft,
                             model_id,
-                            app_config,
+                            config_snapshot.values,
                         )
                         self._bind_provider_write_expectation(
                             mutation,
-                            provider_draft=provider_draft,
+                            config_snapshot=config_snapshot,
                             discovery_key=discovery_key,
                             model_id=model_id,
                             model_provenance=model_provenance,
@@ -7131,7 +7175,7 @@ class SetupWizardContainer(WizardContainer):
         self,
         mutation: object,
         *,
-        provider_draft: wizard_state.FirstRunProviderDraft,
+        config_snapshot: object,
         discovery_key: wizard_state.FirstRunModelDiscoveryKey,
         model_id: str,
         model_provenance: Literal["discovered", "manual"],
@@ -7141,6 +7185,7 @@ class SetupWizardContainer(WizardContainer):
         from tldw_chatbook.Chat.provider_setup_persistence import (
             ProviderSetupWriteIdentity,
             bind_provider_setup_write_expectation,
+            capture_expected_provider_setup_state,
         )
 
         expected_identity = ProviderSetupWriteIdentity(
@@ -7152,37 +7197,16 @@ class SetupWizardContainer(WizardContainer):
             model_provenance=model_provenance,
         )
         expectation = self._provider_write_guard.arm(expected_identity)
-        provider = provider_draft.provider
-        editable_endpoint = provider_draft.endpoint
-        credential_source = discovery_key.credential_source
-        credential_revision = discovery_key.credential_revision
-        app_instance = self.app_instance
-
-        def current_identity() -> ProviderSetupWriteIdentity | None:
-            try:
-                current_key = wizard_state.build_current_first_run_model_discovery_key(
-                    provider=provider,
-                    editable_endpoint=editable_endpoint,
-                    credential_source=credential_source,
-                    credential_revision=credential_revision,
-                    app_config=getattr(app_instance, "app_config", {}) or {},
-                )
-                return ProviderSetupWriteIdentity(
-                    provider_key=current_key.provider_key,
-                    connection_identity=current_key.connection_identity,
-                    credential_source=current_key.credential_source,
-                    credential_revision=current_key.credential_revision,
-                    model_id=model_id,
-                    model_provenance=model_provenance,
-                )
-            except (TypeError, ValueError):
-                return None
+        expected_state = capture_expected_provider_setup_state(
+            config_snapshot,
+            identity=expected_identity,
+        )
 
         bind_provider_setup_write_expectation(
             mutation,
             guard=self._provider_write_guard,
             expectation=expectation,
-            current_identity=current_identity,
+            expected_state=expected_state,
         )
 
     def compose(self) -> ComposeResult:

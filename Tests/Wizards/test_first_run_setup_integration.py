@@ -265,6 +265,14 @@ def _typed_provider_draft(
     )
 
 
+def _assert_locked_precondition(precondition) -> None:
+    from tldw_chatbook.config import get_atomic_config_snapshot
+
+    assert callable(precondition)
+    assert precondition(get_atomic_config_snapshot())
+
+
+@pytest.mark.usefixtures("temp_config")
 class TestWizardAtomicProviderHandoff:
     @pytest.mark.asyncio
     async def test_concurrent_identical_model_commits_share_one_writer(
@@ -276,10 +284,9 @@ class TestWizardAtomicProviderHandoff:
         call_count = 0
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
             started.set()
@@ -314,10 +321,9 @@ class TestWizardAtomicProviderHandoff:
         written_models = []
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             written_models.append(section_values["chat_defaults"]["model"])
             return ConfigMutationResult(True, True, None)
 
@@ -352,10 +358,9 @@ class TestWizardAtomicProviderHandoff:
         written_models = []
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             written_models.append(section_values["chat_defaults"]["model"])
             return ConfigMutationResult(True, True, None)
 
@@ -385,10 +390,9 @@ class TestWizardAtomicProviderHandoff:
         release = threading.Event()
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             started.set()
             assert release.wait(2)
             return ConfigMutationResult(True, True, None)
@@ -419,10 +423,9 @@ class TestWizardAtomicProviderHandoff:
         call_count = 0
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -450,10 +453,9 @@ class TestWizardAtomicProviderHandoff:
         call_count = 0
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
             started.set()
@@ -490,10 +492,9 @@ class TestWizardAtomicProviderHandoff:
         calls = []
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             calls.append((section_values, delete_keys))
             return ConfigMutationResult(True, True, None)
 
@@ -553,10 +554,9 @@ class TestWizardAtomicProviderHandoff:
         calls = []
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             calls.append((section_values, delete_keys))
             return result
 
@@ -593,10 +593,9 @@ class TestWizardAtomicProviderHandoff:
         call_count = 0
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
             return next(results)
@@ -626,10 +625,9 @@ class TestWizardAtomicProviderHandoff:
         call_count = 0
 
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             nonlocal call_count
             call_count += 1
             return ConfigMutationResult(True, True, None)
@@ -654,11 +652,10 @@ class TestWizardAtomicProviderHandoff:
     ):
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
         def writer(
-            section_values, *, delete_keys=None, mutation_precondition=None
+            section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
             del section_values, delete_keys
-            assert callable(mutation_precondition)
-            assert mutation_precondition()
+            _assert_locked_precondition(locked_snapshot_precondition)
             return ConfigMutationResult(True, True, None)
 
         monkeypatch.setattr(
