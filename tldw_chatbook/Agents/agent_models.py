@@ -144,6 +144,7 @@ class ToolCall:
     name: str
     args: dict
     call_id: str = ""
+    raw_arguments: str = ""
 
 
 @dataclass(frozen=True)

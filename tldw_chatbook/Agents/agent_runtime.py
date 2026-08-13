@@ -52,9 +52,11 @@ from .agent_models import (
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
+    ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     transition_provider_call,
+    validate_continuation_restore,
 )
 
 FENCE_OPEN = "```tool_call"
@@ -110,7 +112,38 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     args = payload.get("arguments", {})
     if not isinstance(name, str) or not name or not isinstance(args, dict):
         return None
-    return ToolCall(name=name, args=args)
+    raw_arguments = ""
+    decoder = json.JSONDecoder()
+    try:
+        cursor = 1
+        while cursor < len(raw):
+            while cursor < len(raw) and (raw[cursor].isspace() or raw[cursor] == ","):
+                cursor += 1
+            if cursor >= len(raw) or raw[cursor] == "}":
+                break
+            key, cursor = decoder.raw_decode(raw, cursor)
+            while cursor < len(raw) and raw[cursor].isspace():
+                cursor += 1
+            if raw[cursor] != ":":
+                return None
+            cursor += 1
+            while cursor < len(raw) and raw[cursor].isspace():
+                cursor += 1
+            value_start = cursor
+            _value, cursor = decoder.raw_decode(raw, cursor)
+            if key == "arguments":
+                raw_arguments = raw[value_start:cursor]
+    except (IndexError, TypeError, ValueError):
+        return None
+    call_id = payload.get("call_id", "")
+    if not isinstance(call_id, str):
+        return None
+    return ToolCall(
+        name=name,
+        args=args,
+        call_id=call_id,
+        raw_arguments=raw_arguments,
+    )
 
 
 def split_visible_text_and_tool_call(text: str) -> tuple[str, ToolCall | None]:
@@ -339,6 +372,9 @@ class LoopDeps:
     persist_provider_continuation: Callable[
         [ProviderContinuationEvent], None
     ] = _noop_provider_continuation
+    expand_provider_continuation: (
+        Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+    ) = None
 
 
 def _continuation_calls_match(
@@ -356,10 +392,11 @@ def _continuation_calls_match(
         for canonical, call in zip(canonical_calls, calls):
             if (
                 not call.call_id
+                or not call.raw_arguments.strip()
                 or canonical.call_id != call.call_id
                 or canonical.name != call.name
                 or canonical.state != "pending"
-                or json.loads(canonical.arguments) != call.args
+                or canonical.arguments != call.raw_arguments
             ):
                 return False
     except Exception:
@@ -539,11 +576,26 @@ def _truncate_tool_result(
             " Re-issue the call with a narrower query, or use the tool's "
             "offset/limit arguments to read the rest."
         )
-    return (
-        content[:max_chars]
-        + f"\n\n[truncated: {tool_name} returned {len(content)} characters; "
-        f"showing the first {max_chars}.{recovery}]"
+    full_trailer = (
+        f"\n\n[truncated: {tool_name} returned {len(content)} characters."
+        f"{recovery}]"
     )
+    trailer = next(
+        (
+            value
+            for value in (
+                full_trailer,
+                f"\n[truncated: {tool_name} {len(content)}]",
+                "\n[truncated]",
+                "[cut]",
+            )
+            if len(value) < max_chars
+        ),
+        "",
+    )
+    if not trailer:
+        return content[:max_chars]
+    return content[: max_chars - len(trailer)] + trailer
 
 
 def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> None:
@@ -605,6 +657,7 @@ def run_agent_loop(
     deps: LoopDeps,
     *,
     restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+    restore_provider_target: ContinuationRestoreTarget | None = None,
     resume_provider_continuation: bool = False,
 ) -> RunOutcome:
     """Drive think → (tool) → observe until done / stuck / cancelled.
@@ -648,6 +701,7 @@ def run_agent_loop(
     total_tokens = 0
     continuation_checkpoint: ProviderContinuationCheckpoint | None = None
     restored_calls: list[ToolCall] | None = None
+    restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
 
     def add(kind: str, **kw) -> AgentStep:
@@ -727,11 +781,29 @@ def run_agent_loop(
             return False
         return True
 
+    def expand_restore_history(checkpoint: ProviderContinuationCheckpoint) -> bool:
+        nonlocal restore_history_start
+        expand = deps.expand_provider_continuation
+        if expand is None:
+            return False
+        try:
+            rows = expand(checkpoint)
+        except Exception:
+            return False
+        if type(rows) is not list or any(type(row) is not dict for row in rows):
+            return False
+        if restore_history_start is None:
+            restore_history_start = len(messages)
+        messages[restore_history_start:] = rows
+        return True
+
     if restore_provider_continuation is not None:
         context = deps.continuation_context
         checkpoint = restore_provider_continuation
         try:
-            dump_provider_continuation_json(checkpoint)
+            if restore_provider_target is None:
+                raise ValueError
+            validate_continuation_restore(checkpoint, restore_provider_target)
         except Exception:
             return continuation_error()
         if (
@@ -760,6 +832,8 @@ def run_agent_loop(
                 ),
             )
             return _outcome(RUN_STUCK)
+        if not expand_restore_history(checkpoint):
+            return continuation_error()
         continuation_checkpoint = checkpoint
         restored_calls = []
         for round_ in checkpoint.rounds:
@@ -768,32 +842,12 @@ def run_agent_loop(
                     name=call.name,
                     args=json.loads(call.arguments),
                     call_id=call.call_id,
+                    raw_arguments=call.arguments,
                 )
                 for call in round_.calls
             ]
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": round_.assistant_content,
-                    "tool_calls": [
-                        {
-                            "id": call.call_id,
-                            "type": "function",
-                            "function": {
-                                "name": call.name,
-                                "arguments": call.arguments,
-                            },
-                        }
-                        for call in round_.calls
-                    ],
-                }
-            )
             for canonical, call in zip(round_.calls, calls):
-                if canonical.state in {"completed", "failed"}:
-                    if canonical.result is None:
-                        return continuation_error()
-                    _append_tool_result(messages, call, canonical.result.value)
-                else:
+                if canonical.state == "pending":
                     restored_calls.append(call)
 
     while True:
@@ -813,6 +867,7 @@ def run_agent_loop(
             return _outcome(RUN_STUCK)
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
+        ephemeral_continuation = False
         if restoring_batch:
             calls = restored_calls or []
             restored_calls = None
@@ -822,78 +877,14 @@ def run_agent_loop(
             turn = deps.call_model(messages, tuple(active))
             model_turns += 1
             total_tokens += turn.tokens
-            add(STEP_MODEL, summary=turn.text[:200])
-            _emit_record(
-                deps,
-                "model",
-                content=turn.text,
-                tool="",
-                status="",
-                call_id="",
-            )
             calls = list(turn.tool_calls)
+        fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
-            if fenced is None:
-                # A Stop can land while this (tool-call-free) turn was still
-                # streaming. There is no further step/tool-call boundary
-                # ahead for a plain final answer, so this is the last chance
-                # to recheck should_cancel before reporting "done" — without
-                # this, a cancellation that lands mid-final-answer would be
-                # silently downgraded to a normal completed run.
-                if deps.should_cancel():
-                    return _outcome(RUN_CANCELLED, final_text=turn.text)
-                candidate = turn.provider_continuation
-                if candidate is not None:
-                    context = deps.continuation_context
-                    try:
-                        dump_provider_continuation_json(candidate)
-                    except Exception:
-                        return continuation_error()
-                    if (
-                        not _valid_continuation_context(
-                            context, deps.persist_provider_continuation
-                        )
-                        or candidate.state != "complete"
-                    ):
-                        return continuation_error()
-                    expected_revision = (
-                        continuation_checkpoint.checkpoint_revision
-                        if continuation_checkpoint is not None
-                        else None
-                    )
-                    if continuation_checkpoint is None:
-                        final_round = candidate.rounds[-1]
-                        if (
-                            candidate.checkpoint_revision != 1
-                            or candidate.provider != "moonshot"
-                            or candidate.model != "kimi-k3"
-                            or len(candidate.rounds) != 1
-                            or final_round.calls
-                            or final_round.assistant_content != turn.text
-                        ):
-                            return continuation_error()
-                    elif not _valid_final_update(
-                        continuation_checkpoint, candidate, turn.text
-                    ):
-                        return continuation_error()
-                    final_event = FinalContinuation(
-                        context=context,  # type: ignore[arg-type]
-                        checkpoint=candidate,
-                        expected_checkpoint_revision=expected_revision,
-                        assistant_content=turn.text,
-                    )
-                    if not persist_continuation(final_event):
-                        return continuation_error()
-                    continuation_checkpoint = candidate
-                elif continuation_checkpoint is not None:
-                    return continuation_error()
-                return _outcome(RUN_DONE, final_text=turn.text)
-            calls = [fenced]
+            if fenced is not None:
+                calls = [fenced]
         candidate = turn.provider_continuation
-        if restoring_batch:
-            pass
-        elif candidate is not None:
+        if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context
             if (
                 not _valid_continuation_context(
@@ -917,10 +908,81 @@ def run_agent_loop(
             if not persist_continuation(batch_event):
                 return continuation_error()
             continuation_checkpoint = candidate
-            if context is not None and context.durability == "ephemeral":
-                steps[-1].summary = "Ephemeral tool continuation is non-resumable."
-        elif continuation_checkpoint is not None:
+            ephemeral_continuation = bool(
+                context is not None and context.durability == "ephemeral"
+            )
+        elif not restoring_batch and calls and continuation_checkpoint is not None:
             return continuation_error()
+
+        if not calls:
+            # A Stop can land while this (tool-call-free) turn was still
+            # streaming. There is no further step/tool-call boundary ahead.
+            if deps.should_cancel():
+                return _outcome(RUN_CANCELLED, final_text=turn.text)
+            if candidate is not None:
+                context = deps.continuation_context
+                try:
+                    dump_provider_continuation_json(candidate)
+                except Exception:
+                    return continuation_error()
+                if (
+                    not _valid_continuation_context(
+                        context, deps.persist_provider_continuation
+                    )
+                    or candidate.state != "complete"
+                ):
+                    return continuation_error()
+                expected_revision = (
+                    continuation_checkpoint.checkpoint_revision
+                    if continuation_checkpoint is not None
+                    else None
+                )
+                if continuation_checkpoint is None:
+                    final_round = candidate.rounds[-1]
+                    if (
+                        candidate.checkpoint_revision != 1
+                        or candidate.provider != "moonshot"
+                        or candidate.model != "kimi-k3"
+                        or len(candidate.rounds) != 1
+                        or final_round.calls
+                        or final_round.assistant_content != turn.text
+                    ):
+                        return continuation_error()
+                elif not _valid_final_update(
+                    continuation_checkpoint, candidate, turn.text
+                ):
+                    return continuation_error()
+                final_event = FinalContinuation(
+                    context=context,  # type: ignore[arg-type]
+                    checkpoint=candidate,
+                    expected_checkpoint_revision=expected_revision,
+                    assistant_content=turn.text,
+                )
+                if not persist_continuation(final_event):
+                    return continuation_error()
+                continuation_checkpoint = candidate
+            elif continuation_checkpoint is not None:
+                return continuation_error()
+
+        if not restoring_batch:
+            add(
+                STEP_MODEL,
+                summary=(
+                    "Ephemeral tool continuation is non-resumable."
+                    if ephemeral_continuation
+                    else turn.text[:200]
+                ),
+            )
+            _emit_record(
+                deps,
+                "model",
+                content=turn.text,
+                tool="",
+                status="",
+                call_id="",
+            )
+        if not calls:
+            return _outcome(RUN_DONE, final_text=turn.text)
         if not restoring_batch:
             messages.append(
                 turn.assistant_message or {"role": "assistant", "content": turn.text}
@@ -1033,6 +1095,10 @@ def run_agent_loop(
                 verdict = verdicts[call.call_id]
             else:
                 verdict = verdicts.get(call.name, "proceed")
+            if continuation_checkpoint is not None and not transition_call(
+                call, "executing"
+            ):
+                return continuation_error()
             _emit_record(
                 deps,
                 "tool_call",
@@ -1041,10 +1107,6 @@ def run_agent_loop(
                 status="",
                 call_id=call.call_id,
             )
-            if continuation_checkpoint is not None and not transition_call(
-                call, "executing"
-            ):
-                return continuation_error()
             if verdict != "proceed":
                 content = verdict
             else:
@@ -1306,7 +1368,14 @@ def run_agent_loop(
             # point at its own full copy in the run log.
             content = _truncate_tool_result(
                 content,
-                budget.max_tool_result_chars,
+                (
+                    min(budget.max_tool_result_chars, 16_000)
+                    if continuation_checkpoint is not None
+                    and budget.max_tool_result_chars > 0
+                    else 16_000
+                    if continuation_checkpoint is not None
+                    else budget.max_tool_result_chars
+                ),
                 call.name,
                 record_number=record_number,
             )
@@ -1324,5 +1393,13 @@ def run_agent_loop(
                 ):
                     return continuation_error()
 
-            add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
-            _append_tool_result(messages, call, content)
+            add(
+                STEP_TOOL_RESULT,
+                tool_name=call.name,
+                result=(content if continuation_checkpoint is not None else content[:2000]),
+            )
+            if restoring_batch and continuation_checkpoint is not None:
+                if not expand_restore_history(continuation_checkpoint):
+                    return continuation_error()
+            else:
+                _append_tool_result(messages, call, content)

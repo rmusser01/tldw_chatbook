@@ -770,7 +770,8 @@ def test_truncate_tool_result_bounds_content_and_names_a_continuation():
     out = _truncate_tool_result("x" * 5000, 100, "grep_files")
 
     assert len(out) < 5000
-    assert out.startswith("x" * 100)
+    assert out.startswith("x")
+    assert len(out) == 100
     assert "grep_files" in out
     assert "5000" in out
 
@@ -826,7 +827,8 @@ def test_run_agent_loop_truncates_oversized_tool_result_in_history():
     tool_result_message = seen_messages[1][-1]
     assert tool_result_message["role"] == "user"
     content = tool_result_message["content"]
-    assert content.startswith("Tool result for calculator: " + "y" * 100)
+    assert content.startswith("Tool result for calculator: " + "y")
+    assert len(content.removeprefix("Tool result for calculator: ")) == 100
     assert len(content) < len(huge)
     assert "truncated" in content and "calculator" in content
 
@@ -871,9 +873,8 @@ def test_run_agent_loop_truncates_review_hook_refusal_in_history():
     )  # dispatch was skipped -- the refusal never reaches invoke_tool
     tool_result_message = seen_messages[1][-1]
     content = tool_result_message["content"]
-    assert content.startswith(
-        "Tool result for calculator: Blocked: " + "z" * (100 - len("Blocked: "))
-    )
+    assert content.startswith("Tool result for calculator: Blocked: ")
+    assert len(content.removeprefix("Tool result for calculator: ")) == 100
     assert len(content) < len(long_refusal)
     assert "truncated" in content and "calculator" in content
 

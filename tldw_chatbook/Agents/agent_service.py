@@ -57,7 +57,10 @@ from .agent_models import (
     # invoking the parameter's value (None/str) instead.
     definition_fingerprint as compute_definition_fingerprint,
 )
-from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+)
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .fleet_coordinator import FleetCoordinator, FleetHandle
 from .native_tools import (
@@ -550,6 +553,9 @@ class AgentService:
         | None = None,
         persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
         | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -698,6 +704,7 @@ class AgentService:
         # client for no reachable benefit.
         self._child_model_scope = child_model_scope or contextlib.nullcontext
         self.persist_provider_continuation = persist_provider_continuation
+        self.expand_provider_continuation = expand_provider_continuation
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -1258,6 +1265,7 @@ class AgentService:
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
         continuation_agent_kind: Literal["primary", "subagent", "fleet"] | None = None,
         restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
         resume_provider_continuation: bool = False,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
@@ -2751,6 +2759,7 @@ class AgentService:
         )
         if self.persist_provider_continuation is not None:
             deps.persist_provider_continuation = self.persist_provider_continuation
+        deps.expand_provider_continuation = self.expand_provider_continuation
         try:
             # PR2a Task 7: bind THIS run as the dispatching run for the
             # whole loop, on the loop's own thread.
@@ -2787,6 +2796,7 @@ class AgentService:
                     active,
                     deps,
                     restore_provider_continuation=restore_provider_continuation,
+                    restore_provider_target=restore_provider_target,
                     resume_provider_continuation=resume_provider_continuation,
                 )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
@@ -2823,6 +2833,7 @@ class AgentService:
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
         restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
         resume_provider_continuation: bool = False,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
@@ -2862,6 +2873,8 @@ class AgentService:
                 explicitly non-resumable in memory.
             restore_provider_continuation: Already-validated canonical state
                 to load without automatic execution.
+            restore_provider_target: Exact frozen provider resolution required
+                to validate an explicit restore.
             resume_provider_continuation: Explicitly resume pending restored
                 calls through fresh review when ``True``.
 
@@ -2977,6 +2990,7 @@ class AgentService:
             ),
             continuation_durability=continuation_durability,
             restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
             resume_provider_continuation=resume_provider_continuation,
         )
         # Settle the children that must not outlive this turn. Must happen

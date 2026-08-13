@@ -27,6 +27,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
@@ -480,9 +481,13 @@ def test_service_wires_exact_continuation_context_callback_and_resume_input(
     def persist(event):
         raise AssertionError("not called by this wiring-only test")
 
+    def expand(actual):
+        return [{"opaque": True}]
+
     def fake_loop(config, messages, active, deps, **kwargs):
         captured["context"] = deps.continuation_context
         captured["callback"] = deps.persist_provider_continuation
+        captured["expand"] = deps.expand_provider_continuation
         captured.update(kwargs)
         return agent_service.RunOutcome(status=RUN_DONE, steps=[], final_text="done")
 
@@ -494,6 +499,7 @@ def test_service_wires_exact_continuation_context_callback_and_resume_input(
         registry=registry,
         chat_call=ScriptedChat(["unused"]),
         persist_provider_continuation=persist,
+        expand_provider_continuation=expand,
     )
     run_id, outcome = service.run_turn(
         conversation_id="conversation",
@@ -503,6 +509,12 @@ def test_service_wires_exact_continuation_context_callback_and_resume_input(
         continuation_owner_message_id="assistant-owner",
         continuation_durability="ephemeral",
         restore_provider_continuation=checkpoint,
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+        ),
         resume_provider_continuation=True,
     )
 
@@ -514,7 +526,14 @@ def test_service_wires_exact_continuation_context_callback_and_resume_input(
         durability="ephemeral",
     )
     assert captured["callback"] is persist
+    assert captured["expand"] is expand
     assert captured["restore_provider_continuation"] is checkpoint
+    assert captured["restore_provider_target"] == ContinuationRestoreTarget(
+        "deepseek",
+        "deepseek-v4-flash",
+        "responses",
+        "https://api.deepseek.com/v1",
+    )
     assert captured["resume_provider_continuation"] is True
 
 
