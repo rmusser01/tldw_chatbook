@@ -8,11 +8,19 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+)
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleRetrievalScopeState,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 
@@ -66,6 +74,18 @@ class _StatusRowApp(App):
             collapsed=self._collapsed,
             id="console-status-chips",
         )
+
+
+def _ready_console_host() -> tuple[ConsoleHarness, object]:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return ConsoleHarness(app), app
+
+
+async def _mounted_console(host: ConsoleHarness, pilot) -> ChatScreen:
+    console = host.screen_stack[-1]
+    await _wait_for_selector(console, pilot, "#console-status-chips")
+    return console
 
 
 @pytest.mark.asyncio
@@ -180,3 +200,70 @@ async def test_widget_status_toggle_buttons_are_focusable_and_described() -> Non
         assert expand.can_focus is True
         assert "Collapse status" in str(collapse.tooltip)
         assert "Expand status" in str(expand.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_screen_fresh_status_row_starts_expanded() -> None:
+    host, _ = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+
+        assert console._console_status_chips_collapsed is False
+        assert strip.collapsed is False
+        assert _is_effectively_displayed(
+            strip.query_one("#console-status-expanded")
+        )
+        assert not _is_effectively_displayed(
+            strip.query_one("#console-status-collapsed")
+        )
+
+
+@pytest.mark.asyncio
+async def test_screen_status_collapse_updates_state_and_focuses_expand() -> None:
+    host, _ = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+
+        await pilot.click("#console-status-collapse")
+        await pilot.pause()
+
+        expand = strip.query_one("#console-status-expand", Button)
+        assert console._console_status_chips_collapsed is True
+        assert strip.collapsed is True
+        assert _is_effectively_displayed(expand)
+        assert host.focused is expand
+
+
+@pytest.mark.asyncio
+async def test_screen_status_expand_updates_state_and_focuses_collapse() -> None:
+    host, _ = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+        await pilot.click("#console-status-collapse")
+        await pilot.pause()
+
+        await pilot.click("#console-status-expand")
+        await pilot.pause()
+
+        collapse = strip.query_one("#console-status-collapse", Button)
+        assert console._console_status_chips_collapsed is False
+        assert strip.collapsed is False
+        assert _is_effectively_displayed(collapse)
+        assert host.focused is collapse
+
+
+@pytest.mark.asyncio
+async def test_screen_status_collapse_state_resets_on_new_screen() -> None:
+    host, app = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await pilot.click("#console-status-collapse")
+        await pilot.pause()
+        assert console._console_status_chips_collapsed is True
+
+        replacement = ChatScreen(app)
+
+        assert replacement._console_status_chips_collapsed is False
