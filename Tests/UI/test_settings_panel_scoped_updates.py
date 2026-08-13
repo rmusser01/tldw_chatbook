@@ -119,6 +119,7 @@ async def test_category_switch_lands_focus_on_the_selected_rail_button():
         await pilot.click("#settings-category-storage")
         await _settle(pilot)
 
+        assert screen.active_category == "storage"
         assert getattr(host.focused, "id", None) == "settings-category-storage"
 
 

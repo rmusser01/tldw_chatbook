@@ -21,11 +21,11 @@ from textual.widgets import Button, Input
 
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
-from Tests.UI.test_evals_screen import (  # noqa: F401 -- fixtures
-    EvalsHarness,
-    evals_app,
-    evals_db,
-    seeded_bench,
+from .test_evals_screen import EvalsHarness as EvalsHarness  # noqa: F401
+from .test_evals_screen import evals_app as evals_app  # noqa: F401 -- fixture re-export
+from .test_evals_screen import evals_db as evals_db  # noqa: F401 -- fixture re-export
+from .test_evals_screen import (  # noqa: F401 -- fixture re-export
+    seeded_bench as seeded_bench,
 )
 
 pytestmark = pytest.mark.asyncio
