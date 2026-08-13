@@ -91,6 +91,7 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
     sessions = store.sessions()
     assert len(sessions) == 1
     session = sessions[0]
+    assert session is original
     assert session.id == original.id
     assert session.workspace_id == "workspace-original"
     assert session.title == "Chat with Alba"
@@ -98,6 +99,11 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
     assert session.settings.system_prompt == "Protect Captain Rowan as Alba."
     greetings = store.messages_for_session(session.id)
     assert [message.content for message in greetings] == ["Hello, Captain Rowan."]
+    assert session.identity_revision == 2
+    assert store.payload_revision(session.id) == 3
+    presentation = store.presentation_context(session.id, "fallback")
+    assert presentation.character_name == "Alba"
+    assert presentation.revision == session.identity_revision
     sync.assert_awaited_once_with()
     assert focus_calls == [True]
 

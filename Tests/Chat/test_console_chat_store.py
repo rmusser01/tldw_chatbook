@@ -111,9 +111,6 @@ def test_typed_then_cleared_session_keeps_durable_work_marker():
             "_stream_materialized_counts", lambda _session: 1, id="stream-materialized"
         ),
         pytest.param(
-            "_sync_v2_message_versions", lambda _session: "version", id="sync-version"
-        ),
-        pytest.param(
             "_roleplay_message_projection_candidates",
             lambda _session: ("projection",),
             id="roleplay-message-projection",
@@ -145,12 +142,72 @@ def test_pristine_session_rejects_each_session_colliding_live_message_state(
     session = _pristine_session(store, defaults)
     container = getattr(store, container_name)
     value = value_factory(session)
+    message_id = "orphan-message-owned-by-pristine-session"
+    store._message_session_index[message_id] = session.id
     if isinstance(container, set):
-        container.add(session.id)
+        container.add(message_id)
     else:
-        container[session.id] = value
+        container[message_id] = value
 
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+@pytest.mark.parametrize(
+    "container_name,value",
+    [
+        pytest.param("_pending_persistence_message_ids", None, id="pending-persistence"),
+        pytest.param("_terminal_citation_finalizers", object(), id="citation-finalizer"),
+        pytest.param(
+            "_provisional_terminal_selection_ids", None, id="provisional-terminal"
+        ),
+        pytest.param(
+            "_terminal_persistence_deferred_ids", None, id="deferred-terminal"
+        ),
+        pytest.param("_stream_chunks_by_message", ["chunk"], id="stream-chunks"),
+        pytest.param("_stream_materialized_counts", 1, id="stream-materialized"),
+        pytest.param(
+            "_roleplay_message_projection_candidates",
+            ("projection",),
+            id="roleplay-message-projection",
+        ),
+        pytest.param("_variant_stream_bases", object(), id="variant-stream"),
+        pytest.param("_variant_restored_message_ids", None, id="restored-variant"),
+        pytest.param("_message_speech_revisions", 1, id="speech-revision"),
+        pytest.param("_failed_retry_message_ids", None, id="failed-retry"),
+        pytest.param("_native_parent_by_message", None, id="native-parent"),
+    ],
+)
+def test_pristine_session_ignores_foreign_message_id_collision(
+    container_name, value
+):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    target = _pristine_session(store, defaults)
+    foreign = store.create_session(title="Other", settings=defaults)
+    foreign_message = ConsoleChatMessage(
+        id=target.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="foreign work",
+    )
+    store._register_tree_node(foreign.id, foreign_message, parent_native_id=None)
+    container = getattr(store, container_name)
+    if isinstance(container, set):
+        container.add(foreign_message.id)
+    else:
+        container[foreign_message.id] = value
+
+    assert store.is_pristine_session(target.id, expected_settings=defaults)
+
+
+def test_pristine_session_ignores_global_sync_version_cache():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    target = _pristine_session(store, defaults)
+    store._sync_v2_message_versions[
+        "foreign-conversation:foreign-persisted-message"
+    ] = "global-stable-version"
+
+    assert store.is_pristine_session(target.id, expected_settings=defaults)
 
 
 def test_pristine_session_allows_harmless_initialized_empty_cache_entries():
@@ -355,6 +412,9 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
         canonical_settings_baseline=defaults,
     )
     order_before = [session.id for session in store.sessions()]
+    updated_at_before = target.updated_at
+    payload_revision_before = store.payload_revision(target.id)
+    identity_revision_before = target.identity_revision
 
     updated = store.repurpose_pristine_session(
         target.id,
@@ -370,6 +430,8 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
         character_name="Alba",
     )
 
+    assert updated is target
+    assert store.sessions()[1] is target
     assert updated.id == target.id
     assert updated.workspace_id == "workspace-target"
     assert [session.id for session in store.sessions()] == order_before
@@ -383,6 +445,64 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
     assert updated.character_id == 7
     assert updated.character_name == "Alba"
     assert updated.persisted_conversation_id is None
+    assert updated.canonical_settings_baseline is None
+    assert updated.updated_at != updated_at_before
+    assert updated.identity_revision == identity_revision_before + 1
+    assert store.payload_revision(updated.id) == payload_revision_before + 1
+    presentation = store.presentation_context(updated.id, "User")
+    assert presentation.character_name == "Alba"
+    assert presentation.assistant_kind == "character"
+    assert presentation.revision == updated.identity_revision
+
+
+@pytest.mark.parametrize(
+    "system_template,greeting_template,expected_identity_revision,expected_payload_revision",
+    [
+        pytest.param("", "", 1, 1, id="identity-only"),
+        pytest.param("Stay {{char}}.", "", 2, 2, id="template"),
+        pytest.param("Stay {{char}}.", "Hello.", 2, 3, id="template-and-greeting"),
+    ],
+)
+def test_repurpose_and_seed_revision_contracts(
+    system_template,
+    greeting_template,
+    expected_identity_revision,
+    expected_payload_revision,
+):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    store.repurpose_pristine_session(
+        session.id,
+        canonical_settings=defaults,
+        trusted_system_prompt="You are Alba.",
+        title="Chat with Alba",
+        settings=replace(
+            defaults,
+            system_prompt="You are Alba.",
+            character_label="Alba",
+        ),
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+        character_name="Alba",
+    )
+    store.seed_character_roleplay(
+        session.id,
+        system_template=system_template,
+        greeting_template=greeting_template,
+        global_default="User",
+    )
+
+    assert session.identity_revision == expected_identity_revision
+    assert store.payload_revision(session.id) == expected_payload_revision
+    assert store.presentation_context(session.id, "User").revision == (
+        expected_identity_revision
+    )
+    assert len(store.messages_for_session(session.id)) == int(bool(greeting_template))
 
 
 def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypatch):
@@ -390,6 +510,8 @@ def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypa
     store = ConsoleChatStore()
     session = _pristine_session(store, defaults)
     before = replace(session)
+    payload_revision_before = store.payload_revision(session.id)
+    payload_revisions_before = dict(store._payload_revisions)
     monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
 
     with pytest.raises(ValueError, match="pristine"):
@@ -412,6 +534,10 @@ def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypa
         )
 
     assert store.sessions() == [before]
+    assert store.sessions()[0] is session
+    assert session == before
+    assert store.payload_revision(session.id) == payload_revision_before
+    assert store._payload_revisions == payload_revisions_before
 
 
 @pytest.mark.parametrize(
@@ -439,6 +565,8 @@ def test_repurpose_rejects_noncanonical_roleplay_settings_without_mutation(
     store = ConsoleChatStore()
     session = _pristine_session(store, defaults)
     before = replace(session)
+    payload_revision_before = store.payload_revision(session.id)
+    payload_revisions_before = dict(store._payload_revisions)
 
     with pytest.raises(ValueError):
         store.repurpose_pristine_session(
@@ -456,6 +584,10 @@ def test_repurpose_rejects_noncanonical_roleplay_settings_without_mutation(
         )
 
     assert store.sessions() == [before]
+    assert store.sessions()[0] is session
+    assert session == before
+    assert store.payload_revision(session.id) == payload_revision_before
+    assert store._payload_revisions == payload_revisions_before
 
 
 def test_repurpose_rejects_mismatched_roleplay_title_without_mutation():

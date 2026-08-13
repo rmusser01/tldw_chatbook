@@ -796,11 +796,28 @@ class ConsoleChatStore:
         if direct_session_state:
             return False
 
+        return not self._session_owns_message_live_state(session_id)
+
+    def _session_owns_message_live_state(self, session_id: str) -> bool:
+        """Return whether native-message live state belongs to ``session_id``.
+
+        Every collection below is keyed by native ``ConsoleChatMessage.id``.
+        Resolve that key through the ownership index or the session's full tree;
+        a session id that merely happens to equal another session's message id
+        is not ownership. ``_sync_v2_message_versions`` is intentionally absent:
+        its keys are ``<conversation id>:<persisted message id>`` stable keys,
+        not native message ids.
+
+        The normal indexed-orphan case is rejected by the direct index audit in
+        :meth:`is_pristine_session`. This pass also protects structurally owned
+        state if an index entry is absent or inconsistent, while iterating only
+        live-message containers rather than every stored message tree.
+        """
+        owned_tree_nodes = self._nodes_by_session.get(session_id, {})
         message_maps = (
             self._terminal_citation_finalizers,
             self._stream_chunks_by_message,
             self._stream_materialized_counts,
-            self._sync_v2_message_versions,
             self._roleplay_message_projection_candidates,
             self._variant_stream_bases,
             self._message_speech_revisions,
@@ -813,7 +830,12 @@ class ConsoleChatStore:
             self._variant_restored_message_ids,
             self._failed_retry_message_ids,
         )
-        return not any(session_id in state for state in (*message_maps, *message_sets))
+        return any(
+            self._message_session_index.get(message_id) == session_id
+            or message_id in owned_tree_nodes
+            for state in (*message_maps, *message_sets)
+            for message_id in state
+        )
 
     def repurpose_pristine_session(
         self,
@@ -871,26 +893,32 @@ class ConsoleChatStore:
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError("Session is no longer pristine.")
-        candidate = replace(
-            session,
-            title=title,
-            settings=settings,
-            runtime_backend=runtime_backend,
-            assistant_kind=assistant_kind,
-            assistant_id=assistant_id,
-            assistant_authority_id=assistant_authority_id,
-            character_id=character_id,
-            character_name=character_name,
-            canonical_settings_baseline=None,
-            updated_at=_utc_now_iso(),
-        )
+        proposed_updated_at = _utc_now_iso()
+        proposed_identity_revision = session.identity_revision + 1
+        proposed_payload_revision = self._payload_revisions.get(session_id, 0) + 1
         if not self.is_pristine_session(
             session_id,
             expected_settings=canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
-        self._sessions[session_id] = candidate
-        return candidate
+
+        # All validation, derived values, and stale-eligibility checks are
+        # complete. ConsoleChatSession is a plain dataclass with no property
+        # setters, so these bounded assignments cannot raise application-level
+        # exceptions and preserve the live object references held by the UI.
+        session.title = title
+        session.settings = settings
+        session.canonical_settings_baseline = None
+        session.runtime_backend = runtime_backend
+        session.assistant_kind = assistant_kind
+        session.assistant_id = assistant_id
+        session.assistant_authority_id = assistant_authority_id
+        session.character_id = character_id
+        session.character_name = character_name
+        session.updated_at = proposed_updated_at
+        session.identity_revision = proposed_identity_revision
+        self._payload_revisions[session_id] = proposed_payload_revision
+        return session
 
     def refresh_pristine_session_settings(
         self,
