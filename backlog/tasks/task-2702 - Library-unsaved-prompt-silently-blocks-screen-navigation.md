@@ -1,9 +1,11 @@
 ---
 id: TASK-2702
 title: 'Library: an unsaved prompt silently blocks screen navigation'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-31'
+updated_date: '2026-08-13 16:00'
 labels: [library, bug, ux]
 dependencies: []
 ---
