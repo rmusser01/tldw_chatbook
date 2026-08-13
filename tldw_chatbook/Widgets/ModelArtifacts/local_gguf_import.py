@@ -18,7 +18,11 @@ class LocalGGUFImportRequested(Message):
     """Request consent for importing one explicitly selected GGUF."""
 
     def __init__(self, path: Path) -> None:
-        """Create an import request that preserves the exact selected path."""
+        """Create an import request that preserves the exact selected path.
+
+        Args:
+            path: Explicit local GGUF selected by the user.
+        """
         super().__init__()
         self.path = path
 
@@ -52,7 +56,11 @@ class LocalGGUFImportControls(Widget):
         yield Button("Import…", classes="model-import", disabled=self.pending)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Post exact import intent without performing file work."""
+        """Post exact import intent without performing file work.
+
+        Args:
+            event: Textual button event for the row's Import action.
+        """
         event.stop()
         if not self.pending:
             self.post_message(LocalGGUFImportRequested(self.path))
@@ -129,7 +137,11 @@ class LocalGGUFImportConsentModal(ModalScreen[bool]):
                 )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dismiss with the decision represented by the pressed control."""
+        """Dismiss with the decision represented by the pressed control.
+
+        Args:
+            event: Textual button event for Import or Cancel.
+        """
         if event.button.id == "local-gguf-import-confirm":
             self.dismiss(True)
         elif event.button.id == "local-gguf-import-cancel":

@@ -1136,6 +1136,81 @@ def test_open_local_gguf_rejects_windows_reparse_point(
             pytest.fail("reparse point must not open")
 
 
+def test_open_local_gguf_accepts_windows_path_birthtime_without_weakening_fstat_recheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    real_lstat = gguf.os.lstat
+    real_fstat = gguf.os.fstat
+
+    class WindowsPathInfo:
+        def __init__(self, actual: os.stat_result):
+            self.st_dev = actual.st_dev
+            self.st_ino = actual.st_ino
+            self.st_mode = actual.st_mode
+            self.st_size = actual.st_size
+            self.st_mtime_ns = actual.st_mtime_ns
+            self.st_ctime_ns = actual.st_ctime_ns + 1
+            self.st_file_attributes = getattr(actual, "st_file_attributes", 0)
+
+    class ChangedDescriptorInfo(WindowsPathInfo):
+        def __init__(self, actual: os.stat_result):
+            super().__init__(actual)
+            self.st_ctime_ns = actual.st_ctime_ns + 1
+
+    monkeypatch.setattr(gguf.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        gguf.os,
+        "lstat",
+        lambda path: WindowsPathInfo(real_lstat(path)),
+    )
+
+    with gguf.open_local_gguf(source) as opened:
+        assert opened.identity.changed_ns == real_fstat(opened.descriptor).st_ctime_ns
+
+        monkeypatch.setattr(
+            gguf.os,
+            "fstat",
+            lambda descriptor: ChangedDescriptorInfo(real_fstat(descriptor)),
+        )
+        with pytest.raises(gguf.GGUFSourceChangedError):
+            opened.recheck()
+        monkeypatch.setattr(gguf.os, "fstat", real_fstat)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns"),
+)
+def test_open_local_gguf_windows_path_comparison_rejects_stable_field_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+):
+    source = tmp_path / "model.gguf"
+    source.write_bytes(make_gguf(architecture="llama"))
+    actual = gguf.os.lstat(source)
+
+    class ChangedPathInfo:
+        st_dev = actual.st_dev
+        st_ino = actual.st_ino
+        st_mode = actual.st_mode
+        st_size = actual.st_size
+        st_mtime_ns = actual.st_mtime_ns
+        st_ctime_ns = actual.st_ctime_ns + 1
+        st_file_attributes = getattr(actual, "st_file_attributes", 0)
+
+    setattr(ChangedPathInfo, field, getattr(ChangedPathInfo, field) + 1)
+    monkeypatch.setattr(gguf.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(gguf.os, "lstat", lambda path: ChangedPathInfo())
+
+    with pytest.raises(gguf.GGUFSourceChangedError):
+        with gguf.open_local_gguf(source):
+            pytest.fail("changed path identity must not open")
+
+
 def test_validate_local_gguf_structure_accepts_generic_llm_without_wheel_policy(
     tmp_path: Path,
 ):

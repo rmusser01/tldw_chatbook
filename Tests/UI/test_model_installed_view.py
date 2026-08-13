@@ -1838,6 +1838,7 @@ async def test_activation_failure_keeps_installed_row_and_offers_activate(
             pilot,
             lambda: "Installed — activation required" in _rendered_static_text(view),
         )
+        await _wait_until(pilot, lambda: len(view.query(".model-activate")) == 1)
 
         activate = view.query_one(".model-activate", Button)
         assert activate.disabled is False

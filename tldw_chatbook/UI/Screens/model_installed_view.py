@@ -129,7 +129,14 @@ def reconcile_result_message(report: ReconcileReport) -> str:
 
 
 def local_import_failure_message(exc: BaseException) -> str:
-    """Map local-import failures to path-free recovery guidance."""
+    """Map a local-import failure to path-free recovery guidance.
+
+    Args:
+        exc: Failure raised by local admission or managed-store import.
+
+    Returns:
+        Stable user-facing guidance that excludes exception details and paths.
+    """
     if isinstance(exc, GGUFPathError):
         return "The selected GGUF could not be read safely. Choose another file."
     if isinstance(exc, GGUFVersionError):

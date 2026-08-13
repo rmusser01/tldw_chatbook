@@ -27,11 +27,6 @@ REQUIRED_NODES = (
     "Tests/UI/test_model_installed_view.py::test_activation_failure_keeps_installed_row_and_offers_activate",
     "Tests/UI/test_model_installed_view.py::test_import_failure_logs_only_stable_category_and_never_selected_path",
     "Tests/UI/test_model_installed_view.py::test_import_lane_disables_every_lifecycle_action_at_80_columns",
-    "Tests/UI/test_llm_screen_lab_adoption.py::test_local_import_terminal_releases_host_ownership[success]",
-    "Tests/UI/test_llm_screen_lab_adoption.py::test_local_import_terminal_releases_host_ownership[failure]",
-    "Tests/UI/test_llm_screen_lab_adoption.py::test_selection_unmount_releases_host_ownership",
-    "Tests/UI/test_llm_screen_lab_adoption.py::test_active_import_unmount_keeps_host_owned_until_worker_stops",
-    "Tests/UI/test_llm_screen_lab_adoption.py::test_queued_import_unmount_releases_host_before_thread_body",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
 ASYNC_EVIDENCE_FUNCTIONS = {
@@ -43,12 +38,6 @@ ASYNC_EVIDENCE_FUNCTIONS = {
         "test_activation_failure_keeps_installed_row_and_offers_activate",
         "test_import_failure_logs_only_stable_category_and_never_selected_path",
         "test_import_lane_disables_every_lifecycle_action_at_80_columns",
-    },
-    "Tests/UI/test_llm_screen_lab_adoption.py": {
-        "test_local_import_terminal_releases_host_ownership",
-        "test_selection_unmount_releases_host_ownership",
-        "test_active_import_unmount_keeps_host_owned_until_worker_stops",
-        "test_queued_import_unmount_releases_host_before_thread_body",
     },
 }
 
