@@ -89,7 +89,7 @@ parse of the expression -- a mock would pin nothing.
 import asyncio
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -548,25 +548,26 @@ def test_the_prefix_form_really_is_wider_than_the_and_over_the_same_terms():
     If this ever stopped being true, suppressing the fallback would be
     correct and the pin above would be the wrong rule.
     """
-    conn = sqlite3.connect(":memory:")
-    conn.execute("CREATE VIRTUAL TABLE docs USING fts5(title, content)")
-    conn.execute(
-        "INSERT INTO docs(title, content) VALUES (?, ?)",
-        ("Burrow survey", "The wombats were counted at dusk."),
-    )
-    conn.commit()
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.execute("CREATE VIRTUAL TABLE docs USING fts5(title, content)")
+        conn.execute(
+            "INSERT INTO docs(title, content) VALUES (?, ?)",
+            ("Burrow survey", "The wombats were counted at dusk."),
+        )
+        conn.commit()
 
-    def match(expression):
-        return conn.execute(
-            "SELECT rowid FROM docs WHERE docs MATCH ?", (expression,)
-        ).fetchall()
+        def match(expression):
+            return conn.execute(
+                "SELECT rowid FROM docs WHERE docs MATCH ?", (expression,)
+            ).fetchall()
 
-    service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
-    primary, fallback = service._fts5_match_expressions("wombat")
+        service = _make_service(
+            construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX
+        )
+        primary, fallback = service._fts5_match_expressions("wombat")
 
-    assert match(primary) == [], "the AND form must NOT reach 'wombats'"
-    assert match(fallback) == [(1,)], "the prefix form must"
-    conn.close()
+        assert match(primary) == [], "the AND form must NOT reach 'wombats'"
+        assert match(fallback) == [(1,)], "the prefix form must"
 
 
 def test_a_zero_row_and_falls_back_to_the_prefix_form_exactly_once(
