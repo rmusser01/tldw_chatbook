@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import signal
+import shlex
 import shutil
 import subprocess
 import sys
@@ -266,38 +267,65 @@ _SOURCE_OVERRIDE_ARGUMENTS = (
     ("--hf-repo=private/model",),
     ("-hff", "private.gguf"),
     ("--hf-file=private.gguf",),
-    ("-hfd", "private/draft"),
-    ("-hfrd=private/draft",),
-    ("--hf-repo-draft=private/draft",),
-    ("--spec-draft-hf=private/draft",),
-    ("-md", "/private/draft.gguf"),
-    ("--model-draft=/private/draft.gguf",),
-    ("--spec-draft-model=/private/draft.gguf",),
-    ("-mm", "/private/mmproj.gguf"),
-    ("--mmproj=/private/mmproj.gguf",),
-    ("-mmu", "https://private.invalid/mmproj.gguf"),
-    ("--mmproj-url=https://private.invalid/mmproj.gguf",),
-    ("-mv", "/private/vocoder.gguf"),
-    ("--model-vocoder=/private/vocoder.gguf",),
-    ("-hfv", "private/vocoder"),
-    ("-hfrv=private/vocoder",),
-    ("--hf-repo-v=private/vocoder",),
-    ("-hffv", "vocoder.gguf"),
-    ("--hf-file-v=vocoder.gguf",),
-    ("-tk", "/private/talker.gguf"),
-    ("--talker-model=/private/talker.gguf",),
-    ("-c2w", "/private/code2wav.gguf"),
-    ("--code2wav-model=/private/code2wav.gguf",),
     ("--models-dir=/private/models",),
     ("--models-preset", "/private/models.ini"),
-    ("--lora=/private/adapter.gguf",),
-    ("--lora-scaled", "/private/adapter.gguf", "0.5"),
-    ("--control-vector=/private/control.gguf",),
-    ("--control-vector-scaled", "/private/control.gguf", "0.5"),
     ("--embd-gemma-default",),
+    ("--fim-qwen-1.5b-default",),
+    ("--fim-qwen-3b-default",),
+    ("--fim-qwen-7b-default",),
     ("--fim-qwen-7b-spec",),
+    ("--fim-qwen-14b-spec",),
+    ("--fim-qwen-30b-default",),
     ("--gpt-oss-20b-default",),
+    ("--gpt-oss-120b-default",),
     ("--vision-gemma-4b-default",),
+    ("--vision-gemma-12b-default",),
+)
+
+_AUXILIARY_MODEL_ARGUMENTS = (
+    "--lora",
+    "/aux/lora.gguf",
+    "--lora-scaled=/aux/scaled.gguf:0.5",
+    "--lora-scaled",
+    "/aux/scaled-split.gguf:0.25",
+    "--lora-init-without-apply",
+    "--lora-base",
+    "/aux/base.gguf",
+    "--control-vector=/aux/control.gguf",
+    "--control-vector-scaled",
+    "/aux/control-scaled.gguf:0.25",
+    "-mm",
+    "/aux/mmproj.gguf",
+    "--mmproj=/aux/mmproj-equals.gguf",
+    "-mmu",
+    "https://aux.invalid/mmproj-short.gguf",
+    "--mmproj-url=https://aux.invalid/mmproj.gguf",
+    "-hfd",
+    "aux/draft",
+    "-hfrd=aux/draft-alias",
+    "--hf-repo-draft=aux/draft-long",
+    "--spec-draft-hf",
+    "aux/draft-canonical",
+    "-md",
+    "/aux/draft-short.gguf",
+    "--model-draft=/aux/draft.gguf",
+    "--spec-draft-model=/aux/draft-canonical.gguf",
+    "-mv",
+    "/aux/vocoder.gguf",
+    "--model-vocoder=/aux/vocoder-long.gguf",
+    "-hfv",
+    "aux/vocoder-short",
+    "-hfrv=aux/vocoder-alias",
+    "--hf-repo-v=aux/vocoder",
+    "-hffv=vocoder-short.gguf",
+    "--hf-file-v",
+    "vocoder.gguf",
+    "-tk",
+    "/aux/talker.gguf",
+    "--talker-model=/aux/talker-long.gguf",
+    "-c2w",
+    "/aux/code2wav-short.gguf",
+    "--code2wav-model=/aux/code2wav.gguf",
 )
 
 
@@ -313,8 +341,8 @@ def test_source_override_argument_aliases_and_equals_forms_are_rejected(
     assert arguments == original
 
 
-def test_harmless_model_metadata_and_draft_tuning_arguments_remain_accepted() -> None:
-    arguments = (
+def test_auxiliary_models_metadata_and_tuning_arguments_remain_accepted() -> None:
+    arguments = _AUXILIARY_MODEL_ARGUMENTS + (
         "--threads",
         "4",
         "--alias",
@@ -334,6 +362,101 @@ def test_harmless_model_metadata_and_draft_tuning_arguments_remain_accepted() ->
 
     assert events._validate_gguf_additional_args(arguments) is None
     assert arguments[-1] == "private-token"
+
+
+@pytest.mark.parametrize(
+    ("provider", "mode"),
+    (
+        ("llamacpp", GGUFSourceMode.MANAGED),
+        ("llamacpp", GGUFSourceMode.EXTERNAL),
+        ("llamafile", GGUFSourceMode.EMBEDDED),
+        ("llamafile", GGUFSourceMode.MANAGED),
+        ("llamafile", GGUFSourceMode.EXTERNAL),
+    ),
+)
+@pytest.mark.asyncio
+async def test_handlers_preserve_auxiliary_models_alongside_primary_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: str,
+    mode: GGUFSourceMode,
+) -> None:
+    executable = tmp_path / ("llama-server" if provider == "llamacpp" else "llamafile")
+    executable.touch()
+    external = tmp_path / "external.gguf"
+    _write_sparse_gguf(external)
+    managed_payload = tmp_path / "managed.gguf"
+    selection = _selection(
+        mode,
+        managed_ref=REF if mode is GGUFSourceMode.MANAGED else None,
+        external_path=external if mode is GGUFSourceMode.EXTERNAL else None,
+    )
+    additional_args = shlex.join(_AUXILIARY_MODEL_ARGUMENTS)
+    args_widget = (
+        _InputWidget(value=additional_args)
+        if provider == "llamacpp"
+        else _InputWidget(text=additional_args)
+    )
+    window = _Window(
+        {
+            f"#{provider}-exec-path": _InputWidget(value=str(executable)),
+            f"#{provider}-host": _InputWidget(value="127.0.0.1"),
+            f"#{provider}-port": _InputWidget(value="8123"),
+            f"#{provider}-additional-args": args_widget,
+            f"#{provider}-log-output": _LogWidget(),
+        }
+    )
+    window.gguf_source_snapshot = lambda _provider: selection  # type: ignore[attr-defined]
+    app = _App()
+    app.screen_stack = [type("Screen", (), {"llm_window": window})()]
+    lease = _Lease()
+    commands: list[list[str]] = []
+
+    def capture_command(
+        _app: object,
+        _provider: str,
+        command: list[str],
+        *_args: object,
+        **_kwargs: object,
+    ) -> str:
+        commands.append(command)
+        return "captured"
+
+    monkeypatch.setattr(events, "managed_service", lambda: object())
+    monkeypatch.setattr(
+        events,
+        "acquire_managed_gguf",
+        lambda _service, _reference: (managed_payload, lease),
+    )
+    monkeypatch.setattr(events, "run_server_subprocess", capture_command)
+
+    handler = (
+        events.handle_start_llamacpp_server_button_pressed
+        if provider == "llamacpp"
+        else events.handle_start_llamafile_server_button_pressed
+    )
+    await handler(window, app, Button.Pressed(Button("Start")))
+
+    assert len(app.workers) == 1
+    work, _worker_options = app.workers[0]
+    assert work() == "captured"
+    assert len(commands) == 1
+    command = commands[0]
+    expected = [str(executable)]
+    if mode is not GGUFSourceMode.EMBEDDED:
+        primary = managed_payload if mode is GGUFSourceMode.MANAGED else external
+        primary_flag = "--model" if provider == "llamacpp" else "-m"
+        expected.extend((primary_flag, str(primary)))
+    expected.extend(("--host", "127.0.0.1", "--port", "8123"))
+    expected.extend(_AUXILIARY_MODEL_ARGUMENTS)
+    assert command == expected
+    assert (
+        args_widget.value if provider == "llamacpp" else args_widget.text
+    ) == additional_args
+    assert all(severity != "error" for _message, severity in app.notifications)
+    claim = server_lifecycle.current_server_claim(app, provider)
+    assert claim is not None
+    assert server_lifecycle.release_server_claim(app, provider, claim)
 
 
 @pytest.mark.parametrize(
