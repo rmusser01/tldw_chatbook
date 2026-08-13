@@ -57,6 +57,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-058](058-thread-scoped-test-socketpair-exemption.md) | Accepted | Permit only same-thread connections made dynamically inside the real socketpair implementation while preserving the test network guard's process-wide default denial. |
 | [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md) | Accepted | Use hierarchical ownership-aware Database Note folders plus device-private, journaled multi-root sync with explicit conflicts, deletion review, process coordination, and opaque server claims. |
 | [ADR-060](060-notes-sync-round-trip-and-interoperability-constraints.md) | Accepted | Amend Notes lasting sync with single-binding ownership, representation-safe file writes, composite journaling, explicit Sync-v2 and backup boundaries, and per-mutation server fencing. |
+| [ADR-061](061-library-ingest-parse-progress-channel.md) | Accepted | Carry local parse progress over a bounded, non-blocking, generation-fenced process channel while lifecycle results remain authoritative. |
 
 ## Historical Decision Material
 

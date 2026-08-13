@@ -106,6 +106,7 @@ def test_mark_writing_transitions_from_parsing() -> None:
     assert writing.started_at == parsing.started_at
     # detected_type persists across the transition too.
     assert writing.detected_type == "plaintext"
+    assert writing.progress == {"phase": "writing", "message": "Saving to Library"}
 
 
 def test_mark_writing_rejects_a_job_that_is_not_parsing() -> None:
@@ -773,6 +774,160 @@ class _FakeStore:
 
     def delete_job(self, job_id):
         self.deletes.append(job_id)
+
+
+# --- transient parse progress (task-207) -----------------------------------
+
+
+def test_transient_progress_uses_progress_listener_without_persisting() -> None:
+    """A local tick must update the projection without lifecycle churn or I/O."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    lifecycle_calls: list[str] = []
+    progress_calls: list[tuple[object, object]] = []
+    registry.add_listener(lambda: lifecycle_calls.append("lifecycle"))
+    registry.add_progress_listener(
+        lambda before, after: progress_calls.append((before, after))
+    )
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id,
+        progress={"phase": "extracting", "message": "Extracting"},
+        persist=False,
+    )
+
+    assert updated is not None
+    assert updated.progress == {"phase": "extracting", "message": "Extracting"}
+    assert lifecycle_calls == []
+    assert progress_calls[0][0].progress is None
+    assert progress_calls[0][1].progress == updated.progress
+    assert len(store.upserts) == persisted_before
+
+
+def test_progress_listener_removal_stops_future_progress_notifications() -> None:
+    """Removing a progress observer must prevent only its later callbacks."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    calls: list[str] = []
+
+    def listener(before, after) -> None:
+        calls.append(after.progress["message"])
+
+    registry.add_progress_listener(listener)
+    registry.update_progress(job.job_id, progress={"message": "Extracting"})
+    registry.remove_progress_listener(listener)
+    registry.update_progress(job.job_id, progress={"message": "Chunking"})
+
+    assert calls == ["Extracting"]
+
+
+def test_progress_listener_exception_is_isolated_from_other_progress_listeners() -> None:
+    """A broken observer must not prevent another observer seeing the tick."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    calls: list[str] = []
+
+    def bad_listener(before, after) -> None:
+        raise RuntimeError("boom")
+
+    registry.add_progress_listener(bad_listener)
+    registry.add_progress_listener(
+        lambda before, after: calls.append(after.progress["message"])
+    )
+
+    registry.update_progress(job.job_id, progress={"message": "Extracting"})
+
+    assert calls == ["Extracting"]
+
+
+def test_server_progress_persists_by_default_for_reconciliation() -> None:
+    """Removing the default persistence would make server reconciliation stale."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt", origin="server")
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id, progress={"phase": "processing", "message": "Processing"}
+    )
+
+    assert updated is not None
+    assert len(store.upserts) == persisted_before + 1
+
+
+def test_progress_rejects_terminal_job_without_notification_or_persistence() -> None:
+    """Allowing terminal telemetry would overwrite the authoritative receipt."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
+    registry.mark_done(job.job_id, media_id=1, progress={"message": "Imported"})
+    calls: list[str] = []
+    registry.add_progress_listener(lambda before, after: calls.append("progress"))
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(
+        job.job_id, progress={"phase": "extracting", "message": "Late tick"}
+    )
+
+    assert updated is None
+    assert calls == []
+    assert len(store.upserts) == persisted_before
+
+
+def test_identical_progress_is_a_noop_without_notification_or_persistence() -> None:
+    """Not short-circuiting equal ticks would cause needless UI and DB work."""
+    registry = LibraryIngestJobRegistry()
+    store = _FakeStore()
+    registry.attach_store(store)
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    progress = {"phase": "extracting", "message": "Extracting"}
+    registry.update_progress(job.job_id, progress=progress)
+    calls: list[str] = []
+    registry.add_progress_listener(lambda before, after: calls.append("progress"))
+    persisted_before = len(store.upserts)
+
+    updated = registry.update_progress(job.job_id, progress=progress)
+
+    assert updated is not None
+    assert updated.progress == progress
+    assert calls == []
+    assert len(store.upserts) == persisted_before
+
+
+def test_progress_snapshots_and_return_value_do_not_share_registry_payload() -> None:
+    """Shallow snapshots would let listeners corrupt the registry payload."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/report.txt")
+    registry.mark_parsing(job.job_id)
+    listener_after = []
+    registry.add_progress_listener(
+        lambda before, after: listener_after.append(after)
+    )
+    payload = {"phase": "extracting", "message": "Extracting", "detail": {"page": 1}}
+
+    updated = registry.update_progress(job.job_id, progress=payload)
+    payload["detail"]["page"] = 2
+    listener_after[0].progress["detail"]["page"] = 3
+    updated.progress["detail"]["page"] = 4
+
+    stored = registry.jobs()[0]
+
+    assert stored.progress == {
+        "phase": "extracting",
+        "message": "Extracting",
+        "detail": {"page": 1},
+    }
 
 
 def test_submit_starts_retry_count_zero_and_requeue_increments():

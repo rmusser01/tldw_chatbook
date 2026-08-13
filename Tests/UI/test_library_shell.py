@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import json
+import queue
 import re
 import statistics
 import threading
@@ -20,7 +21,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
-from tldw_chatbook.app import LibraryIngestQueueMixin
+from tldw_chatbook.app import LibraryIngestQueueMixin, _IngestParsePoolResources
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
@@ -15385,7 +15386,10 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
             )
 
     def _create_ingest_parse_pool(self):
-        return self._pool_factory()
+        return _IngestParsePoolResources(
+            self._pool_factory(),
+            queue.Queue(maxsize=64),
+        )
 
     def _ingest_parse_worker_count(self) -> int:
         if self._worker_count_override is not None:
@@ -16520,6 +16524,7 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
         await _wait_for_library_shell(screen, pilot)
         assert screen in harness.screen_stack
         assert len(harness.library_ingest_jobs._listeners) == 1
+        assert len(harness.library_ingest_jobs._progress_listeners) == 1
 
         await harness.switch_screen(_DummyReplacementScreen())
         await pilot.pause()
@@ -16533,6 +16538,26 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
         # any screen stack).
         assert screen not in harness.screen_stack
         assert len(harness.library_ingest_jobs._listeners) == 0
+        assert len(harness.library_ingest_jobs._progress_listeners) == 0
+
+        # Textual's ``is_mounted`` remains true after removal; a stale direct
+        # callback must still reject the detached screen before any UI path.
+        before = LibraryIngestJob(
+            job_id="ingest-job-detached",
+            source_path=str(tmp_path / "detached.wav"),
+            state=IngestJobState.PARSING,
+            origin="local",
+            progress={"phase": "transcribing"},
+        )
+        after = dataclasses.replace(
+            before,
+            progress={"phase": "transcribing", "cancel_requested": True},
+        )
+        screen._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+        update_regions = Mock()
+        screen._update_library_ingest_dynamic_regions = update_regions
+        screen._handle_library_ingest_progress_changed(before, after)
+        update_regions.assert_not_called()
 
         # Must not raise, and must not resurrect/recompose the removed
         # screen -- the queue-runner will run this (missing) file to a
@@ -16548,6 +16573,108 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
             raise AssertionError("Ghost job never reached FAILED.")
 
         assert screen not in harness.screen_stack
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_progress_tick_updates_only_reserved_line_in_place():
+    """Ordinary telemetry must not remount the form, queue, row, or detail line."""
+    harness = _LibraryIngestCanvasHarness(None)
+    job = harness.library_ingest_jobs.submit(source_path="/tmp/interview.wav")
+    harness.library_ingest_jobs.mark_parsing(job.job_id)
+    harness.library_ingest_jobs.update_progress(
+        job.job_id,
+        progress={
+            "phase": "transcribing",
+            "message": "Transcribing minute 1 of 5",
+            "percent": 20.0,
+        },
+        persist=False,
+    )
+
+    async with harness.run_test(size=(100, 30)) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = "/tmp/next-file.txt"
+        path_input.cursor_position = 7
+        path_input.focus()
+        canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
+        canvas.scroll_to(y=6, animate=False, force=True, immediate=True)
+        await pilot.pause()
+
+        primary_row = screen.query_one("#library-ingest-row-0", Static)
+        progress_line = screen.query_one(
+            f"#library-ingest-progress-{job.job_id}", Static
+        )
+        queue_panel = screen.query_one("#library-ingest-queue-panel")
+        scroll_y = canvas.scroll_y
+        assert scroll_y > 0
+        assert screen.focused is path_input
+
+        harness.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={
+                "phase": "transcribing",
+                "message": "Transcribing minute 2 of 5",
+                "percent": 40.0,
+            },
+            persist=False,
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-canvas") is canvas
+        assert screen.query_one("#library-ingest-queue-panel") is queue_panel
+        assert screen.query_one("#library-ingest-row-0") is primary_row
+        assert screen.query_one(f"#library-ingest-progress-{job.job_id}") is progress_line
+        assert screen.query_one("#library-ingest-path") is path_input
+        assert screen.focused is path_input
+        assert path_input.cursor_position == 7
+        assert canvas.scroll_y == scroll_y
+        rendered = str(progress_line.renderable)
+        assert rendered == "40% · Transcribing minute 2 of 5"
+        assert "Â·" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_progress_action_change_recomposes_dynamic_regions():
+    """A local-STT cancel request must replace Cancel with Force stop."""
+    harness = _LibraryIngestCanvasHarness(None)
+    job = harness.library_ingest_jobs.submit(source_path="/tmp/interview.wav")
+    harness.library_ingest_jobs.mark_parsing(job.job_id)
+    harness.library_ingest_jobs.update_progress(
+        job.job_id,
+        progress={"phase": "transcribing", "message": "Transcribing audio"},
+        persist=False,
+    )
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        assert screen.query_one(f"#library-ingest-cancel-{job.job_id}", Button)
+
+        update_regions = Mock(
+            wraps=screen._update_library_ingest_dynamic_regions
+        )
+        screen._update_library_ingest_dynamic_regions = update_regions
+        harness.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={
+                "phase": "transcribing",
+                "message": "Stopping transcription",
+                "cancel_requested": True,
+            },
+            persist=False,
+        )
+        await pilot.pause()
+
+        update_regions.assert_called_once_with()
+        assert not screen.query(f"#library-ingest-cancel-{job.job_id}")
+        assert screen.query_one(
+            f"#library-ingest-force-stop-{job.job_id}", Button
+        )
 
 
 @pytest.mark.asyncio
@@ -16567,7 +16694,10 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
     )
     app.notes_scope_service = StaticLibraryNotesScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    app._create_ingest_parse_pool = lambda: _FakeIngestParsePool()
+    app._create_ingest_parse_pool = lambda: _IngestParsePoolResources(
+        _FakeIngestParsePool(),
+        queue.Queue(maxsize=64),
+    )
 
     async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await _wait_for_condition(

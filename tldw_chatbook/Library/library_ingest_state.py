@@ -9,6 +9,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -21,6 +22,9 @@ from typing import Any, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age as format_batch_relative_age,
+)
+from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
+    INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS,
 )
 from tldw_chatbook.Library.ingest_capabilities import (
     MULTI_PAGE_SCRAPE_METHODS,
@@ -234,27 +238,28 @@ def collect_ingest_option_errors(
         cap = get_capabilities(group)
         values = type_options.get(group, {}) or {}
         fields_by_name = {f.name: f for f in cap.fields}
-        for field in cap.fields:
-            if field.depends_on is not None and not _dependency_installed(
-                field.depends_on
+        for option_field in cap.fields:
+            if option_field.depends_on is not None and not _dependency_installed(
+                option_field.depends_on
             ):
                 continue
-            if field.enabled_when is not None:
-                gate = fields_by_name.get(field.enabled_when)
+            if option_field.enabled_when is not None:
+                gate = fields_by_name.get(option_field.enabled_when)
                 gate_value = values.get(
-                    field.enabled_when,
+                    option_field.enabled_when,
                     gate.default if gate is not None else False,
                 )
-                if field.enabled_when_values:
-                    if gate_value not in field.enabled_when_values:
+                if option_field.enabled_when_values:
+                    if gate_value not in option_field.enabled_when_values:
                         continue
                 elif not bool(gate_value):
                     continue
             message = validate_ingest_option_value(
-                field, values.get(field.name, field.default)
+                option_field,
+                values.get(option_field.name, option_field.default),
             )
             if message:
-                errors.append((group, field.name, message))
+                errors.append((group, option_field.name, message))
     return tuple(errors)
 
 # First-visit orientation. Shown only while the form is untouched, so it fills
@@ -1537,6 +1542,59 @@ def _format_elapsed(
     return f"{minutes}m {seconds}s"
 
 
+_INGEST_PROGRESS_PHASE_LABELS: dict[str, str] = {
+    "preparing": "Preparing import",
+    "loading": "Loading source",
+    "transcribing": "Transcribing audio",
+    "post-processing": "Post-processing audio",
+    "inspecting": "Inspecting file",
+    "extracting": "Extracting",
+    "processing": "Processing content",
+    "chunking": "Chunking extracted text",
+    "analyzing": "Analyzing content",
+    "writing": "Saving to Library",
+}
+
+
+def format_ingest_progress_line(
+    progress: Mapping[str, Any] | None, *, state: IngestJobState
+) -> str:
+    """Format one quiet, truthful ingest progress detail line.
+
+    A percentage is shown only when telemetry supplies a finite value within
+    its documented bounds. The lifecycle state belongs to the primary queue
+    row, so this detail line never repeats it.
+
+    Args:
+        progress: Optional structured progress payload.
+        state: Current ingest lifecycle state used for the quiet fallback.
+
+    Returns:
+        A bounded single-line progress description. Fractional percentages
+        are floored so incomplete work never renders as complete.
+    """
+    payload = progress or {}
+    message = payload.get("message")
+    text = " ".join(message.split()) if isinstance(message, str) else ""
+    if text:
+        text = text[:INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS]
+    if not text:
+        phase = payload.get("phase")
+        text = _INGEST_PROGRESS_PHASE_LABELS.get(phase, "")
+        if not text and state is IngestJobState.PARSING:
+            text = "Preparing import"
+    percent = payload.get("percent")
+    if (
+        text
+        and isinstance(percent, (int, float))
+        and not isinstance(percent, bool)
+        and 0 <= percent <= 100
+        and math.isfinite(percent)
+    ):
+        return f"{math.floor(percent)}% · {text}"
+    return text
+
+
 def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """Build one ``IngestQueueRow`` from a registry job snapshot.
 
@@ -1800,6 +1858,26 @@ _TERMINAL_ROW_STATES = (
 )
 
 
+_LOCAL_STT_PROGRESS_PHASES = frozenset(
+    {"preparing", "loading", "transcribing", "post-processing"}
+)
+
+
+def ingest_progress_action_signature(job: LibraryIngestJob) -> tuple[bool, bool]:
+    """Return local-STT Cancel and Force-stop availability for ``job``."""
+    progress = job.progress or {}
+    active_local_stt = (
+        job.origin == "local"
+        and job.state is IngestJobState.PARSING
+        and progress.get("phase") in _LOCAL_STT_PROGRESS_PHASES
+    )
+    cancel_requested = bool(progress.get("cancel_requested"))
+    return (
+        active_local_stt and not cancel_requested,
+        active_local_stt and cancel_requested,
+    )
+
+
 def _build_queue_row(
     job: LibraryIngestJob, *, now: float, details_expanded: bool = False
 ) -> IngestQueueRow:
@@ -1820,20 +1898,12 @@ def _build_queue_row(
     """
     row = _build_queue_row_for_state(job, now=now)
     if job.origin == "local":
-        progress = job.progress or {}
-        executor_phase = progress.get("phase") in {
-            "preparing",
-            "loading",
-            "transcribing",
-            "post-processing",
-        }
-        cancel_requested = bool(progress.get("cancel_requested"))
-        active_local_stt = job.state is IngestJobState.PARSING and executor_phase
+        can_cancel, can_force_stop = ingest_progress_action_signature(job)
         row = replace(
             row,
             origin=job.origin,
-            can_cancel=active_local_stt and not cancel_requested,
-            can_force_stop=active_local_stt and cancel_requested,
+            can_cancel=can_cancel,
+            can_force_stop=can_force_stop,
         )
     else:
         can_cancel = (

@@ -4306,6 +4306,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+.library-ingest-progress {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 2;
+}
+
+.library-ingest-row-with-progress {
+    margin-bottom: 0;
+}
+
 /* (L3b AB wave, A3) A row followed by action button(s) (Open in Library /
    Retry / Dismiss) trims its own bottom margin to 0 -- the actions
    wrapper's own `.library-ingest-row-actions` margin below supplies the

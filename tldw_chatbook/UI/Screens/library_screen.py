@@ -114,6 +114,8 @@ from ...Library.library_ingest_state import (
     build_ingest_forecast,
     build_library_ingest_state,
     clamp_chunk_size,
+    format_ingest_progress_line,
+    ingest_progress_action_signature,
     library_ingest_retry_available,
     library_ingest_retry_label,
     parse_keywords,
@@ -5195,6 +5197,9 @@ class LibraryScreen(BaseAppScreen):
                 # done-transition and fire a redundant snapshot refresh.
                 self._library_ingest_last_done_count = counts_fn().get("done", 0)
             registry.add_listener(self._handle_library_ingest_registry_changed)
+            add_progress_listener = getattr(registry, "add_progress_listener", None)
+            if callable(add_progress_listener):
+                add_progress_listener(self._handle_library_ingest_progress_changed)
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -5302,6 +5307,13 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
+            remove_progress_listener = getattr(
+                registry, "remove_progress_listener", None
+            )
+            if callable(remove_progress_listener):
+                remove_progress_listener(
+                    self._handle_library_ingest_progress_changed
+                )
 
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
@@ -10487,6 +10499,46 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_last_done_count = done_count
             if grew:
                 self._refresh_local_source_snapshot()
+
+    def _handle_library_ingest_progress_changed(
+        self,
+        before: LibraryIngestJob,
+        after: LibraryIngestJob,
+    ) -> None:
+        """Patch ordinary ingest telemetry without disturbing queue context.
+
+        Progress updates cannot change lifecycle state, origin, result ids,
+        error detail, or terminal actions. Local-STT cancellation is the one
+        progress-owned structural exception: its action signature replaces
+        Cancel with Force stop and therefore recomposes the dynamic regions.
+
+        Args:
+            before: Job snapshot immediately before the progress mutation.
+            after: Job snapshot immediately after the progress mutation.
+        """
+        if (
+            not self.is_attached
+            or self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
+        ):
+            return
+        if ingest_progress_action_signature(
+            before
+        ) != ingest_progress_action_signature(after):
+            self._update_library_ingest_dynamic_regions()
+            return
+        try:
+            progress_widget = self.query_one(
+                f"#library-ingest-progress-{after.job_id}", Static
+            )
+        except (NoMatches, QueryError):
+            return
+        progress = after.progress
+        if progress is None and after.state is IngestJobState.WRITING:
+            progress = {"phase": "writing"}
+        progress_widget.update(
+            format_ingest_progress_line(progress, state=after.state)
+        )
+        progress_widget.display = True
 
     def _refresh_library_ingest_canvas_preserving_context(self) -> None:
         """Recompose for a job-tick WITHOUT losing what the user was doing.

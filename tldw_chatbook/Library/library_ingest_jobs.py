@@ -261,15 +261,19 @@ class LibraryIngestJob:
 
 
 def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
-    """Return a job whose persisted STT snapshots share no mutable state."""
+    """Return a job whose mutable snapshots share no registry-owned state."""
 
     return replace(
         job,
+        progress=deepcopy(job.progress),
         stt_failure_provenance=deepcopy(job.stt_failure_provenance),
         retry_source_failure_provenance=deepcopy(
             job.retry_source_failure_provenance
         ),
     )
+
+
+ProgressListener = Callable[[LibraryIngestJob, LibraryIngestJob], None]
 
 
 class IngestJobStore(Protocol):
@@ -332,6 +336,7 @@ class LibraryIngestJobRegistry:
         self._jobs: list[LibraryIngestJob] = []
         self._next_id: int = 1
         self._listeners: list[Callable[[], None]] = []
+        self._progress_listeners: list[ProgressListener] = []
         # Plain flag flipped by the runner owner (e.g. the app's queue-runner
         # worker). No locking -- see the module docstring's threading
         # contract; this attribute is UI-thread-only like everything else.
@@ -452,6 +457,23 @@ class LibraryIngestJobRegistry:
         except ValueError:
             pass
 
+    def add_progress_listener(self, callback: ProgressListener) -> None:
+        """Register a callback for progress-only job projection changes.
+
+        Args:
+            callback: A callable receiving immutable-by-convention before and
+                after job snapshots. Exceptions are isolated like lifecycle
+                listener failures.
+        """
+        self._progress_listeners.append(callback)
+
+    def remove_progress_listener(self, callback: ProgressListener) -> None:
+        """Unregister a previously added progress-only callback."""
+        try:
+            self._progress_listeners.remove(callback)
+        except ValueError:
+            pass
+
     def _notify_listeners(self) -> None:
         # Iterate a snapshot so a listener that adds/removes listeners
         # mid-callback can't corrupt this loop.
@@ -467,6 +489,18 @@ class LibraryIngestJobRegistry:
                 # entirely.
                 logger.opt(exception=True).debug(
                     "LibraryIngestJobRegistry listener raised"
+                )
+
+    def _notify_progress_listeners(
+        self, before: LibraryIngestJob, after: LibraryIngestJob
+    ) -> None:
+        """Notify progress observers without allowing one to stop the rest."""
+        for callback in tuple(self._progress_listeners):
+            try:
+                callback(before, after)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "LibraryIngestJobRegistry progress listener raised"
                 )
 
     # -- mutations -----------------------------------------------------
@@ -668,7 +702,11 @@ class LibraryIngestJobRegistry:
             return None
         if current.state != IngestJobState.PARSING:
             return None
-        updated = replace(current, state=IngestJobState.WRITING)
+        updated = replace(
+            current,
+            state=IngestJobState.WRITING,
+            progress={"phase": "writing", "message": "Saving to Library"},
+        )
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
@@ -858,7 +896,11 @@ class LibraryIngestJobRegistry:
         return _copy_job(updated)
 
     def update_progress(
-        self, job_id: str, *, progress: dict[str, Any] | None
+        self,
+        job_id: str,
+        *,
+        progress: dict[str, Any] | None,
+        persist: bool = True,
     ) -> LibraryIngestJob | None:
         """Attach in-flight progress to a running job.
 
@@ -869,6 +911,9 @@ class LibraryIngestJobRegistry:
         Args:
             job_id: The job to annotate.
             progress: Structured progress payload, or ``None`` to clear it.
+            persist: Whether this update should write through to the attached
+                store. Local live parse ticks set this false; server
+                reconciliation retains the default true behavior.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is unknown,
@@ -883,10 +928,14 @@ class LibraryIngestJobRegistry:
             return None
         if current.state in _TERMINAL_STATES:
             return None
-        updated = replace(current, progress=progress)
+        if current.progress == progress:
+            return _copy_job(current)
+        before = _copy_job(current)
+        updated = replace(current, progress=deepcopy(progress))
         self._jobs[index] = updated
-        self._notify_listeners()
-        self._persist(updated)
+        self._notify_progress_listeners(before, _copy_job(updated))
+        if persist:
+            self._persist(updated)
         return _copy_job(updated)
 
     def mark_cancelled(
