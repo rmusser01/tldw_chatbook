@@ -72,7 +72,10 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
     store = screen._ensure_console_chat_store()
     defaults = screen._session._default_console_session_settings()
     original = store.ensure_session(
-        title="Chat 1", workspace_id="workspace-original", settings=defaults
+        title="Chat 1",
+        workspace_id="workspace-original",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
     )
     sync = AsyncMock()
     focus_calls: list[bool] = []
@@ -100,7 +103,19 @@ async def test_character_handoff_reuses_untouched_chat_one(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("worked_state", ["draft", "title", "settings"])
+@pytest.mark.parametrize(
+    "worked_state",
+    [
+        "draft",
+        "title",
+        "system-prompt",
+        "pinned-prefill",
+        "model",
+        "provider",
+        "temperature",
+        "character-label",
+    ],
+)
 async def test_character_handoff_leaves_worked_session_and_creates_another(
     monkeypatch, worked_state
 ):
@@ -108,13 +123,36 @@ async def test_character_handoff_leaves_worked_session_and_creates_another(
     screen = _character_screen(monkeypatch, card)
     store = screen._ensure_console_chat_store()
     defaults = screen._session._default_console_session_settings()
-    original = store.ensure_session(title="Chat 1", settings=defaults)
+    original = store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
     if worked_state == "draft":
         store.set_session_draft(original.id, "my work")
-    elif worked_state == "settings":
+    elif worked_state == "system-prompt":
+        store.set_session_system_prompt(original.id, "My system prompt")
+    elif worked_state == "pinned-prefill":
+        store.set_session_pinned_prefill(original.id, "Always:")
+    elif worked_state == "model":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, model="my-model"),
+        )
+    elif worked_state == "provider":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, provider="anthropic"),
+        )
+    elif worked_state == "temperature":
         store.replace_session_settings(
             original.id,
             replace(defaults, temperature=defaults.temperature + 0.1),
+        )
+    elif worked_state == "character-label":
+        store.replace_session_settings(
+            original.id,
+            replace(defaults, character_label="My assistant"),
         )
     else:
         original.title = "Planning"
@@ -131,11 +169,38 @@ async def test_character_handoff_leaves_worked_session_and_creates_another(
     assert len(store.messages_for_session(store.active_session_id)) == 1
 
 
+@pytest.mark.asyncio
+async def test_character_handoff_does_not_refresh_unproven_derived_settings(
+    monkeypatch,
+):
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    stale = screen._session._default_console_session_settings()
+    original = store.ensure_session(settings=stale)
+    original_before = replace(original)
+    screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
+        "canonical-current-model"
+    )
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    assert len(store.sessions()) == 2
+    assert store.sessions()[0] == original_before
+    assert store.active_session_id != original.id
+
+
 def test_typed_then_cleared_work_marker_survives_screen_state_restore(monkeypatch):
     screen = _character_screen(monkeypatch, _roleplay_card(name="Alba"))
     store = screen._ensure_console_chat_store()
     defaults = screen._session._default_console_session_settings()
-    session = store.ensure_session(title="Chat 1", settings=defaults)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
     store.set_session_draft(session.id, "my work")
     store.set_session_draft(session.id, "")
 
@@ -153,7 +218,10 @@ async def test_character_handoff_uses_current_canonical_defaults_not_stale_sessi
     screen = _character_screen(monkeypatch, card)
     store = screen._ensure_console_chat_store()
     stale = screen._session._default_console_session_settings()
-    original = store.ensure_session(settings=stale)
+    original = store.ensure_session(
+        settings=stale,
+        canonical_settings_baseline=stale,
+    )
     screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
         "canonical-current-model"
     )
@@ -183,8 +251,11 @@ async def test_duplicate_character_handoff_does_not_duplicate_session_or_greetin
         card["first_message"] = ""
     screen = _character_screen(monkeypatch, card)
     store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
     store.ensure_session(
-        title="Chat 1", settings=screen._session._default_console_session_settings()
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
     )
     payload = _start_chat_handoff(card)
 
@@ -202,8 +273,11 @@ async def test_concurrent_character_handoff_does_not_duplicate_session_or_greeti
     card = _roleplay_card(name="Alba")
     screen = _character_screen(monkeypatch, card)
     store = screen._ensure_console_chat_store()
+    defaults = screen._session._default_console_session_settings()
     store.ensure_session(
-        title="Chat 1", settings=screen._session._default_console_session_settings()
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
     )
     both_fetches_started = asyncio.Event()
     release_fetches = asyncio.Event()

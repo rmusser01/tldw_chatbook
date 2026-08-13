@@ -454,6 +454,12 @@ class ConsoleChatSession:
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
+    #: Exact canonical defaults from which an untouched initial session was
+    #: created. ``None`` means the settings have no proven default provenance.
+    canonical_settings_baseline: ConsoleSessionSettings | None = field(
+        default=None,
+        kw_only=True,
+    )
     #: Sparse conversation-owned context policy. For an empty unsaved tab this
     #: remains staged only in the session/screen snapshot and is flushed after
     #: the first durable conversation row is created.
@@ -671,12 +677,16 @@ class ConsoleChatStore:
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Return the active session, creating one when needed."""
         if self.active_session_id is not None:
             return self._sessions[self.active_session_id]
         return self.create_session(
-            title=title, workspace_id=workspace_id, settings=settings
+            title=title,
+            workspace_id=workspace_id,
+            settings=settings,
+            canonical_settings_baseline=canonical_settings_baseline,
         )
 
     def create_session(
@@ -685,6 +695,7 @@ class ConsoleChatStore:
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
         assistant_id: str | None = "console",
@@ -696,14 +707,28 @@ class ConsoleChatStore:
         """Create and activate a new native Console session.
 
         Args:
+            canonical_settings_baseline: Exact canonical defaults that equal
+                ``settings``. Omit when the settings have no proven provenance.
             ephemeral: When True the session is temporary -- never written to
                 local storage until ``promote_ephemeral_session`` clears the
                 flag.
         """
+        if (
+            canonical_settings_baseline is not None
+            and (
+                not isinstance(
+                    canonical_settings_baseline,
+                    ConsoleSessionSettings,
+                )
+                or canonical_settings_baseline != settings
+            )
+        ):
+            raise ValueError("canonical baseline must equal the session settings.")
         session = ConsoleChatSession(
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
+            canonical_settings_baseline=canonical_settings_baseline,
             runtime_backend=runtime_backend,
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
@@ -736,6 +761,7 @@ class ConsoleChatStore:
             session.title != DEFAULT_CONSOLE_SESSION_TITLE
             or session.persisted_conversation_id is not None
             or session.settings != expected_settings
+            or session.canonical_settings_baseline != expected_settings
             or session.draft != ""
             or session.has_user_work
             or session.pending_attachments
@@ -756,53 +782,61 @@ class ConsoleChatStore:
             or session.todos
         ):
             return False
-        return not (
+        direct_session_state = (
             self._messages_by_session.get(session_id)
             or self._nodes_by_session.get(session_id)
             or self._children_by_parent.get(session_id)
             or self._active_leaf_by_session.get(session_id) is not None
             or any(owner == session_id for owner in self._message_session_index.values())
-            or session_id in self._tool_markers_by_session
+            or bool(self._tool_markers_by_session.get(session_id))
             or self._context_summary_by_session.get(session_id) != (None, None)
-            or session_id in self._roleplay_system_projection_candidates
+            or bool(self._roleplay_system_projection_candidates.get(session_id))
             or self._conversation_context_epochs.get(session_id) != 0
         )
+        if direct_session_state:
+            return False
+
+        message_maps = (
+            self._terminal_citation_finalizers,
+            self._stream_chunks_by_message,
+            self._stream_materialized_counts,
+            self._sync_v2_message_versions,
+            self._roleplay_message_projection_candidates,
+            self._variant_stream_bases,
+            self._message_speech_revisions,
+            self._native_parent_by_message,
+        )
+        message_sets = (
+            self._pending_persistence_message_ids,
+            self._provisional_terminal_selection_ids,
+            self._terminal_persistence_deferred_ids,
+            self._variant_restored_message_ids,
+            self._failed_retry_message_ids,
+        )
+        return not any(session_id in state for state in (*message_maps, *message_sets))
 
     def repurpose_pristine_session(
         self,
         session_id: str,
-        **identity: Any,
+        *,
+        canonical_settings: ConsoleSessionSettings,
+        settings: ConsoleSessionSettings,
+        trusted_system_prompt: str,
+        title: str,
+        runtime_backend: str,
+        assistant_kind: str,
+        assistant_id: str,
+        assistant_authority_id: str | None,
+        character_id: int | None,
+        character_name: str,
     ) -> ConsoleChatSession:
         """Atomically replace an untouched initial tab with roleplay identity."""
-        required = {
-            "expected_settings",
-            "title",
-            "settings",
-            "runtime_backend",
-            "assistant_kind",
-            "assistant_id",
-            "assistant_authority_id",
-            "character_id",
-            "character_name",
-        }
-        if set(identity) != required:
-            raise TypeError("Repurpose identity must provide the complete roleplay state.")
-
-        expected_settings = identity["expected_settings"]
-        settings = identity["settings"]
-        title = identity["title"]
-        runtime_backend = identity["runtime_backend"]
-        assistant_kind = identity["assistant_kind"]
-        assistant_id = identity["assistant_id"]
-        assistant_authority_id = identity["assistant_authority_id"]
-        character_id = identity["character_id"]
-        character_name = identity["character_name"]
-        if not isinstance(expected_settings, ConsoleSessionSettings):
-            raise TypeError("expected_settings must be ConsoleSessionSettings.")
+        if not isinstance(canonical_settings, ConsoleSessionSettings):
+            raise TypeError("canonical_settings must be ConsoleSessionSettings.")
         if not isinstance(settings, ConsoleSessionSettings):
             raise TypeError("settings must be ConsoleSessionSettings.")
-        if type(title) is not str or not title:
-            raise ValueError("Roleplay title must be non-empty text.")
+        if type(trusted_system_prompt) is not str or not trusted_system_prompt.strip():
+            raise ValueError("Trusted roleplay system prompt must be non-empty text.")
         if runtime_backend not in {"local", "server"}:
             raise ValueError("Roleplay runtime backend must be local or server.")
         if assistant_kind != "character":
@@ -815,6 +849,15 @@ class ConsoleChatStore:
             raise ValueError("Roleplay authority id must be non-empty text or None.")
         if type(character_name) is not str or not character_name.strip():
             raise ValueError("Roleplay character name must be non-empty text.")
+        if title != f"Chat with {character_name}":
+            raise ValueError("Roleplay title does not match the character identity.")
+        expected_roleplay_settings = replace(
+            canonical_settings,
+            system_prompt=trusted_system_prompt,
+            character_label=character_name,
+        )
+        if settings != expected_roleplay_settings:
+            raise ValueError("Roleplay settings contain noncanonical changes.")
         if runtime_backend == "local":
             if (
                 type(character_id) is not int
@@ -838,11 +881,12 @@ class ConsoleChatStore:
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
             character_name=character_name,
+            canonical_settings_baseline=None,
             updated_at=_utc_now_iso(),
         )
         if not self.is_pristine_session(
             session_id,
-            expected_settings=expected_settings,
+            expected_settings=canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
         self._sessions[session_id] = candidate
@@ -852,24 +896,29 @@ class ConsoleChatStore:
         self,
         session_id: str,
         *,
-        expected_settings: ConsoleSessionSettings,
-        settings: ConsoleSessionSettings,
+        prior_canonical_settings: ConsoleSessionSettings,
+        current_canonical_settings: ConsoleSessionSettings,
     ) -> ConsoleChatSession:
-        """Atomically refresh derived defaults on an otherwise untouched tab."""
+        """Atomically refresh proven canonical defaults on an untouched tab."""
         if (
-            not isinstance(expected_settings, ConsoleSessionSettings)
-            or not isinstance(settings, ConsoleSessionSettings)
-            or expected_settings.source != "derived"
-            or settings.source != "derived"
+            not isinstance(prior_canonical_settings, ConsoleSessionSettings)
+            or not isinstance(current_canonical_settings, ConsoleSessionSettings)
         ):
-            raise ValueError("Only derived pristine settings may be refreshed.")
+            raise TypeError("Canonical settings provenance is required.")
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError("Session is no longer pristine.")
-        candidate = replace(session, settings=settings, updated_at=_utc_now_iso())
+        if session.canonical_settings_baseline != prior_canonical_settings:
+            raise ValueError("Session settings lack the expected canonical provenance.")
+        candidate = replace(
+            session,
+            settings=current_canonical_settings,
+            canonical_settings_baseline=current_canonical_settings,
+            updated_at=_utc_now_iso(),
+        )
         if not self.is_pristine_session(
             session_id,
-            expected_settings=expected_settings,
+            expected_settings=prior_canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
         self._sessions[session_id] = candidate
@@ -1385,11 +1434,18 @@ class ConsoleChatStore:
         settings: ConsoleSessionSettings,
         *,
         mark_user_work: bool = True,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
         if mark_user_work and session.settings != settings:
             session.has_user_work = True
+        elif not mark_user_work:
+            if canonical_settings_baseline != settings:
+                raise ValueError(
+                    "Automatic settings replacement requires an exact canonical baseline."
+                )
+            session.canonical_settings_baseline = canonical_settings_baseline
         session.settings = settings
         self._bump_payload_revision(session_id)
         return session
@@ -4626,6 +4682,8 @@ class ConsoleChatStore:
             if isinstance(system_prompt, str) and system_prompt.strip()
             else None
         )
+        if session.settings.system_prompt != normalized:
+            session.has_user_work = True
         session.settings = replace(session.settings, system_prompt=normalized)
         cleared_character_template = session.character_system_template is not None
         if cleared_character_template:
@@ -4701,6 +4759,8 @@ class ConsoleChatStore:
             )
             return session, False
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
+        if session.settings.pinned_prefill != normalized:
+            session.has_user_work = True
         session.settings = replace(session.settings, pinned_prefill=normalized)
         self._bump_payload_revision(session_id)
         persisted = True

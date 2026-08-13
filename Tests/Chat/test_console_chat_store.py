@@ -33,10 +33,36 @@ def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSetting
     return ConsoleSessionSettings(provider="openai", model=model)
 
 
+def _pristine_session(
+    store: ConsoleChatStore,
+    defaults: ConsoleSessionSettings,
+    **kwargs,
+) -> ConsoleChatSession:
+    return store.ensure_session(
+        title="Chat 1",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+        **kwargs,
+    )
+
+
+def test_create_session_rejects_mismatched_canonical_provenance():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+
+    with pytest.raises(ValueError, match="canonical baseline"):
+        store.create_session(
+            settings=defaults,
+            canonical_settings_baseline=replace(defaults, model="not-the-snapshot"),
+        )
+
+    assert store.sessions() == []
+
+
 def test_initial_chat_one_is_pristine_until_the_user_types():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    session = store.ensure_session(title="Chat 1", settings=defaults)
+    session = _pristine_session(store, defaults)
 
     assert store.is_pristine_session(session.id, expected_settings=defaults)
 
@@ -47,12 +73,95 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
 def test_typed_then_cleared_session_keeps_durable_work_marker():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    session = store.ensure_session(title="Chat 1", settings=defaults)
+    session = _pristine_session(store, defaults)
 
     store.set_session_draft(session.id, "typed work")
     store.set_session_draft(session.id, "")
 
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+@pytest.mark.parametrize(
+    "container_name,value_factory",
+    [
+        pytest.param(
+            "_pending_persistence_message_ids",
+            lambda _session: None,
+            id="pending-persistence",
+        ),
+        pytest.param(
+            "_terminal_citation_finalizers",
+            lambda _session: object(),
+            id="citation-finalizer",
+        ),
+        pytest.param(
+            "_provisional_terminal_selection_ids",
+            lambda _session: None,
+            id="provisional-terminal",
+        ),
+        pytest.param(
+            "_terminal_persistence_deferred_ids",
+            lambda _session: None,
+            id="deferred-terminal",
+        ),
+        pytest.param(
+            "_stream_chunks_by_message", lambda _session: ["chunk"], id="stream-chunks"
+        ),
+        pytest.param(
+            "_stream_materialized_counts", lambda _session: 1, id="stream-materialized"
+        ),
+        pytest.param(
+            "_sync_v2_message_versions", lambda _session: "version", id="sync-version"
+        ),
+        pytest.param(
+            "_roleplay_message_projection_candidates",
+            lambda _session: ("projection",),
+            id="roleplay-message-projection",
+        ),
+        pytest.param(
+            "_variant_stream_bases", lambda _session: object(), id="variant-stream"
+        ),
+        pytest.param(
+            "_variant_restored_message_ids",
+            lambda _session: None,
+            id="restored-variant",
+        ),
+        pytest.param(
+            "_message_speech_revisions", lambda _session: 1, id="speech-revision"
+        ),
+        pytest.param(
+            "_failed_retry_message_ids", lambda _session: None, id="failed-retry"
+        ),
+        pytest.param(
+            "_native_parent_by_message", lambda _session: None, id="native-parent"
+        ),
+    ],
+)
+def test_pristine_session_rejects_each_session_colliding_live_message_state(
+    container_name, value_factory
+):
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    container = getattr(store, container_name)
+    value = value_factory(session)
+    if isinstance(container, set):
+        container.add(session.id)
+    else:
+        container[session.id] = value
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
+def test_pristine_session_allows_harmless_initialized_empty_cache_entries():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    store._tool_markers_by_session[session.id] = []
+    store._roleplay_system_projection_candidates[session.id] = ()
+    store._payload_revisions[session.id] = 1
+
+    assert store.is_pristine_session(session.id, expected_settings=defaults)
 
 
 @pytest.mark.parametrize(
@@ -213,7 +322,7 @@ def test_typed_then_cleared_session_keeps_durable_work_marker():
 def test_pristine_session_rejects_each_work_or_identity_disqualifier(disqualify):
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    session = store.ensure_session(title="Chat 1", settings=defaults)
+    session = _pristine_session(store, defaults)
 
     disqualify(store, session)
 
@@ -232,7 +341,6 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
     defaults = _pristine_defaults()
     roleplay_settings = replace(
         defaults,
-        model="current-model",
         system_prompt="You are Alba.",
         character_label="Alba",
     )
@@ -241,13 +349,17 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
         title="Other", workspace_id="workspace-before", settings=defaults
     )
     target = store.create_session(
-        title="Chat 1", workspace_id="workspace-target", settings=defaults
+        title="Chat 1",
+        workspace_id="workspace-target",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
     )
     order_before = [session.id for session in store.sessions()]
 
     updated = store.repurpose_pristine_session(
         target.id,
-        expected_settings=defaults,
+        canonical_settings=defaults,
+        trusted_system_prompt="You are Alba.",
         title="Chat with Alba",
         settings=roleplay_settings,
         runtime_backend="local",
@@ -276,16 +388,93 @@ def test_repurpose_pristine_session_preserves_slot_and_applies_identity_atomical
 def test_repurpose_pristine_session_revalidation_failure_is_nonmutating(monkeypatch):
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
-    session = store.ensure_session(title="Chat 1", settings=defaults)
+    session = _pristine_session(store, defaults)
     before = replace(session)
     monkeypatch.setattr(store, "is_pristine_session", lambda *_args, **_kwargs: False)
 
     with pytest.raises(ValueError, match="pristine"):
         store.repurpose_pristine_session(
             session.id,
-            expected_settings=defaults,
+            canonical_settings=defaults,
+            trusted_system_prompt="You are Alba.",
             title="Chat with Alba",
-            settings=replace(defaults, system_prompt="You are Alba."),
+            settings=replace(
+                defaults,
+                system_prompt="You are Alba.",
+                character_label="Alba",
+            ),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
+
+
+@pytest.mark.parametrize(
+    "settings_change",
+    [
+        pytest.param({"provider": "anthropic"}, id="provider"),
+        pytest.param({"model": "different-model"}, id="model"),
+        pytest.param({"source": "user"}, id="source"),
+        pytest.param({"temperature": 0.1}, id="temperature"),
+        pytest.param({"pinned_prefill": "Always:"}, id="pinned-prefill"),
+        pytest.param({"character_label": "Not Alba"}, id="character-label"),
+        pytest.param({"system_prompt": "Arbitrary prompt"}, id="system-prompt"),
+    ],
+)
+def test_repurpose_rejects_noncanonical_roleplay_settings_without_mutation(
+    settings_change,
+):
+    defaults = _pristine_defaults()
+    trusted_prompt = "You are Alba."
+    valid_settings = replace(
+        defaults,
+        system_prompt=trusted_prompt,
+        character_label="Alba",
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+
+    with pytest.raises(ValueError):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt=trusted_prompt,
+            title="Chat with Alba",
+            settings=replace(valid_settings, **settings_change),
+            runtime_backend="local",
+            assistant_kind="character",
+            assistant_id="7",
+            assistant_authority_id="local-authority",
+            character_id=7,
+            character_name="Alba",
+        )
+
+    assert store.sessions() == [before]
+
+
+def test_repurpose_rejects_mismatched_roleplay_title_without_mutation():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+
+    with pytest.raises(ValueError):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt="You are Alba.",
+            title="Alba roleplay",
+            settings=replace(
+                defaults,
+                system_prompt="You are Alba.",
+                character_label="Alba",
+            ),
             runtime_backend="local",
             assistant_kind="character",
             assistant_id="7",

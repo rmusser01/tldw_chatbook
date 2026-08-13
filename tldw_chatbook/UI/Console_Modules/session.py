@@ -1222,17 +1222,21 @@ class ConsoleSessionController:
         """Ensure the active native Console session owns a settings snapshot."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
+        defaults = self._default_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(workspace_id),
             workspace_id=workspace_id,
-            settings=self._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
         )
         if session.settings is None:
-            settings = self._default_console_session_settings()
             store.replace_session_settings(
-                session.id, settings, mark_user_work=False
+                session.id,
+                defaults,
+                mark_user_work=False,
+                canonical_settings_baseline=defaults,
             )
-            return settings
+            return defaults
         return self._maybe_refresh_stale_default_console_settings(store, session)
 
     def _maybe_refresh_stale_default_console_settings(
@@ -1247,19 +1251,25 @@ class ConsoleSessionController:
         When the user then configures a working provider in Settings, an empty
         session the user never explicitly configured must converge on the new
         defaults instead of keeping the setup card blocked until restart
-        (task-177 live regression). Explicit selections (``source == "user"``),
-        sessions with any messages, and already-sendable settings are never
-        touched; stale defaults are only replaced when the re-derived defaults
-        are actually send-capable.
+        (task-177 live regression). Sessions with user work, settings that no
+        longer equal their explicit canonical baseline, any messages, or
+        already-sendable settings are never touched; stale defaults are only
+        replaced when the re-derived defaults are actually send-capable.
         """
         settings = session.settings
         if settings is None:
             settings = self._default_console_session_settings()
             store.replace_session_settings(
-                session.id, settings, mark_user_work=False
+                session.id,
+                settings,
+                mark_user_work=False,
+                canonical_settings_baseline=settings,
             )
             return settings
-        if getattr(settings, "source", "derived") == "user":
+        if (
+            session.has_user_work
+            or session.canonical_settings_baseline != settings
+        ):
             return settings
         try:
             if store.messages_for_session(session.id):
@@ -1285,20 +1295,11 @@ class ConsoleSessionController:
         )
         if not fresh_readiness.native_send_supported:
             return settings
-        if settings.system_prompt:
-            # Carry forward an already-applied `/system` prompt across this
-            # config-driven refresh -- it is explicit user intent, not part
-            # of the provider/model "default" this refresh re-derives.
-            # `fresh_defaults.system_prompt` is always ``None`` (defaults
-            # never seed it), so without this guard a message-less session
-            # where the user ran `/system` before fixing a blocked provider
-            # in Settings would have its applied system prompt silently
-            # discarded on the very next settings read.
-            fresh_defaults = replace(
-                fresh_defaults, system_prompt=settings.system_prompt
-            )
         store.replace_session_settings(
-            session.id, fresh_defaults, mark_user_work=False
+            session.id,
+            fresh_defaults,
+            mark_user_work=False,
+            canonical_settings_baseline=fresh_defaults,
         )
         return fresh_defaults
 
@@ -1738,13 +1739,13 @@ class ConsoleSessionController:
             active is not None
             and active.settings is not None
             and active.settings != canonical_defaults
-            and active.settings.source == "derived"
+            and active.canonical_settings_baseline == active.settings
         ):
             try:
                 active = store.refresh_pristine_session_settings(
                     active.id,
-                    expected_settings=active.settings,
-                    settings=canonical_defaults,
+                    prior_canonical_settings=active.settings,
+                    current_canonical_settings=canonical_defaults,
                 )
             except ValueError:
                 pass
@@ -1786,7 +1787,8 @@ class ConsoleSessionController:
                 try:
                     session = store.repurpose_pristine_session(
                         active.id,
-                        expected_settings=canonical_defaults,
+                        canonical_settings=canonical_defaults,
+                        trusted_system_prompt=seed.system_prompt,
                         title=f"Chat with {seed.name}",
                         settings=settings,
                         runtime_backend=runtime_backend,
@@ -2113,6 +2115,11 @@ class ConsoleSessionController:
             "settings": ConsoleSessionController._serialize_console_settings(
                 session.settings
             ),
+            "canonical_settings_baseline": (
+                ConsoleSessionController._serialize_console_settings(
+                    session.canonical_settings_baseline
+                )
+            ),
             "context_policy_overrides": session.context_policy_overrides.to_dict(),
             "updated_at": session.updated_at,
             "runtime_backend": session.runtime_backend,
@@ -2166,6 +2173,9 @@ class ConsoleSessionController:
                 else None
             ),
             settings=self._restore_console_settings(raw_session.get("settings")),
+            canonical_settings_baseline=self._restore_console_settings(
+                raw_session.get("canonical_settings_baseline")
+            ),
             draft=str(raw_session.get("draft") or ""),
             has_user_work=(
                 raw_session.get("has_user_work") is True
