@@ -7,11 +7,13 @@ not a provider plug-in or schema-driven form system.
 
 from __future__ import annotations
 
+import io
 import math
 import os
 import shutil
 import stat
 import unicodedata
+import wave
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -583,26 +585,208 @@ class ProcessProviderTestEvidenceStore:
         ] = {}
 
     @staticmethod
-    def _audio_body_matches_format(body: bytes, response_format: str) -> bool:
+    def _wav_has_complete_frames(body: bytes) -> bool:
+        if (
+            len(body) < 44
+            or body[:4] != b"RIFF"
+            or body[8:12] != b"WAVE"
+            or int.from_bytes(body[4:8], "little") + 8 != len(body)
+        ):
+            return False
+        try:
+            with wave.open(io.BytesIO(body), "rb") as audio:
+                channels = audio.getnchannels()
+                sample_width = audio.getsampwidth()
+                frame_rate = audio.getframerate()
+                frame_count = audio.getnframes()
+                if (
+                    audio.getcomptype() != "NONE"
+                    or channels <= 0
+                    or sample_width <= 0
+                    or frame_rate <= 0
+                    or frame_count <= 0
+                ):
+                    return False
+                frames = audio.readframes(frame_count)
+                return len(frames) == frame_count * channels * sample_width
+        except (EOFError, wave.Error):
+            return False
+
+    @staticmethod
+    def _mp3_has_complete_frame(body: bytes) -> bool:
+        position = 0
+        if body.startswith(b"ID3"):
+            if len(body) < 10 or any(byte & 0x80 for byte in body[6:10]):
+                return False
+            tag_size = sum(byte << shift for byte, shift in zip(body[6:10], (21, 14, 7, 0)))
+            position = 10 + tag_size + (10 if body[5] & 0x10 else 0)
+        if len(body) - position < 4:
+            return False
+        header = int.from_bytes(body[position : position + 4], "big")
+        if header >> 21 != 0x7FF:
+            return False
+        version_bits = (header >> 19) & 0x3
+        layer_bits = (header >> 17) & 0x3
+        bitrate_index = (header >> 12) & 0xF
+        sample_rate_index = (header >> 10) & 0x3
+        padding = (header >> 9) & 0x1
+        if (
+            version_bits == 1
+            or layer_bits == 0
+            or bitrate_index in {0, 15}
+            or sample_rate_index == 3
+        ):
+            return False
+        version = {0: 2.5, 2: 2, 3: 1}[version_bits]
+        sample_rate = (44_100, 48_000, 32_000)[sample_rate_index]
+        if version == 2:
+            sample_rate //= 2
+        elif version == 2.5:
+            sample_rate //= 4
+        layer = 4 - layer_bits
+        mpeg1_bitrates = {
+            1: (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448),
+            2: (0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384),
+            3: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+        }
+        mpeg2_bitrates = {
+            1: (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256),
+            2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+            3: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+        }
+        bitrate = (
+            mpeg1_bitrates if version == 1 else mpeg2_bitrates
+        )[layer][bitrate_index] * 1000
+        if layer == 1:
+            frame_length = ((12 * bitrate) // sample_rate + padding) * 4
+        else:
+            coefficient = 72 if layer == 3 and version != 1 else 144
+            frame_length = (coefficient * bitrate) // sample_rate + padding
+        return frame_length > 4 and len(body) - position >= frame_length
+
+    @staticmethod
+    def _ogg_opus_has_audio_packet(body: bytes) -> bool:
+        position = 0
+        packets: list[bytes] = []
+        partial = bytearray()
+        while position < len(body):
+            if len(body) - position < 27 or body[position : position + 4] != b"OggS":
+                return False
+            if body[position + 4] != 0:
+                return False
+            segment_count = body[position + 26]
+            table_start = position + 27
+            payload_start = table_start + segment_count
+            if payload_start > len(body):
+                return False
+            segment_sizes = body[table_start:payload_start]
+            payload_size = sum(segment_sizes)
+            payload_end = payload_start + payload_size
+            if payload_end > len(body):
+                return False
+            cursor = payload_start
+            for segment_size in segment_sizes:
+                partial.extend(body[cursor : cursor + segment_size])
+                cursor += segment_size
+                if segment_size < 255:
+                    packets.append(bytes(partial))
+                    partial.clear()
+            position = payload_end
+        if partial or not packets or len(packets[0]) < 19:
+            return False
+        header = packets[0]
+        if not header.startswith(b"OpusHead") or header[8] == 0 or header[9] == 0:
+            return False
+        audio_packets = packets[1:]
+        if audio_packets and audio_packets[0].startswith(b"OpusTags"):
+            audio_packets = audio_packets[1:]
+        return any(audio_packets)
+
+    @staticmethod
+    def _flac_has_audio_frame(body: bytes) -> bool:
+        if not body.startswith(b"fLaC"):
+            return False
+        position = 4
+        stream_info_seen = False
+        while True:
+            if len(body) - position < 4:
+                return False
+            header = body[position]
+            block_type = header & 0x7F
+            block_length = int.from_bytes(body[position + 1 : position + 4], "big")
+            position += 4
+            block_end = position + block_length
+            if block_end > len(body):
+                return False
+            if not stream_info_seen:
+                if block_type != 0 or block_length != 34:
+                    return False
+                stream_info = body[position:block_end]
+                packed = int.from_bytes(stream_info[10:18], "big")
+                sample_rate = (packed >> 44) & 0xFFFFF
+                channels = ((packed >> 41) & 0x7) + 1
+                bits_per_sample = ((packed >> 36) & 0x1F) + 1
+                total_samples = packed & ((1 << 36) - 1)
+                if not sample_rate or not channels or not bits_per_sample or not total_samples:
+                    return False
+                stream_info_seen = True
+            position = block_end
+            if header & 0x80:
+                break
+        return (
+            stream_info_seen
+            and len(body) - position >= 6
+            and body[position] == 0xFF
+            and body[position + 1] & 0xFE == 0xF8
+        )
+
+    @staticmethod
+    def _aac_has_complete_adts_frame(body: bytes) -> bool:
+        if len(body) < 7 or body[0] != 0xFF or body[1] & 0xF6 != 0xF0:
+            return False
+        sample_rate_index = (body[2] >> 2) & 0xF
+        channel_configuration = ((body[2] & 0x1) << 2) | (body[3] >> 6)
+        frame_length = ((body[3] & 0x3) << 11) | (body[4] << 3) | (body[5] >> 5)
+        header_length = 7 if body[1] & 0x1 else 9
+        return (
+            sample_rate_index < 13
+            and channel_configuration > 0
+            and frame_length > header_length
+            and len(body) >= frame_length
+        )
+
+    @classmethod
+    def _audio_body_matches_format(
+        cls,
+        body: bytes,
+        response_format: str,
+        *,
+        sample_rate_hz: int | None,
+        channels: int | None,
+        sample_width_bytes: int | None,
+    ) -> bool:
         if response_format == "wav":
-            return (
-                len(body) >= 12
-                and body[:4] == b"RIFF"
-                and body[8:12] == b"WAVE"
-                and int.from_bytes(body[4:8], "little") + 8 == len(body)
-            )
+            return cls._wav_has_complete_frames(body)
         if response_format == "mp3":
-            return body.startswith(b"ID3") or (
-                len(body) >= 2 and body[0] == 0xFF and body[1] & 0xE0 == 0xE0
-            )
+            return cls._mp3_has_complete_frame(body)
         if response_format == "flac":
-            return body.startswith(b"fLaC")
+            return cls._flac_has_audio_frame(body)
         if response_format == "opus":
-            return body.startswith(b"OggS") and b"OpusHead" in body[:512]
+            return cls._ogg_opus_has_audio_packet(body)
         if response_format == "aac":
-            return len(body) >= 2 and body[0] == 0xFF and body[1] & 0xF6 == 0xF0
+            return cls._aac_has_complete_adts_frame(body)
         if response_format == "pcm":
-            return bool(body) and len(body) % 2 == 0
+            if (
+                type(sample_rate_hz) is not int
+                or not 1 <= sample_rate_hz <= 384_000
+                or type(channels) is not int
+                or not 1 <= channels <= 8
+                or type(sample_width_bytes) is not int
+                or sample_width_bytes not in {1, 2, 3, 4}
+            ):
+                return False
+            frame_size = channels * sample_width_bytes
+            return len(body) >= frame_size and len(body) % frame_size == 0
         return False
 
     def record_successful_sample(
@@ -614,6 +798,9 @@ class ProcessProviderTestEvidenceStore:
         body: bytes,
         content_type: str | None = None,
         max_bytes: int = _DEFAULT_MAX_SAMPLE_BYTES,
+        sample_rate_hz: int | None = None,
+        channels: int | None = None,
+        sample_width_bytes: int | None = None,
     ) -> bool:
         """Record only a bounded, format-valid successful speech response."""
 
@@ -638,7 +825,13 @@ class ProcessProviderTestEvidenceStore:
             or type(max_bytes) is not int
             or max_bytes <= 0
             or not 0 < len(body) <= max_bytes
-            or not self._audio_body_matches_format(body, response_format.lower())
+            or not self._audio_body_matches_format(
+                body,
+                response_format.lower(),
+                sample_rate_hz=sample_rate_hz,
+                channels=channels,
+                sample_width_bytes=sample_width_bytes,
+            )
         ):
             return False
         self._successful_samples[fingerprint.provider_id] = fingerprint

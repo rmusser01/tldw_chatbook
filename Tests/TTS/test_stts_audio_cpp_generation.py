@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import stat
 import struct
+import wave
 from collections.abc import AsyncIterator, Mapping
 from hashlib import sha256
 from pathlib import Path
@@ -47,6 +49,7 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
 )
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
     StudioTTSPreferenceStore,
@@ -68,21 +71,33 @@ def _snapshot(
     options: Mapping[str, Any] | None = None,
     model_id: str = "model-1",
     text: str = "private source text",
+    voice_id: str | None = None,
+    speed: float = 1.0,
 ) -> STTSPlaygroundRequest:
     return STTSPlaygroundRequest(
         operation_id="local-operation-1",
         provider_id=provider_id,
         model_id=model_id,
         text=text,
-        voice_id=None if provider_id == "audio_cpp" else "alloy",
+        voice_id=(
+            None
+            if provider_id == "audio_cpp"
+            else ("alloy" if voice_id is None else voice_id)
+        ),
         response_format=response_format,
-        speed=1.0,
+        speed=speed,
         options=options or {},
     )
 
 
 def _sample_wav(payload: bytes = b"\x00\x00") -> bytes:
-    return b"RIFF" + (len(payload) + 4).to_bytes(4, "little") + b"WAVE" + payload
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24_000)
+        wav.writeframes(payload)
+    return output.getvalue()
 
 
 class _CountingStream:
@@ -201,6 +216,16 @@ class _LegacyService:
         self.native_calls = 0
         self.revision = 5
         self.revision_error: BaseException | None = None
+        self.stream_body = b"RIFFlegacy"
+        self.saved_preferences = TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="model-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.0,
+        )
 
     async def synthesize(self, *_args: object, **_kwargs: object) -> None:
         self.native_calls += 1
@@ -211,6 +236,12 @@ class _LegacyService:
             raise self.revision_error
         return self.revision
 
+    def saved_configuration_revision(self, _provider_id: str) -> int:
+        return self.revision
+
+    def preferences_snapshot(self) -> TTSPreferencesSnapshot:
+        return self.saved_preferences
+
     async def generate_audio_stream(
         self,
         request: object,
@@ -218,8 +249,7 @@ class _LegacyService:
         progress_sink: object = None,
     ) -> AsyncIterator[bytes]:
         self.stream_calls.append((request, internal_model_id, progress_sink))
-        yield b"RIFF"
-        yield b"legacy"
+        yield self.stream_body
 
 
 class _StudioService:
@@ -1065,6 +1095,184 @@ async def test_evidence_lookup_failure_does_not_fail_valid_generation() -> None:
     artifact = handler._current_playground_artifact
     try:
         assert artifact is not None
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    (
+        ("saved", SpeechTTSConnectionState.REACHABLE),
+        ("model", SpeechTTSConnectionState.NOT_TESTED),
+        ("voice", SpeechTTSConnectionState.NOT_TESTED),
+        ("speed", SpeechTTSConnectionState.NOT_TESTED),
+        ("options", SpeechTTSConnectionState.NOT_TESTED),
+    ),
+)
+async def test_legacy_sample_certifies_only_exact_saved_effective_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected: SpeechTTSConnectionState,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+    )
+    service = _LegacyService()
+    service.stream_body = _sample_wav()
+    service.saved_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="model-1",
+        voice_mode="exact",
+        voice_id="alloy",
+        response_format="wav",
+        speed=1.0,
+    )
+    request = _snapshot(
+        provider_id="openai",
+        response_format="wav",
+        model_id="unsaved-model" if case == "model" else "model-1",
+        voice_id="echo" if case == "voice" else "alloy",
+        speed=1.25 if case == "speed" else 1.0,
+        options={"temperature": 0.8} if case == "options" else {},
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=5,
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert handler.provider_test_evidence.sample_state(fingerprint) is expected
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_legacy_sample_revision_change_during_stream_prevents_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+    )
+    service = _LegacyService()
+    service.saved_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="model-1",
+        voice_mode="exact",
+        voice_id="alloy",
+        response_format="wav",
+        speed=1.0,
+    )
+
+    async def changing_stream(*_args: object, **_kwargs: object) -> AsyncIterator[bytes]:
+        yield _sample_wav()
+        service.revision = 6
+
+    service.generate_audio_stream = changing_stream  # type: ignore[method-assign]
+    state = load_global_speech_tts_state({}, environment={})
+    original = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=5,
+    )
+    changed = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=6,
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(
+        STTSPlaygroundGenerateEvent(
+            _snapshot(provider_id="openai", response_format="wav")
+        )
+    )
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert (
+            handler.provider_test_evidence.sample_state(original)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+        assert (
+            handler.provider_test_evidence.sample_state(changed)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+    finally:
+        if artifact is not None:
+            artifact.path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_legacy_saved_selection_change_during_stream_prevents_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={}),
+    )
+    service = _LegacyService()
+    service.saved_preferences = TTSPreferencesSnapshot(
+        provider_id="openai",
+        model_mode="exact",
+        model_id="model-1",
+        voice_mode="exact",
+        voice_id="alloy",
+        response_format="wav",
+        speed=1.0,
+    )
+
+    async def changing_stream(*_args: object, **_kwargs: object) -> AsyncIterator[bytes]:
+        yield _sample_wav()
+        service.saved_preferences = TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="model-2",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+        )
+
+    service.generate_audio_stream = changing_stream  # type: ignore[method-assign]
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=5,
+    )
+    handler = STTSEventHandler(app=_DeliveryApp())
+    handler._stts_service = service
+
+    await handler.handle_playground_generate(
+        STTSPlaygroundGenerateEvent(
+            _snapshot(provider_id="openai", response_format="wav")
+        )
+    )
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert (
+            handler.provider_test_evidence.sample_state(fingerprint)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
     finally:
         if artifact is not None:
             artifact.path.unlink(missing_ok=True)

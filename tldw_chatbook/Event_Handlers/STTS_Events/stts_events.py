@@ -525,6 +525,7 @@ class _SampleEvidenceCandidate:
     """Saved provider identity captured before one synthesis operation."""
 
     fingerprint: ProviderTestFingerprint
+    saved_selection: TTSPreferencesSnapshot | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +534,7 @@ class _SampleGenerationFacts:
 
     provider_configuration_revision: int
     certifies_saved_configuration: bool
+    saved_selection: TTSPreferencesSnapshot | None = None
 
 
 class STTSAudioBookGenerateEvent(Message):
@@ -601,15 +603,53 @@ class STTSEventHandler:
             state = load_global_speech_tts_state(
                 values if isinstance(values, Mapping) else {}
             )
+            preferences_snapshot = getattr(service, "preferences_snapshot", None)
+            saved_selection = (
+                preferences_snapshot() if callable(preferences_snapshot) else None
+            )
+            if type(saved_selection) is not TTSPreferencesSnapshot:
+                saved_selection = None
             return _SampleEvidenceCandidate(
-                build_provider_test_fingerprint(
+                fingerprint=build_provider_test_fingerprint(
                     state,
                     provider_id=request.provider_id,
                     saved_revision=saved,
-                )
+                ),
+                saved_selection=saved_selection,
             )
         except Exception:  # noqa: BLE001 - evidence cannot block synthesis
             return None
+
+    @staticmethod
+    def _legacy_sample_generation_facts(
+        request: STTSPlaygroundRequest,
+        candidate: _SampleEvidenceCandidate | None,
+    ) -> _SampleGenerationFacts | None:
+        """Bind legacy evidence to the exact saved selection before synthesis."""
+
+        if candidate is None:
+            return None
+        saved = candidate.saved_selection
+        certifies = bool(
+            saved is not None
+            and saved.provider_id == request.provider_id
+            and saved.model_mode == "exact"
+            and saved.model_id == request.model_id
+            and saved.voice_mode == "exact"
+            and saved.voice_id == request.voice_id
+            and saved.response_format == request.response_format.lower()
+            and saved.speed == request.speed
+            and not request.options
+            and request.clone_audition is None
+            and request.profile_preview is None
+            and request.studio_draft is None
+            and request.studio_preferences is None
+        )
+        return _SampleGenerationFacts(
+            provider_configuration_revision=candidate.fingerprint.saved_revision,
+            certifies_saved_configuration=certifies,
+            saved_selection=saved,
+        )
 
     def _record_successful_sample_evidence(
         self,
@@ -640,9 +680,26 @@ class STTSEventHandler:
                 != fingerprint.saved_revision
             ):
                 return False
+            if facts.saved_selection is not None:
+                preferences_snapshot = getattr(service, "preferences_snapshot", None)
+                if not callable(preferences_snapshot):
+                    return False
+                current_saved_selection = preferences_snapshot()
+                if (
+                    type(current_saved_selection) is not TTSPreferencesSnapshot
+                    or current_saved_selection != facts.saved_selection
+                ):
+                    return False
             max_bytes = ProcessProviderTestEvidenceStore._DEFAULT_MAX_SAMPLE_BYTES
             with artifact.path.open("rb") as source:
                 body = source.read(max_bytes + 1)
+            sample_rate_hz = artifact.metadata.get("sample_rate")
+            channels = artifact.metadata.get("channels")
+            sample_width_bytes = artifact.metadata.get("sample_width_bytes")
+            if sample_width_bytes is None:
+                bits_per_sample = artifact.metadata.get("bits_per_sample")
+                if type(bits_per_sample) is int and bits_per_sample % 8 == 0:
+                    sample_width_bytes = bits_per_sample // 8
             return self.provider_test_evidence.record_successful_sample(
                 fingerprint,
                 status_code=200,
@@ -650,6 +707,15 @@ class STTSEventHandler:
                 content_type=artifact.content_type,
                 body=body,
                 max_bytes=max_bytes,
+                sample_rate_hz=(
+                    sample_rate_hz if type(sample_rate_hz) is int else None
+                ),
+                channels=channels if type(channels) is int else None,
+                sample_width_bytes=(
+                    sample_width_bytes
+                    if type(sample_width_bytes) is int
+                    else None
+                ),
             )
         except Exception:  # noqa: BLE001 - evidence must not fail delivered audio
             logger.warning(
@@ -1378,6 +1444,12 @@ class STTSEventHandler:
                     progress_callback,
                 )
             else:
+                legacy_facts = self._legacy_sample_generation_facts(
+                    snapshot,
+                    sample_candidate,
+                )
+                if legacy_facts is not None:
+                    self._sample_generation_facts[snapshot.operation_id] = legacy_facts
                 artifact = await self._generate_legacy(
                     snapshot,
                     progress_callback,
@@ -1389,7 +1461,11 @@ class STTSEventHandler:
                 snapshot.operation_id,
                 None,
             )
-            if sample_facts is None and artifact.requested_selection is not None:
+            if (
+                sample_facts is None
+                and snapshot.provider_id == "audio_cpp"
+                and artifact.requested_selection is not None
+            ):
                 sample_facts = _SampleGenerationFacts(
                     provider_configuration_revision=(
                         artifact.requested_selection.configuration_revision

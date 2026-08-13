@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1311,6 +1312,228 @@ async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome
             evidence.catalog_state(fingerprint)
             is SpeechTTSConnectionState.UNSUPPORTED
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("latest_state", "hydration"),
+    (
+        (SpeechTTSConnectionState.UNREACHABLE, "success"),
+        (SpeechTTSConnectionState.UNSUPPORTED, "error"),
+        (SpeechTTSConnectionState.UNREACHABLE, "incompatible"),
+    ),
+)
+async def test_latest_openai_probe_replaces_success_independently_of_hydration(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+    latest_state: SpeechTTSConnectionState,
+    hydration: str,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        return SettingsEndpointProbeOutcome(
+            state=latest_state,
+            operation="catalog",
+            summary=latest_state.value,
+        )
+
+    original_get_catalog = faked_service.get_catalog
+
+    async def get_catalog(
+        provider_id: str,
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        if hydration == "error":
+            raise RuntimeError("catalog hydration failed")
+        catalog = await original_get_catalog(provider_id, refresh=refresh)
+        if hydration == "incompatible":
+            return replace(catalog, provider_id="audio_cpp")
+        return catalog
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        evidence = process_provider_test_evidence_store(app)
+        evidence.record_catalog(
+            fingerprint,
+            SpeechTTSConnectionState.REACHABLE,
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        assert pane._catalog_test_fingerprint(faked_service, "openai", 1) is not None
+        request_generation = pane._reserve_catalog_request("openai")
+        await pane._load_provider_catalog_worker.__wrapped__(
+            pane,
+            "openai",
+            refresh=True,
+            request_generation=request_generation,
+        )
+
+        assert evidence.catalog_state(fingerprint) is latest_state
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_result_is_not_attributed_after_revision_changes(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        probe_started.set()
+        await release_probe.wait()
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.REACHABLE,
+            operation="catalog",
+            summary="reachable",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": {}})(),
+    )
+    state = load_global_speech_tts_state({}, environment={})
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        assert pane._catalog_test_fingerprint(faked_service, "openai", 1) is not None
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        request_generation = pane._reserve_catalog_request("openai")
+        worker = asyncio.create_task(
+            pane._load_provider_catalog_worker.__wrapped__(
+                pane,
+                "openai",
+                refresh=True,
+                request_generation=request_generation,
+            )
+        )
+        await wait_for_signal(probe_started, what="the explicit catalog probe")
+        faked_service.revisions["openai"] = 2
+        release_probe.set()
+        await worker
+
+        changed = build_provider_test_fingerprint(
+            state,
+            provider_id="openai",
+            saved_revision=2,
+        )
+        assert (
+            process_provider_test_evidence_store(app).catalog_state(changed)
+            is SpeechTTSConnectionState.NOT_TESTED
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
+    faked_service: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    faked_service.saved_configuration_revision = lambda provider_id: (
+        faked_service.revisions[provider_id]
+    )
+    runtime_values: dict[str, object] = {}
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
+
+    async def probe(*_args: object, **_kwargs: object) -> SettingsEndpointProbeOutcome:
+        probe_started.set()
+        await release_probe.wait()
+        return SettingsEndpointProbeOutcome(
+            state=SpeechTTSConnectionState.REACHABLE,
+            operation="catalog",
+            summary="reachable",
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Speech.speech_catalog_mixin.get_runtime_config_snapshot",
+        lambda: type("Snapshot", (), {"values": runtime_values})(),
+    )
+    initial_state = load_global_speech_tts_state({}, environment={})
+    initial = build_provider_test_fingerprint(
+        initial_state,
+        provider_id="openai",
+        saved_revision=1,
+    )
+    app = _AxisHarness()
+
+    async with app.run_test(size=(160, 60)):
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._tts_service = faked_service
+        pane._provider_ids = frozenset(faked_service.revisions)
+        pane._selected_provider_id = "openai"
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Speech.speech_catalog_mixin.probe_settings_endpoint",
+            probe,
+        )
+        request_generation = pane._reserve_catalog_request("openai")
+        worker = asyncio.create_task(
+            pane._load_provider_catalog_worker.__wrapped__(
+                pane,
+                "openai",
+                refresh=True,
+                request_generation=request_generation,
+            )
+        )
+        await wait_for_signal(probe_started, what="the explicit catalog probe")
+        runtime_values.update(
+            {
+                "COMPREHENSIVE_CONFIG_RAW": {
+                    "app_tts": {
+                        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+                    }
+                }
+            }
+        )
+        changed_state = load_global_speech_tts_state(runtime_values, environment={})
+        changed = build_provider_test_fingerprint(
+            changed_state,
+            provider_id="openai",
+            saved_revision=1,
+        )
+        assert initial != changed
+        release_probe.set()
+        await worker
+
+        evidence = process_provider_test_evidence_store(app)
+        assert (
+            evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
+        )
+        assert evidence.catalog_state(changed) is SpeechTTSConnectionState.NOT_TESTED
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import wave
 from copy import deepcopy
 
 import pytest
@@ -74,17 +76,21 @@ def _settings() -> dict[str, object]:
     }
 
 
-def _wav_sample() -> bytes:
-    return (
-        b"RIFF"
-        + (40).to_bytes(4, "little")
-        + b"WAVEfmt "
-        + (16).to_bytes(4, "little")
-        + b"\x01\x00\x01\x00\x80\xbb\x00\x00\x00w\x01\x00\x02\x00\x10\x00"
-        + b"data"
-        + (4).to_bytes(4, "little")
-        + b"\x00\x00\x01\x00"
-    )
+def _wav_sample(frames: bytes = b"\x00\x00\x01\x00") -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24_000)
+        wav.writeframes(frames)
+    return output.getvalue()
+
+
+def _wav_with_declared_data_size(size: int) -> bytes:
+    body = bytearray(_wav_sample())
+    data_size_offset = body.index(b"data") + 4
+    body[data_size_offset : data_size_offset + 4] = size.to_bytes(4, "little")
+    return bytes(body)
 
 
 def test_successful_sample_outranks_unsupported_catalog() -> None:
@@ -319,6 +325,107 @@ def test_sample_evidence_requires_bounded_successful_format_valid_response(
     )
     assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
     assert store.sample_operation(fingerprint) is SpeechTTSTestOperation.SAMPLE
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        b"RIFF\x04\x00\x00\x00WAVE",
+        _wav_sample(b""),
+        _wav_sample()[:-1],
+        _wav_with_declared_data_size(128),
+    ),
+    ids=("header-only", "no-data", "truncated", "malformed-data-size"),
+)
+def test_wav_sample_evidence_requires_complete_non_empty_audio(body: bytes) -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="wav",
+        content_type="audio/wav",
+        body=body,
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
+
+
+def test_raw_pcm_sample_requires_authoritative_frame_metadata() -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+    one_frame = b"\x00\x00\x00\x00"
+
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="pcm",
+        content_type="audio/pcm",
+        body=one_frame,
+    )
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="pcm",
+        content_type="audio/pcm",
+        body=one_frame[:-1],
+        sample_rate_hz=24_000,
+        channels=2,
+        sample_width_bytes=2,
+    )
+    assert store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format="pcm",
+        content_type="audio/pcm",
+        body=one_frame,
+        sample_rate_hz=24_000,
+        channels=2,
+        sample_width_bytes=2,
+    )
+
+
+@pytest.mark.parametrize(
+    ("response_format", "content_type", "body"),
+    (
+        ("mp3", "audio/mpeg", b"ID3\x04\x00\x00\x00\x00\x00\x00"),
+        ("mp3", "audio/mpeg", b"\xff\xfb"),
+        ("flac", "audio/flac", b"fLaC"),
+        ("opus", "audio/ogg", b"OggS" + b"\x00" * 23 + b"OpusHead"),
+        ("aac", "audio/aac", b"\xff\xf1"),
+    ),
+)
+def test_compressed_sample_evidence_rejects_magic_only_or_truncated_audio(
+    response_format: str,
+    content_type: str,
+    body: bytes,
+) -> None:
+    state = load_global_speech_tts_state(_settings(), environment={})
+    fingerprint = build_provider_test_fingerprint(
+        state,
+        provider_id="openai",
+        saved_revision=3,
+    )
+    store = ProcessProviderTestEvidenceStore()
+
+    assert not store.record_successful_sample(
+        fingerprint,
+        status_code=200,
+        response_format=response_format,
+        content_type=content_type,
+        body=body,
+    )
+    assert store.sample_state(fingerprint) is SpeechTTSConnectionState.NOT_TESTED
 
 
 def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_cpp() -> (

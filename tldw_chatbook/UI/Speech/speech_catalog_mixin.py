@@ -159,7 +159,7 @@ class SpeechCatalogMixin:
 
         if captured is None or state is None:
             return
-        fingerprint, _base_url = captured
+        fingerprint, base_url = captured
         saved_revision = getattr(service, "saved_configuration_revision", None)
         configuration_revision = getattr(service, "configuration_revision", None)
         try:
@@ -171,6 +171,13 @@ class SpeechCatalogMixin:
                 or configuration_revision(fingerprint.provider_id)
                 != fingerprint.saved_revision
             ):
+                return
+            current = self._catalog_test_fingerprint(
+                service,
+                fingerprint.provider_id,
+                fingerprint.saved_revision,
+            )
+            if current != (fingerprint, base_url):
                 return
             process_provider_test_evidence_store(self.app).record_catalog(
                 fingerprint,
@@ -381,6 +388,16 @@ class SpeechCatalogMixin:
                 if provider_id == "openai"
                 else None
             )
+            if catalog_test_state is not None:
+                if not self._catalog_token_is_current(token):
+                    if self._catalog_request_is_latest(token):
+                        self._mark_stale_catalog_result(token)
+                    return
+                self._record_catalog_test_state(
+                    service,
+                    catalog_test,
+                    catalog_test_state,
+                )
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
@@ -392,12 +409,6 @@ class SpeechCatalogMixin:
                     "The selected provider returned an incompatible catalog",
                 )
                 return
-            self._record_catalog_test_state(
-                service,
-                catalog_test,
-                catalog_test_state,
-            )
-
             self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (
