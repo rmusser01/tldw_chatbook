@@ -24831,13 +24831,9 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Set the in-content search query and jump to the first match.
 
-        Submitted (rather than Changed) is used deliberately: recomposing
-        the whole screen on every keystroke would remount
-        ``#library-media-content-search`` and drop focus/cursor position
-        mid-typing, so the query only takes effect on Enter -- mirroring
-        ``handle_library_search_submitted``'s rail search box. A no-op
-        guard (mirroring ``update_library_rag_query``) skips the recompose
-        entirely when the submitted text matches the current query.
+        Submitted (rather than Changed) is used deliberately, so the query
+        only takes effect on Enter. The mounted viewer coordinates its focused
+        search controls and persistent body without rebuilding the screen.
 
         Args:
             event: Input submit event emitted by the content search box.
@@ -24850,11 +24846,6 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_media_content_search_input)
-        # Bring the first match into view on submit; otherwise the status line
-        # claims "Match 1 of N" while the hit stays below the fold until the
-        # user cycles Next all the way around.
         detail = (
             self._library_media_detail
             if isinstance(self._library_media_detail, Mapping)
@@ -24862,26 +24853,39 @@ class LibraryScreen(BaseAppScreen):
         )
         content = build_library_media_viewer_state(detail).content if detail else ""
         matches = find_content_matches(content, self._library_media_content_query)
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None:
+            return
+        viewer.sync_query_state(
+            query=submitted,
+            matches=matches,
+            match_index=0,
+        )
+        self.call_after_refresh(self._focus_library_media_content_search_input)
+        # Bring the first match into view after Rich text wrapping/layout settles.
         if matches:
             self.call_after_refresh(
                 self._scroll_library_media_content_to_line, matches[0]
             )
 
-    def _focus_library_media_content_search_input(self) -> None:
-        """Re-focus the content search box after a submit-triggered recompose.
+    def _mounted_library_media_viewer(self) -> LibraryMediaViewer | None:
+        """Return the mounted media viewer, or ``None`` during teardown."""
+        try:
+            return self.query_one("#library-media-viewer", LibraryMediaViewer)
+        except (NoMatches, QueryError):
+            return None
 
-        Mirrors ``_focus_library_search_input``: the Submitted-driven
-        recompose above remounts a brand-new
-        ``#library-media-content-search``, so without this, focus falls
-        back to the screen after every search.
-        """
+    def _focus_library_media_content_search_input(self) -> None:
+        """Focus the mounted content search box after controls synchronize."""
         try:
             self.query_one("#library-media-content-search", Input).focus()
         except (NoMatches, QueryError):
             pass
 
     @on(Button.Pressed, "#library-media-content-mode-rendered")
-    def handle_library_media_content_mode_rendered(self, event: Button.Pressed) -> None:
+    async def handle_library_media_content_mode_rendered(
+        self, event: Button.Pressed
+    ) -> None:
         """Switch the open media item's Content section to the Rendered (Markdown) view.
 
         Args:
@@ -24889,10 +24893,12 @@ class LibraryScreen(BaseAppScreen):
                 "Rendered" action.
         """
         event.stop()
-        self._set_library_media_content_mode("rendered")
+        await self._set_library_media_content_mode("rendered")
 
     @on(Button.Pressed, "#library-media-content-mode-raw")
-    def handle_library_media_content_mode_raw(self, event: Button.Pressed) -> None:
+    async def handle_library_media_content_mode_raw(
+        self, event: Button.Pressed
+    ) -> None:
         """Switch the open media item's Content section to the Raw text view.
 
         Args:
@@ -24900,15 +24906,13 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
-        self._set_library_media_content_mode("raw")
+        await self._set_library_media_content_mode("raw")
 
-    def _set_library_media_content_mode(self, mode: str) -> None:
+    async def _set_library_media_content_mode(self, mode: str) -> None:
         """Shared Rendered/Raw toggle: no-op when already in ``mode``.
 
-        A plain screen-state flip + recompose -- unlike the note editor's
-        Preview toggle, there is nothing to save here (the media viewer has
-        no editable body while browsing), so there is no write for this to
-        accidentally trigger.
+        The persistent body lazily mounts each view once; no media write is
+        involved because the viewer has no editable body while browsing.
 
         Args:
             mode: ``"rendered"`` or ``"raw"``.
@@ -24919,7 +24923,10 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._library_media_content_mode = mode
-        self.refresh(recompose=True)
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None:
+            return
+        await viewer.sync_mode(mode)
 
     @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
@@ -24964,7 +24971,13 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_content_match_index + step
         ) % len(matches)
         line_index = matches[self._library_media_content_match_index]
-        self.refresh(recompose=True)
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None:
+            return
+        viewer.sync_match_index(
+            matches=matches,
+            match_index=self._library_media_content_match_index,
+        )
         self.call_after_refresh(self._scroll_library_media_content_to_line, line_index)
 
     def _scroll_library_media_content_to_line(self, line_index: int) -> None:
