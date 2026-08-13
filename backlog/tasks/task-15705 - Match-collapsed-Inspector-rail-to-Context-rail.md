@@ -40,6 +40,7 @@ Reason: Existing ADR-017 governs the rail visual language and ADR-043 governs co
 3. Update component TCSS, regenerate the production CSS bundle, and run focused rail/CSS/static checks.
 4. Run a real-Console six-state SVG/geometry sweep at 130x30, 140x42, and 160x45 with zero/three approvals. RED review replaced 100x30 because its baseline Inspector is already horizontally off-screen, a separate ADR-043 layout defect outside this visual-parity change; existing compact-access tests retain 80/90/140 coverage.
 5. Run full-suite Ruff/check/format gates; verify the task diff; close only if every Definition of Done gate is green.
+6. Follow-up: pin `Inspect` as the canonical horizontal collapsed-button copy, verify exactly one composited text row across six live states, preserve the full tooltip and stacked `Inspector` label, and run only directly related tests per the user's scoped verification instruction.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

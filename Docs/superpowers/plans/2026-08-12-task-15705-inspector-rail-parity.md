@@ -18,6 +18,11 @@
 
 **Reason:** ADR-017 already governs the Console rail's text-only visual language, and ADR-043 governs the compact-width Inspector access preserved by AC #4; this is a reversible presentation refinement within those existing boundaries.
 
+**Approved follow-up:** After reviewing the finished 160×45 render, the user
+approved shortening only the horizontal collapsed right-handle label from
+`Inspector` to `Inspect`. Tasks 1–3 below describe the completed parity work;
+Task 4 is the only active follow-up scope.
+
 ---
 
 ## File map
@@ -343,4 +348,124 @@ the exact unmet gate in `--notes`. Before implementation begins, assign it with
 ```bash
 git add 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
 git commit -m "docs(console): record Inspector rail parity verification"
+```
+
+### Task 4: Keep the horizontal Inspect action on one line
+
+**Files:**
+- Modify: `Tests/UI/test_console_rail_handle.py`
+- Modify: `Tests/UI/test_destination_rail.py`
+- Modify: `Tests/UI/test_console_shell_regions.py`
+- Modify: `Tests/UI/test_settings_console_rail_labels.py`
+- Modify: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
+- Modify: `Tests/UI/test_workbench_visual_snapshots.py`
+- Modify: `tldw_chatbook/Widgets/Console/console_rail_handle.py:94-101`
+- Modify: `backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md`
+
+- [ ] **Step 1: Change horizontal contract expectations to `Inspect`**
+
+Update only tests that observe the horizontal collapsed Console right handle:
+
+```python
+assert inspector._display_label() == "Inspect"
+assert str(right_button.label) == "Inspect"
+assert right_button.tooltip == "Open Inspector rail"
+```
+
+Rename the two focused tests whose names currently say the horizontal default
+is preserved or the Inspector label is renamed so they describe the new
+horizontal abbreviation contract. In the shell/config parameterizations,
+change only the non-stacked right-label expectation. Preserve every stacked
+`I\nn\ns\np\ne\nc\nt\no\nr` expectation, settings label, canonical constant,
+tooltip, and open Inspector heading.
+
+- [ ] **Step 2: Replace the vacuous visual substring oracle**
+
+In `Tests/UI/test_workbench_visual_snapshots.py`, add a small local helper that
+slices a widget's exact rows from `screen._compositor.render_strips()`. In the
+six-state TASK-15705 sweep, assert both the semantic label and the final paint:
+
+```python
+assert str(inspector_button.label) == "Inspect"
+assert inspector_button.tooltip == "Open Inspector rail"
+painted_rows = [
+    row.strip()
+    for row in _composited_rows(inspector_button)
+    if row.strip()
+]
+assert painted_rows == ["Inspect"]
+```
+
+Delete the whole-SVG `"Inspector" in rendered_text` assertion. It is not an
+oracle for this behavior because the screenshot title contains `Inspector`,
+and `Inspect` is also a prefix of `Inspector`.
+
+- [ ] **Step 3: Run the changed contracts and verify RED**
+
+Run only the directly affected tests:
+
+```bash
+.venv/bin/python -m pytest -q Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+```
+
+Expected: failures are limited to horizontal collapsed right-handle copy still
+rendering `Inspector` or two painted rows (`Inspect`, `or`). Vertical-label,
+tooltip, geometry, badge, and interaction assertions continue to pass.
+
+- [ ] **Step 4: Commit the RED contracts**
+
+```bash
+git add Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
+git commit -m "test(console): require one-line Inspect rail label"
+```
+
+- [ ] **Step 5: Implement the one-literal Console-only abbreviation**
+
+In `ConsoleRailHandle._display_label()`, retain the vertical branch and every
+noncanonical fallback, changing only the canonical horizontal return value:
+
+```python
+if self.vertical:
+    return self._stack_vertical_label(self.label)
+if self.side != "right":
+    return self.label
+return "Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+```
+
+Do not change `CONSOLE_RAIL_INSPECTOR_LABEL`, shared
+`DestinationRailHandle`, CSS, geometry, ids/classes, state builders, tooltip,
+badge vocabulary, or the open Inspector rail.
+
+- [ ] **Step 6: Run the exact focused GREEN verification**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest -q Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_console_right_rail.py Tests/UI/test_console_inspector_compact_access.py Tests/UI/test_css_build_integrity.py Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/ruff check tldw_chatbook/Widgets/Console/console_rail_handle.py Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
+.venv/bin/ruff format --check tldw_chatbook/Widgets/Console/console_rail_handle.py Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
+git diff --check
+```
+
+Expected: all selected tests pass; the compositor reports one `Inspect` row at
+all six live Console states; the exact tooltip and stacked label remain
+unchanged. Per the user's explicit instruction, do not run the full repository
+suite for this follow-up.
+
+- [ ] **Step 7: Record evidence, close AC #7, and commit**
+
+Update TASK-15705's Implementation Notes with the RED/GREEN counts, the exact
+compositor evidence, preserved invariants, and the user-scoped verification
+boundary. Check AC #7 and return the task to Done only after every focused gate
+above passes.
+
+```bash
+git add tldw_chatbook/Widgets/Console/console_rail_handle.py
+git commit -m "fix(console): shorten collapsed rail label to Inspect"
+backlog task edit 15705 --check-ac 7 -s Done --notes "<focused verified follow-up summary>"
+git add 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
+git commit -m "docs(console): record Inspect label verification"
+git push
 ```
