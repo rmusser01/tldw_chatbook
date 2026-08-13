@@ -3579,3 +3579,48 @@ their hidden mass cost nothing to skip. Watchlists is genuinely widget-bound —
 statements and ~10 ms of application code for a whole push, everything else Textual's
 per-widget CSS apply and mount. The rule is the same in both cases: find out what the
 screen is bound by before choosing what to count.
+
+---
+
+## A test's stimulus can rely on the exact inefficiency your fix removes (task-15459, 2026-08-13)
+
+**Incident.** task-15459 made `LibraryScreen._apply_local_source_snapshot` skip its
+`refresh(recompose=True)` when the incoming snapshot is byte-for-byte identical to
+what is already rendered — the point of the task, since a warm revisit's reconcile
+fetch confirming the app-scoped cache verbatim no longer needs to repaint. Two full
+background suite runs afterward reported 14 failures. `test_library_note_recompose_
+and_fifty_route_cycles_return_to_baseline` was one: its stress loop called
+`_apply_local_source_snapshot` five times with a `dict()`-copied but otherwise
+UNCHANGED snapshot, purely to force a recompose and verify a dirty note-editor
+session survives being torn down and rebuilt repeatedly. That loop's own assertion
+("Generic source-snapshot completion never recomposed the Notes workbench") is
+exactly the behavior the fix intentionally removed — the test's PASS depended on
+the inefficiency, not on anything the task changed being wrong.
+
+Reflexively "fixing" this by loosening the guard, or by deleting/skipping the test,
+would both have been mistakes: the guard is correct (measured 2 composes → 1 for a
+real warm revisit), and the test's underlying intent (repeated recomposes must not
+corrupt a dirty session) is still a real requirement worth pinning — its STIMULUS
+was just now inert. The fix was to vary a harmless field (the notes count) each
+loop iteration, restoring a genuine data change that still forces the recompose
+under the new contract, matching what a real background refresh would look like.
+
+Of the other 13 reported failures, mutation-bisection (temporarily reverting BOTH
+halves of the production diff to their pre-task behavior with `Edit`, confirming
+the SAME failure still reproduces, then restoring — never `git checkout --`, which
+discards uncommitted work) showed 9 were pre-existing (reproduced identically with
+the diff neutralized, mostly drift from an unrelated recent merge) and 4 were
+load/order flakiness that passed reliably in isolation. Zero were real regressions.
+
+**What to do.** When an optimization correctly removes redundant work and a test
+goes red, do not assume either "the test is now wrong, ignore it" or "my change
+broke something" — read what the test's assertion is actually FOR. If it names the
+mechanism you just changed ("never recomposed", "recompose count", "refresh was
+called"), check whether that mechanism was the test's STIMULUS (how it drove the
+scenario) or its OUTCOME (what it was actually verifying). A stimulus that no
+longer fires needs a new stimulus that still exercises the real requirement; an
+outcome assertion that no longer holds needs the assertion updated to the new
+contract. Across a batch of full-suite failures, mutation-bisect each one against
+your own diff before writing any of them off as "pre-existing" or accepting any as
+"caused by my change" — a batch this size will usually contain both, plus plain
+flakiness, and a single red run distinguishes none of them.
