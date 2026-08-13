@@ -414,54 +414,7 @@ DEFAULT_DIARIZATION_CONFIG = {
     "min_speaker_duration": 3.0,  # minimum total duration per speaker
 }
 
-
-def load_openai_mappings() -> Dict:
-    """Load OpenAI TTS mappings from packaged resources.
-
-    Prefer importlib.resources so this works when installed as a package.
-    Fallback to a file path inside the package directory if needed.
-    """
-    from importlib import resources as importlib_resources
-
-    package = "tldw_chatbook.Config_Files"
-    resource_name = "openai_tts_mappings.json"
-
-    # Try importlib.resources first (works in wheels and editable installs)
-    try:
-        mapping_path = importlib_resources.files(package).joinpath(resource_name)
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}"
-        )
-        with mapping_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_res:
-        logger.debug(
-            f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}"
-        )
-
-    # Fallback: direct path within the installed package directory
-    try:
-        current_file_path = Path(__file__).resolve()
-        mapping_path_fs = current_file_path.parent / "Config_Files" / resource_name
-        logger.info(
-            f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}"
-        )
-        with open(mapping_path_fs, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e_fs:
-        logger.warning(
-            f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}"
-        )
-        return {
-            "models": {"tts-1": "openai_official_tts-1"},
-            "voices": {"alloy": "alloy"},
-        }
-
-
-_openai_mappings = load_openai_mappings()
-
-# This hardcoded mapping can also be moved to TOML or be a fallback for the JSON loaded one
-openai_tts_mappings = {
+_BUILT_IN_OPENAI_TTS_MAPPINGS = {
     "models": {
         "tts-1": "openai_official_tts-1",
         "tts-1-hd": "openai_official_tts-1-hd",
@@ -480,6 +433,30 @@ openai_tts_mappings = {
         "k_adam": "am_v0adam",
     },
 }
+
+
+def load_openai_mappings() -> Dict:
+    """Load OpenAI TTS mappings from packaged resources.
+
+    Load through importlib.resources so wheels and editable installs agree.
+    """
+    from importlib import resources as importlib_resources
+
+    package = "tldw_chatbook.Config_Files"
+    resource_name = "openai_tts_mappings.json"
+
+    try:
+        mapping_path = importlib_resources.files(package).joinpath(resource_name)
+        with mapping_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        logger.info("OpenAI TTS mappings unavailable; using built-in defaults")
+        return copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
+
+
+_openai_mappings = load_openai_mappings()
+
+openai_tts_mappings = copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)
 # Update openai_tts_mappings with values from _openai_mappings (JSON file takes precedence)
 if _openai_mappings:
     openai_tts_mappings["models"].update(_openai_mappings.get("models", {}))

@@ -1,12 +1,12 @@
 import pytest
-
 from textual.app import App
 from textual.widgets import Button, Static
 
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Lab_Modules.lab_speech_status import speech_capability_detail
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-from Tests.UI.app_factory import _build_test_app
 
 # The capability line moved out of STTSWindow's sidebar and into the Lab
 # frame's rail when Speech adopted the frame, so these mount the SCREEN now.
@@ -63,6 +63,9 @@ async def test_speech_rail_exposes_and_opens_voice_profiles():
 async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatch):
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "tts_processing", False)
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", False)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "kokoro_onnx", False)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "chatterbox", False)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "higgs_tts", False)
     monkeypatch.setattr(
         "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_tts_deps", lambda: False
     )
@@ -78,16 +81,35 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
         status = app.screen.query_one("#speech-capability-status", Static)
         rendered_status = str(status.render())
 
-        # The status now uses the phase-5 recovery taxonomy copy
-        # (headline / Why / Next / Recovery / Owner) instead of a one-liner.
-        assert "Dependency missing" in rendered_status
-        assert "Local speech" in rendered_status
+        assert "OpenAI-compatible speech: available when configured" in rendered_status
         assert (
-            'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"'
-            in rendered_status
-        )
-        assert "Recovery: Settings > Speech." in rendered_status
+            'Local transcription: missing - pip install '
+            '"tldw_chatbook[transcription_faster_whisper]"'
+        ) in rendered_status
+        assert (
+            'Local Kokoro: missing - pip install "tldw_chatbook[local_tts]"'
+        ) in rendered_status
+        assert (
+            'Local Chatterbox: missing - pip install "tldw_chatbook[chatterbox]"'
+        ) in rendered_status
+        assert (
+            'Local Higgs: missing - pip install "tldw_chatbook[higgs_tts]"'
+        ) in rendered_status
         assert app.screen.lab_header_state().status == "ready"
+
+
+def test_speech_capability_detail_names_each_ready_local_capability(monkeypatch):
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", True)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "kokoro_onnx", True)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "chatterbox", True)
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "higgs_tts", True)
+
+    detail = speech_capability_detail()
+
+    assert "Local transcription: ready" in detail
+    assert "Local Kokoro: ready" in detail
+    assert "Local Chatterbox: ready" in detail
+    assert "Local Higgs: ready" in detail
 
 
 @pytest.mark.asyncio
@@ -97,6 +119,9 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
 
     def mark_tts_available() -> bool:
         DEPENDENCIES_AVAILABLE["tts_processing"] = True
+        DEPENDENCIES_AVAILABLE["kokoro_onnx"] = True
+        DEPENDENCIES_AVAILABLE["chatterbox"] = True
+        DEPENDENCIES_AVAILABLE["higgs_tts"] = True
         return True
 
     def mark_stt_available() -> bool:
@@ -120,10 +145,17 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         # Two widgets now: the rail's one-line summary, and the inspector's
         # recovery detail carrying the stable selector. Both must flip.
         summary = app.screen.query_one("#speech-capability-summary", Static)
-        assert str(summary.render()) == "Local speech: ready"
+        assert str(summary.render()) == (
+            "OpenAI-compatible speech: available when configured; "
+            "local capabilities: 4/4 ready"
+        )
 
         detail = app.screen.query_one("#speech-capability-status", Static)
-        assert str(detail.render()) == "Local TTS and STT dependencies are available."
+        rendered_detail = str(detail.render())
+        assert "Local transcription: ready" in rendered_detail
+        assert "Local Kokoro: ready" in rendered_detail
+        assert "Local Chatterbox: ready" in rendered_detail
+        assert "Local Higgs: ready" in rendered_detail
 
 
 @pytest.mark.asyncio

@@ -89,7 +89,11 @@ from tldw_chatbook.UI.stts_profile_library import (
     STTSProfileLibrary,
     _retire_profile_test_context,
 )
-from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
+from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
+    speech_capability_text,
+    speech_capability_tooltip,
+    speech_dependencies_available,
+)
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
     EnhancedFileSave as FileSave,
@@ -97,11 +101,6 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.UI.Dictation_Window_Improved import (
     ImprovedDictationWindow as DictationWindow,
-)
-from tldw_chatbook.Utils.optional_deps import (
-    DEPENDENCIES_AVAILABLE,
-    check_stt_deps,
-    check_tts_deps,
 )
 # Note: Not using form_components due to generator/widget incompatibility
 
@@ -1629,41 +1628,14 @@ class STTSWindow(Container):
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
-        check_tts_deps()
-        check_stt_deps()
-
-        if self._speech_dependencies_available():
-            return "Local speech: ready"
-
-        return self._speech_dependency_recovery_state().visible_copy
+        return speech_capability_text()
 
     def _speech_capability_status_tooltip(self) -> str:
         """Return install guidance for local speech dependencies."""
-        if self._speech_dependencies_available():
-            return "Local TTS and STT dependencies are available."
-        return self._speech_dependency_recovery_state().disabled_tooltip
+        return speech_capability_tooltip()
 
     def _speech_dependencies_available(self) -> bool:
-        return bool(DEPENDENCIES_AVAILABLE.get("tts_processing", False)) and bool(
-            DEPENDENCIES_AVAILABLE.get("stt_processing", False)
-        )
-
-    def _speech_dependency_recovery_state(self):
-        missing_dependencies = []
-        if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
-            missing_dependencies.append("local_tts")
-        if not DEPENDENCIES_AVAILABLE.get("stt_processing", False):
-            missing_dependencies.extend(
-                ("transcription_faster_whisper", "speech_recording")
-            )
-
-        return optional_dependency_recovery_state(
-            unavailable_what="Local speech providers",
-            missing_dependencies=tuple(missing_dependencies),
-            install_target='pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"',
-            stable_selector="speech-capability-status",
-            recovery_action="Settings > Speech",
-        )
+        return speech_dependencies_available()
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes.

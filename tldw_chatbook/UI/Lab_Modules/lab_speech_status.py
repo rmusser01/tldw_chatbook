@@ -16,29 +16,38 @@ from __future__ import annotations
 
 from importlib.util import find_spec
 
+from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+)
 from tldw_chatbook.Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
     check_stt_deps,
     check_tts_deps,
-)
-from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
-from tldw_chatbook.UI.Speech.speech_runtime_status import (
-    SpeechLocalDependencyAvailability,
 )
 
 #: Stable selector the recovery state reports against, unchanged from when
 #: this rendered inside the sidebar.
 SPEECH_CAPABILITY_SELECTOR = "speech-capability-status"
 
+_LOCAL_CAPABILITIES = (
+    ("Local transcription", "stt", "transcription_faster_whisper"),
+    ("Local Kokoro", "kokoro", "local_tts"),
+    ("Local Chatterbox", "chatterbox", "chatterbox"),
+    ("Local Higgs", "higgs", "higgs_tts"),
+)
+
 
 def speech_dependencies_available() -> bool:
-    """Report whether both local TTS and local STT are importable.
+    """Report whether every independently presented local capability is ready.
 
     Returns:
-        True only when both dependency groups are present.
+        True only when all four local capabilities are present.
     """
-    return bool(DEPENDENCIES_AVAILABLE.get("tts_processing", False)) and bool(
-        DEPENDENCIES_AVAILABLE.get("stt_processing", False)
+    dependencies = speech_local_dependency_availability()
+    return all(
+        getattr(dependencies, attribute)
+        for _label, attribute, _extra in _LOCAL_CAPABILITIES
     )
 
 
@@ -95,21 +104,19 @@ def speech_dependency_recovery_state():
         The shared optional-dependency recovery state, naming only the
         dependency groups that are actually absent.
     """
-    missing_dependencies: list[str] = []
-    if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
-        missing_dependencies.append("local_tts")
-    if not DEPENDENCIES_AVAILABLE.get("stt_processing", False):
-        missing_dependencies.extend(
-            ("transcription_faster_whisper", "speech_recording")
-        )
+    dependencies = speech_local_dependency_availability()
+    missing_capabilities = [
+        (label, extra)
+        for label, attribute, extra in _LOCAL_CAPABILITIES
+        if not getattr(dependencies, attribute)
+    ]
+    missing_dependencies = [extra for _label, extra in missing_capabilities]
+    extras = ",".join(missing_dependencies)
 
     return optional_dependency_recovery_state(
-        unavailable_what="Local speech providers",
+        unavailable_what=", ".join(label for label, _extra in missing_capabilities),
         missing_dependencies=tuple(missing_dependencies),
-        install_target=(
-            'pip install "tldw_chatbook'
-            '[local_tts,transcription_faster_whisper,speech_recording]"'
-        ),
+        install_target=f'pip install "tldw_chatbook[{extras}]"',
         stable_selector=SPEECH_CAPABILITY_SELECTOR,
         recovery_action="Settings > Speech",
     )
@@ -127,36 +134,48 @@ def speech_capability_text() -> str:
     check_tts_deps()
     check_stt_deps()
 
-    if speech_dependencies_available():
-        return "Local speech: ready"
-    return "Local speech: dependencies missing"
+    dependencies = speech_local_dependency_availability()
+    ready_count = sum(
+        getattr(dependencies, attribute)
+        for _label, attribute, _extra in _LOCAL_CAPABILITIES
+    )
+    return (
+        "OpenAI-compatible speech: available when configured; "
+        f"local capabilities: {ready_count}/{len(_LOCAL_CAPABILITIES)} ready"
+    )
+
+
+def _speech_capability_lines() -> tuple[str, ...]:
+    """Return one exact status and recovery extra per local capability."""
+
+    dependencies = speech_local_dependency_availability()
+    lines = ["OpenAI-compatible speech: available when configured"]
+    for label, attribute, extra in _LOCAL_CAPABILITIES:
+        if getattr(dependencies, attribute):
+            lines.append(f"{label}: ready")
+        else:
+            lines.append(
+                f'{label}: missing - pip install "tldw_chatbook[{extra}]"'
+            )
+    return tuple(lines)
 
 
 def speech_capability_detail() -> str:
-    """Return the full recovery taxonomy for the inspector.
+    """Return independent remote and local capability facts for the inspector.
 
-    Headline / Why / Next / Recovery / Owner, including the exact pip
-    command. This is ~14 rendered lines, which is why it lives in the
-    inspector rather than the rail: rendered inline it buried the six view
-    rows it was meant to sit beside, and rendered as a tooltip it would put
-    the fix behind a pointer in a keyboard-first app.
+    The inspector keeps all exact install commands visible without crowding
+    the rail's one-line summary or hiding recovery behind pointer interaction.
 
     Returns:
-        A confirmation line when both groups are present, otherwise the
-        recovery state's full visible copy.
+        One remote availability line followed by all four local capabilities.
     """
-    if speech_dependencies_available():
-        return "Local TTS and STT dependencies are available."
-    return speech_dependency_recovery_state().visible_copy
+    return "\n".join(_speech_capability_lines())
 
 
 def speech_capability_tooltip() -> str:
     """Return install guidance for the capability chip's tooltip.
 
     Returns:
-        A confirmation when both groups are present, otherwise the recovery
-        state's disabled tooltip naming the install target.
+        The same capability-specific guidance in a compact single line.
     """
-    if speech_dependencies_available():
-        return "Local TTS and STT dependencies are available."
-    return speech_dependency_recovery_state().disabled_tooltip
+    return " ".join(_speech_capability_lines())
