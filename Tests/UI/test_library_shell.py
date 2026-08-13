@@ -922,7 +922,9 @@ async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
         assert "Reading list" in str(notes_row.label)
         assert "Quarterly report.pdf" in str(media_row.label)
         assert "Quarterly planning sync" in str(conv_row.label)
-        assert not screen.query("#library-hub-recents")
+        # The retained landing owner keeps one stable recents container and
+        # replaces only its rows when a fresh snapshot lands.
+        assert screen.query_one("#library-hub-recents")
 
         # The next-action triad stays on top of the recents.
         actions = screen.query_one("#library-hub-actions")
@@ -950,7 +952,7 @@ async def test_hub_recents_rows_absent_on_an_empty_library():
         await _wait_for_library_shell(screen, pilot)
 
         assert not screen.query(".library-hub-recent")
-        assert not screen.query("#library-hub-recents")
+        assert screen.query_one("#library-hub-recents")
 
 
 def test_hub_recents_one_line_helpers_are_removed():
@@ -1824,10 +1826,10 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-create-flashcards").press()
-        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
 
         canvas = screen.query_one("#library-canvas")
-        detail = screen.query_one("#library-study-handoff-detail")
+        detail = screen.query_one("#library-study-handoff-canvas")
         assert canvas in detail.ancestors
 
         # Header: the row's own title, not a second "X mode" restatement.
@@ -16564,7 +16566,9 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
         await pilot.pause()
 
         # Path clears immediately on submit (metadata fields would persist).
-        assert screen.query_one("#library-ingest-path", Input).value == ""
+        # A registry-driven targeted canvas refresh may briefly detach the
+        # Input, so assert the screen-owned form state at this boundary.
+        assert screen._library_ingest_form.path == ""
 
         # Task 4 has no live-update listener yet (that's Task 5) -- the
         # canvas only re-renders on a user-triggered recompose, so poll the
@@ -20484,20 +20488,21 @@ async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn(
         # Let the first-ever mirror worker (always reconciles once,
         # regardless of whether the value actually changed vs. compose)
         # finish before capturing the baseline identity.
-        for _ in range(75):
-            await pilot.pause(0.02)
-            if screen.query("#library-rag-scope-recovery"):
-                break
-        else:
-            raise AssertionError(
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-rag-scope-recovery")),
+            message=(
                 "the recovery banner never mounted for a genuinely empty "
                 "library on the first snapshot"
-            )
+            ),
+        )
 
-        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
-        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
         scope_container = screen.query_one("#library-rag-source-scope")
         assert scope_container.has_class("has-recovery")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
+        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
 
         # Spy (not replace) so a genuinely-scheduled mirror would still run
         # -- this proves the repeat call below schedules nothing, on top of

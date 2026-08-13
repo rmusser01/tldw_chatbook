@@ -81,7 +81,7 @@ class _EntryWorkerCase:
     name: str
     terminal_selector: str
     owner_type: type[Widget]
-    owner_replaced: bool = False
+    owner_replaced: bool | None = False
 
 
 _ENTRY_WORKER_CASES = (
@@ -113,7 +113,9 @@ _ENTRY_WORKER_CASES = (
         "pending-conversations",
         "#library-conversations-canvas",
         LibraryConversationsCanvas,
-        owner_replaced=True,
+        # The initial paged snapshot may either patch the pre-mounted route
+        # owner or replace it before the pending point lookup settles.
+        owner_replaced=None,
     ),
     _EntryWorkerCase(
         "pending-prompt",
@@ -238,9 +240,11 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 @pytest.mark.parametrize("case", _ENTRY_WORKER_CASES, ids=lambda case: case.name)
 async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
     case: _EntryWorkerCase,
+    size: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -394,7 +398,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
     monkeypatch.setattr(LibraryScreen, "recompose", recorded_recompose)
 
     host = LibraryHarness(app, screen=screen)
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         active_screen = _active_library_screen(host)
         await _wait_for_library_shell(active_screen, pilot)
         if case.name == "export":
@@ -423,11 +427,28 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
         first_host = active_screen.query_one("#library-canvas")
         first_owner = active_screen._library_entry_canvas_owner()
         assert first_owner is not None
+        if size == (60, 20):
+            active_screen._library_notes_stage = "notes"
+            active_screen._set_library_rail_collapsed(True)
+            await pilot.pause()
+            await pilot.pause()
 
         if case.name == "export":
             thread_release.set()
         else:
             release.set()
+        painted_copy = {
+            "prompts": "Entry prompt",
+            "collections": "Launch Evidence",
+            "skills": "code-review",
+            "notes": "Q3 retro",
+            "media": "Interview Recording",
+            "export": "Export bundle (.zip)",
+            "pending-media": "Interview Recording",
+            "pending-notes": "Q3 retro",
+            "pending-conversations": "Design review notes",
+            "pending-prompt": "Entry prompt",
+        }[case.name]
         await _wait_for_condition(
             pilot,
             lambda: _entry_worker_terminal(case, active_screen),
@@ -436,20 +457,40 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
                 f"route={active_screen._library_entry_route_key()!r}."
             ),
         )
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: painted_copy in _compositor_text(active_screen),
+            message=lambda: (
+                f"{case.name} terminal copy was not painted: "
+                f"{_compositor_text(active_screen)!r}"
+            ),
+        )
 
         final_owner = active_screen._library_entry_canvas_owner()
         assert _active_library_screen(host) is first_screen
         assert active_screen.query_one("#library-rail") is first_rail
         assert active_screen.query_one("#library-canvas") is first_host
         assert isinstance(final_owner, case.owner_type)
-        if case.owner_replaced:
+        if case.owner_replaced is True:
             assert final_owner is not first_owner
-        else:
+        elif case.owner_replaced is False:
             assert final_owner is first_owner
         assert compose_calls.count(active_screen) == 1
         assert refresh_recompose_calls == []
         assert recompose_calls == []
+        compositor = _compositor_text(active_screen)
+        exported_svg = _exported_svg_text(host)
+        assert painted_copy in compositor
+        assert painted_copy in exported_svg
+        print(
+            "task5_uat_entry "
+            f"size={size} route={case.name} copy={painted_copy!r} "
+            f"screen={id(active_screen)} rail={id(first_rail)} host={id(first_host)} "
+            f"owner_before={id(first_owner)} owner_after={id(final_owner)} "
+            f"compose={compose_calls.count(active_screen)} "
+            f"refresh_recompose={len(refresh_recompose_calls)} "
+            f"recompose={len(recompose_calls)}"
+        )
 
 
 async def _capture_new_conversations_route(screen: LibraryScreen, pilot):
@@ -1394,6 +1435,56 @@ def _compositor_text(screen: LibraryScreen) -> str:
     )
 
 
+def _exported_svg_text(host: LibraryHarness) -> str:
+    """Return text nodes from an exported compositor frame as plain text."""
+    import re
+    from html import unescape
+
+    svg = host.export_screenshot(simplify=True)
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+    return unescape(joined).replace("\xa0", " ")
+
+
+def _install_screen_lifecycle_spies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Record compose plus both whole-screen recompose APIs for UAT."""
+    evidence = SimpleNamespace(compose=[], refresh_recompose=[], recompose=[])
+    original_compose = LibraryScreen.compose_content
+    original_refresh = LibraryScreen.refresh
+    original_recompose = LibraryScreen.recompose
+
+    def counted_compose(screen):
+        evidence.compose.append(screen)
+        yield from original_compose(screen)
+
+    def recorded_refresh(screen, *regions, **kwargs):
+        if kwargs.get("recompose"):
+            evidence.refresh_recompose.append(screen)
+        return original_refresh(screen, *regions, **kwargs)
+
+    async def recorded_recompose(screen):
+        evidence.recompose.append(screen)
+        return await original_recompose(screen)
+
+    monkeypatch.setattr(LibraryScreen, "compose_content", counted_compose)
+    monkeypatch.setattr(LibraryScreen, "refresh", recorded_refresh)
+    monkeypatch.setattr(LibraryScreen, "recompose", recorded_recompose)
+    return evidence
+
+
+def _screen_identity_tuple(screen: LibraryScreen) -> tuple[int, int, int, int]:
+    """Return screen/rail/host/active-owner identities for evidence output."""
+    owner = screen._library_entry_canvas_owner()
+    assert owner is not None
+    return (
+        id(screen),
+        id(screen.query_one("#library-rail")),
+        id(screen.query_one("#library-canvas")),
+        id(owner),
+    )
+
+
 def _assert_widget_text_is_painted(
     screen: LibraryScreen, selector: str, expected: str
 ) -> None:
@@ -1442,6 +1533,157 @@ def _apply_changed_snapshot(
         screen._library_lookup_recovery_state,
         study_counts,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (170, 48)])
+async def test_uat_warm_landing_fresh_reconcile_retains_frame_and_focus(
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A warm Landing frame must paint cached data before fresh data lands."""
+    app = _build_test_app()
+    conversations = _two_conversations()
+    _seed_conversations(app, conversations[:1])
+    evidence = _install_screen_lifecycle_spies(monkeypatch)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        first = _active_library_screen(host)
+        await _wait_for_library_shell(first, pilot)
+        await first.workers.wait_for_complete()
+        await host.pop_screen()
+        await pilot.pause()
+
+        _seed_conversations(app, conversations)
+        fresh_started = asyncio.Event()
+        release_fresh = asyncio.Event()
+        original_list = LibraryScreen._list_local_source_snapshot
+
+        async def gated_fresh(screen: LibraryScreen):
+            fresh_started.set()
+            await release_fresh.wait()
+            return await original_list(screen)
+
+        monkeypatch.setattr(
+            LibraryScreen,
+            "_list_local_source_snapshot",
+            gated_fresh,
+        )
+        revisit = LibraryScreen(app)
+        await host.push_screen(revisit)
+        await _wait_for_library_shell(revisit, pilot)
+        await fresh_started.wait()
+        if size == (60, 20):
+            revisit._library_notes_stage = "notes"
+            revisit._set_library_rail_collapsed(True)
+            await pilot.pause()
+            await pilot.pause()
+
+        identity_before = _screen_identity_tuple(revisit)
+        search = revisit.query_one("#library-hub-action-search")
+        search.focus()
+        await pilot.pause()
+        assert "Conversations (1)" in _compositor_text(revisit)
+        assert "Conversations (1)" in _exported_svg_text(host)
+
+        release_fresh.set()
+        await revisit.workers.wait_for_complete()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                revisit._local_source_counts["conversations"] == 2
+                and revisit._library_snapshot_rendered_generation
+                == revisit._library_snapshot_state_generation
+            ),
+            message="Warm Landing fresh reconciliation did not settle.",
+        )
+        await pilot.pause()
+        identity_after = _screen_identity_tuple(revisit)
+        compositor = _compositor_text(revisit)
+        exported_svg = _exported_svg_text(host)
+
+        assert identity_after == identity_before
+        assert revisit.focused is search
+        assert "Conversations (2)" in compositor
+        assert "Conversations (2)" in exported_svg
+        assert "Search" in compositor
+        assert "Search" in exported_svg
+        assert evidence.compose.count(revisit) == 1
+        assert revisit not in evidence.refresh_recompose
+        assert revisit not in evidence.recompose
+        print(
+            "task5_uat_warm_landing "
+            f"size={size} identity_before={identity_before} "
+            f"identity_after={identity_after} compose={evidence.compose.count(revisit)} "
+            f"refresh_recompose={evidence.refresh_recompose.count(revisit)} "
+            f"recompose={evidence.recompose.count(revisit)} focus={search.id}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (170, 48)])
+async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold Conversations must paint loading and then rows without a screen recompose."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    evidence = _install_screen_lifecycle_spies(monkeypatch)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_list = LibraryScreen._list_local_source_snapshot
+
+    async def gated_list(screen: LibraryScreen):
+        started.set()
+        await release.wait()
+        return await original_list(screen)
+
+    monkeypatch.setattr(LibraryScreen, "_list_local_source_snapshot", gated_list)
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=size) as pilot:
+        active = _active_library_screen(host)
+        await started.wait()
+        await _wait_for_selector(active, pilot, "#library-canvas-loading")
+        if size == (60, 20):
+            active._library_notes_stage = "notes"
+            active._set_library_rail_collapsed(True)
+            await pilot.pause()
+            await pilot.pause()
+        loading_identity = _screen_identity_tuple(active)
+        assert "Loading local Library sources" in _compositor_text(active)
+        assert "Loading local Library sources" in _exported_svg_text(host)
+
+        release.set()
+        await _wait_for_selector(active, pilot, "#library-conversation-row-0")
+        await active.workers.wait_for_complete()
+        await pilot.pause()
+        rows_identity = _screen_identity_tuple(active)
+        compositor = _compositor_text(active)
+        exported_svg = _exported_svg_text(host)
+
+        assert rows_identity[:3] == loading_identity[:3]
+        assert rows_identity[3] != loading_identity[3]
+        assert "Conversations (2)" in compositor
+        assert "Conversations (2)" in exported_svg
+        assert "Design review notes" in compositor
+        assert "Design review notes" in exported_svg
+        assert evidence.compose.count(active) == 1
+        assert active not in evidence.refresh_recompose
+        assert active not in evidence.recompose
+        print(
+            "task5_uat_cold_conversations "
+            f"size={size} loading_identity={loading_identity} "
+            f"rows_identity={rows_identity} compose={evidence.compose.count(active)} "
+            f"refresh_recompose={evidence.refresh_recompose.count(active)} "
+            f"recompose={evidence.recompose.count(active)}"
+        )
 
 
 @pytest.mark.asyncio
@@ -1760,7 +2002,9 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
+    size: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A timeout generation must not prevent the in-flight fetch from repairing it."""
@@ -1772,6 +2016,7 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
     target_sync_calls: list[int] = []
     original_apply = LibraryScreen._apply_local_source_snapshot
     original_sync = library_screen_module._sync_library_canvas
+    evidence = _install_screen_lifecycle_spies(monkeypatch)
 
     async def gated_snapshot(_screen: LibraryScreen):
         fetch_started.set()
@@ -1809,12 +2054,22 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
     monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
 
     host = LibraryHarness(app)
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await fetch_started.wait()
         screen._apply_source_snapshot_timeout()
         await pilot.pause()
+        if size == (60, 20):
+            screen._library_notes_stage = "notes"
+            screen._set_library_rail_collapsed(True)
+            await pilot.pause()
+            await pilot.pause()
+        identity_before = _screen_identity_tuple(screen)
         assert screen._library_lookup_error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+        assert library_screen_module.LIBRARY_SERVICE_ERROR_COPY in _compositor_text(screen)
+        assert library_screen_module.LIBRARY_SERVICE_ERROR_COPY in _exported_svg_text(
+            host
+        )
 
         release_fetch.set()
         async with asyncio.timeout(10):
@@ -1827,9 +2082,22 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
         assert screen._local_source_counts["conversations"] == 2
         assert screen._library_entry_reconcile_dirty is False
         assert target_sync_calls[-1] == screen._library_snapshot_state_generation
+        identity_after = _screen_identity_tuple(screen)
+        assert identity_after == identity_before
         assert "Conversations (2)" in _compositor_text(screen)
+        assert "Conversations (2)" in _exported_svg_text(host)
         assert library_screen_module.LIBRARY_SERVICE_ERROR_COPY not in _compositor_text(
             screen
+        )
+        assert evidence.compose.count(screen) == 1
+        assert screen not in evidence.refresh_recompose
+        assert screen not in evidence.recompose
+        print(
+            "task5_uat_timeout_success "
+            f"size={size} identity_before={identity_before} "
+            f"identity_after={identity_after} compose={evidence.compose.count(screen)} "
+            f"refresh_recompose={evidence.refresh_recompose.count(screen)} "
+            f"recompose={evidence.recompose.count(screen)}"
         )
 
 
