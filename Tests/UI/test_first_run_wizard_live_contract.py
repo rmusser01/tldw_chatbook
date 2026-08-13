@@ -51,6 +51,7 @@ from textual.widgets import (
     Input,
     OptionList,
     RadioButton,
+    RadioSet,
     Static,
     Switch,
 )
@@ -81,6 +82,9 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_FULL,
     TRACK_QUICK,
     WIZARD_STATE_SECTION,
+    FirstRunProviderDraft,
+    ProviderCredentialDraft,
+    build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
@@ -1866,6 +1870,67 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             assert "Paste your API key" in rendered_text, (
                 "key Input's placeholder never reached the rendered frame"
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size: tuple[int, int]
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.pause(0.2)
+            container = app.screen.query_one(SetupWizardContainer)
+            draft = FirstRunProviderDraft(
+                "custom",
+                "https://compact.example/v1/chat/completions",
+                ProviderCredentialDraft("none", "", 4),
+            )
+            key = build_first_run_model_discovery_key(draft)
+            assert container.stage_provider_setup(draft)
+            container.wizard_data[STEP_PROVIDER] = {
+                "provider_key": "custom",
+                "provider_value": "custom",
+            }
+            container._first_run_selected_provider_models = {
+                key: ("compact-model-a", "compact-model-b")
+            }
+            model_index = container._step_index_for_id(STEP_MODEL)
+            assert model_index is not None
+            container.show_step(model_index)
+            await pilot.pause(0.2)
+
+            model_step = container.steps[model_index]
+            assert isinstance(model_step, ModelStep)
+            choices = model_step.query_one("#setup-model-choice", RadioSet)
+            first_choice = choices.query_one("#setup-model-option-0", RadioButton)
+            first_choice.focus()
+            await pilot.pause()
+            assert app.focused is first_choice
+            await pilot.press("enter")
+            await pilot.pause()
+            assert choices.pressed_button is not None
+            assert getattr(choices.pressed_button, "_model_id", None) in {
+                "compact-model-a",
+                "compact-model-b",
+            }
+
+            manual = model_step.query_one("#setup-model-custom", Input)
+            manual.focus()
+            await pilot.pause(0.2)
+            assert manual in app.screen._compositor.visible_widgets
+            assert manual.region.right <= size[0]
+            assert manual.region.bottom <= size[1]
+            footer_top = min(
+                app.screen.query_one(selector, Button).region.y
+                for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel")
+            )
+            assert manual.region.bottom <= footer_top
 
 
 @pytest.mark.asyncio

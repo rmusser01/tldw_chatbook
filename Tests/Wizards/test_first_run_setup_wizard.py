@@ -3454,6 +3454,17 @@ async def test_mounted_models_404_then_manual_model_never_reports_verified(monke
         await container._advance()
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
+        await pilot.pause(0.1)
+        status_rows = list(
+            model_step.query_one("#setup-model-choice", RadioSet).query(RadioButton)
+        )
+        assert len(status_rows) == 1
+        assert str(status_rows[0].label) == (
+            "Model listing unavailable; enter the model ID used by this endpoint."
+        )
+        assert status_rows[0].disabled
+        assert getattr(status_rows[0], "_model_id", None) is None
+        assert not model_step.query_one("#setup-model-custom", Input).disabled
         model_step.query_one("#setup-model-custom", Input).value = "manual-model"
         await pilot.pause()
         await container._advance()
@@ -5563,8 +5574,27 @@ async def test_provider_step_probe_budgets_cloud_vs_local(monkeypatch):
 def _model_step(wizard, discover_models=None):
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
     if not callable(getattr(wizard, "commit_staged_provider_setup", None)):
         wizard.commit_staged_provider_setup = AsyncMock(return_value=True)
+    provider_values = (getattr(wizard, "wizard_data", {}) or {}).get("provider", {})
+    provider_key = str(provider_values.get("provider_key", ""))
+    if provider_key and not isinstance(
+        getattr(wizard, "staged_provider_draft", None), FirstRunProviderDraft
+    ):
+        endpoint = builtin_provider_endpoint(provider_key, {}) or (
+            "https://custom.example/v1/chat/completions"
+        )
+        wizard.staged_provider_draft = FirstRunProviderDraft(
+            provider_key,
+            endpoint,
+            ProviderCredentialDraft("none", "", 0),
+        )
     return ModelStep(
         wizard=wizard,
         config=WizardStepConfig(id="model", title="Model", step_number=3),
@@ -5576,6 +5606,11 @@ def _model_step(wizard, discover_models=None):
 async def test_model_step_provider_change_resets_selection():
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -5596,6 +5631,11 @@ async def test_model_step_provider_change_resets_selection():
             "provider_key": "anthropic",
             "provider_value": "Anthropic",
         }
+        wizard.staged_provider_draft = FirstRunProviderDraft(
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            ProviderCredentialDraft("none", "", 0),
+        )
         step.on_show()
         assert step.selected_model_id == ""
 
@@ -5776,8 +5816,8 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
 
-    async def discover(provider_key):
-        return {"openai": ["model-a"], "anthropic": ["model-b"]}[provider_key]
+    async def discover(*, provider, **_identity):
+        return {"openai": ["model-a"], "anthropic": ["model-b"]}[provider]
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -5802,6 +5842,16 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
             "provider_key": "anthropic",
             "provider_value": "Anthropic",
         }
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            FirstRunProviderDraft,
+            ProviderCredentialDraft,
+        )
+
+        wizard.staged_provider_draft = FirstRunProviderDraft(
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            ProviderCredentialDraft("none", "", 0),
+        )
         step.on_show()
         await pilot.pause(0.1)
         ids = [
@@ -5886,24 +5936,43 @@ async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_model_step_uses_scope_service_when_available():
-    """The scope-service path (no injected discover_models) renders whatever
-    the service reports on a "success" result -- mirrors
-    settings_screen.py:7079's call shape."""
+async def test_model_step_uses_exact_provider_draft_with_scope_service():
+    """The mounted scope-service path receives the staged connection, not config."""
     from unittest.mock import AsyncMock, MagicMock as Mock
     from types import SimpleNamespace
 
-    scope_result = _typed_model_discovery_result("openai", "svc-model-a", "svc-model-b")
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    scope_result = _typed_model_discovery_result("custom", "svc-model-a", "svc-model-b")
     scope_service = Mock()
     scope_service.discover_models = AsyncMock(return_value=scope_result)
-    app_instance = MagicMock(app_config={})
+    provider_draft = FirstRunProviderDraft(
+        provider="custom",
+        endpoint="https://draft.example/proxy/v1/chat/completions",
+        credential=ProviderCredentialDraft("draft", "draft-secret", 7),
+    )
+    app_instance = MagicMock(
+        app_config={
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://ambient.example/v1/chat/completions",
+                    "api_key": "ambient-secret",
+                }
+            }
+        }
+    )
     app_instance.llm_provider_catalog_scope_service = scope_service
     wizard = SimpleNamespace(
         app_instance=app_instance,
         wizard_data={
             "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
         },
+        staged_provider_draft=provider_draft,
         commit_config=AsyncMock(return_value=True),
+        commit_staged_provider_setup=AsyncMock(return_value=True),
         rerun=False,
     )
     step = ModelStep(
@@ -5923,8 +5992,15 @@ async def test_model_step_uses_scope_service_when_available():
         # the *last* call matters here, not the exact invocation count.
         assert scope_service.discover_models.await_args.kwargs == {
             "mode": "local",
-            "provider": "openai",
-            "staged_settings": None,
+            "provider": "custom",
+            "staged_settings": {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://draft.example/proxy/v1/chat/completions",
+                        "api_key": "draft-secret",
+                    }
+                }
+            },
         }
         radio_set = step.query_one("#setup-model-choice", RadioSet)
         ids = [
@@ -5932,6 +6008,399 @@ async def test_model_step_uses_scope_service_when_available():
             for button in radio_set.query(RadioButton)
         ]
         assert ids == ["svc-model-a", "svc-model-b"]
+        identity = step._current_discovery_key()
+        assert identity is not None
+        assert identity.connection_identity == (
+            "custom",
+            "https://draft.example/proxy/v1/chat/completions",
+        )
+        for rendered in (repr(identity), repr(step.__dict__), app.export_screenshot()):
+            assert "draft-secret" not in rendered
+            assert "ambient-secret" not in rendered
+        wizard.commit_config.assert_not_awaited()
+        wizard.commit_staged_provider_setup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_step_injected_discovery_receives_secret_free_exact_identity():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    seen: list[dict[str, object]] = []
+
+    async def discover(**identity):
+        seen.append(identity)
+        return ["draft-model"]
+
+    draft = FirstRunProviderDraft(
+        "llama_cpp",
+        "http://127.0.0.1:8222/v1/chat/completions",
+        ProviderCredentialDraft("draft", "never-pass-this-secret", 9),
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "llama_cpp", "provider_value": "llama_cpp"}
+        },
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=discover,
+        provider_draft=draft,
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        assert seen == [
+            {
+                "provider": "llama_cpp",
+                "endpoint": "http://127.0.0.1:8222",
+                "credential_source": "draft",
+                "credential_revision": 9,
+            }
+        ]
+        row = step.query_one("#setup-model-option-0", RadioButton)
+        assert getattr(row, "_model_id", None) == "draft-model"
+        assert "never-pass-this-secret" not in repr(seen)
+    assert step._explicit_provider_draft is None
+
+
+@pytest.mark.asyncio
+async def test_model_cache_separates_exact_identity_and_reconfirms_manual_entry():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+        build_first_run_model_discovery_key,
+    )
+
+    draft_a = FirstRunProviderDraft(
+        "custom",
+        "https://a.example/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 1),
+    )
+    draft_b = FirstRunProviderDraft(
+        "custom",
+        "https://b.example/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 2),
+    )
+    key_a = build_first_run_model_discovery_key(draft_a)
+    key_b = build_first_run_model_discovery_key(draft_b)
+    discover = AsyncMock(side_effect=AssertionError("cache miss"))
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=draft_a,
+        _first_run_selected_provider_models={
+            key_a: ("model-a",),
+            key_b: ("model-b",),
+        },
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=discover,
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        assert getattr(
+            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+        ) == "model-a"
+        manual = step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-a"
+        await pilot.pause()
+
+        wizard.staged_provider_draft = draft_b
+        step.on_show()
+        await pilot.pause(0.1)
+        assert manual.value == ""
+        assert step.selected_model_id == ""
+        assert getattr(
+            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+        ) == "model-b"
+
+        wizard.staged_provider_draft = draft_a
+        step.on_show()
+        await pilot.pause(0.1)
+        assert getattr(
+            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+        ) == "model-a"
+        discover.assert_not_awaited()
+        assert "manual-a" not in app.export_screenshot()
+
+
+@pytest.mark.asyncio
+async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_enabled():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    draft = FirstRunProviderDraft(
+        "llama_cpp",
+        "http://127.0.0.1:8080/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 0),
+    )
+    unavailable = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="Llama.cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="unsupported",
+        error=ModelDiscoveryError(
+            kind="unsupported_endpoint",
+            message="Models route returned 404.",
+            recovery_hint="Enter the model manually.",
+        ),
+    )
+    scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=unavailable)
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={}, llm_provider_catalog_scope_service=scope_service
+        ),
+        wizard_data={
+            "provider": {"provider_key": "llama_cpp", "provider_value": "llama_cpp"}
+        },
+        staged_provider_draft=draft,
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=None,
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
+        assert len(rows) == 1
+        assert str(rows[0].label) == (
+            "Model listing unavailable; enter the model ID used by this endpoint."
+        )
+        assert rows[0].disabled
+        assert getattr(rows[0], "_model_id", None) is None
+        manual = step.query_one("#setup-model-custom", Input)
+        assert not manual.disabled and manual.focusable
+        assert step.selected_model_id == ""
+
+        step.set_selected_model_from_button(rows[0])
+        assert step.selected_model_id == ""
+
+
+@pytest.mark.asyncio
+async def test_model_connection_failure_shows_bounded_category_and_retry():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    draft = FirstRunProviderDraft(
+        "custom",
+        "https://retry.example/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 0),
+    )
+    failed = ModelDiscoveryResult(
+        provider="custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="request_failed",
+            message="x" * 500,
+            recovery_hint="y" * 500,
+        ),
+    )
+    succeeded = _typed_model_discovery_result("custom", "retry-model")
+    discover_models = AsyncMock(side_effect=[failed, succeeded])
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={},
+            llm_provider_catalog_scope_service=MagicMock(
+                discover_models=discover_models
+            ),
+        ),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=draft,
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=None,
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        failure = step.query_one("#setup-model-connection-failed", RadioButton)
+        failure_copy = str(failure.label)
+        assert failure.disabled
+        assert "request failed" in failure_copy
+        assert len(failure_copy) < 120
+        assert "x" * 20 not in failure_copy and "y" * 20 not in failure_copy
+
+        manual = step.query_one("#setup-model-custom", Input)
+        manual.value = "manual-model"
+        retry = step.query_one("#setup-model-retry", Button)
+        assert retry.display and retry.focusable
+        retry.press()
+        await pilot.pause(0.1)
+
+        row = step.query_one("#setup-model-option-0", RadioButton)
+        assert getattr(row, "_model_id", None) == "retry-model"
+        assert manual.value == "manual-model"
+        assert step.selected_model_id == "manual-model"
+        assert retry.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_model_navigation_discards_cancellation_resistant_late_discovery():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def discover(**_identity):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            return ["late-model"]
+        return ["late-model"]
+
+    draft = FirstRunProviderDraft(
+        "custom",
+        "https://late.example/v1/chat/completions",
+        ProviderCredentialDraft("none", "", 2),
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=draft,
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=discover,
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        generation = step._model_load_generation
+        step.on_hide()
+        release.set()
+        await pilot.pause(0.1)
+
+        assert cancelled.is_set()
+        assert step._model_load_generation > generation
+        assert not [
+            row
+            for row in step.query_one("#setup-model-choice", RadioSet).query(
+                RadioButton
+            )
+            if (row.id or "").startswith("setup-model-option-")
+        ]
+        assert step.selected_model_id == ""
+
+
+@pytest.mark.asyncio
+async def test_model_external_unmount_fences_late_discovery_without_widget_access():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        FirstRunProviderDraft,
+        ProviderCredentialDraft,
+    )
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def discover(**_identity):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            return ["detached-late-model"]
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "custom", "provider_value": "custom"}
+        },
+        staged_provider_draft=FirstRunProviderDraft(
+            "custom",
+            "https://unmount.example/v1/chat/completions",
+            ProviderCredentialDraft("none", "", 3),
+        ),
+        commit_staged_provider_setup=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=discover,
+    )
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        generation = step._model_load_generation
+        await step.remove()
+        await pilot.pause(0.1)
+
+        assert cancelled.is_set()
+        assert not step.is_attached
+        assert step._model_load_generation > generation
+        assert step.selected_model_id == ""
 
 
 def test_real_discovery_result_extracts_exact_safe_unique_model_ids():
@@ -6042,10 +6511,8 @@ async def test_clicking_discovered_model_clears_visible_manual_input():
 
 
 @pytest.mark.asyncio
-async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
-    """Behavior spec: an 8s guard on model discovery -- a slow/hanging
-    discover() must not block the step forever; it degrades to the curated
-    fallback instead of hanging Next indefinitely."""
+async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeypatch):
+    """A timed-out exact request stays honest and leaves recovery controls usable."""
     import asyncio as asyncio_module
     from unittest.mock import AsyncMock
     from types import SimpleNamespace
@@ -6060,7 +6527,7 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
         lambda: {"OpenAI": ["fallback-model"]},
     )
 
-    async def _hangs(_provider_key):
+    async def _hangs(**_identity):
         await asyncio_module.sleep(1.0)
         return ["too-slow-model"]
 
@@ -6079,11 +6546,13 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
         step.on_show()
         await pilot.pause(0.3)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        ids = [
-            str(getattr(button, "_model_id", button.label))
-            for button in radio_set.query(RadioButton)
-        ]
-        assert ids == ["fallback-model"]
+        [status] = list(radio_set.query(RadioButton))
+        assert status.disabled
+        assert "timeout" in str(status.label)
+        assert getattr(status, "_model_id", None) is None
+        assert not step.query_one("#setup-model-custom", Input).disabled
+        retry = step.query_one("#setup-model-retry", Button)
+        assert retry.display and not retry.has_class("hidden")
 
 
 def test_model_step_worker_group_is_not_wizard_advance():
@@ -7493,9 +7962,8 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = ModelStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="model", title="Model", step_number=3),
+    step = _model_step(
+        wizard,
         discover_models=AsyncMock(return_value=["model-alpha", "model-beta"]),
     )
     app = _StepHost(step)

@@ -731,6 +731,25 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
     return tuple(model_ids)
 
 
+def _first_run_discovery_staged_settings(
+    provider_draft: wizard_state.FirstRunProviderDraft,
+    discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Build transient settings for one exact typed discovery boundary."""
+
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    endpoint = provider_draft.endpoint or discovery_key.connection_identity[1]
+    settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
+    credential = provider_draft.credential
+    credential_value = wizard_state._credential_value_for_boundary(credential)
+    if credential.source == "draft" and credential_value:
+        settings["api_key"] = credential_value
+    elif credential.source == "environment":
+        settings["api_key_env_var"] = credential_value
+    return {"api_settings": {discovery_key.provider_key: settings}}
+
+
 def _process_environment() -> Mapping[str, str]:
     """Return the current process environment without retaining it on a widget."""
 
@@ -1878,19 +1897,7 @@ class ProviderStep(SetupStep):
     ) -> dict[str, dict[str, dict[str, str]]]:
         """Build transient exact settings; callers must never persist or cache it."""
 
-        from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
-
-        endpoint = provider_draft.endpoint or self._cloud_probe_base_url(
-            discovery_key.provider_key
-        )
-        settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
-        credential = provider_draft.credential
-        credential_value = wizard_state._credential_value_for_boundary(credential)
-        if credential.source == "draft" and credential_value:
-            settings["api_key"] = credential_value
-        elif credential.source == "environment":
-            settings["api_key_env_var"] = credential_value
-        return {"api_settings": {discovery_key.provider_key: settings}}
+        return _first_run_discovery_staged_settings(provider_draft, discovery_key)
 
     def _begin_selected_provider_discovery(
         self,
@@ -2101,6 +2108,29 @@ class ProviderStep(SetupStep):
             return None
         await done.wait()
         return self._selected_provider_models.get(discovery_key)
+
+    def _test_evidence_for_discovery_key(
+        self, discovery_key: wizard_state.FirstRunModelDiscoveryKey
+    ):
+        """Return settled probe evidence only for the same secret-free identity."""
+
+        from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+        tested = self._last_tested_provider_identity
+        if type(tested) is not ProviderDraftIdentity:
+            return None
+        source_matches = discovery_key.credential_source == tested.credential_source or (
+            discovery_key.credential_source == "none"
+            and tested.credential_source == "stored"
+        )
+        if not (
+            discovery_key.provider_key == tested.provider_key
+            and discovery_key.connection_identity == tested.connection_identity
+            and source_matches
+            and discovery_key.credential_revision == tested.credential_revision
+        ):
+            return None
+        return self._provider_test_evidence.evidence_for(tested)
 
     @on(Input.Changed, "#setup-provider-endpoint")
     def _on_endpoint_changed(self, event: Input.Changed) -> None:
@@ -2703,9 +2733,22 @@ class ModelStep(SetupStep):
     case/format mismatch never silently empties the list.
     """
 
-    def __init__(self, wizard=None, config=None, *, discover_models=None, **kwargs):
+    def __init__(
+        self,
+        wizard=None,
+        config=None,
+        *,
+        discover_models=None,
+        provider_draft: wizard_state.FirstRunProviderDraft | None = None,
+        **kwargs,
+    ):
         super().__init__(wizard=wizard, config=config, **kwargs)
+        if provider_draft is not None and (
+            type(provider_draft) is not wizard_state.FirstRunProviderDraft
+        ):
+            raise TypeError("Model discovery requires FirstRunProviderDraft.")
         self._discover_models = discover_models
+        self._explicit_provider_draft = provider_draft
         self._shown_for_provider: Optional[str] = None
         self._shown_for_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
             None
@@ -2772,29 +2815,40 @@ class ModelStep(SetupStep):
                 )
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
+            yield Button(
+                "Retry", id="setup-model-retry", variant="default", classes="hidden"
+            )
             yield Static("", classes="setup-step-error")
 
     def _current_provider(self) -> tuple[str, str]:
+        provider_draft = self._current_provider_draft()
+        if provider_draft is not None:
+            return provider_draft.provider, provider_draft.provider
         data = (self.wizard.wizard_data or {}).get(wizard_state.STEP_PROVIDER, {})
         provider_key = str(data.get("provider_key", ""))
         provider_value = str(data.get("provider_value", ""))
         if provider_key:
             return provider_key, provider_value
-        staged = getattr(self.wizard, "staged_provider_draft", None)
-        if type(staged) is wizard_state.FirstRunProviderDraft:
-            return staged.provider, staged.provider
         return "", ""
 
     def _current_discovery_key(
         self,
     ) -> wizard_state.FirstRunModelDiscoveryKey | None:
-        provider_draft = getattr(self.wizard, "staged_provider_draft", None)
-        if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
+        provider_draft = self._current_provider_draft()
+        if provider_draft is None:
             return None
         try:
             return wizard_state.build_first_run_model_discovery_key(provider_draft)
         except ValueError:
             return None
+
+    def _current_provider_draft(
+        self,
+    ) -> wizard_state.FirstRunProviderDraft | None:
+        provider_draft = getattr(self.wizard, "staged_provider_draft", None)
+        if type(provider_draft) is wizard_state.FirstRunProviderDraft:
+            return provider_draft
+        return self._explicit_provider_draft
 
     def on_show(self) -> None:
         super().on_show()
@@ -2888,6 +2942,20 @@ class ModelStep(SetupStep):
                 group="setup-model-load",
             )
 
+    def _cancel_model_discovery(self) -> None:
+        self._model_load_generation += 1
+        if self.is_attached:
+            self.workers.cancel_group(self, "setup-model-load")
+
+    def on_hide(self) -> None:
+        super().on_hide()
+        self._cancel_model_discovery()
+        self._explicit_provider_draft = None
+
+    def on_unmount(self) -> None:
+        self._cancel_model_discovery()
+        self._explicit_provider_draft = None
+
     async def _load_models(
         self,
         provider_key: str,
@@ -2898,6 +2966,16 @@ class ModelStep(SetupStep):
         import asyncio
 
         models: list[str] = []
+        discovery_state = "available"
+        failure_category = ""
+        provider_draft = self._current_provider_draft()
+        if provider_draft is None or discovery_key is None:
+            await self._render_models(
+                [],
+                discovery_key=discovery_key,
+                load_generation=load_generation,
+            )
+            return
         discover = self._discover_models
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
         handed_off = getattr(self.wizard, "_first_run_selected_provider_models", {})
@@ -2924,6 +3002,20 @@ class ModelStep(SetupStep):
             discover = None
         elif isinstance(owner, ProviderStep):
             discover = None
+        if isinstance(owner, ProviderStep):
+            evidence = owner._test_evidence_for_discovery_key(discovery_key)
+            if evidence is not None:
+                if evidence.endpoint == "model_listing_unavailable":
+                    discovery_state = "listing_unavailable"
+                    models = []
+                elif evidence.endpoint == "unreachable":
+                    discovery_state = "connection_failed"
+                    failure_category = (evidence.category or "connection_error").replace(
+                        "_", " "
+                    )
+                    models = []
+                elif evidence.endpoint == "reachable" and not models:
+                    models = list(evidence.model_ids)
         if discover is None:
             service = (
                 None
@@ -2936,25 +3028,57 @@ class ModelStep(SetupStep):
             )
             if service is not None:
 
-                async def discover(pk=provider_key, svc=service):
-                    result = await svc.discover_models(
-                        mode="local", provider=pk, staged_settings=None
+                async def discover(*, provider=provider_key, svc=service, **_identity):
+                    return await svc.discover_models(
+                        mode="local",
+                        provider=provider,
+                        staged_settings=_first_run_discovery_staged_settings(
+                            provider_draft, discovery_key
+                        ),
                     )
-                    return _model_ids_from_discovery_result(result)
 
         if discover is not None:
             try:
-                models = list(
-                    _legacy_model_ids(
-                        await asyncio.wait_for(
-                            discover(provider_key),
-                            timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
-                        )
-                    )
+                result = await asyncio.wait_for(
+                    discover(
+                        provider=provider_key,
+                        endpoint=discovery_key.connection_identity[1],
+                        credential_source=discovery_key.credential_source,
+                        credential_revision=discovery_key.credential_revision,
+                    ),
+                    timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                 )
+                from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+                    ModelDiscoveryResult,
+                )
+
+                if type(result) is ModelDiscoveryResult:
+                    if result.status == "success":
+                        models = list(_model_ids_from_discovery_result(result))
+                    elif result.status == "unsupported" or (
+                        result.error is not None
+                        and result.error.kind
+                        in {"unsupported_endpoint", "invalid_response"}
+                    ):
+                        discovery_state = "listing_unavailable"
+                    else:
+                        discovery_state = "connection_failed"
+                        failure_category = (
+                            "authentication"
+                            if result.error is not None
+                            and result.error.kind == "missing_credentials"
+                            else "request failed"
+                        )
+                else:
+                    models = list(_legacy_model_ids(result))
+            except TimeoutError:
+                discovery_state = "connection_failed"
+                failure_category = "timeout"
             except Exception:
+                discovery_state = "connection_failed"
+                failure_category = "connection error"
                 logger.debug("Wizard model discovery failed", exc_info=True)
-        if not models:
+        if not models and discovery_state == "available":
             from tldw_chatbook.config import get_cli_providers_and_models
 
             models = wizard_state.curated_models_for_provider(
@@ -2962,6 +3086,8 @@ class ModelStep(SetupStep):
             )
         await self._render_models(
             models[:20],
+            discovery_state=discovery_state,
+            failure_category=failure_category,
             discovery_key=discovery_key,
             load_generation=load_generation,
         )
@@ -2971,6 +3097,8 @@ class ModelStep(SetupStep):
         models: list[str],
         *,
         no_provider: bool = False,
+        discovery_state: str = "available",
+        failure_category: str = "",
         discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = None,
         load_generation: int | None = None,
     ) -> None:
@@ -3025,6 +3153,23 @@ class ModelStep(SetupStep):
                     if getattr(button, "_model_id", "") == selected:
                         button.value = True
                         break
+        elif discovery_state == "listing_unavailable":
+            await radio_set.mount(
+                SetupRadioButton(
+                    "Model listing unavailable; enter the model ID used by this endpoint.",
+                    id="setup-model-listing-unavailable",
+                    disabled=True,
+                )
+            )
+        elif discovery_state == "connection_failed":
+            category = failure_category or "connection error"
+            await radio_set.mount(
+                SetupRadioButton(
+                    f"Connection failed ({category}). Retry or enter a model ID below.",
+                    id="setup-model-connection-failed",
+                    disabled=True,
+                )
+            )
         elif no_provider:
             await radio_set.mount(
                 SetupRadioButton(
@@ -3037,7 +3182,23 @@ class ModelStep(SetupStep):
             await radio_set.mount(
                 SetupRadioButton("(no models found — enter one below)", disabled=True)
             )
+        if not self.is_attached:
+            return
+        try:
+            retry = self.query_one("#setup-model-retry", Button)
+            retry.set_class(discovery_state != "connection_failed", "hidden")
+        except NoMatches:
+            return
         self._rendered_discovery_key = discovery_key
+
+    @on(Button.Pressed, "#setup-model-retry")
+    def _retry_model_discovery(self, event: Button.Pressed) -> None:
+        event.stop()
+        if not self.is_active or self._current_discovery_key() is None:
+            return
+        event.button.add_class("hidden")
+        self._rendered_discovery_key = None
+        self.on_show()
 
     @on(RadioSet.Changed, "#setup-model-choice")
     def _on_model_chosen(self, event: RadioSet.Changed) -> None:
@@ -3051,9 +3212,12 @@ class ModelStep(SetupStep):
         the undecorated model id is stored on the button as ``_model_id``.
 
         Args:
-            button: The pressed radio row; its ``_model_id`` attribute (or
-                label when absent) supplies the model id to select.
+            button: The pressed radio row. Only its clean ``_model_id``
+                attribute can supply a model id; status labels are ignored.
         """
+        model_id = getattr(button, "_model_id", None)
+        if not isinstance(model_id, str) or not model_id:
+            return
         try:
             custom_input = self.query_one("#setup-model-custom", Input)
             with custom_input.prevent(Input.Changed):
@@ -3061,7 +3225,7 @@ class ModelStep(SetupStep):
         except Exception:
             pass
         self.set_selected_model(
-            getattr(button, "_model_id", str(button.label)),
+            model_id,
             discovery_key=getattr(button, "_discovery_key", None),
         )
 
