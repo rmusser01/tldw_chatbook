@@ -412,6 +412,20 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   completion they will miss. The indicator must be reachable from wherever
   they are; the fleet panel's own rows stay scoped to the conversation they
   belong to.
+
+  **Where the wake itself runs — the honest architectural limit as built
+  (recorded 2026-08-13, PR 3a-2).** The INDICATOR is fully cross-screen
+  (app-wide toast + durable unseen-completion mark + session glyphs), but
+  the wake TURN requires a live Console controller: bridge and controller
+  are per-screen today, so the wake fires immediately whenever a Console
+  screen is mounted — whichever session or screen the user is watching —
+  and with no Console mounted it is staged durably (the mark plus the
+  per-run `agent_runs.wake_delivered_at` ledger) and claimed synchronously
+  at the next Console mount. A fully headless supervisor — one that ACTS
+  with no Console mounted at all — requires moving bridge/controller
+  ownership above the screen and is a filed follow-up (task-15860).
+  Everything PR 3a-2 built is substrate that version needs; the only delta
+  is where the wake runs.
 - **Cost:** per-child token spend rolls into the existing Console cost
   ticker, attributed per agent in expanded rows; fleet aggregate visible on
   the summary line's expansion.
