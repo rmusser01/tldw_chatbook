@@ -2374,16 +2374,21 @@ class EnhancedFileOpen(EnhancedFileDialog):
         must_exist: bool = True,
         multi_select: bool = False,
         context: str = "file_open",
-        select_button: str = "Open",
+        select_button: Optional[str] = None,
         cancel_button: str = "Cancel",
         id: Optional[str] = None,
         classes: Optional[str] = None,
         name: Optional[str] = None,
     ):
+        effective_select_button = select_button
+        if effective_select_button is None:
+            effective_select_button = (
+                "Import" if context == "character_import" else "Open"
+            )
         super().__init__(
             location=location,
             title=title,
-            select_button=select_button,
+            select_button=effective_select_button,
             cancel_button=cancel_button,
             filters=filters,
             context=context,

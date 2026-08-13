@@ -135,6 +135,26 @@ async def test_character_import_picker_actions_explain_open_and_cancel(
                 "cancel": "Close without importing a character card.",
             },
         )
+        assert str(picker.query_one("#select", Button).label) == "Import"
+
+
+@pytest.mark.asyncio
+async def test_character_import_picker_preserves_explicit_primary_action_label(
+    tmp_path, monkeypatch
+):
+    _patch_clean_picker_config(monkeypatch)
+    picker = efp.EnhancedFileOpen(
+        location=tmp_path,
+        context="character_import",
+        select_button="Choose card",
+    )
+    app = App()
+
+    async with app.run_test() as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+
+        assert str(picker.query_one("#select", Button).label) == "Choose card"
 
 
 @pytest.mark.asyncio
