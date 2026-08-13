@@ -39,8 +39,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
     ) -> None:
         super().__init__(**kwargs)
         self.canvas = canvas
-        self.styles.width = "13fr"
-        self.styles.min_width = 40
+        self.styles.width = "100%"
 
     def sync_state(self, canvas: LibraryConversationsCanvasState) -> None:
         """Refresh the canvas from new state.

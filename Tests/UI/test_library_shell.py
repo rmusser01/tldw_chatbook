@@ -389,6 +389,67 @@ async def test_conversation_canvas_scrolls_current_page_while_pager_stays_fixed(
         assert scroll.scroll_y > 0
 
 
+@pytest.mark.asyncio
+async def test_conversation_canvas_pager_stays_in_the_visible_library_host():
+    """The production canvas must not claim the grid's fractional width again."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        [
+            {
+                "title": f"Conversation {index}",
+                "conversation_id": f"chat-{index}",
+                "message_count": 1,
+                "updated_at": "2026-06-01T10:00:00Z",
+            }
+            for index in range(20)
+        ],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
+
+        canvas_host = screen.query_one("#library-canvas")
+        canvas = screen.query_one("#library-conversations-canvas")
+        scroll = screen.query_one("#library-conversations-list", VerticalScroll)
+        pager = screen.query_one("#library-conversations-pager")
+        pager_status = screen.query_one("#library-conversations-page-status", Static)
+        previous = screen.query_one("#library-conversations-previous", Button)
+        next_page = screen.query_one("#library-conversations-next", Button)
+
+        def assert_within_canvas(widget) -> None:
+            assert widget.region.x >= canvas_host.region.x
+            assert widget.region.right <= canvas_host.region.right
+
+        assert_within_canvas(canvas)
+        for widget in (scroll, pager, pager_status, previous, next_page):
+            assert_within_canvas(widget)
+        assert scroll.max_scroll_y > 0
+
+        pager_region = pager.region
+        last_row = screen.query_one("#library-conversation-row-19", Button)
+        last_row.focus()
+        await pilot.pause()
+        assert scroll.scroll_y > 0
+        assert pager.region == pager_region
+
+        # The only-page state rightly disables both controls. Enable each
+        # independently here to prove its compact pager geometry still admits
+        # normal focus when Task 3 supplies a navigable page.
+        previous.disabled = False
+        previous.focus()
+        await pilot.pause()
+        assert previous.has_focus
+        next_page.disabled = False
+        next_page.focus()
+        await pilot.pause()
+        assert next_page.has_focus
+
+
 def _active_library_screen(host: LibraryHarness):
     return host.screen_stack[-1]
 

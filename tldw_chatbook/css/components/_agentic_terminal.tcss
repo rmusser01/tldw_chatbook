@@ -1188,7 +1188,7 @@ ConsoleRunLogModal {
 
 #library-conversations-page-status {
     width: auto;
-    height: 3;
+    height: 1;
     content-align: center middle;
     color: $ds-text-muted;
 }
