@@ -22,6 +22,7 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactFormat,
     ArtifactHandle,
     ArtifactIntegrityError,
+    ArtifactLeaseTimeoutError,
     ArtifactNotReadyError,
     ArtifactRef,
     ArtifactRole,
@@ -409,6 +410,22 @@ def test_acquire_managed_gguf_requires_exact_reference_before_service_call() -> 
         acquire_managed_gguf(UnusedService(), "latest")  # type: ignore[arg-type]
 
 
+def test_acquire_managed_gguf_maps_lease_timeout_to_retryable_busy_code() -> None:
+    class BusyService:
+        def acquire(self, _reference: ArtifactRef) -> NoReturn:
+            raise ArtifactLeaseTimeoutError(
+                "raw lock at /private/managed-root/locks/private.lock"
+            )
+
+    with pytest.raises(GGUFSourceError) as caught:
+        acquire_managed_gguf(BusyService(), REF)  # type: ignore[arg-type]
+
+    assert caught.value.code == "busy"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "/private/" not in repr(caught.value)
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
@@ -419,6 +436,10 @@ def test_acquire_managed_gguf_requires_exact_reference_before_service_call() -> 
         (
             ArtifactIntegrityError("raw /private/sentinel.gguf"),
             "The selected managed GGUF is corrupt. Delete it and import it again.",
+        ),
+        (
+            ArtifactLeaseTimeoutError("raw /private/sentinel.gguf"),
+            "The managed model store is busy. Try again.",
         ),
         (
             ArtifactStateError("raw /private/sentinel.gguf"),

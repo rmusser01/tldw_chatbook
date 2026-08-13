@@ -52,6 +52,80 @@ from .server_lifecycle import (
 #
 # Constants:
 
+_GGUF_RUNTIME_LOAD_FAILURE = (
+    "The runtime could not load this GGUF. Check that its architecture and "
+    "quantization are supported."
+)
+_GGUF_SOURCE_ARGUMENTS = frozenset(
+    {
+        "-m",
+        "--model",
+        "-mu",
+        "--model-url",
+        "-dr",
+        "--docker-repo",
+        "-hf",
+        "-hfr",
+        "--hf-repo",
+        "-hff",
+        "--hf-file",
+        "-hfd",
+        "-hfrd",
+        "--hf-repo-draft",
+        "--spec-draft-hf",
+        "-md",
+        "--model-draft",
+        "--spec-draft-model",
+        "-mm",
+        "--mmproj",
+        "-mmu",
+        "--mmproj-url",
+        "-mv",
+        "--model-vocoder",
+        "-hfv",
+        "-hfrv",
+        "--hf-repo-v",
+        "-hffv",
+        "--hf-file-v",
+        "-tk",
+        "--talker-model",
+        "-c2w",
+        "--code2wav-model",
+        "--models-dir",
+        "--models-preset",
+        "--lora",
+        "--lora-scaled",
+        "--control-vector",
+        "--control-vector-scaled",
+        "--embd-gemma-default",
+        "--fim-qwen-1.5b-default",
+        "--fim-qwen-3b-default",
+        "--fim-qwen-7b-default",
+        "--fim-qwen-7b-spec",
+        "--fim-qwen-14b-spec",
+        "--fim-qwen-30b-default",
+        "--gpt-oss-20b-default",
+        "--gpt-oss-120b-default",
+        "--vision-gemma-4b-default",
+        "--vision-gemma-12b-default",
+    }
+)
+
+
+class _GGUFSourceArgumentError(ValueError):
+    """An additional argument would override app-owned source authority."""
+
+
+def _validate_gguf_additional_args(arguments: tuple[str, ...]) -> None:
+    """Reject source selectors while preserving every accepted argument exactly."""
+    if any(
+        argument.partition("=")[0] in _GGUF_SOURCE_ARGUMENTS for argument in arguments
+    ):
+        raise _GGUFSourceArgumentError(
+            "additional arguments cannot select a model source"
+        )
+
+
 __all__ = [
     # Generic Helpers (Exported for other modules to use)
     "_make_path_update_callback",
@@ -274,6 +348,7 @@ def _run_gguf_server_worker(
             claim,
             subprocess,
             cwd=Path(executable).parent if provider == "llamafile" else None,
+            nonzero_status=_GGUF_RUNTIME_LOAD_FAILURE,
         )
     except Exception as error:
         logger.error(
@@ -374,6 +449,15 @@ async def handle_start_llamafile_server_button_pressed(
             exec_path_input.focus()
             return
         additional_args = tuple(shlex.split(additional_args_str))
+        try:
+            _validate_gguf_additional_args(additional_args)
+        except _GGUFSourceArgumentError:
+            app.notify(
+                "Additional arguments cannot select another model source. "
+                "Remove the model source option and try again.",
+                severity="error",
+            )
+            return
         claim = reserve_server_launch(
             app,
             "llamafile",
@@ -498,6 +582,15 @@ async def handle_start_llamacpp_server_button_pressed(
             exec_path_input.focus()
             return
         additional_args = tuple(shlex.split(additional_args_str))
+        try:
+            _validate_gguf_additional_args(additional_args)
+        except _GGUFSourceArgumentError:
+            app.notify(
+                "Additional arguments cannot select another model source. "
+                "Remove the model source option and try again.",
+                severity="error",
+            )
+            return
         claim = reserve_server_launch(
             app,
             "llamacpp",

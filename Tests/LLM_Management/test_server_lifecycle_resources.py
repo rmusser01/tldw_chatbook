@@ -32,6 +32,20 @@ class _App:
         self.notifications.append((message, severity))
 
 
+class _Destination:
+    is_mounted = True
+
+    def __init__(self) -> None:
+        self.state_changes: list[tuple[str, str | None]] = []
+
+    def _handle_server_process_state_change(
+        self,
+        provider: str,
+        status: str | None = None,
+    ) -> None:
+        self.state_changes.append((provider, status))
+
+
 class _Resource:
     def __init__(self, private_marker: str = "PRIVATE_RESOURCE_PATH") -> None:
         self.private_marker = private_marker
@@ -488,6 +502,32 @@ def test_process_exit_closes_resource_only_after_exact_death(returncode: int) ->
     assert process.poll() is not None
     assert server_lifecycle.current_server_claim(app, "llamacpp") is None
     assert resource.close_count == 1
+
+
+@pytest.mark.parametrize("provider", ("vllm", "mlx"))
+def test_default_nonzero_status_contract_remains_raw_for_non_gguf_callers(
+    provider: str,
+) -> None:
+    app = _App()
+    destination = _Destination()
+    app.screen_stack = [type("Screen", (), {"llm_window": destination})()]
+    claim = server_lifecycle.reserve_server_launch(app, provider)
+    assert claim is not None
+    process = _Process(returncode=19)
+
+    result = server_lifecycle.run_server_subprocess(
+        app,
+        provider,
+        ["PRIVATE_COMMAND"],
+        claim,
+        _SubprocessModule(process),
+    )
+
+    assert result == f"{provider} server exited (code=19)"
+    assert destination.state_changes[-1] == (
+        provider,
+        f"{provider} server exited (code=19)",
+    )
 
 
 @pytest.mark.asyncio

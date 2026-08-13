@@ -437,6 +437,7 @@ def run_server_subprocess(
     subprocess_module: Any,
     *,
     cwd: Any = None,
+    nonzero_status: str | None = None,
 ) -> str:
     """Run one claimed server while discarding potentially sensitive output."""
 
@@ -514,7 +515,9 @@ def run_server_subprocess(
             return f"{provider} launch cancelled"
         return_code = process.wait()
         if return_code and not claim.cancel_event.is_set():
-            final_status = f"{provider} server exited (code={return_code})"
+            final_status = nonzero_status or (
+                f"{provider} server exited (code={return_code})"
+            )
         return f"{provider} server exited (code={return_code})"
     except Exception as exc:
         exception_category = type(exc).__name__

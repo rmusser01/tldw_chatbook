@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,9 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes import
 from tldw_chatbook.Event_Handlers.LLM_Management_Events import server_lifecycle
 from tldw_chatbook.Model_Artifacts import (
     ArtifactInUseError,
+    ArtifactOperationLease,
     ArtifactRef,
+    LeaseMode,
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.gguf_admission import OpenedLocalGGUF
@@ -249,6 +252,187 @@ def _reserve(
     )
     assert claim is not None
     return claim
+
+
+_SOURCE_OVERRIDE_ARGUMENTS = (
+    ("-m", "/private/other.gguf"),
+    ("--model=/private/other.gguf",),
+    ("-mu", "https://private.invalid/model.gguf"),
+    ("--model-url=https://private.invalid/model.gguf",),
+    ("-dr", "private/model:q4"),
+    ("--docker-repo=private/model:q4",),
+    ("-hf", "private/model"),
+    ("-hfr=private/model",),
+    ("--hf-repo=private/model",),
+    ("-hff", "private.gguf"),
+    ("--hf-file=private.gguf",),
+    ("-hfd", "private/draft"),
+    ("-hfrd=private/draft",),
+    ("--hf-repo-draft=private/draft",),
+    ("--spec-draft-hf=private/draft",),
+    ("-md", "/private/draft.gguf"),
+    ("--model-draft=/private/draft.gguf",),
+    ("--spec-draft-model=/private/draft.gguf",),
+    ("-mm", "/private/mmproj.gguf"),
+    ("--mmproj=/private/mmproj.gguf",),
+    ("-mmu", "https://private.invalid/mmproj.gguf"),
+    ("--mmproj-url=https://private.invalid/mmproj.gguf",),
+    ("-mv", "/private/vocoder.gguf"),
+    ("--model-vocoder=/private/vocoder.gguf",),
+    ("-hfv", "private/vocoder"),
+    ("-hfrv=private/vocoder",),
+    ("--hf-repo-v=private/vocoder",),
+    ("-hffv", "vocoder.gguf"),
+    ("--hf-file-v=vocoder.gguf",),
+    ("-tk", "/private/talker.gguf"),
+    ("--talker-model=/private/talker.gguf",),
+    ("-c2w", "/private/code2wav.gguf"),
+    ("--code2wav-model=/private/code2wav.gguf",),
+    ("--models-dir=/private/models",),
+    ("--models-preset", "/private/models.ini"),
+    ("--lora=/private/adapter.gguf",),
+    ("--lora-scaled", "/private/adapter.gguf", "0.5"),
+    ("--control-vector=/private/control.gguf",),
+    ("--control-vector-scaled", "/private/control.gguf", "0.5"),
+    ("--embd-gemma-default",),
+    ("--fim-qwen-7b-spec",),
+    ("--gpt-oss-20b-default",),
+    ("--vision-gemma-4b-default",),
+)
+
+
+@pytest.mark.parametrize("arguments", _SOURCE_OVERRIDE_ARGUMENTS)
+def test_source_override_argument_aliases_and_equals_forms_are_rejected(
+    arguments: tuple[str, ...],
+) -> None:
+    original = tuple(arguments)
+
+    with pytest.raises(ValueError, match="model source"):
+        events._validate_gguf_additional_args(arguments)
+
+    assert arguments == original
+
+
+def test_harmless_model_metadata_and_draft_tuning_arguments_remain_accepted() -> None:
+    arguments = (
+        "--threads",
+        "4",
+        "--alias",
+        "friendly-model-name",
+        "--tags=model-source-metadata",
+        "--models-max",
+        "2",
+        "--no-models-autoload",
+        "--mmproj-offload",
+        "--threads-draft",
+        "2",
+        "--cache-type-k-draft=f16",
+        "--spec-default",
+        "--hf-token",
+        "private-token",
+    )
+
+    assert events._validate_gguf_additional_args(arguments) is None
+    assert arguments[-1] == "private-token"
+
+
+@pytest.mark.parametrize(
+    ("provider", "selection", "additional_args"),
+    (
+        (
+            "llamacpp",
+            _selection(GGUFSourceMode.MANAGED, managed_ref=REF),
+            "--model /private/override-managed.gguf",
+        ),
+        (
+            "llamacpp",
+            _selection(
+                GGUFSourceMode.EXTERNAL,
+                external_path=Path("/private/original-external.gguf"),
+            ),
+            "--hf-repo=private/override-external",
+        ),
+        (
+            "llamafile",
+            _selection(GGUFSourceMode.EMBEDDED),
+            "-m /private/override-embedded.gguf",
+        ),
+        (
+            "llamafile",
+            _selection(GGUFSourceMode.MANAGED, managed_ref=REF),
+            "--model-url=https://private.invalid/managed.gguf",
+        ),
+        (
+            "llamafile",
+            _selection(
+                GGUFSourceMode.EXTERNAL,
+                external_path=Path("/private/original-llamafile.gguf"),
+            ),
+            "--hf-file override-external.gguf",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_handlers_reject_source_overrides_before_reserving_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: str,
+    selection: GGUFSourceSelection,
+    additional_args: str,
+) -> None:
+    executable = tmp_path / ("llama-server" if provider == "llamacpp" else "llamafile")
+    executable.touch()
+    args_widget = (
+        _InputWidget(value=additional_args)
+        if provider == "llamacpp"
+        else _InputWidget(text=additional_args)
+    )
+    widgets: dict[str, object] = {
+        f"#{provider}-exec-path": _InputWidget(value=str(executable)),
+        f"#{provider}-host": _InputWidget(value="127.0.0.1"),
+        f"#{provider}-port": _InputWidget(value="8001"),
+        f"#{provider}-additional-args": args_widget,
+        f"#{provider}-log-output": _LogWidget(),
+    }
+    window = _Window(widgets)
+    window.gguf_source_snapshot = lambda _provider: selection  # type: ignore[attr-defined]
+    app = _App()
+    app.screen_stack = [type("Screen", (), {"llm_window": window})()]
+    monkeypatch.setattr(
+        events,
+        "reserve_server_launch",
+        lambda *_args, **_kwargs: pytest.fail(
+            "source override reached claim reservation"
+        ),
+    )
+    monkeypatch.setattr(
+        events,
+        "managed_service",
+        lambda: pytest.fail("source override reached managed store"),
+    )
+
+    handler = (
+        events.handle_start_llamacpp_server_button_pressed
+        if provider == "llamacpp"
+        else events.handle_start_llamafile_server_button_pressed
+    )
+    await handler(window, app, Button.Pressed(Button("Start")))
+
+    assert app.workers == []
+    assert app._llm_server_launch_claims == {}
+    assert app.notifications == [
+        (
+            "Additional arguments cannot select another model source. "
+            "Remove the model source option and try again.",
+            "error",
+        )
+    ]
+    assert (
+        args_widget.value if provider == "llamacpp" else args_widget.text
+    ) == additional_args
+    captured = repr((app.notifications, app.loguru_logger.records))
+    assert "/private/" not in captured
+    assert "private.invalid" not in captured
 
 
 @pytest.mark.parametrize(
@@ -1346,6 +1530,250 @@ async def test_real_helper_process_retains_managed_lease_until_exact_reaping(
                 )
             else:
                 server_lifecycle.release_server_claim(app, "llamacpp", claim)
+
+
+@pytest.mark.asyncio
+async def test_real_stop_terminates_reaps_and_releases_managed_lease_for_delete(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="Managed", file_type=7))
+    service = ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    reference = service.import_local_gguf(source).reference
+    service.activate(reference)
+    app = _App()
+    selection = _selection(GGUFSourceMode.MANAGED, managed_ref=reference)
+    claim = _reserve(app, "llamacpp", selection)
+    leased = service.acquire(reference)
+    assert server_lifecycle.attach_server_claim_resource(
+        app,
+        "llamacpp",
+        claim,
+        leased,
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    try:
+        assert process.poll() is None
+        assert server_lifecycle.publish_server_process(
+            app,
+            "llamacpp",
+            claim,
+            process,
+        )
+        with pytest.raises(ArtifactInUseError):
+            service.delete(reference)
+
+        assert await server_lifecycle.stop_server_process(
+            app,
+            "llamacpp",
+            "Llama.cpp server",
+        )
+
+        assert process.poll() is not None
+        assert process.wait(timeout=0.1) == process.returncode
+        assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+        assert server_lifecycle.server_process(app, "llamacpp") is None
+        assert claim._resource is None
+        service.delete(reference)
+        assert service.artifact_path(reference).exists() is False
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if server_lifecycle.current_server_claim(app, "llamacpp") is claim:
+            if server_lifecycle.server_process(app, "llamacpp") is process:
+                server_lifecycle.clear_server_process(
+                    app,
+                    "llamacpp",
+                    claim,
+                    process,
+                )
+            else:
+                server_lifecycle.release_server_claim(app, "llamacpp", claim)
+
+
+@pytest.mark.asyncio
+async def test_real_stop_kills_and_reaps_helper_that_ignores_termination(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("Python cannot portably ignore TerminateProcess on Windows")
+    marker = tmp_path / "ready"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import signal, sys, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "open(sys.argv[1], 'w').close(); "
+                "time.sleep(30)"
+            ),
+            str(marker),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    try:
+        for _ in range(100):
+            if marker.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert marker.exists()
+
+        app = _App()
+        selection = _selection(GGUFSourceMode.EXTERNAL, external_path=tmp_path)
+        claim = _reserve(app, "llamacpp", selection)
+        assert server_lifecycle.publish_server_process(
+            app,
+            "llamacpp",
+            claim,
+            process,
+        )
+
+        assert await server_lifecycle.stop_server_process(
+            app,
+            "llamacpp",
+            "Llama.cpp server",
+        )
+        assert process.poll() is not None
+        assert process.wait(timeout=0.1) == process.returncode
+        assert process.returncode == -signal.SIGKILL
+        assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("provider", "mode"),
+    (
+        ("llamacpp", GGUFSourceMode.MANAGED),
+        ("llamacpp", GGUFSourceMode.EXTERNAL),
+        ("llamafile", GGUFSourceMode.EMBEDDED),
+        ("llamafile", GGUFSourceMode.MANAGED),
+        ("llamafile", GGUFSourceMode.EXTERNAL),
+    ),
+)
+def test_gguf_nonzero_exit_presents_sanitized_runtime_compatibility_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: str,
+    mode: GGUFSourceMode,
+) -> None:
+    external = tmp_path / "PRIVATE-EXTERNAL-SOURCE.gguf"
+    _write_sparse_gguf(external)
+    managed_payload = tmp_path / "PRIVATE-MANAGED-STORE" / "model.gguf"
+    lease = _Lease()
+    selection = _selection(
+        mode,
+        managed_ref=REF if mode is GGUFSourceMode.MANAGED else None,
+        external_path=external if mode is GGUFSourceMode.EXTERNAL else None,
+    )
+    original_selection = selection
+    app = _App()
+    claim = _reserve(app, provider, selection)
+    process = _Process(returncode=37)
+    monkeypatch.setattr(events, "managed_service", lambda: object())
+    monkeypatch.setattr(
+        events,
+        "acquire_managed_gguf",
+        lambda _service, _reference: (managed_payload, lease),
+    )
+    monkeypatch.setattr(events, "subprocess", _Subprocess(process))
+
+    worker = (
+        events.run_llamacpp_server_worker
+        if provider == "llamacpp"
+        else events.run_llamafile_server_worker
+    )
+    result = worker(
+        app,
+        "/private/runtime",
+        "127.0.0.1",
+        "8123",
+        (),
+        selection,
+        claim,
+    )
+
+    approved = (
+        "The runtime could not load this GGUF. Check that its architecture and "
+        "quantization are supported."
+    )
+    assert result == f"{provider} server exited (code=37)"
+    assert app.destination.state_changes[-1] == (provider, approved)
+    assert selection == original_selection
+    assert claim.authority == selection.authority
+    assert server_lifecycle.current_server_claim(app, provider) is None
+    assert lease.close_count == (1 if mode is GGUFSourceMode.MANAGED else 0)
+    presented = repr(app.destination.state_changes)
+    assert "code=37" not in presented
+    assert "PRIVATE" not in presented
+    assert str(external) not in presented
+    assert str(managed_payload) not in presented
+
+
+def test_real_managed_contention_delivers_busy_recovery_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "PRIVATE-CONTENDED-SOURCE.gguf"
+    source.write_bytes(make_gguf(architecture="llama", name="Busy", file_type=7))
+    owner = ModelArtifactService(tmp_path / "PRIVATE-MANAGED-ROOT")
+    reference = owner.import_local_gguf(source).reference
+    owner.activate(reference)
+    contender = ModelArtifactService(
+        owner.artifacts_path.parent,
+        lease_timeout_seconds=0.01,
+    )
+    selection = _selection(GGUFSourceMode.MANAGED, managed_ref=reference)
+    app = _App()
+    claim = _reserve(app, "llamacpp", selection)
+    monkeypatch.setattr(events, "managed_service", lambda: contender)
+    monkeypatch.setattr(
+        events,
+        "run_server_subprocess",
+        lambda *_args, **_kwargs: pytest.fail("busy managed launch reached Popen"),
+    )
+
+    with ArtifactOperationLease(
+        owner.locks_path,
+        reference.lease_key(),
+        LeaseMode.EXCLUSIVE,
+    ):
+        result = events.run_llamacpp_server_worker(
+            app,
+            "/private/runtime",
+            "127.0.0.1",
+            "8001",
+            (),
+            selection,
+            claim,
+        )
+
+    assert result == "llamacpp source preparation failed"
+    assert app.destination.state_changes[-1] == (
+        "llamacpp",
+        "The managed model store is busy. Try again.",
+    )
+    assert server_lifecycle.current_server_claim(app, "llamacpp") is None
+    captured = repr(
+        (app.destination.state_changes, app.notifications, app.loguru_logger.records)
+    )
+    assert "PRIVATE" not in captured
+    assert str(owner.locks_path) not in captured
+    assert selection.managed_ref == reference
 
 
 def test_managed_source_failure_is_path_private_and_does_not_overwrite_newer_claim(

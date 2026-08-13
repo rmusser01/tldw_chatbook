@@ -2176,6 +2176,8 @@ class ModelArtifactService:
         )
         try:
             lease_set.acquire()
+        except ArtifactLeaseTimeoutError:
+            raise
         except ArtifactLeaseError as error:
             raise ArtifactStateError(
                 "failed to acquire artifact closure leases"

@@ -11,6 +11,7 @@ from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
     ArtifactFormat,
     ArtifactIntegrityError,
+    ArtifactLeaseTimeoutError,
     ArtifactNotReadyError,
     ArtifactRef,
     ArtifactRole,
@@ -25,7 +26,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import format_mib
 
 
 _SOURCE_ERROR_CODES = frozenset(
-    {"missing", "not_ready", "integrity", "payload", "state"}
+    {"missing", "not_ready", "integrity", "payload", "busy", "state"}
 )
 
 
@@ -207,6 +208,8 @@ def acquire_managed_gguf(
     failure_code: str | None = None
     try:
         leased = service.acquire(reference)
+    except ArtifactLeaseTimeoutError:
+        failure_code = "busy"
     except ArtifactNotReadyError:
         failure_code = "not_ready"
     except ArtifactIntegrityError:
@@ -279,8 +282,11 @@ def gguf_source_failure_message(error: BaseException) -> str:
                 "The selected managed GGUF has an invalid payload. Delete it and "
                 "import it again."
             ),
+            "busy": "The managed model store is busy. Try again.",
             "state": "The managed model store is unavailable. Try again.",
         }[error.code]
+    if isinstance(error, ArtifactLeaseTimeoutError):
+        return "The managed model store is busy. Try again."
     if isinstance(error, ArtifactNotReadyError):
         return (
             "The selected managed GGUF is not ready. Choose another model or import "

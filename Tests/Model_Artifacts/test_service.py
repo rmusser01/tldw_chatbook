@@ -313,6 +313,28 @@ def test_loaded_root_blocks_delete_without_mutation_then_closes_cleanly(
     assert service.artifact_path(dependency.reference).exists()
 
 
+def test_acquire_preserves_retryable_shared_lease_timeout_from_real_contention(
+    tmp_path: Path,
+) -> None:
+    owner, root, _dependency = installed_root_and_dependency(tmp_path)
+    owner.activate(root.reference)
+    contender = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+
+    with service_module.ArtifactOperationLease(
+        owner.locks_path,
+        root.reference.lease_key(),
+        service_module.LeaseMode.EXCLUSIVE,
+    ):
+        with pytest.raises(service_module.ArtifactLeaseTimeoutError) as caught:
+            contender.acquire(root.reference)
+
+    assert type(caught.value) is service_module.ArtifactLeaseTimeoutError
+    assert str(owner.locks_path) not in str(caught.value)
+
+
 def test_loaded_dependency_blocks_delete_then_invalidates_every_affected_root(
     tmp_path: Path,
 ) -> None:
