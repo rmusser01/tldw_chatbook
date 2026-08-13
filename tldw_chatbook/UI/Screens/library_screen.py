@@ -21290,9 +21290,16 @@ class LibraryScreen(BaseAppScreen):
         loop, once per file picked via the Browse dialog. Kept as a thin
         wrapper -- not folded into ``_remember_library_ingest_location``
         itself -- so that method stays directly unit-testable (it is the
-        one existing tests call, and does not need a running app).
+        one existing tests call, and does not need a running app; its own
+        body is deliberately left without a broad guard on the save call
+        to preserve that). The guard lives here instead: an uncaught
+        exception in a ``@work(thread=True)`` worker is fatal to the app
+        by default (``exit_on_error=True``).
         """
-        self._remember_library_ingest_location(selected_path)
+        try:
+            self._remember_library_ingest_location(selected_path)
+        except Exception:
+            logger.error("Failed to persist Library ingest browse location")
 
     def _remember_library_ingest_location(self, selected_path: Path) -> None:
         """Persist the directory a source was picked from, for next time."""

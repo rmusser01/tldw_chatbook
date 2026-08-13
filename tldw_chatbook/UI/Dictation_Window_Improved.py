@@ -873,9 +873,16 @@ Performance Tips:
         applies every section/key in `snapshot` under a single config-file
         lock, atomic replace, and cache reload -- the 6-9 sequential
         `save_setting_to_cli_config` calls this replaced each did all three
-        independently.
+        independently. Guarded broadly: this now also runs inside a
+        `run_worker` coroutine (`_persist_settings_off_loop`), where an
+        uncaught exception is fatal to the whole app by default
+        (`exit_on_error=True`) -- a config-write hiccup must not crash the
+        session.
         """
-        save_settings_to_cli_config(snapshot)
+        try:
+            save_settings_to_cli_config(snapshot)
+        except Exception:
+            logger.exception("Failed to persist dictation settings")
 
     def _save_settings(self):
         """Save dictation settings, synchronously, on this thread.
