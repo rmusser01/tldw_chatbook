@@ -1,5 +1,5 @@
 ---
-id: task-2374
+id: TASK-2374
 title: Media, notes, and conversation Use-in-Console handoffs delivered zero content to the model
 status: Done
 assignee:

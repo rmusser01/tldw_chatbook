@@ -1,5 +1,5 @@
 ---
-id: task-2501
+id: TASK-2501
 title: HTML-escape artifacts reach user-visible labels
 status: To Do
 assignee: []

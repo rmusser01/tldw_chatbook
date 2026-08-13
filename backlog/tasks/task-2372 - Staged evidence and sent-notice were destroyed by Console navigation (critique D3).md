@@ -1,5 +1,5 @@
 ---
-id: task-2372
+id: TASK-2372
 title: Staged evidence and sent-notice were destroyed by Console navigation (critique D3)
 status: Done
 assignee:

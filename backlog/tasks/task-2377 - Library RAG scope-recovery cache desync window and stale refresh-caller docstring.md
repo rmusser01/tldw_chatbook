@@ -1,5 +1,5 @@
 ---
-id: task-2377
+id: TASK-2377
 title: Library RAG scope-recovery cache desync window and stale refresh-caller docstring
 status: To Do
 assignee: []

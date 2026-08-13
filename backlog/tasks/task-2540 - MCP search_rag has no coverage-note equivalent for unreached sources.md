@@ -1,5 +1,5 @@
 ---
-id: task-2540
+id: TASK-2540
 title: MCP search_rag has no coverage-note equivalent for unreached sources
 status: To Do
 assignee: []

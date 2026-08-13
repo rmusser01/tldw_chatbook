@@ -1,5 +1,5 @@
 ---
-id: task-2502
+id: TASK-2502
 title: _consume_pending_console_launch is no longer a pure read
 status: To Do
 assignee: []

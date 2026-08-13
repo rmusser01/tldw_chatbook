@@ -1,5 +1,5 @@
 ---
-id: task-15511
+id: TASK-15511
 title: Console run state and image toggle diverge under a realistic config
 status: Done
 assignee: []
