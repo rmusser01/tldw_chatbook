@@ -1494,6 +1494,40 @@ def test_reply_speech_preference_epoch_advances_only_after_successful_mutation()
     assert store.speech_preference_epoch(session.id) == 4
 
 
+def test_active_session_epoch_advances_across_a_b_a_and_restore() -> None:
+    store = ConsoleChatStore()
+    first = store.create_session(title="A")
+    created_a = store.active_session_epoch()
+    second = store.create_session(title="B")
+    created_b = store.active_session_epoch()
+
+    store.switch_session(first.id)
+    switched_a = store.active_session_epoch()
+    store.switch_session(second.id)
+    switched_b = store.active_session_epoch()
+    store.switch_session(first.id)
+    returned_a = store.active_session_epoch()
+    store.restore_state(sessions=[replace(first)], active_session_id=first.id)
+    restored_a = store.active_session_epoch()
+
+    assert created_a < created_b < switched_a < switched_b < returned_a < restored_a
+
+
+def test_restore_state_replacement_advances_speech_epoch_monotonically() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    store.set_auto_speak(session.id, True)
+    before_restore = store.speech_preference_epoch(session.id)
+    restored = replace(session)
+
+    store.restore_state(sessions=[restored], active_session_id=session.id)
+    first_restore = store.speech_preference_epoch(session.id)
+    store.restore_state(sessions=[restored], active_session_id=session.id)
+    second_restore = store.speech_preference_epoch(session.id)
+
+    assert before_restore < first_restore < second_restore
+
+
 def test_failed_reply_speech_preference_write_does_not_advance_epoch() -> None:
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)

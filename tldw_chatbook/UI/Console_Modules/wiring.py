@@ -558,11 +558,12 @@ def build_console_controllers(
             )
         ),
         issue_message_speech=(
-            lambda message_id, outcome_callback, expected_destination: (
+            lambda message_id, outcome_callback, expected_destination, retry_failed_auto: (
                 screen._message.request_console_message_speech(
                     message_id,
                     outcome_callback,
                     expected_destination,
+                    retry_failed_auto,
                 )
             )
         ),

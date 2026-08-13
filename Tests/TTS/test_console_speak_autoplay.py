@@ -33,12 +33,15 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Mapping
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual.app import App
 
+from Tests.TTS.adapter_fakes import FakeAdapter
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -51,10 +54,19 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSProgressEvent,
 )
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
+from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.adapter_types import (
+    TTSAudioResponse,
+    TTSConfigurationRevisionError,
+    TTSProviderDescriptor,
+    TTSProviderSpec,
+)
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
     openai_destination_fingerprint,
 )
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import TTSService
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
@@ -172,7 +184,7 @@ async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
     )
     fake_app = _FakeApp()
     fake_app._ensure_tts_handler = AsyncMock(return_value=None)
-    fake_app.post_message = AsyncMock()
+    fake_app.post_message = MagicMock(return_value=True)
 
     await TldwCli.handle_tts_message_speech_request_event(fake_app, event)
 
@@ -184,8 +196,8 @@ async def test_app_snapshot_handler_unavailable_logs_only_safe_context():
     assert "PRIVATE_RESPONSE_TEXT" not in rendered_logs
     assert "PRIVATE_AUTHORITY" not in rendered_logs
     assert message.id not in rendered_logs
-    fake_app.post_message.assert_awaited_once()
-    completion = fake_app.post_message.await_args.args[0]
+    fake_app.post_message.assert_called_once()
+    completion = fake_app.post_message.call_args.args[0]
     assert isinstance(completion, TTSCompleteEvent)
     assert completion.message_id == message.id
     assert completion.error == "TTS service not available"
@@ -410,7 +422,7 @@ async def test_trusted_request_cooldown_settles_once() -> None:
     handler._request_cooldown = {"message-1": now}
     handler._last_cooldown_cleanup = now
     handler._post_tts_message = AsyncMock()
-    handler._generate_tts_with_rate_limit = MagicMock()
+    handler._generate_tts_with_rate_limit = AsyncMock()
 
     await handler._admit_tts_generation(
         text="Ready.",
@@ -422,6 +434,89 @@ async def test_trusted_request_cooldown_settles_once() -> None:
 
     assert outcomes == [False]
     handler._generate_tts_with_rate_limit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_auto_bypasses_only_its_existing_message_cooldown() -> None:
+    outcomes: list[bool] = []
+    handler = TTSEventHandler.__new__(TTSEventHandler)
+    now = asyncio.get_running_loop().time()
+    handler._request_cooldown = {"message-1": now, "other-message": now}
+    handler._last_cooldown_cleanup = now
+    handler._post_tts_message = AsyncMock(return_value=True)
+    handler._generate_tts_with_rate_limit = AsyncMock()
+
+    await handler._admit_tts_generation(
+        text="Ready.",
+        message_id="message-1",
+        voice=None,
+        resolution=None,
+        outcome_callback=outcomes.append,
+        retry_failed_auto=True,
+    )
+
+    handler._generate_tts_with_rate_limit.assert_called_once()
+    assert handler._request_cooldown["other-message"] == now
+    assert outcomes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("post_result", [False, RuntimeError("queue closed")])
+async def test_post_tts_message_reports_queue_acceptance(post_result) -> None:
+    handler = TTSEventHandler.__new__(TTSEventHandler)
+    app = MagicMock()
+    if isinstance(post_result, Exception):
+        app.post_message.side_effect = post_result
+    else:
+        app.post_message.return_value = post_result
+    handler.app = app
+
+    accepted = await handler._post_tts_message(TTSCompleteEvent(message_id="m"))
+
+    assert accepted is False
+
+
+@pytest.mark.asyncio
+async def test_final_completion_post_rejection_reports_generation_failure(tmp_path) -> None:
+    async def chunks():
+        yield b"audio"
+
+    response = TTSAudioResponse(
+        provider_id="openai",
+        model_id="tts-model",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+        byte_stream=chunks(),
+    )
+    service = MagicMock()
+    service.preferences_snapshot.return_value = SimpleNamespace(
+        provider_id="openai",
+        speed=1.0,
+    )
+    service.synthesize_default = AsyncMock(return_value=response)
+    handler = TTSEventHandler()
+    handler._tts_service = service
+    handler._create_tts_artifact = MagicMock(return_value=tmp_path / "speech.mp3")
+    posted: list[object] = []
+
+    async def reject_completion(message: object) -> bool:
+        posted.append(message)
+        return not isinstance(message, TTSCompleteEvent)
+
+    handler._post_tts_message = reject_completion
+    outcomes: list[bool] = []
+
+    await handler._generate_tts(
+        "Private reply.",
+        "message-1",
+        None,
+        outcome_callback=outcomes.append,
+    )
+
+    assert any(isinstance(message, TTSCompleteEvent) for message in posted)
+    assert outcomes == [False]
+    assert not (tmp_path / "speech.mp3").exists()
+    assert "message-1" not in handler._audio_files
 
 
 class _SpeechRequestControllerStub:
@@ -504,12 +599,37 @@ async def test_app_unavailable_notice_rejection_still_settles_once() -> None:
     )
     app = _FakeApp()
     app._ensure_tts_handler = AsyncMock(return_value=None)
-    app.post_message = AsyncMock(side_effect=RuntimeError("queue closed"))
+    app.post_message = MagicMock(side_effect=RuntimeError("queue closed"))
 
     await TldwCli.handle_tts_message_speech_request_event(app, event)
     event.report_outcome(True)
 
     assert outcomes == [False]
+
+
+@pytest.mark.asyncio
+async def test_app_unavailable_notice_false_acceptance_settles_without_type_error() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+    outcomes: list[bool] = []
+    event = TTSMessageSpeechRequestEvent(
+        store.issue_tts_message_speech_snapshot(message.id),
+        store.validate_tts_message_speech_snapshot,
+        outcome_callback=outcomes.append,
+    )
+    app = _FakeApp()
+    app._ensure_tts_handler = AsyncMock(return_value=None)
+    app.post_message = MagicMock(return_value=False)
+
+    await TldwCli.handle_tts_message_speech_request_event(app, event)
+
+    assert outcomes == [False]
+    assert "TypeError" not in repr(app.loguru_logger.method_calls)
 
 
 def test_auto_speak_outcome_callback_must_be_callable() -> None:
@@ -609,6 +729,111 @@ async def test_provider_destination_uses_applied_network_configuration(
     )
 
     assert endpoint == expected
+
+
+@pytest.mark.parametrize(
+    ("applied_config", "expected"),
+    [
+        (
+            {"mode": "external", "base_url": "https://audio.example.test:9443"},
+            "https://audio.example.test:9443",
+        ),
+        (
+            {"mode": "managed", "base_url": "https://dormant.invalid"},
+            "http://localhost",
+        ),
+    ],
+)
+def test_audio_cpp_admitted_destination_uses_active_mode(
+    applied_config: dict[str, str],
+    expected: str,
+) -> None:
+    assert (
+        TTSEventHandler._provider_endpoint_from_applied_config(
+            "audio_cpp",
+            applied_config,
+        )
+        == expected
+    )
+
+
+@pytest.mark.asyncio
+async def test_destination_authorization_uses_post_capacity_exact_lease_config() -> None:
+    adapters: list[FakeAdapter] = []
+
+    def factory(_config: Mapping[str, Any]) -> FakeAdapter:
+        adapter = FakeAdapter("openai")
+        adapters.append(adapter)
+        return adapter
+
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("openai", "OpenAI", False),
+                factory=factory,
+                initial_config={
+                    "generation": "one",
+                    "app_config": {
+                        "app_tts": {"OPENAI_BASE_URL": "https://a.example/v1"}
+                    },
+                },
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        max_concurrent_operations=1,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="model",
+            voice_mode="exact",
+            voice_id="default",
+            response_format="wav",
+            speed=1.0,
+        ),
+    )
+    first = await service.synthesize_default(text="occupy capacity")
+    authorization_started = asyncio.Event()
+    observed: list[tuple[str, Mapping[str, object]]] = []
+
+    def authorize(provider_id: str, applied_config: Mapping[str, object]) -> bool:
+        observed.append((provider_id, applied_config))
+        authorization_started.set()
+        nested = applied_config["app_config"]
+        assert isinstance(nested, Mapping)
+        app_tts = nested["app_tts"]
+        assert isinstance(app_tts, Mapping)
+        return app_tts["OPENAI_BASE_URL"] == "https://a.example/v1"
+
+    waiting = asyncio.create_task(
+        service.synthesize_default(
+            text="must not reach changed backend",
+            admission_authorizer=authorize,
+        )
+    )
+    await asyncio.sleep(0)
+    assert not authorization_started.is_set()
+    await registry.reconfigure_provider(
+        "openai",
+        {
+            "generation": "two",
+            "app_config": {
+                "app_tts": {"OPENAI_BASE_URL": "https://b.example/v1"}
+            },
+        },
+    )
+    await first.aclose()
+
+    with pytest.raises(TTSConfigurationRevisionError):
+        await waiting
+
+    assert observed[0][0] == "openai"
+    assert observed[0][1]["generation"] == "two"
+    assert adapters[-1].synthesize_calls == 0
+    await service.close()
+    await service.wait_closed()
 
 
 def test_destination_fingerprint_includes_provider_and_normalized_endpoint() -> None:

@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSAudioResponse,
     TTSCloneGenerationEvidence,
+    TTSConfigurationRevisionError,
     TTSNativeCapabilityObservation,
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
@@ -96,6 +97,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
     TTSCloneRecipeRequirement,
 )
 from tldw_chatbook.TTS.request_admission import (
+    TTSAdmissionAuthorizer,
     TTSProfileReferenceResolver,
     TTSRequestAdmissionCoordinator,
     _ResolvedTTSCloneExecutionAuthority,
@@ -1219,6 +1221,7 @@ class TTSService:
         request: TTSRequest,
         *,
         expected_configuration_revision: int | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> _AdmittedTTSOperation:
         """Reserve service capacity and a revision-matched provider lease.
 
@@ -1246,6 +1249,7 @@ class TTSService:
                             expected_configuration_revision=(
                                 expected_configuration_revision
                             ),
+                            admission_authorizer=admission_authorizer,
                         )
                 except _AudioCppGenerationChanged:
                     continue
@@ -1320,6 +1324,7 @@ class TTSService:
         *,
         expected_configuration_revision: int | None = None,
         clone_execution: _ResolvedTTSCloneExecutionAuthority | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> _AdmittedTTSOperation:
         """Acquire a provider lease using capacity reserved by this service."""
         try:
@@ -1330,6 +1335,25 @@ class TTSService:
         except BaseException:
             reservation.release_if_untransferred()
             raise
+
+        if admission_authorizer is not None:
+            try:
+                authorized = admission_authorizer(
+                    lease.provider_id,
+                    lease.applied_config,
+                )
+            except Exception:
+                authorized = False
+            if authorized is not True:
+                authorization_error = TTSConfigurationRevisionError(
+                    "TTS provider destination authorization changed"
+                )
+                await _cleanup_preserving_primary(
+                    lease.release,
+                    authorization_error,
+                )
+                reservation.release_if_untransferred()
+                raise authorization_error
 
         preparation = self._audio_cpp_preparation.get()
         clone_reference = None if clone_execution is None else clone_execution.reference
@@ -1445,6 +1469,7 @@ class TTSService:
         self,
         request: TTSRequest,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
         """Synthesize audio while retaining provider resources for the response.
 
@@ -1457,7 +1482,10 @@ class TTSService:
         """
         if type(request) is not TTSRequest:
             raise TypeError("TTS request is invalid")
-        operation = await self.admit(request)
+        operation = await self.admit(
+            request,
+            admission_authorizer=admission_authorizer,
+        )
         return await operation.synthesize(progress_sink)
 
     async def synthesize_exact(
@@ -2173,12 +2201,14 @@ class TTSService:
         text: str,
         voice_override: str | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
         """Resolve and synthesize one revision-coherent default request."""
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def synthesize_effective(
@@ -2194,6 +2224,7 @@ class TTSService:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve owner-scoped settings and synthesize one admitted request."""
 
@@ -2208,6 +2239,7 @@ class TTSService:
             profile_preview=profile_preview,
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def synthesize_effective_with_evidence(
@@ -2223,6 +2255,7 @@ class TTSService:
         profile_preview: STTSPlaygroundProfilePreview | None = None,
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> tuple[
         TTSAudioResponse,
         TTSEffectiveSelectionSnapshot,
@@ -2241,6 +2274,7 @@ class TTSService:
             profile_preview=profile_preview,
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
         )
 
     async def generate_audio_stream(

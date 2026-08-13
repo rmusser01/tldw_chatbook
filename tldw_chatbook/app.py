@@ -8730,7 +8730,7 @@ class TldwCli(
             await handler.handle_tts_request(event)
         else:
             self.loguru_logger.error("TTS handler not initialized")
-            await self.post_message(
+            self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="TTS service not available",
@@ -8777,7 +8777,7 @@ class TldwCli(
                 "outcome_code=handler_unavailable)"
             )
             try:
-                await self.post_message(
+                self.post_message(
                     TTSCompleteEvent(
                         message_id=event.message_id,
                         error="TTS service not available",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,12 +45,14 @@ class AutoSpeakHarness:
         self.open_error = False
         self.destination_gate: asyncio.Event | None = None
         self.destination_resolutions = 0
+        self.schedule_failures = 0
         self.opened: list[
             tuple[AutoSpeakConsentModal, Callable[[bool], None]]
         ] = []
         self.spoken: list[str] = []
         self.expected_destinations: list[str | None] = []
         self.outcomes: list[Callable[[bool], None]] = []
+        self.retry_requests: list[bool] = []
         self.synced: list[tuple[bool, bool, bool]] = []
         self.notices: list[tuple[str, str]] = []
         self.tasks: list[asyncio.Task[Any]] = []
@@ -67,12 +70,14 @@ class AutoSpeakHarness:
             message_id: str,
             outcome_callback: Callable[[bool], None],
             expected_destination_fingerprint: str | None,
+            retry_failed_auto: bool = False,
         ) -> bool:
             if self.issue_error:
                 raise RuntimeError("bounded dispatch failure")
             self.spoken.append(message_id)
             self.expected_destinations.append(expected_destination_fingerprint)
             self.outcomes.append(outcome_callback)
+            self.retry_requests.append(retry_failed_auto)
             return True
 
         def open_consent(
@@ -84,6 +89,9 @@ class AutoSpeakHarness:
             self.opened.append((modal, callback))
 
         def schedule(coroutine: Coroutine[Any, Any, Any]) -> None:
+            if self.schedule_failures:
+                self.schedule_failures -= 1
+                raise RuntimeError("screen scheduler rejected work")
             self.tasks.append(asyncio.create_task(coroutine))
 
         self.coordinator = ConsoleAutoSpeakCoordinator(
@@ -409,6 +417,40 @@ async def test_unmount_while_destination_lookup_is_blocked_never_prompts_or_disp
 
 
 @pytest.mark.asyncio
+async def test_delayed_completion_drops_after_active_session_a_b_a_cycle() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    harness.destination_gate = asyncio.Event()
+    message = harness.begin_reply()
+    harness.store.append_stream_chunk(message.id, "Delayed A reply.")
+    harness.store.mark_message_complete(message.id)
+    await asyncio.sleep(0)
+
+    other = harness.store.create_session(title="B")
+    harness.store.switch_session(harness.session.id)
+    assert other.id != harness.store.active_session_id
+    harness.destination_gate.set()
+    await harness.drain()
+
+    assert harness.spoken == []
+
+
+@pytest.mark.asyncio
+async def test_enable_modal_acceptance_drops_after_active_session_a_b_a_cycle() -> None:
+    harness = AutoSpeakHarness()
+    harness.coordinator.request_enabled(True)
+    await harness.drain()
+    _modal, accept = harness.opened.pop()
+
+    harness.store.create_session(title="B")
+    harness.store.switch_session(harness.session.id)
+    accept(True)
+    await harness.drain()
+
+    assert harness.session.speech_preferences.auto_speak is False
+
+
+@pytest.mark.asyncio
 async def test_failure_after_unmount_still_persists_pause_for_same_opt_in_epoch() -> None:
     harness = AutoSpeakHarness()
     await harness.enable()
@@ -419,7 +461,7 @@ async def test_failure_after_unmount_still_persists_pause_for_same_opt_in_epoch(
     outcome(False)
 
     assert harness.session.speech_preferences.paused is True
-    assert harness.coordinator.failed_message_id == message.id
+    assert harness.coordinator.failed_message_ids[harness.session.id] == message.id
 
 
 @pytest.mark.asyncio
@@ -450,6 +492,7 @@ async def test_retry_uses_trusted_path_for_failed_message_without_resuming() -> 
 
     assert harness.spoken == [message.id, message.id]
     assert harness.expected_destinations == [DEST_A, DEST_A]
+    assert harness.retry_requests == [False, True]
     assert harness.session.speech_preferences.paused is True
 
 
@@ -480,6 +523,57 @@ async def test_later_successful_completion_for_same_message_dispatches_again() -
 
     assert harness.spoken == [message.id, message.id]
     assert harness.expected_destinations == [DEST_A, DEST_A]
+
+
+@pytest.mark.asyncio
+async def test_regeneration_waits_for_prior_speech_then_dispatches_once() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("First answer.")
+    first_outcome = harness.outcomes.pop()
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Second answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await harness.drain()
+
+    assert harness.spoken == [message.id]
+    first_outcome(True)
+    await harness.drain()
+    assert harness.spoken == [message.id, message.id]
+
+
+@pytest.mark.asyncio
+async def test_regeneration_pending_behind_failed_speech_stays_paused() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("First answer.")
+    first_outcome = harness.outcomes.pop()
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Second answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await harness.drain()
+
+    first_outcome(False)
+    await harness.drain()
+    assert harness.spoken == [message.id]
+    assert harness.session.speech_preferences.paused is True
+
+
+@pytest.mark.asyncio
+async def test_regeneration_pending_behind_speech_drops_after_active_change() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("First answer.")
+    first_outcome = harness.outcomes.pop()
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Second answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await harness.drain()
+
+    harness.store.create_session(title="B")
+    first_outcome(True)
+    await harness.drain()
+    assert harness.spoken == [message.id]
 
 
 @pytest.mark.asyncio
@@ -528,12 +622,12 @@ async def test_unavailable_app_handler_callback_durably_pauses_auto_speak() -> N
     app = MagicMock()
     app.loguru_logger = MagicMock()
     app._ensure_tts_handler = AsyncMock(return_value=None)
-    app.post_message = AsyncMock(return_value=True)
+    app.post_message = MagicMock(return_value=True)
 
     await TldwCli.handle_tts_message_speech_request_event(app, event)
 
     assert harness.session.speech_preferences.paused is True
-    assert harness.coordinator.failed_message_id == message.id
+    assert harness.coordinator.failed_message_ids[harness.session.id] == message.id
 
 
 @pytest.mark.asyncio
@@ -556,9 +650,98 @@ async def test_retry_stale_failed_message_id_fails_closed() -> None:
     await harness.enable()
     await harness.complete_reply("Stale token.")
     harness.outcomes.pop()(False)
-    harness.coordinator.failed_message_id = "missing-message"
+    harness.coordinator.failed_message_ids[harness.session.id] = "missing-message"
 
     harness.coordinator.request_retry()
     await harness.drain()
 
     assert len(harness.spoken) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_ownership_is_independent_per_session_and_resume_is_scoped() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    first = await harness.complete_reply("A failed reply.")
+    harness.outcomes.pop()(False)
+
+    second_session = harness.store.create_session(title="B")
+    harness.store.confirm_auto_speak_destination(second_session.id, DEST_A)
+    harness.store.set_auto_speak(second_session.id, True)
+    second = harness.store.append_message(
+        second_session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    harness.store.append_stream_chunk(second.id, "B failed reply.")
+    harness.store.mark_message_complete(second.id)
+    await harness.drain()
+    harness.outcomes.pop()(False)
+
+    harness.store.switch_session(harness.session.id)
+    harness.coordinator.sync_controls()
+    harness.coordinator.request_retry()
+    await harness.drain()
+    harness.store.switch_session(second_session.id)
+    harness.coordinator.request_resume()
+    await harness.drain()
+
+    assert harness.spoken == [first.id, second.id, first.id]
+    assert harness.session.speech_preferences.paused is True
+    assert second_session.speech_preferences.paused is False
+    assert harness.coordinator.failed_message_ids[harness.session.id] == first.id
+    assert second_session.id not in harness.coordinator.failed_message_ids
+
+
+@pytest.mark.asyncio
+async def test_old_failure_cannot_pause_same_id_restored_session() -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    await harness.complete_reply("Old state request.")
+    old_outcome = harness.outcomes.pop()
+    restored = replace(harness.session)
+    restored_messages = harness.store.messages_for_session(harness.session.id)
+
+    harness.store.restore_state(
+        sessions=[restored],
+        messages_by_session={restored.id: restored_messages},
+        active_session_id=restored.id,
+    )
+    old_outcome(False)
+
+    active = harness.store.sessions()[0]
+    assert active.speech_preferences.auto_speak is True
+    assert active.speech_preferences.paused is False
+    assert restored.id not in harness.coordinator.failed_message_ids
+
+
+@pytest.mark.asyncio
+async def test_scheduler_rejection_closes_work_and_allows_retry() -> None:
+    harness = AutoSpeakHarness()
+    harness.schedule_failures = 1
+
+    harness.coordinator.request_enabled(True)
+    await harness.drain()
+    assert harness.opened == []
+    assert harness.session.speech_preferences.auto_speak is False
+
+    harness.coordinator.request_enabled(True)
+    await harness.drain()
+    assert len(harness.opened) == 1
+
+
+@pytest.mark.asyncio
+async def test_modal_callback_scheduler_rejection_unwinds_modal() -> None:
+    harness = AutoSpeakHarness()
+    harness.coordinator.request_enabled(True)
+    await harness.drain()
+    _modal, accept = harness.opened.pop()
+    harness.schedule_failures = 1
+
+    accept(True)
+    await harness.drain()
+    harness.coordinator.request_enabled(True)
+    await harness.drain()
+
+    assert harness.session.speech_preferences.auto_speak is False
+    assert len(harness.opened) == 1

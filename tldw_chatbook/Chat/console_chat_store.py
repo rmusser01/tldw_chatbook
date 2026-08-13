@@ -617,6 +617,8 @@ class ConsoleChatStore:
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
         self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
+        self._active_session_epoch = 0
+        self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
@@ -819,8 +821,17 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session.id] = None
         self._context_summary_by_session[session.id] = (None, None)
         self._conversation_context_epochs[session.id] = 0
-        self.active_session_id = session.id
+        self._activate_session(session.id)
         return session
+
+    def _activate_session(self, session_id: str | None) -> None:
+        """Publish one activation transition behind a monotonic process fence."""
+        self.active_session_id = session_id
+        self._active_session_epoch += 1
+
+    def active_session_epoch(self) -> int:
+        """Return the monotonic generation of the current activation state."""
+        return self._active_session_epoch
 
     def is_pristine_session(
         self,
@@ -1340,7 +1351,7 @@ class ConsoleChatStore:
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing session."""
         session = self._session_or_raise(session_id)
-        self.active_session_id = session.id
+        self._activate_session(session.id)
         return session
 
     def rename_session(
@@ -1455,12 +1466,12 @@ class ConsoleChatStore:
 
         remaining_sessions = list(self._sessions.values())
         if not remaining_sessions:
-            self.active_session_id = None
+            self._activate_session(None)
             return None
 
         next_index = min(closed_index, len(remaining_sessions) - 1)
         next_session = remaining_sessions[next_index]
-        self.active_session_id = next_session.id
+        self._activate_session(next_session.id)
         return next_session
 
     def sessions(self) -> list[ConsoleChatSession]:
@@ -1530,8 +1541,9 @@ class ConsoleChatStore:
         return self._speech_preference_epochs.get(session_id, 0)
 
     def _bump_speech_preference_epoch(self, session_id: str) -> None:
+        self._speech_preference_epoch_sequence += 1
         self._speech_preference_epochs[session_id] = (
-            self._speech_preference_epochs.get(session_id, 0) + 1
+            self._speech_preference_epoch_sequence
         )
 
     def pause_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
@@ -1821,7 +1833,7 @@ class ConsoleChatStore:
             active_session_id: Preferred active session after restoration.
         """
         restored_sessions = list(sessions)
-        self.active_session_id = None
+        self._activate_session(None)
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -1843,6 +1855,7 @@ class ConsoleChatStore:
         self._message_completion_generations.clear()
         self._payload_revisions.clear()
         self._conversation_context_epochs.clear()
+        self._speech_preference_epochs.clear()
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
@@ -1852,6 +1865,7 @@ class ConsoleChatStore:
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
             self._sessions[session.id] = replace(session)
+            self._bump_speech_preference_epoch(session.id)
             self._nodes_by_session[session.id] = {}
             self._children_by_parent[session.id] = {}
             self._active_leaf_by_session[session.id] = None
@@ -1864,9 +1878,9 @@ class ConsoleChatStore:
             self._bump_payload_revision(session.id)
 
         if active_session_id in self._sessions:
-            self.active_session_id = active_session_id
+            self._activate_session(active_session_id)
         elif self._sessions:
-            self.active_session_id = next(iter(self._sessions))
+            self._activate_session(next(iter(self._sessions)))
 
     @staticmethod
     def _set_message_attachments(

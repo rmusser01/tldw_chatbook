@@ -179,6 +179,7 @@ class TTSMessageSpeechRequestEvent(Message):
         validator: Callable[[TTSMessageSpeechSnapshot], str],
         outcome_callback: Callable[[bool], None] | None = None,
         expected_destination_fingerprint: str | None = None,
+        retry_failed_auto: bool = False,
     ) -> None:
         super().__init__()
         if type(snapshot) is not TTSMessageSpeechSnapshot:
@@ -196,10 +197,15 @@ class TTSMessageSpeechRequestEvent(Message):
             raise ValueError(
                 "expected_destination_fingerprint must be canonical or None"
             )
+        if type(retry_failed_auto) is not bool:
+            raise ValueError("retry_failed_auto must be an exact boolean")
+        if retry_failed_auto and expected_destination_fingerprint is None:
+            raise ValueError("automatic retry requires a destination fingerprint")
         self.snapshot = snapshot
         self.validator = validator
         self._outcome_callback = outcome_callback
         self.expected_destination_fingerprint = expected_destination_fingerprint
+        self.retry_failed_auto = retry_failed_auto
         self._outcome_reported = False
 
     @property
@@ -565,18 +571,22 @@ class TTSEventHandler:
         for key, _ in sorted_entries[:overflow]:
             del self._request_cooldown[key]
 
-    async def _post_tts_message(self, message: Message) -> None:
+    async def _post_tts_message(self, message: Message) -> bool:
         """Post a message through Textual app wiring or a direct test handler."""
-        app = getattr(self, "app", None)
-        if app is not None and hasattr(app, "post_message"):
-            app.post_message(message)
-            return
-
-        post_message = getattr(self, "post_message", None)
-        if callable(post_message):
-            result = post_message(message)
+        try:
+            app = getattr(self, "app", None)
+            if app is not None and hasattr(app, "post_message"):
+                result = app.post_message(message)
+            else:
+                post_message = getattr(self, "post_message", None)
+                if not callable(post_message):
+                    return False
+                result = post_message(message)
             if asyncio.iscoroutine(result):
-                await result
+                result = await result
+            return result is not False
+        except Exception:
+            return False
 
     async def handle_tts_request(
         self,
@@ -711,6 +721,7 @@ class TTSEventHandler:
                 event.report_outcome if event.has_outcome_callback else None
             ),
             expected_destination_fingerprint=expected,
+            retry_failed_auto=event.retry_failed_auto,
         )
 
     async def speak_utterance(
@@ -1137,18 +1148,35 @@ class TTSEventHandler:
 
     @staticmethod
     async def _effective_provider_endpoint(service, provider_id: str) -> str:
-        if provider_id == "audio_cpp":
-            observation = await service.audio_cpp_runtime_observation()
-            return observation.active_endpoint or "http://localhost"
         if provider_id == "elevenlabs":
             return "https://api.elevenlabs.io"
-        if provider_id not in {"openai", "alltalk"}:
+        if provider_id not in {"audio_cpp", "openai", "alltalk"}:
             return "http://localhost"
 
         configuration = await service.registry.provider_configuration_snapshot(
             provider_id
         )
-        applied = configuration.applied_config
+        return TTSEventHandler._provider_endpoint_from_applied_config(
+            provider_id,
+            configuration.applied_config,
+        )
+
+    @staticmethod
+    def _provider_endpoint_from_applied_config(
+        provider_id: str,
+        applied: Mapping[str, object],
+    ) -> str:
+        if provider_id == "audio_cpp":
+            if applied.get("mode") == "managed":
+                return "http://localhost"
+            raw_endpoint = applied.get("base_url")
+            if isinstance(raw_endpoint, str) and raw_endpoint:
+                return raw_endpoint
+            return "http://localhost"
+        if provider_id == "elevenlabs":
+            return "https://api.elevenlabs.io"
+        if provider_id not in {"openai", "alltalk"}:
+            return "http://localhost"
         app_config = applied.get("app_config") if isinstance(applied, Mapping) else None
         app_tts = (
             app_config.get("app_tts")
@@ -1273,6 +1301,7 @@ class TTSEventHandler:
         resolution: CharacterTTSRequestResolution | None,
         outcome_callback: Callable[[bool], None] | None = None,
         expected_destination_fingerprint: str | None = None,
+        retry_failed_auto: bool = False,
     ) -> None:
         """Apply cooldown only after validation and character resolution."""
         current_time = asyncio.get_event_loop().time()
@@ -1281,6 +1310,8 @@ class TTSEventHandler:
             self._last_cooldown_cleanup = current_time
         self._enforce_cooldown_limit()
 
+        if retry_failed_auto:
+            self._request_cooldown.pop(message_id, None)
         if message_id in self._request_cooldown:
             time_since_last = current_time - self._request_cooldown[message_id]
             if time_since_last < self.COOLDOWN_SECONDS:
@@ -1424,6 +1455,32 @@ class TTSEventHandler:
         response = None
         artifact_path: Path | None = None
 
+        def authorize_destination(
+            admitted_provider_id: str,
+            applied_config: Mapping[str, object],
+        ) -> bool:
+            if expected_destination_fingerprint is None:
+                return True
+            try:
+                raw_endpoint = self._provider_endpoint_from_applied_config(
+                    admitted_provider_id,
+                    applied_config,
+                )
+                endpoint = normalize_openai_compatible_endpoint(raw_endpoint)
+                admitted_fingerprint = (
+                    "sha256:"
+                    f"{openai_destination_fingerprint(admitted_provider_id, endpoint)}"
+                )
+            except Exception:
+                return False
+            return admitted_fingerprint == expected_destination_fingerprint
+
+        admission_authorizer = (
+            authorize_destination
+            if expected_destination_fingerprint is not None
+            else None
+        )
+
         try:
             service = self._tts_service
             if service is None:
@@ -1530,6 +1587,7 @@ class TTSEventHandler:
                                 reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
+                            admission_authorizer=admission_authorizer,
                         )
                     else:
                         assert resolution.source == "default_profile"
@@ -1548,6 +1606,7 @@ class TTSEventHandler:
                                 reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
+                            admission_authorizer=admission_authorizer,
                         )
                     requested_selection = TTSRequestedSelectionSnapshot(
                         provider_id=effective_selection.provider_id,
@@ -1569,6 +1628,7 @@ class TTSEventHandler:
                         text=text,
                         voice_override=voice,
                         progress_sink=progress_sink,
+                        admission_authorizer=admission_authorizer,
                     )
                 if (
                     not isinstance(response.provider_id, str)
@@ -1818,7 +1878,7 @@ class TTSEventHandler:
                     status="Audio generation complete",
                 )
             )
-            await self._post_tts_message(
+            completion_accepted = await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=normalized_message_id,
                     # Task-4 review F1: `None`, not `artifact_path`, when a
@@ -1839,6 +1899,12 @@ class TTSEventHandler:
                     audio_file=artifact_path if on_finished is None else None,
                 )
             )
+            if not completion_accepted and on_finished is None:
+                await self._discard_tts_artifact(
+                    normalized_message_id,
+                    artifact_path,
+                )
+                artifact_path = None
             if on_finished is not None:
                 # Task-4: a hands-free utterance has no per-message widget
                 # for the app's own `TTSCompleteEvent` handler to route an
@@ -1853,7 +1919,7 @@ class TTSEventHandler:
                     on_finished,
                     speed=effective_speed,
                 )
-            outcome_code = "success"
+            outcome_code = "success" if completion_accepted else "delivery_rejected"
         except asyncio.CancelledError as cancellation:
             outcome_code = "cancelled"
             if artifact_path is not None:
@@ -1870,8 +1936,12 @@ class TTSEventHandler:
             raise cancellation
         except Exception as error:
             destination_changed = isinstance(
-                error, _TTSAutomaticDestinationChangedError
-            )
+                error,
+                (
+                    _TTSAutomaticDestinationChangedError,
+                    TTSConfigurationRevisionError,
+                ),
+            ) and expected_destination_fingerprint is not None
             outcome_code = (
                 "destination_changed"
                 if destination_changed
@@ -2083,9 +2153,13 @@ class TTSEventHandler:
                     status="Audio generation complete",
                 )
             )
-            await self._post_tts_message(
+            completion_accepted = await self._post_tts_message(
                 TTSCompleteEvent(message_id=message_id, audio_file=None)
             )
+            if not completion_accepted:
+                if on_finished is not None:
+                    on_finished(False)
+                return "delivery_rejected"
             if result.outcome == "drained":
                 if on_finished is not None:
                     on_finished(True)

@@ -1076,6 +1076,7 @@ class ConsoleMessageController:
         message_id: str,
         outcome_callback: Callable[[bool], None] | None = None,
         expected_destination_fingerprint: str | None = None,
+        retry_failed_auto: bool = False,
     ) -> bool:
         """Dispatch Manual Speak's exact trusted snapshot/event path."""
         from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
@@ -1124,6 +1125,7 @@ class ConsoleMessageController:
             validate_speech_snapshot,
             outcome_callback=report_outcome if outcome_callback is not None else None,
             expected_destination_fingerprint=expected_destination_fingerprint,
+            retry_failed_auto=retry_failed_auto,
         )
         try:
             posted = self.app_instance.post_message(event)
