@@ -166,3 +166,77 @@ async def test_character_import_selection_saves_only_selected_parent(
     assert config_store[("filepicker", "last_dir_character_import")] == str(
         selected_parent
     )
+
+
+@pytest.mark.asyncio
+async def test_character_import_cancel_keeps_remembered_directory(
+    config_store, tmp_path
+):
+    remembered = tmp_path / "remembered"
+    current = tmp_path / "current"
+    remembered.mkdir()
+    current.mkdir()
+    config_store[("filepicker", "last_dir_character_import")] = str(remembered)
+    picker = EnhancedFileOpen(location=current, context="character_import")
+    app = App()
+
+    async with app.run_test() as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        picker.dismiss(None)
+        await pilot.pause()
+
+    assert config_store[("filepicker", "last_dir_character_import")] == str(
+        remembered
+    )
+
+
+@pytest.mark.asyncio
+async def test_character_import_directory_result_keeps_remembered_directory(
+    config_store, tmp_path
+):
+    remembered = tmp_path / "remembered"
+    selected_directory = tmp_path / "selected-directory"
+    remembered.mkdir()
+    selected_directory.mkdir()
+    config_store[("filepicker", "last_dir_character_import")] = str(remembered)
+    picker = EnhancedFileOpen(
+        location=selected_directory,
+        context="character_import",
+    )
+    app = App()
+
+    async with app.run_test() as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        picker.dismiss(selected_directory)
+        await pilot.pause()
+
+    assert config_store[("filepicker", "last_dir_character_import")] == str(
+        remembered
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_kind", ["empty_list", "missing_file"])
+async def test_character_import_invalid_result_keeps_remembered_directory(
+    config_store, tmp_path, result_kind
+):
+    remembered = tmp_path / "remembered"
+    current = tmp_path / "current"
+    remembered.mkdir()
+    current.mkdir()
+    config_store[("filepicker", "last_dir_character_import")] = str(remembered)
+    picker = EnhancedFileOpen(location=current, context="character_import")
+    result = [] if result_kind == "empty_list" else current / "missing.json"
+    app = App()
+
+    async with app.run_test() as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        picker.dismiss(result)
+        await pilot.pause()
+
+    assert config_store[("filepicker", "last_dir_character_import")] == str(
+        remembered
+    )

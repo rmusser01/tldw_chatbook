@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
-from rich.console import RenderableType
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.table import Table
 from textual import events, on, work
 from textual.app import ComposeResult
@@ -17,7 +17,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
-from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 
@@ -473,6 +472,9 @@ def resolve_file_picker_start(
 class FormattedDirectoryEntry(DirectoryEntry):
     """Directory entry with human-readable sizes and no size for directories."""
 
+    show_selection_marker = False
+    selected = False
+
     @staticmethod
     def _size(location: Path) -> str:
         if is_dir(location):
@@ -483,54 +485,104 @@ class FormattedDirectoryEntry(DirectoryEntry):
             entry_size = 0
         return _human_readable_size(entry_size)
 
+    def _as_renderable(self, location: Path) -> RenderableType:
+        marker = None
+        if self.show_selection_marker:
+            marker = "✓" if self.selected else " "
+        return _ResponsiveDirectoryRow(
+            marker=marker,
+            icon=self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
+            name=self._name(location),
+            size=self._size(location),
+            modified=self._mtime(location),
+            name_style=self._style(self._styles.name, location),
+            size_style=self._style(self._styles.size, location),
+            time_style=self._style(self._styles.time, location),
+        )
+
+    def row_renderable(self) -> RenderableType:
+        """Build the current prompt for public OptionList prompt replacement."""
+        return self._as_renderable(self.location)
+
+
+class _ResponsiveDirectoryRow:
+    """Rich renderable that removes secondary metadata before the name."""
+
+    SHOW_SIZE_AT = 35
+    SHOW_TIMESTAMP_AT = 56
+
+    def __init__(
+        self,
+        *,
+        marker: Optional[str],
+        icon: RenderableType,
+        name: RenderableType,
+        size: RenderableType,
+        modified: RenderableType,
+        name_style: Any = None,
+        size_style: Any = None,
+        time_style: Any = None,
+    ) -> None:
+        self.marker = marker
+        self.icon = icon
+        self.name = name
+        self.size = size
+        self.modified = modified
+        self.name_style = name_style
+        self.size_style = size_style
+        self.time_style = time_style
+
+    def __rich_console__(
+        self,
+        _console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        show_size = options.max_width >= self.SHOW_SIZE_AT
+        show_timestamp = options.max_width >= self.SHOW_TIMESTAMP_AT
+        grid = Table.grid(expand=True)
+        grid.add_column(no_wrap=True, width=1)
+        cells: list[RenderableType] = [""]
+        if self.marker is not None:
+            grid.add_column(no_wrap=True, width=1, style=self.name_style)
+            cells.append(self.marker)
+        grid.add_column(no_wrap=True, width=3)
+        grid.add_column(
+            no_wrap=True,
+            overflow="ellipsis",
+            ratio=1,
+            style=self.name_style,
+        )
+        cells.extend((self.icon, self.name))
+        if show_size:
+            grid.add_column(
+                no_wrap=True,
+                justify="right",
+                width=10,
+                style=self.size_style,
+            )
+            cells.append(self.size)
+        if show_timestamp:
+            grid.add_column(
+                no_wrap=True,
+                justify="right",
+                width=20,
+                style=self.time_style,
+            )
+            cells.append(self.modified)
+        grid.add_column(no_wrap=True, width=1)
+        cells.append("")
+        grid.add_row(*cells)
+        yield grid
+
 
 class SelectableDirectoryEntry(FormattedDirectoryEntry):
     """A directory entry with a fixed-width textual selection marker."""
 
+    show_selection_marker = True
+
     def __init__(self, location: Path, styles: Any, selected: bool = False) -> None:
         self.selected = selected
         super().__init__(location, styles)
-
-    def _as_renderable(self, location: Path) -> RenderableType:
-        """Render with an extra leading check-mark column."""
-        prompt = Table.grid(expand=True)
-        prompt.add_column(no_wrap=True, width=1)
-        prompt.add_column(
-            no_wrap=True,
-            width=1,
-            style=self._style(self._styles.name, location),
-        )
-        prompt.add_column(no_wrap=True, width=3)
-        prompt.add_column(
-            no_wrap=True,
-            justify="left",
-            ratio=1,
-            style=self._style(self._styles.name, location),
-        )
-        prompt.add_column(
-            no_wrap=True,
-            justify="right",
-            width=10,
-            style=self._style(self._styles.size, location),
-        )
-        prompt.add_column(
-            no_wrap=True,
-            justify="right",
-            width=20,
-            style=self._style(self._styles.time, location),
-        )
-        prompt.add_column(no_wrap=True, width=1)
-        marker = "✓" if self.selected else " "
-        prompt.add_row(
-            "",
-            marker,
-            self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
-            self._name(location),
-            self._size(location),
-            self._mtime(location),
-            "",
-        )
-        return prompt
 
 
 # Compatibility for callers and tests that imported the former name.
@@ -697,48 +749,21 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
             classes.add("-selected")
         return classes
 
-    def render_line(self, y: int) -> Strip:
-        """Render an option with composable focus and selection component styles."""
-        line_number = self.scroll_offset.y + y
-        try:
-            option_index, line_offset = self._lines[line_number]
-            option = self.options[option_index]
-        except IndexError:
-            return Strip.blank(
-                self.scrollable_content_region.width,
-                self.get_visual_style("option-list--option").rich_style,
+    def refresh_selection_markers(self) -> None:
+        """Refresh selection prompts through OptionList's public API."""
+        screen = self.screen
+        selected_paths = getattr(screen, "_selected_paths", set())
+        selected_path = getattr(screen, "_selected_path", None)
+        for index, option in enumerate(self.options):
+            if not isinstance(option, SelectableDirectoryEntry):
+                continue
+            selected = (
+                option.location in selected_paths or option.location == selected_path
             )
-
-        component_classes: list[str] = []
-        if option.disabled:
-            component_classes.append("option-list--option-disabled")
-        else:
-            row_classes = self.row_state_classes(option_index)
-            highlighted = self.highlighted == option_index
-            if highlighted:
-                component_classes.append("option-list--option-highlighted")
-            if "-focused" in row_classes:
-                component_classes.append("-focused")
-            if "-selected" in row_classes:
-                component_classes.append("-selected")
-            if row_classes == {"-focused", "-selected"}:
-                component_classes.append("-focused-selected")
-            if (
-                not highlighted
-                and not row_classes
-                and self._mouse_hovering_over == option_index
-            ):
-                component_classes.append("option-list--option-hover")
-
-        style = self.get_visual_style("option-list--option", *component_classes)
-        strips = self._get_option_render(option, style)
-        try:
-            return strips[line_offset]
-        except IndexError:
-            return Strip.blank(
-                self.scrollable_content_region.width,
-                self.get_visual_style("option-list--option").rich_style,
-            )
+            if option.selected == selected:
+                continue
+            option.selected = selected
+            self.replace_option_prompt_at_index(index, option.row_renderable())
 
     def _restart_type_ahead_timer(self) -> None:
         """Reset the inactivity timeout that clears the type-ahead buffer."""
@@ -791,6 +816,10 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
                 event.stop()
                 event.prevent_default()
                 self.post_message(self.ToggleSelection(self))
+            elif getattr(self.screen, "context", "") == "character_import":
+                event.stop()
+                event.prevent_default()
+                self.action_select()
             return
 
         if not event.is_printable or not event.character or len(event.character) != 1:
@@ -1743,7 +1772,9 @@ class EnhancedFileDialog(BaseFileDialog):
         if self.context == "character_import":
             self._selected_path = event.path
             try:
-                self.query_one(EnhancedDirectoryNavigation)._repopulate_display()
+                self.query_one(
+                    EnhancedDirectoryNavigation
+                ).refresh_selection_markers()
             except Exception:
                 pass
         try:
@@ -2109,24 +2140,17 @@ class EnhancedFileDialog(BaseFileDialog):
 
     def _file_list_header(self) -> RenderableType:
         """Return a column header matching DirectoryEntry's layout."""
-        grid = Table.grid(expand=True)
         show_selection_marker = (
             getattr(self, "multi_select", False)
             or self.context == "character_import"
         )
-        grid.add_column(no_wrap=True, width=1)
-        if show_selection_marker:
-            grid.add_column(no_wrap=True, width=1)
-        grid.add_column(no_wrap=True, width=3)
-        grid.add_column(no_wrap=True, ratio=1)
-        grid.add_column(no_wrap=True, justify="right", width=10)
-        grid.add_column(no_wrap=True, justify="right", width=20)
-        grid.add_column(no_wrap=True, width=1)
-        if show_selection_marker:
-            grid.add_row("", "", "", "Name", "Size", "Modified", "")
-        else:
-            grid.add_row("", "", "Name", "Size", "Modified", "")
-        return grid
+        return _ResponsiveDirectoryRow(
+            marker="" if show_selection_marker else None,
+            icon="",
+            name="Name",
+            size="Size",
+            modified="Modified",
+        )
 
     def action_toggle_bookmarks(self) -> None:
         """Toggle bookmarks panel."""
@@ -2331,6 +2355,12 @@ class EnhancedFileDialog(BaseFileDialog):
         both recent-locations and the last directory is coalesced into one
         deferred, off-loop write via `_persist_recent_and_last_directory`.
         """
+        if self.context == "character_import":
+            if isinstance(result, Path) and result.is_file():
+                self.recent_locations.add(result, "file", persist=False)
+                self._persist_recent_and_last_directory(result)
+            super().dismiss(result)
+            return
         if isinstance(result, list):
             for path in result:
                 self.recent_locations.add(

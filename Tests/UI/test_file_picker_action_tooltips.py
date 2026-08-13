@@ -1,9 +1,11 @@
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from rich.console import Console
 from textual.app import App, ComposeResult
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Third_Party.textual_fspicker.parts.directory_navigation import (
     DirectoryEntry,
@@ -39,6 +41,29 @@ def _patch_clean_picker_config(monkeypatch) -> None:
         lambda _section, _key, default=None: default,
     )
     monkeypatch.setattr(efp, "save_setting_to_cli_config", lambda *_args: None)
+
+
+async def _wait_for_picker_options(navigation, pilot, attempts: int = 20) -> None:
+    for _ in range(attempts):
+        if navigation.option_count:
+            return
+        await pilot.pause()
+
+
+def _picker_option_index(navigation, path) -> int:
+    return next(
+        index
+        for index, option in enumerate(navigation.options)
+        if isinstance(option, DirectoryEntry) and option.location == path
+    )
+
+
+def _single_line_option_offset(navigation, index: int) -> tuple[int, int]:
+    content_offset = navigation.content_region.offset - navigation.region.offset
+    return (
+        content_offset.x + 4,
+        content_offset.y + index - navigation.scroll_offset.y,
+    )
 
 
 @pytest.mark.asyncio
@@ -191,6 +216,141 @@ async def test_character_picker_selected_row_keeps_focus_and_selection_states(
         frame = app.export_screenshot()
         assert "✓" in frame
         assert "ann.json" in frame
+
+
+@pytest.mark.asyncio
+async def test_character_picker_single_click_selects_without_importing(
+    tmp_path, monkeypatch
+):
+    _patch_clean_picker_config(monkeypatch)
+    card = tmp_path / "ann.json"
+    card.write_text("{}", encoding="utf-8")
+    picker = efp.EnhancedFileOpen(
+        location=tmp_path,
+        context="character_import",
+    )
+    app = App()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        navigation = picker.query_one(efp.EnhancedDirectoryNavigation)
+        await _wait_for_picker_options(navigation, pilot)
+        index = _picker_option_index(navigation, card)
+
+        await pilot.click(
+            navigation,
+            offset=_single_line_option_offset(navigation, index),
+        )
+        await pilot.pause()
+
+        assert picker._selected_path == card
+        assert app.screen is picker
+        assert picker.query_one("#filename-input", Input).value == card.name
+        assert navigation.row_state_classes(index) == {"-selected"}
+        assert "✓" in app.export_screenshot()
+
+        picker.query_one("#select", Button).focus()
+        await pilot.pause()
+        assert navigation.row_state_classes(index) == {"-selected"}
+        assert "✓" in app.export_screenshot()
+
+        navigation.focus()
+        navigation.highlighted = index
+        await pilot.pause()
+        assert navigation.row_state_classes(index) == {"-focused", "-selected"}
+        frame = app.export_screenshot()
+        assert "✓" in frame
+        assert card.name in frame
+
+
+@pytest.mark.asyncio
+async def test_character_picker_space_selects_without_importing(
+    tmp_path, monkeypatch
+):
+    _patch_clean_picker_config(monkeypatch)
+    card = tmp_path / "ann.json"
+    card.write_text("{}", encoding="utf-8")
+    picker = efp.EnhancedFileOpen(
+        location=tmp_path,
+        context="character_import",
+    )
+    app = App()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        navigation = picker.query_one(efp.EnhancedDirectoryNavigation)
+        await _wait_for_picker_options(navigation, pilot)
+        index = _picker_option_index(navigation, card)
+        navigation.focus()
+        navigation.highlighted = index
+        await pilot.pause()
+
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert picker._selected_path == card
+        assert app.screen is picker
+        assert picker.query_one("#filename-input", Input).value == card.name
+        assert "✓" in app.export_screenshot()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_width", "expect_size"),
+    [(50, True), (40, False)],
+)
+async def test_character_picker_narrow_rows_prioritize_marker_and_filename(
+    tmp_path, monkeypatch, terminal_width, expect_size
+):
+    _patch_clean_picker_config(monkeypatch)
+    card = tmp_path / "ann.json"
+    card.write_bytes(b"x" * 1234)
+    picker = efp.EnhancedFileOpen(
+        location=tmp_path,
+        context="character_import",
+    )
+    app = App()
+
+    async with app.run_test(size=(terminal_width, 24)) as pilot:
+        app.push_screen(picker)
+        await pilot.pause()
+        navigation = picker.query_one(efp.EnhancedDirectoryNavigation)
+        await _wait_for_picker_options(navigation, pilot)
+        index = _picker_option_index(navigation, card)
+        navigation.highlighted = index
+        navigation.action_select()
+        await pilot.pause()
+
+        option = navigation.get_option_at_index(index)
+        row_width = navigation.scrollable_content_region.width
+        console = Console(color_system=None)
+        render_options = console.options.update(width=row_width)
+        rendered_table = next(
+            iter(option.prompt.__rich_console__(console, render_options))
+        )
+        with console.capture() as capture:
+            console.print(rendered_table)
+        rendered_row = capture.get()
+        frame = app.export_screenshot()
+        assert "✓" in frame
+        assert card.name in frame
+        assert option._mtime(card) not in rendered_row
+        assert (option._size(card) in rendered_row) is expect_size
+
+
+def test_directory_navigation_uses_supported_option_rendering_boundary():
+    source = inspect.getsource(efp.EnhancedDirectoryNavigation)
+
+    assert "def render_line" not in source
+    assert "self._lines" not in source
+    assert "self._mouse_hovering_over" not in source
+    assert "self._get_option_render" not in source
+    assert hasattr(
+        efp.EnhancedDirectoryNavigation,
+        "replace_option_prompt_at_index",
+    )
 
 
 @pytest.mark.asyncio
