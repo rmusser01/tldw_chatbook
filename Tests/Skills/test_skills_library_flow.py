@@ -1,8 +1,4 @@
 """Real-service end-to-end tests for the Library Skills detail/trust editor
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
 (Task 4 of the Skills sub-project).
 
 Mirrors ``Tests/UI/test_library_prompts_canvas.py``'s real-service section:
@@ -48,6 +44,10 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 def _real_skills_scope_service(

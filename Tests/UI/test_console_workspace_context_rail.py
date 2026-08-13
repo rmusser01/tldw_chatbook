@@ -1,9 +1,5 @@
 """Mounted Console workspace context rail regressions."""
 
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 from __future__ import annotations
 
 import inspect
@@ -61,6 +57,10 @@ from tldw_chatbook.Workspaces.display_state import (
     console_workspace_conversation_result_copy,
     console_workspace_conversation_visible_rows,
 )
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 def _visible_text(screen) -> str:

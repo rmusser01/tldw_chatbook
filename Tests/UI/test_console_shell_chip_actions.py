@@ -1,9 +1,5 @@
 """Console shell-strip chips are actionable and show longer model ids.
 
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 tasks 1670-1672: Provider/Model chips open the quick model popover, the
 Character chip opens a character picker that also asks where the pick
 lands, and the chip width cap fits common model ids.
@@ -25,6 +21,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleSourcesChip,
     ConsoleToolsChip,
 )
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 _CSS = (
     Path(__file__).resolve().parents[2]

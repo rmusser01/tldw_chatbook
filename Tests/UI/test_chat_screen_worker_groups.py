@@ -1,9 +1,5 @@
 """Worker-group hygiene for ChatScreen (TASK-228).
 
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 Root cause being guarded against: Textual's ``run_worker(..., exclusive=True)``
 cancels every other worker in the same group, and calls without ``group=`` all
 share the default group. The Console send worker and the UI-sync re-kick both
@@ -18,6 +14,10 @@ import asyncio
 from pathlib import Path
 
 import pytest
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 _UI_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI"
 CHAT_SCREEN_PATH = _UI_ROOT / "Screens" / "chat_screen.py"

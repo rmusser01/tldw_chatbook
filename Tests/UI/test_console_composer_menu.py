@@ -1,9 +1,5 @@
 """Composer overflow menu: entries, image command, impersonate insertion.
 
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 tasks 1680-1683.
 """
 
@@ -25,6 +21,10 @@ from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     DEFAULT_CHOICE,
     build_generate_image_command,
 )
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 @pytest.mark.unit

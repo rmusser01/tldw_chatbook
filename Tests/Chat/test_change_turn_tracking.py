@@ -1,9 +1,5 @@
 """TASK-1971: B/E turn snapshots around agent runs + change_snapshots schema.
 
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 Tracker and bridge tests run against REAL git (no mocks — TASK-1970's rule).
 The bridge tests drive the real run loop with a scripted gateway whose
 streaming callback writes files mid-turn: that is literally the run-window
@@ -28,6 +24,10 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 @pytest.fixture()
