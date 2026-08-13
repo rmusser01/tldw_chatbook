@@ -4601,8 +4601,16 @@ class LibraryIngestQueueMixin:
                     return
                 job, payload = claim
                 try:
+                    generic_options = (job.ingest_options or {}).get("generic", {})
+                    overwrite_existing = bool(
+                        generic_options.get("overwrite_existing", False)
+                        if isinstance(generic_options, dict)
+                        else False
+                    )
                     media_id, _media_uuid, _message = persist_parsed_media(
-                        payload, self.media_db
+                        payload,
+                        self.media_db,
+                        overwrite_existing=overwrite_existing,
                     )
                     # ``add_media_with_keywords`` returns ``media_id=None`` on
                     # exactly one success path: the duplicate skip ("already

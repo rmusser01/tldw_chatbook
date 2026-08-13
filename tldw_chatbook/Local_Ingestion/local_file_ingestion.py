@@ -1572,6 +1572,9 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
 def persist_parsed_media(
     payload: Dict[str, Any],
     media_db: MediaDatabase,
+    *,
+    overwrite_existing: bool = False,
+    generate_embeddings: bool = True,
 ) -> tuple[Optional[int], Optional[str], str]:
     """
     Persist a payload produced by ``parse_local_file_for_ingest`` to the Media database.
@@ -1586,6 +1589,10 @@ def persist_parsed_media(
     Args:
         payload: The dict returned by ``parse_local_file_for_ingest``.
         media_db: The ``MediaDatabase`` instance to write to.
+        overwrite_existing: Whether a live matching row is updated in place.
+            Defaults to the historical duplicate-skip behavior.
+        generate_embeddings: Reserved for the Local RAG writer behavior. It
+            intentionally has no persistence effect here yet.
 
     Returns:
         ``(media_id, media_uuid, message)`` -- exactly
@@ -1640,6 +1647,7 @@ def persist_parsed_media(
             ingestion_date=datetime.now().strftime("%Y-%m-%d"),
             chunks=payload["chunks"],
             chunk_options=payload["chunk_options"],
+            overwrite=overwrite_existing,
             restore_trashed=True,
         )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")

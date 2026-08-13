@@ -108,6 +108,69 @@ _MANY_SENTENCES = " ".join(
 
 
 # ---------------------------------------------------------------------------
+# Local overwrite persistence
+# ---------------------------------------------------------------------------
+
+
+class TestLocalOverwritePersistence:
+    def test_matching_content_skips_off_and_updates_metadata_on(
+        self, media_db: MediaDatabase
+    ) -> None:
+        """The Local overwrite control must update the matched row in place.
+
+        This is deliberately a real SQLite test: the duplicate decision and
+        metadata update both belong to ``MediaDatabase``, not a mock.
+        """
+        initial_payload = {
+            "file_type": "plaintext",
+            "title": "Original title",
+            "media_type": "document",
+            "content": "The same local document content.",
+            "keywords": ["original"],
+            "url": "file:///fixtures/local-overwrite.txt",
+            "analysis_content": "",
+            "author": "Original author",
+            "chunks": None,
+            "chunk_options": None,
+        }
+        changed_metadata_payload = {
+            **initial_payload,
+            "title": "Updated title",
+            "author": "Updated author",
+            "keywords": ["updated"],
+        }
+
+        media_id, _media_uuid, _message = persist_parsed_media(
+            initial_payload, media_db
+        )
+        assert media_id is not None
+
+        skipped_id, _skipped_uuid, _skipped_message = persist_parsed_media(
+            changed_metadata_payload, media_db
+        )
+        assert skipped_id is None
+        skipped_row = media_db.execute_query(
+            "SELECT title, author FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()
+        assert dict(skipped_row) == {
+            "title": "Original title",
+            "author": "Original author",
+        }
+
+        updated_id, _updated_uuid, _updated_message = persist_parsed_media(
+            changed_metadata_payload, media_db, overwrite_existing=True
+        )
+        assert updated_id == media_id
+        updated_row = media_db.execute_query(
+            "SELECT title, author FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()
+        assert dict(updated_row) == {
+            "title": "Updated title",
+            "author": "Updated author",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Encoding (AC #3)
 # ---------------------------------------------------------------------------
 

@@ -3484,6 +3484,55 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
         await _wait_for_runner_idle(app, pilot)
 
 
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
+async def test_local_writer_uses_claimed_generic_overwrite_option(tmp_path: Path) -> None:
+    """A job's snapshot, rather than current form state, controls overwrite."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(
+        tmp_path, "overwrite.txt", "Unchanged document body for overwrite testing."
+    )
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Original title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        first_done = await _wait_for_job_state(
+            app, pilot, first.job_id, IngestJobState.DONE
+        )
+        assert first_done.media_id is not None
+
+        skipped = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Skipped title",
+            ingest_options={"generic": {"overwrite_existing": False}},
+        )
+        await _wait_for_job_state(app, pilot, skipped.job_id, IngestJobState.DONE)
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Original title"
+
+        updated = app.submit_library_ingest_job(
+            source_path=str(source),
+            title="Updated title",
+            ingest_options={"generic": {"overwrite_existing": True}},
+        )
+        updated_done = await _wait_for_job_state(
+            app, pilot, updated.job_id, IngestJobState.DONE
+        )
+        assert updated_done.media_id == first_done.media_id
+        row = db.execute_query(
+            "SELECT title FROM Media WHERE id = ?", (first_done.media_id,)
+        ).fetchone()
+        assert row["title"] == "Updated title"
+        await _wait_for_runner_idle(app, pilot)
+
+
 # --- remote poller (task-684.2) ---------------------------------------------
 
 
