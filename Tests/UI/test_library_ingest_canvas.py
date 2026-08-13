@@ -43,7 +43,11 @@ from Tests.UI.test_library_shell import (
 )
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
 from tldw_chatbook.Library.ingest_types import PreflightResult
-from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
     LibraryIngestFormState,
@@ -51,7 +55,10 @@ from tldw_chatbook.Library.library_ingest_state import (
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryScreen,
+    _LibraryIngestStartConsent,
+)
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
     LibraryIngestCanvas,
     LibraryIngestQueuePanel,
@@ -976,6 +983,92 @@ async def test_progress_detail_paints_below_row_without_obscuring_actions_or_nei
         assert "Cancel" in painted_text(actions)
         assert "queued" in painted_text(neighbor)
         assert "neighbor.txt" in painted_text(neighbor)
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "Import active. Start again to queue a duplicate.",
+        "2 active files. Start again to queue all.",
+        "Import active; 2 may fail. Start again to queue.",
+    ],
+)
+@pytest.mark.asyncio
+async def test_active_ingest_confirm_copy_fits_fixed_gate_at_72x18(copy):
+    """Each binding instruction paints whole above Start at minimum geometry."""
+    form = LibraryIngestFormState(path="C:/docs/a.txt")
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        start_confirm_armed=True,
+        start_confirm_line=copy,
+    )
+    app = _CanvasHost(state)
+
+    async with app.run_test(size=(72, 18)) as pilot:
+        await pilot.pause()
+        quiet = app.query_one("#library-ingest-start-quiet-line", Static)
+        start = app.query_one("#library-ingest-start", Button)
+        strips = app.screen._compositor.render_strips()
+        painted = "".join(
+            strip.text
+            for strip in strips[quiet.region.y : quiet.region.bottom]
+        )
+
+        assert quiet.region.height == 1
+        assert copy in painted
+        assert "…" not in painted
+        assert quiet.region.bottom <= start.region.y
+
+
+@pytest.mark.asyncio
+async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scroll(
+    tmp_path,
+):
+    """Arming consent updates only the mounted gate line and warning class."""
+    app = _build_test_app()
+    _seed_conversations(app, ())
+    registry = LibraryIngestJobRegistry()
+    for index in range(12):
+        registry.submit(source_path=f"C:/docs/queued-{index}.txt")
+    app.library_ingest_jobs = registry
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    host = LibraryHarness(app, screen=screen)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        path_input = screen.query_one("#library-ingest-path", Input)
+        start = screen.query_one("#library-ingest-start", Button)
+        canvas = screen.query_one(LibraryIngestCanvas)
+        path_input.value = str(tmp_path / "active.txt")
+        path_input.focus()
+        await pilot.pause()
+        path_input.cursor_position = 3
+        canvas.scroll_to(y=2, animate=False, force=True, immediate=True)
+        start_region = start.region
+        scroll_y = canvas.scroll_y
+        assert screen.focused is path_input
+        assert path_input.cursor_position == 3
+        assert scroll_y == 2
+
+        screen._library_ingest_start_consent = _LibraryIngestStartConsent(
+            fingerprint="active-test",
+            active_job_ids=("ingest-job-1",),
+            active_source_count=1,
+            tooling_affected_count=0,
+            is_folder=False,
+        )
+        screen._update_library_ingest_gate(screen._build_library_ingest_state())
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-path", Input) is path_input
+        assert screen.query_one("#library-ingest-start", Button) is start
+        assert screen.focused is path_input
+        assert path_input.cursor_position == 3
+        assert canvas.scroll_y == scroll_y
+        assert start.region == start_region
 
 
 @pytest.mark.asyncio

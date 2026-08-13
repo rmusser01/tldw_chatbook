@@ -209,6 +209,17 @@ picking a different file with "Browse…", or a pre-check that comes back
 different also cancels it. The "Copy install command" buttons stay under
 the warnings the whole time.
 
+If the same source is already queued, parsing, or being written for the chosen
+Local or Server destination, the first Start press queues nothing and the line
+beside Start says the import is active. Press Start again after the brief
+double-press guard to deliberately queue one duplicate. Local and Server are
+separate, finished jobs do not block another import, and a folder is admitted
+as one batch: the first press queues none of its files, while the confirmed
+second press queues the whole unchanged selection. When tooling and active-source
+warnings occur together, one confirmation accepts both, so the complete action
+still takes two presses rather than three. Editing the request, changing its
+destination, or leaving the Import canvas cancels pending consent.
+
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
