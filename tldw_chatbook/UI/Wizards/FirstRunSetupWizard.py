@@ -157,9 +157,7 @@ class SetupWizardProgress(WizardProgress):
         )
         self.step_titles = [item.title for item in self.items]
 
-    def set_items(
-        self, items: tuple[wizard_state.SetupProgressItem, ...]
-    ) -> None:
+    def set_items(self, items: tuple[wizard_state.SetupProgressItem, ...]) -> None:
         if items == self.items:
             return
         self.items = items
@@ -406,9 +404,7 @@ class SetupStep(WizardStep):
                 Button(
                     "Use manual setup",
                     id="setup-step-manual",
-                    disabled=manual_settings_context_for_required_step(
-                        failure.step_id
-                    )
+                    disabled=manual_settings_context_for_required_step(failure.step_id)
                     is None,
                 ),
                 Button("Finish later", id="setup-step-later"),
@@ -599,16 +595,22 @@ class ProviderStep(SetupStep):
         self._discovery_visible = False
         self._local_discovery_generation = 0
         self._local_discovery_state = "idle"
-        self._selected_discovery_provider_key = ""
+        self._selected_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
+            None
+        )
         self._selected_discovery_generation = 0
         self._selected_discovery_state = "idle"
-        self._selected_provider_models: dict[str, tuple[str, ...]] = {}
+        self._selected_provider_models: dict[
+            wizard_state.FirstRunModelDiscoveryKey, tuple[str, ...]
+        ] = {}
         self._selected_discovery_done: asyncio.Event | None = None
         self.selected_provider_key: str = ""
         self.provider_value_for_chat_defaults: str = ""
         self._last_committed_provider_value: Optional[str] = None
         self._entered_key = False
         self._clear_requested = False
+        self._credential_revision = 0
+        self._detected_endpoint_provider_key = ""
         self._provider_choice_interacted = False
         if wizard is not None:
             setattr(wizard, "_first_run_provider_discovery_owner", self)
@@ -642,8 +644,10 @@ class ProviderStep(SetupStep):
                 classes="setup-probe-status setup-detected-banner hidden",
             )
             yield Button(
-                "Use this server", id="setup-provider-use-detected",
-                classes="hidden", variant="primary",
+                "Use this server",
+                id="setup-provider-use-detected",
+                classes="hidden",
+                variant="primary",
             )
             yield ProviderChoiceList(
                 *_provider_options(entries),
@@ -669,15 +673,22 @@ class ProviderStep(SetupStep):
             # field — undiscoverable. A visible Test button shares the
             # input's row so the 1495 row budget is unchanged.
             with Horizontal(classes="setup-key-row"):
-                yield Input(password=True, id="setup-provider-key-input",
-                            placeholder="Paste your API key")
+                yield Input(
+                    password=True,
+                    id="setup-provider-key-input",
+                    placeholder="Paste your API key",
+                )
                 yield Button("Test", id="setup-provider-test")
-            yield Static("", id="setup-provider-key-status", classes="setup-probe-status")
+            yield Static(
+                "", id="setup-provider-key-status", classes="setup-probe-status"
+            )
             with Horizontal(id="setup-provider-key-actions", classes="hidden"):
                 yield Button("Keep current", id="setup-provider-key-keep")
                 yield Button("Replace", id="setup-provider-key-replace")
                 yield Button("Clear", id="setup-provider-key-clear")
-            yield Static("", id="setup-provider-probe-status", classes="setup-probe-status")
+            yield Static(
+                "", id="setup-provider-probe-status", classes="setup-probe-status"
+            )
             yield Static("", classes="setup-step-error")
 
     # TASK-1498: providers most first-time users are actually looking for, in
@@ -700,22 +711,26 @@ class ProviderStep(SetupStep):
         )
 
         by_key = {e.readiness_key: e for e in entries}
-        popular = [
-            by_key[key] for key in cls._POPULAR_PROVIDER_KEYS if key in by_key
-        ]
+        popular = [by_key[key] for key in cls._POPULAR_PROVIDER_KEYS if key in by_key]
         popular_keys = {e.readiness_key for e in popular}
         rest = [e for e in entries if e.readiness_key not in popular_keys]
         alpha = lambda e: e.display_name.lower()  # noqa: E731
         cloud = sorted(
-            (e for e in rest
-             if e.requires_api_key
-             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            (
+                e
+                for e in rest
+                if e.requires_api_key
+                and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS
+            ),
             key=alpha,
         )
         local = sorted(
-            (e for e in rest
-             if not e.requires_api_key
-             and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS),
+            (
+                e
+                for e in rest
+                if not e.requires_api_key
+                and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS
+            ),
             key=alpha,
         )
         other = sorted(
@@ -748,17 +763,17 @@ class ProviderStep(SetupStep):
             return
         self._discovery_visible = True
         if self.selected_provider_key:
-            is_current_provider = (
-                self._selected_discovery_provider_key
-                == self.selected_provider_key
-            )
-            if not is_current_provider or self._selected_discovery_state in {
-                "idle",
-                "cancelled",
-            }:
-                self._begin_selected_provider_discovery(
-                    self.selected_provider_key
-                )
+            provider_draft = self._effective_provider_draft()
+            discovery_key = self._model_discovery_key(provider_draft)
+            if (
+                discovery_key != self._selected_discovery_key
+                or self._selected_discovery_state
+                in {
+                    "idle",
+                    "cancelled",
+                }
+            ):
+                self._begin_selected_provider_discovery(provider_draft)
         elif self._local_discovery_state in {"idle", "cancelled"}:
             self._start_discovery()
 
@@ -860,17 +875,109 @@ class ProviderStep(SetupStep):
 
         return resolve_console_provider_identity(provider_key).readiness_key
 
-    def _begin_selected_provider_discovery(self, provider_key: str) -> None:
+    def _credential_draft(
+        self, *, revision: int | None = None
+    ) -> wizard_state.ProviderCredentialDraft:
+        """Return the current credential decision without exposing its value."""
+
+        provider_key = self.selected_provider_key
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        presence = wizard_state.read_provider_secret_presence(
+            app_config, self._environ, provider_key=provider_key
+        )
+        key_input = self.query_one("#setup-provider-key-input", Input)
+        typed_key = (
+            key_input.value.strip() if key_input.display and key_input.value else ""
+        )
+        if typed_key:
+            source, value = "draft", typed_key
+        elif self._clear_requested:
+            source, value = "draft", ""
+        elif presence.env_var and (presence.env_var_declared or presence.env_var_set):
+            source, value = "environment", presence.env_var
+        else:
+            source, value = "none", ""
+        return wizard_state.ProviderCredentialDraft(
+            source, value, self._credential_revision if revision is None else revision
+        )
+
+    def _effective_provider_draft(
+        self, *, revision: int | None = None
+    ) -> wizard_state.FirstRunProviderDraft | None:
+        """Resolve the exact staged connection used for discovery and commit."""
+
+        provider_key = self.selected_provider_key
+        if not provider_key:
+            return None
+        endpoint = ""
+        if self._detected_endpoint_provider_key == provider_key:
+            endpoint = str(getattr(self, "detected_base_url", "") or "")
+        try:
+            draft = wizard_state.FirstRunProviderDraft(
+                provider=provider_key,
+                endpoint=endpoint,
+                credential=self._credential_draft(revision=revision),
+            )
+            return wizard_state.resolve_first_run_provider_draft(
+                draft, getattr(self.wizard.app_instance, "app_config", {}) or {}
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _model_discovery_key(
+        provider_draft: wizard_state.FirstRunProviderDraft | None,
+    ) -> wizard_state.FirstRunModelDiscoveryKey | None:
+        if provider_draft is None:
+            return None
+        try:
+            return wizard_state.build_first_run_model_discovery_key(provider_draft)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _discovery_staged_settings(
+        provider_draft: wizard_state.FirstRunProviderDraft,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+    ) -> dict[str, dict[str, dict[str, str]]]:
+        """Build transient exact settings; callers must never persist or cache it."""
+
+        from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+        settings = {
+            provider_endpoint_key(discovery_key.provider_key): provider_draft.endpoint
+        }
+        credential = provider_draft.credential
+        if credential.source == "draft" and credential.value:
+            settings["api_key"] = credential.value
+        elif credential.source == "environment":
+            settings["api_key_env_var"] = credential.value
+        return {"api_settings": {discovery_key.provider_key: settings}}
+
+    def _begin_selected_provider_discovery(
+        self, provider_draft: wizard_state.FirstRunProviderDraft | str | None
+    ) -> None:
         """Start one selected-provider probe/catalog request generation."""
 
-        canonical_key = self._canonical_provider_key(provider_key)
-        if not canonical_key:
+        if isinstance(provider_draft, str):
+            canonical_key = self._canonical_provider_key(provider_draft)
+            if canonical_key != self.selected_provider_key:
+                return
+            provider_draft = self._effective_provider_draft()
+        discovery_key = self._model_discovery_key(provider_draft)
+        if provider_draft is None or discovery_key is None:
+            self._obsolete_provider_generation(
+                "setup-provider-discovery", "setup-provider-probe"
+            )
+            self._selected_discovery_key = None
+            self._selected_discovery_state = "idle"
+            self._selected_provider_models.clear()
             return
         generation = self._obsolete_provider_generation(
             "setup-provider-discovery",
             "setup-provider-probe",
         )
-        self._selected_discovery_provider_key = canonical_key
+        self._selected_discovery_key = discovery_key
         self._selected_discovery_generation = generation
         self._selected_discovery_state = "in_progress"
         self._selected_provider_models.clear()
@@ -881,26 +988,37 @@ class ProviderStep(SetupStep):
         self.run_worker(
             partial(
                 self._discover_selected_provider,
-                canonical_key,
+                provider_draft,
+                discovery_key,
                 generation,
             ),
             exclusive=True,
             group="setup-provider-discovery",
         )
 
-    def _owns_selected_discovery(self, provider_key: str, generation: int) -> bool:
+    def _owns_selected_discovery(
+        self,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+        generation: int,
+    ) -> bool:
+        current_key = self._model_discovery_key(self._effective_provider_draft())
         return (
             generation == self.probe_generation
             and generation == self._selected_discovery_generation
-            and provider_key == self.selected_provider_key
-            and provider_key == self._selected_discovery_provider_key
+            and discovery_key == self._selected_discovery_key
+            and discovery_key == current_key
+            and discovery_key.provider_key == self.selected_provider_key
             and self.is_mounted
             and self.is_active
         )
 
     async def _discover_selected_provider(
-        self, provider_key: str, generation: int
+        self,
+        provider_draft: wizard_state.FirstRunProviderDraft,
+        discovery_key: wizard_state.FirstRunModelDiscoveryKey,
+        generation: int,
     ) -> None:
+        provider_key = discovery_key.provider_key
         provider_result: tuple[Any, ...] = ()
         models: tuple[str, ...] = ()
         attempted = False
@@ -921,11 +1039,10 @@ class ProviderStep(SetupStep):
                 except Exception as exc:
                     failed = True
                     logger.debug(
-                        "Wizard selected provider discovery failed "
-                        "(error_type={})",
+                        "Wizard selected provider discovery failed (error_type={})",
                         type(exc).__name__,
                     )
-            if not self._owns_selected_discovery(provider_key, generation):
+            if not self._owns_selected_discovery(discovery_key, generation):
                 return
 
             scope_service = getattr(
@@ -941,7 +1058,9 @@ class ProviderStep(SetupStep):
                         discover_models(
                             mode="local",
                             provider=provider_key,
-                            staged_settings=None,
+                            staged_settings=self._discovery_staged_settings(
+                                provider_draft, discovery_key
+                            ),
                         ),
                         timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS,
                     )
@@ -958,14 +1077,13 @@ class ProviderStep(SetupStep):
                 except Exception as exc:
                     failed = True
                     logger.debug(
-                        "Wizard selected model discovery failed "
-                        "(error_type={})",
+                        "Wizard selected model discovery failed (error_type={})",
                         type(exc).__name__,
                     )
-            if not self._owns_selected_discovery(provider_key, generation):
+            if not self._owns_selected_discovery(discovery_key, generation):
                 return
 
-            self._selected_provider_models[provider_key] = models
+            self._selected_provider_models[discovery_key] = models
             setattr(
                 self.wizard,
                 "_first_run_selected_provider_models",
@@ -1011,13 +1129,19 @@ class ProviderStep(SetupStep):
         canonical_key = self._canonical_provider_key(provider_key)
         if canonical_key != self.selected_provider_key:
             return None
-        if canonical_key in self._selected_provider_models:
-            return self._selected_provider_models[canonical_key]
+        provider_draft = getattr(self.wizard, "staged_provider_draft", None)
+        if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
+            provider_draft = self._effective_provider_draft()
+        discovery_key = self._model_discovery_key(provider_draft)
+        if discovery_key is None:
+            return None
+        if discovery_key in self._selected_provider_models:
+            return self._selected_provider_models[discovery_key]
         done = self._selected_discovery_done
         if done is None:
             return None
         await done.wait()
-        return self._selected_provider_models.get(canonical_key)
+        return self._selected_provider_models.get(discovery_key)
 
     @on(Button.Pressed, "#setup-provider-use-detected")
     def _on_use_detected(self) -> None:
@@ -1026,10 +1150,31 @@ class ProviderStep(SetupStep):
         if server is None:
             return
         self.select_provider(server.provider_key)
+        self.detected_server = server
         self.detected_base_url = server.base_url
+        self._detected_endpoint_provider_key = self.selected_provider_key
         self.query_one("#setup-provider-detected", Static).update(
             f"✓ Using {server.base_url} ({server.provider_key})."
         )
+        self.query_one("#setup-provider-detected", Static).remove_class("hidden")
+        self.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
+        self._begin_selected_provider_discovery(self._effective_provider_draft())
+
+    def _clear_detected_provider_state(self) -> None:
+        """Drop an adopted endpoint and its provider-owned discovery results."""
+
+        for attribute in ("detected_base_url", "detected_server"):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
+        self._detected_endpoint_provider_key = ""
+        self._selected_provider_models.clear()
+        try:
+            banner = self.query_one("#setup-provider-detected", Static)
+            banner.update("")
+            banner.add_class("hidden")
+            self.query_one("#setup-provider-use-detected", Button).add_class("hidden")
+        except Exception:
+            pass
 
     def select_provider(self, provider_key: str) -> None:
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -1038,6 +1183,8 @@ class ProviderStep(SetupStep):
 
         provider_key = self._canonical_provider_key(provider_key)
         provider_changed = provider_key != self.selected_provider_key
+        if provider_changed and self._detected_endpoint_provider_key != provider_key:
+            self._clear_detected_provider_state()
         self.selected_provider_key = provider_key
         self._clear_requested = False
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -1054,7 +1201,9 @@ class ProviderStep(SetupStep):
             # commit under B's api_settings section on Next.
             key_input.value = ""
         if presence.env_var_set:
-            status.update(f"Found {presence.env_var} in your environment ✓ — nothing to store.")
+            status.update(
+                f"Found {presence.env_var} in your environment ✓ — nothing to store."
+            )
             key_input.display = False
             actions.add_class("hidden")
         elif presence.configured:
@@ -1067,7 +1216,7 @@ class ProviderStep(SetupStep):
             actions.add_class("hidden")
         self.query_one("#setup-provider-probe-status", Static).update("")
         if provider_changed:
-            self._begin_selected_provider_discovery(provider_key)
+            self._begin_selected_provider_discovery(self._effective_provider_draft())
 
     def _select_provider_option(self, option: Option) -> None:
         provider_key = getattr(option, "provider_key", None)
@@ -1277,63 +1426,26 @@ class ProviderStep(SetupStep):
         )
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            FirstRunProviderDraft,
-            ProviderCredentialDraft,
-            read_provider_secret_presence,
-        )
-
         provider_key = self._effective_provider_key()
         if not provider_key:
             return True, ""  # legitimately nothing pressed -- skip is correct
         self.selected_provider_key = provider_key
         key_input = self.query_one("#setup-provider-key-input", Input)
-        typed_key = (
-            key_input.value.strip() if key_input.display and key_input.value else None
+        typed_key = bool(
+            key_input.display and key_input.value and key_input.value.strip()
         )
-        endpoint = str(getattr(self, "detected_base_url", None) or "")
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        presence = read_provider_secret_presence(
-            app_config,
-            self._environ,
-            provider_key=self.selected_provider_key,
-        )
-        if typed_key:
-            credential_source = "draft"
-            credential_value = typed_key
-        elif self._clear_requested:
-            # An empty draft value is the in-memory explicit-clear decision.
-            # It stays distinguishable from source="none", which preserves a
-            # valid stored key when the user chose Keep current.
-            credential_source = "draft"
-            credential_value = ""
-        elif presence.env_var_set and presence.env_var:
-            credential_source = "environment"
-            credential_value = presence.env_var
-        else:
-            credential_source = "none"
-            credential_value = ""
-
         self.provider_value_for_chat_defaults = self._display_value_for(
             self.selected_provider_key
         )
-        revision = getattr(self, "_credential_revision", 0) + 1
-        try:
-            provider_draft = FirstRunProviderDraft(
-                provider=self.selected_provider_key,
-                endpoint=endpoint,
-                credential=ProviderCredentialDraft(
-                    credential_source,
-                    credential_value,
-                    revision,
-                ),
-            )
-        except ValueError:
+        revision = self._credential_revision + 1
+        provider_draft = self._effective_provider_draft(revision=revision)
+        if provider_draft is None:
             return False, "The provider settings are invalid."
         stage = getattr(self.wizard, "stage_provider_setup", None)
         if not callable(stage) or not stage(provider_draft):
             return False, "Staging the provider settings failed."
         self._credential_revision = revision
+        self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
         self._clear_requested = False
         if typed_key:
@@ -1447,7 +1559,7 @@ class ModelStep(SetupStep):
             pass
         if provider_key:
             self.run_worker(
-                self._load_models(provider_key, provider_value),
+                partial(self._load_models, provider_key, provider_value),
                 exclusive=True,
                 group="setup-model-load",
             )
@@ -1459,7 +1571,7 @@ class ModelStep(SetupStep):
             # that was never actually loading. Replace it with copy that
             # tells the user what to do instead.
             self.run_worker(
-                self._render_models([], no_provider=True),
+                partial(self._render_models, [], no_provider=True),
                 exclusive=True,
                 group="setup-model-load",
             )
@@ -1670,9 +1782,7 @@ class ModelStep(SetupStep):
         if ok:
             self.selected_model_id = model_id
         return (
-            (True, "")
-            if ok
-            else (False, "Saving the provider and model setup failed.")
+            (True, "") if ok else (False, "Saving the provider and model setup failed.")
         )
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -1703,13 +1813,19 @@ class RagStep(SetupStep):
     def _embedding_model_ids(self) -> list[str]:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         embedding_config = app_config.get("embedding_config", {})
-        models = embedding_config.get("models", {}) if isinstance(embedding_config, dict) else {}
+        models = (
+            embedding_config.get("models", {})
+            if isinstance(embedding_config, dict)
+            else {}
+        )
         return sorted(models) if isinstance(models, dict) else []
 
     def on_mount(self) -> None:
         status = self.query_one("#setup-rag-status", Static)
         if self._deps_installed():
-            status.update("Embedding dependencies are installed. Pick a default model, or skip.")
+            status.update(
+                "Embedding dependencies are installed. Pick a default model, or skip."
+            )
         else:
             status.update(
                 # Static.update() treats [..] as Rich markup by default, so the
@@ -1718,7 +1834,7 @@ class RagStep(SetupStep):
                 # TASK-1502: quoted plainly — backticks are markdown idiom and
                 # render literally in a TUI.
                 "RAG needs optional dependencies that aren't installed. Install the "
-                "extras package \"tldw_chatbook\\[embeddings_rag]\" with your package "
+                'extras package "tldw_chatbook\\[embeddings_rag]" with your package '
                 "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
             )
             try:
@@ -1916,8 +2032,12 @@ class SpeechSetupStep(SetupStep):
                 classes="setup-subtitle",
                 markup=False,
             )
-            progress = ModelInstallProgress(self._progress, id="setup-speech-install-progress")
-            progress.display = self._operation == "install" and self._progress is not None
+            progress = ModelInstallProgress(
+                self._progress, id="setup-speech-install-progress"
+            )
+            progress.display = (
+                self._operation == "install" and self._progress is not None
+            )
             yield progress
             yield Button(
                 "Use model from disk…",
@@ -1989,11 +2109,14 @@ class SpeechSetupStep(SetupStep):
                     yield SetupRadioButton(
                         label,
                         id=f"setup-speech-language-{option.code}",
-                        value=option.selectable and option.code == self._selected_language,
+                        value=option.selectable
+                        and option.code == self._selected_language,
                         disabled=not option.selectable or self._lifecycle_pending,
                     )
             yield Label("Precision", classes="setup-field-label")
-            with RadioSet(id="setup-speech-precision-choice", classes="setup-choice-list"):
+            with RadioSet(
+                id="setup-speech-precision-choice", classes="setup-choice-list"
+            ):
                 for option in speech_state.speech_precision_options(
                     model_id=self._selection().model_id,
                     curated_selections=self._curated_selections(),
@@ -2024,7 +2147,9 @@ class SpeechSetupStep(SetupStep):
     def _curated_model_ids() -> frozenset[str]:
         from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
 
-        return frozenset(descriptor.model_id for descriptor in curated_registry().list())
+        return frozenset(
+            descriptor.model_id for descriptor in curated_registry().list()
+        )
 
     @staticmethod
     def _curated_selections() -> frozenset[tuple[str, str]]:
@@ -2118,15 +2243,21 @@ class SpeechSetupStep(SetupStep):
         valid, skip-safe result -- ``resolve_speech_selection`` falls back
         to the recommended default for it.
         """
-        return self._pressed_radio_code(
-            "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
-        ) or self._selected_language
+        return (
+            self._pressed_radio_code(
+                "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
+            )
+            or self._selected_language
+        )
 
     def _effective_precision(self) -> str:
         """The value of the currently pressed precision radio, or "" for none."""
-        return self._pressed_radio_code(
-            "#setup-speech-precision-choice", self._PRECISION_RADIO_ID_PREFIX
-        ) or self._selected_precision
+        return (
+            self._pressed_radio_code(
+                "#setup-speech-precision-choice", self._PRECISION_RADIO_ID_PREFIX
+            )
+            or self._selected_precision
+        )
 
     def _pressed_radio_code(self, selector: str, id_prefix: str) -> str:
         try:
@@ -2139,7 +2270,7 @@ class SpeechSetupStep(SetupStep):
         button_id = pressed.id or ""
         if not button_id.startswith(id_prefix):
             return ""
-        return button_id[len(id_prefix):]
+        return button_id[len(id_prefix) :]
 
     def _prefill(self) -> Any:
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -2244,7 +2375,9 @@ class SpeechSetupStep(SetupStep):
                     pending=self._lifecycle_pending,
                 ),
             )
-        status = "Installed and active." if item.active else "Installed, not yet active."
+        status = (
+            "Installed and active." if item.active else "Installed, not yet active."
+        )
         return status, ModelActivationControls(
             self._reference,
             active=item.active,
@@ -2923,7 +3056,9 @@ class SpeechSetupStep(SetupStep):
         )
         self.refresh(recompose=True)
 
-    @work(thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False
+    )
     def _preflight_install(self) -> None:
         import asyncio
 
@@ -3067,7 +3202,9 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._activate_model()
 
-    @work(thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False
+    )
     def _activate_model(self) -> None:
         try:
             self._service_for_worker().activate(self._reference)
@@ -3118,7 +3255,9 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._delete_model()
 
-    @work(thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False)
+    @work(
+        thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False
+    )
     def _delete_model(self) -> None:
         try:
             self._service_for_worker().delete(self._reference)
@@ -3469,9 +3608,11 @@ class ToolsStep(SetupStep):
         return (True, "") if ok else (False, "Saving tool settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"enabled_gates": [
-            self.gate_key_for(sw) for sw in self.query(Switch) if sw.value
-        ]}
+        return {
+            "enabled_gates": [
+                self.gate_key_for(sw) for sw in self.query(Switch) if sw.value
+            ]
+        }
 
 
 class NotesSyncStep(SetupStep):
@@ -3525,11 +3666,15 @@ class NotesSyncStep(SetupStep):
         )
         if not prefill.auto_sync_enabled:
             return True, ""
-        ok = await self.wizard.commit_config(build_notes_commit(auto_sync_enabled=False))
+        ok = await self.wizard.commit_config(
+            build_notes_commit(auto_sync_enabled=False)
+        )
         return (True, "") if ok else (False, "Saving notes sync settings failed.")
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"auto_sync_enabled": self.query_one("#setup-notes-enable", Switch).value}
+        return {
+            "auto_sync_enabled": self.query_one("#setup-notes-enable", Switch).value
+        }
 
 
 class AppearanceStep(SetupStep):
@@ -3708,7 +3853,11 @@ class AppearanceStep(SetupStep):
             and bool(prefill.card_selection)
             and prefill.card_selection != "random"
         )
-        if not self.selected_theme and not self.selected_splash_card and not reset_to_random:
+        if (
+            not self.selected_theme
+            and not self.selected_splash_card
+            and not reset_to_random
+        ):
             return True, ""
         # Bug-2b fix: delta-aware theme write -- only persist default_theme
         # when the chosen theme actually differs from what's already on
@@ -3762,7 +3911,9 @@ class WelcomeStep(SetupStep):
                     value=True,
                     id="setup-track-quick",
                 )
-                yield SetupRadioButton("Full setup — configure everything", id="setup-track-full")
+                yield SetupRadioButton(
+                    "Full setup — configure everything", id="setup-track-full"
+                )
             # TASK-1507: tertiary treatment — quiet, link-like, clearly a
             # control but visually subordinate to the track choice above.
             # TASK-2154.9 (FR-01): unlike Cancel/Esc (finish later, resumed
@@ -3818,8 +3969,9 @@ class ProtectKeysStep(SetupStep):
                 "in Settings ▸ Privacy & Security).",
                 classes="setup-subtitle",
             )
-            yield Button("Set a password", id="setup-protect-set-password",
-                        variant="primary")
+            yield Button(
+                "Set a password", id="setup-protect-set-password", variant="primary"
+            )
             yield Static("", id="setup-protect-status", classes="setup-probe-status")
             yield Static("", classes="setup-step-error")
 
@@ -3901,9 +4053,17 @@ class SummaryStep(SetupStep):
     think they committed.
     """
 
-    def __init__(self, wizard=None, config=None, *, load_config=None,
-                 rag_deps_installed=None, speech_installed=None,
-                 speech_runtime_installed=None, **kwargs):
+    def __init__(
+        self,
+        wizard=None,
+        config=None,
+        *,
+        load_config=None,
+        rag_deps_installed=None,
+        speech_installed=None,
+        speech_runtime_installed=None,
+        **kwargs,
+    ):
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._load_config = load_config
         self._rag_deps_installed = rag_deps_installed
@@ -3926,8 +4086,9 @@ class SummaryStep(SetupStep):
             # literal "[...]" -- Static.update() otherwise parses that as Rich
             # markup and silently drops it from the rendered text.
             yield Static("", id="setup-summary-rows", markup=False)
-            yield Static("", id="setup-summary-footer", classes="setup-subtitle",
-                        markup=False)
+            yield Static(
+                "", id="setup-summary-footer", classes="setup-subtitle", markup=False
+            )
         # The exit actions are a DIRECT child of the step (the .setup-step
         # scroll container), not of the scrolling .setup-summary Vertical:
         # Textual docks position against the container's visible frame and
@@ -3947,9 +4108,11 @@ class SummaryStep(SetupStep):
 
     def on_show(self) -> None:
         super().on_show()
-        track = (self.wizard.wizard_data or {}).get(
-            wizard_state.STEP_WELCOME, {}
-        ).get("track")
+        track = (
+            (self.wizard.wizard_data or {})
+            .get(wizard_state.STEP_WELCOME, {})
+            .get("track")
+        )
         if track == wizard_state.TRACK_QUICK:
             self.query_one("#setup-summary-defaults-note", Static).update(
                 "Left at recommended defaults: tools off, RAG off, default theme, "
@@ -3978,7 +4141,10 @@ class SummaryStep(SetupStep):
         if speech_installed_check is None:
             prefill = speech_state.read_speech_prefill(config)
             selection = speech_state.recommended_speech_selection()
-            if prefill.provider_id == speech_state.routing_policy().parakeet_provider_id:
+            if (
+                prefill.provider_id
+                == speech_state.routing_policy().parakeet_provider_id
+            ):
                 resolved = speech_state.resolve_speech_selection(
                     selected_language=prefill.language,
                     selected_precision=prefill.precision or "int8",
@@ -4032,8 +4198,7 @@ class SummaryStep(SetupStep):
         # bracketed literal in a label/detail (e.g. a package extra name)
         # must be escaped or it silently vanishes from the rendered text.
         lines = [
-            f"{row.glyph} {row.label}"
-            + (f" — {row.detail}" if row.detail else "")
+            f"{row.glyph} {row.label}" + (f" — {row.detail}" if row.detail else "")
             for row in rows
         ]
         # TASK-1266: steps dropped by the compose-crash policy get a reasoned
@@ -4128,6 +4293,12 @@ class SetupWizardContainer(WizardContainer):
         self._staged_provider_draft: wizard_state.FirstRunProviderDraft | None = None
         self._provider_setup_committed = False
         self._committed_provider_model = ""
+        self._provider_stage_generation = 0
+        self._provider_commit_generation = 0
+        self._provider_commit_lock = asyncio.Lock()
+        self._provider_commit_task: asyncio.Task[bool] | None = None
+        self._provider_commit_identity: tuple[int, str] | None = None
+        self._provider_commit_write_started = False
         self._draft_mutation_lock = asyncio.Lock()
         self._draft_mutations_terminal = False
         # (task-2040) MUST be set before ``_create_steps()``: step
@@ -4190,7 +4361,10 @@ class SetupWizardContainer(WizardContainer):
     def finish_later_message(self) -> str:
         """Describe provider persistence accurately for the current step."""
 
-        if self._staged_provider_draft is not None and not self._provider_setup_committed:
+        if (
+            self._staged_provider_draft is not None
+            and not self._provider_setup_committed
+        ):
             return (
                 "This provider connection is staged only in this wizard and has "
                 "not been saved. Your non-secret setup progress will resume at "
@@ -4213,6 +4387,10 @@ class SetupWizardContainer(WizardContainer):
 
         if type(provider_draft) is not wizard_state.FirstRunProviderDraft:
             return False
+        if self._provider_commit_write_started:
+            return False
+        self._provider_stage_generation += 1
+        self._provider_commit_generation += 1
         self._staged_provider_draft = provider_draft
         self._provider_setup_committed = False
         self._committed_provider_model = ""
@@ -4221,35 +4399,109 @@ class SetupWizardContainer(WizardContainer):
     async def commit_staged_provider_setup(self, model_id: str) -> bool:
         """Persist the staged connection and model through one atomic mutation."""
 
-        provider_draft = self._staged_provider_draft
-        if provider_draft is None:
+        if type(model_id) is not str:
             return False
-        if (
-            type(model_id) is str
-            and self._provider_setup_committed
-            and self._committed_provider_model == model_id.strip()
-        ):
-            return True
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        normalized_model = model_id.strip()
+        async with self._provider_commit_lock:
+            provider_draft = self._staged_provider_draft
+            if provider_draft is None:
+                return False
+            if (
+                self._provider_setup_committed
+                and self._committed_provider_model == normalized_model
+            ):
+                return True
+            identity = (self._provider_stage_generation, normalized_model)
+            active_task = self._provider_commit_task
+            if (
+                active_task is not None
+                and not active_task.done()
+                and identity == self._provider_commit_identity
+            ):
+                operation = active_task
+            else:
+                if self._provider_commit_write_started:
+                    return False
+                self._provider_commit_generation += 1
+                lease = self._provider_commit_generation
+                operation = asyncio.create_task(
+                    self._run_provider_setup_commit(
+                        provider_draft,
+                        normalized_model,
+                        self._provider_stage_generation,
+                        lease,
+                    )
+                )
+                operation.add_done_callback(self._consume_provider_commit_result)
+                self._provider_commit_task = operation
+                self._provider_commit_identity = identity
+        return await asyncio.shield(operation)
+
+    @staticmethod
+    def _consume_provider_commit_result(task: asyncio.Task[bool]) -> None:
+        """Consume a detached result when its awaiting caller was cancelled."""
+
+        if task.cancelled():
+            return
+        task.exception()
+
+    async def _run_provider_setup_commit(
+        self,
+        provider_draft: wizard_state.FirstRunProviderDraft,
+        model_id: str,
+        stage_generation: int,
+        lease: int,
+    ) -> bool:
+        """Own one secret-free lease from validation through atomic persistence."""
+
+        await asyncio.sleep(0)
+        current_task = asyncio.current_task()
+        write_started = False
         try:
-            mutation = wizard_state.build_first_run_provider_commit(
-                provider_draft,
-                model_id,
-                app_config,
+            async with self._provider_commit_lock:
+                if (
+                    lease != self._provider_commit_generation
+                    or stage_generation != self._provider_stage_generation
+                    or self._staged_provider_draft is not provider_draft
+                ):
+                    return False
+                app_config = getattr(self.app_instance, "app_config", {}) or {}
+                try:
+                    mutation = wizard_state.build_first_run_provider_commit(
+                        provider_draft,
+                        model_id,
+                        app_config,
+                    )
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "First-run provider commit rejected (category=validation)"
+                    )
+                    return False
+                self._provider_commit_write_started = True
+                write_started = True
+
+            saved = await self.commit_config(
+                mutation.section_values,
+                delete_keys=mutation.delete_keys,
+                provider_setup_mutation=mutation,
             )
-        except (TypeError, ValueError):
-            logger.warning("First-run provider commit rejected (category=validation)")
+            if not saved:
+                return False
+            self._provider_setup_committed = True
+            self._committed_provider_model = model_id
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("First-run provider commit failed (category=writer)")
             return False
-        saved = await self.commit_config(
-            mutation.section_values,
-            delete_keys=mutation.delete_keys,
-            provider_setup_mutation=mutation,
-        )
-        if not saved or self._staged_provider_draft is not provider_draft:
-            return False
-        self._provider_setup_committed = True
-        self._committed_provider_model = model_id.strip()
-        return True
+        finally:
+            async with self._provider_commit_lock:
+                if write_started and lease == self._provider_commit_generation:
+                    self._provider_commit_write_started = False
+                if self._provider_commit_task is current_task:
+                    self._provider_commit_task = None
+                    self._provider_commit_identity = None
 
     def compose(self) -> ComposeResult:
         """Compose with progress derived from the resolved setup track."""
@@ -4343,11 +4595,13 @@ class SetupWizardContainer(WizardContainer):
             track_choice = self.query_one("#setup-track-choice", RadioSet)
             self._restore_radio_selection(
                 track_choice,
-                lambda button: button.id
-                == (
-                    "setup-track-full"
-                    if draft.track == wizard_state.TRACK_FULL
-                    else "setup-track-quick"
+                lambda button: (
+                    button.id
+                    == (
+                        "setup-track-full"
+                        if draft.track == wizard_state.TRACK_FULL
+                        else "setup-track-quick"
+                    )
                 ),
             )
 
@@ -4397,7 +4651,9 @@ class SetupWizardContainer(WizardContainer):
                 and "auto_sync_enabled" in notes_values
             ):
                 notes_enabled = notes_values["auto_sync_enabled"]
-                notes_step.query_one("#setup-notes-enable", Switch).value = notes_enabled
+                notes_step.query_one(
+                    "#setup-notes-enable", Switch
+                ).value = notes_enabled
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
             appearance_step = self.steps[
@@ -4954,9 +5210,7 @@ class SetupWizardContainer(WizardContainer):
                 elif selector == "#setup-step-manual" and failure is not None:
                     button.disabled = (
                         failure.config is None
-                        or manual_settings_context_for_required_step(
-                            failure.config.id
-                        )
+                        or manual_settings_context_for_required_step(failure.config.id)
                         is None
                     )
                 else:
@@ -5007,9 +5261,7 @@ class SetupWizardContainer(WizardContainer):
         finally:
             self._release_failure_action(action)
 
-    async def _finish_later_from_failure(
-        self, action: _SetupFailureAction
-    ) -> None:
+    async def _finish_later_from_failure(self, action: _SetupFailureAction) -> None:
         try:
             if await self._checkpoint_required_failure(action) is not True:
                 return
@@ -5043,9 +5295,7 @@ class SetupWizardContainer(WizardContainer):
             replacement.add_class("hidden")
 
             await failed_step.remove()
-            if not self._failure_action_is_current(
-                action, require_step_mounted=False
-            ):
+            if not self._failure_action_is_current(action, require_step_mounted=False):
                 return
             self.steps[index] = replacement
             if next_sibling is None:
@@ -5121,8 +5371,7 @@ class SetupWizardContainer(WizardContainer):
             if recovery_step is not None and recovery_step.parent is parent:
                 self.steps[action.index] = recovery_step
             logger.error(
-                "Wizard step retry rollback failed "
-                "(category=recovery, error_type={})",
+                "Wizard step retry rollback failed (category=recovery, error_type={})",
                 type(exc).__name__,
             )
 
@@ -5183,7 +5432,8 @@ class SetupWizardContainer(WizardContainer):
             if step_id != wizard_state.STEP_SUMMARY:
                 next_step_id = (
                     self.steps[next_index].config.id
-                    if next_index is not None and self.steps[next_index].config is not None
+                    if next_index is not None
+                    and self.steps[next_index].config is not None
                     else step_id
                 )
                 if not await self.persist_setup_checkpoint(next_step_id):
@@ -5247,7 +5497,9 @@ class SetupWizardContainer(WizardContainer):
     # -- explicit whole-wizard skip ---------------------------------------
     @on(Button.Pressed, "#setup-skip-entirely")
     def handle_skip_entirely(self) -> None:
-        self.run_worker(self._skip_entirely(), exclusive=True, group="setup-wizard-advance")
+        self.run_worker(
+            self._skip_entirely(), exclusive=True, group="setup-wizard-advance"
+        )
 
     async def _skip_entirely(self) -> None:
         async with self._draft_mutation_lock:

@@ -18,7 +18,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 from unicodedata import category as unicode_category
 
@@ -52,6 +52,9 @@ _MAX_CREDENTIAL_CHARS = 8192
 _MAX_IDENTITY_COUNTER = 2**63 - 1
 _SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
 _CREDENTIAL_SOURCES = frozenset({"none", "draft", "environment"})
+_ENDPOINT_REQUIRED_PROVIDER_KEYS = frozenset(
+    {"custom", "custom_2", "llama_cpp", "local_llamacpp"}
+)
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
@@ -201,12 +204,23 @@ def build_first_run_model_discovery_key(
     )
 
 
+def _first_run_provider_owner_key(provider: object) -> str:
+    """Return one shared provider owner key without reading configuration."""
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    provider_endpoint_key(provider)
+    resolution = resolve_provider_endpoint(provider, "http://127.0.0.1:1")
+    if resolution.errors or not resolution.provider_key:
+        raise ValueError("Provider is not supported.")
+    return resolution.provider_key
+
+
 def _validate_first_run_app_config(
     app_config: object, provider: str
 ) -> Mapping[str, object]:
     """Reject malformed matching provider tables before constructing a write."""
-
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
     if not isinstance(app_config, Mapping):
         raise TypeError("Application configuration is invalid.")
@@ -215,15 +229,74 @@ def _validate_first_run_app_config(
         return app_config
     if not isinstance(api_settings, Mapping):
         raise TypeError("Provider configuration is invalid.")
-    target = provider_config_key(provider)
+    target = _first_run_provider_owner_key(provider)
     for index, (configured_provider, settings) in enumerate(api_settings.items()):
         if index >= 256:
             raise ValueError("Provider configuration is too large.")
-        if provider_config_key(str(configured_provider)) != target:
+        try:
+            configured_owner = _first_run_provider_owner_key(configured_provider)
+        except ValueError:
+            continue
+        if configured_owner != target:
             continue
         if not isinstance(settings, Mapping):
             raise TypeError("Provider configuration is invalid.")
     return app_config
+
+
+def _first_run_provider_settings(
+    app_config: Mapping[str, object], provider: str
+) -> Mapping[str, object]:
+    """Return the same owned provider table selected by shared persistence."""
+
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return {}
+    target = _first_run_provider_owner_key(provider)
+    exact = api_settings.get(target)
+    if isinstance(exact, Mapping):
+        return exact
+    for index, (configured_provider, settings) in enumerate(api_settings.items()):
+        if index >= 256:
+            raise ValueError("Provider configuration is too large.")
+        try:
+            configured_owner = _first_run_provider_owner_key(configured_provider)
+        except ValueError:
+            continue
+        if configured_owner == target and isinstance(settings, Mapping):
+            return settings
+    return {}
+
+
+def resolve_first_run_provider_draft(
+    provider_draft: FirstRunProviderDraft,
+    app_config: object,
+) -> FirstRunProviderDraft:
+    """Resolve an untouched endpoint without turning blank into implicit clear."""
+
+    from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+
+    if type(provider_draft) is not FirstRunProviderDraft:
+        raise ValueError("Provider draft is invalid.")
+    config = _validate_first_run_app_config(app_config, provider_draft.provider)
+    endpoint = provider_draft.endpoint.strip()
+    owner_key = _first_run_provider_owner_key(provider_draft.provider)
+    if not endpoint:
+        endpoint = (
+            first_configured_endpoint(
+                _first_run_provider_settings(config, provider_draft.provider)
+            )
+            or ""
+        )
+    if endpoint:
+        resolution = resolve_provider_endpoint(provider_draft.provider, endpoint)
+        if resolution.errors or resolution.persisted_endpoint is None:
+            raise ValueError("Provider endpoint is invalid.")
+        return replace(provider_draft, endpoint=resolution.persisted_endpoint)
+    if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:
+        raise ValueError("Provider endpoint is required.")
+    return provider_draft
 
 
 def _validated_first_run_model(model_id: object) -> str:
@@ -257,10 +330,11 @@ def build_first_run_provider_commit(
     if type(provider_draft) is not FirstRunProviderDraft:
         raise ValueError("Provider draft is invalid.")
     config = _validate_first_run_app_config(app_config, provider_draft.provider)
+    effective_draft = resolve_first_run_provider_draft(provider_draft, config)
     model = _validated_first_run_model(model_id)
-    if provider_draft.endpoint:
+    if effective_draft.endpoint:
         resolution = resolve_provider_endpoint(
-            provider_draft.provider, provider_draft.endpoint
+            effective_draft.provider, effective_draft.endpoint
         )
         if resolution.errors:
             raise ValueError("Provider endpoint is invalid.")
@@ -269,9 +343,9 @@ def build_first_run_provider_commit(
 
     def shared_draft(source: str) -> ProviderSetupDraft:
         return ProviderSetupDraft(
-            provider=provider_draft.provider,
+            provider=effective_draft.provider,
             model=model,
-            endpoint=provider_draft.endpoint,
+            endpoint=effective_draft.endpoint,
             credential_source=source,
             credential_revision=credential.revision,
             draft_generation=0,
@@ -287,9 +361,14 @@ def build_first_run_provider_commit(
 
     if credential.source == "none":
         try:
-            mutation = build_provider_setup_mutation(shared_draft("stored"), config)
+            mutation = build_provider_setup_mutation(
+                shared_draft("environment"), config
+            )
         except ValueError:
-            mutation = build_provider_setup_mutation(shared_draft("none"), config)
+            try:
+                mutation = build_provider_setup_mutation(shared_draft("stored"), config)
+            except ValueError:
+                mutation = build_provider_setup_mutation(shared_draft("none"), config)
     elif credential.source == "draft" and not credential.value:
         mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:
@@ -1171,6 +1250,7 @@ class SecretPresence:
     configured: bool
     env_var: str | None = None
     env_var_set: bool = False
+    env_var_declared: bool = False
 
 
 @dataclass(frozen=True)
@@ -1260,17 +1340,21 @@ def read_provider_secret_presence(
     """
     from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
 
-    settings = _section(_section(app_config, "api_settings"), provider_key)
+    settings = _first_run_provider_settings(app_config, provider_key)
     env_var_raw = settings.get("api_key_env_var")
+    env_var_declared = isinstance(env_var_raw, str) and bool(env_var_raw.strip())
     env_var = (
         env_var_raw.strip()
-        if isinstance(env_var_raw, str) and env_var_raw.strip()
+        if env_var_declared
         else default_api_key_env_var(provider_key)
     )
     env_var_set = bool(env_var and environ.get(env_var))
     inline = _is_real_secret(settings.get("api_key"))
     return SecretPresence(
-        configured=inline or env_var_set, env_var=env_var, env_var_set=env_var_set
+        configured=inline or env_var_set,
+        env_var=env_var,
+        env_var_set=env_var_set,
+        env_var_declared=env_var_declared,
     )
 
 

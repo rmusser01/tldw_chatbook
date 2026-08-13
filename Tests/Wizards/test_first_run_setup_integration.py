@@ -1,6 +1,9 @@
 """Integration tests: wizard commit plans against a real TOML config file."""
 
+import asyncio
 import json
+import threading
+import tomllib
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -263,6 +266,197 @@ def _typed_provider_draft(
 
 class TestWizardAtomicProviderHandoff:
     @pytest.mark.asyncio
+    async def test_concurrent_identical_model_commits_share_one_writer(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        started = threading.Event()
+        release = threading.Event()
+        call_count = 0
+
+        def writer(section_values, *, delete_keys=None):
+            nonlocal call_count
+            call_count += 1
+            started.set()
+            assert release.wait(2)
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+
+        first = asyncio.create_task(
+            container.commit_staged_provider_setup("custom-model")
+        )
+        assert await asyncio.to_thread(started.wait, 2)
+        second = asyncio.create_task(
+            container.commit_staged_provider_setup("custom-model")
+        )
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await asyncio.gather(first, second) == [True, True]
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_restaging_before_writer_starts_invalidates_old_operation(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        written_models = []
+
+        def writer(section_values, *, delete_keys=None):
+            written_models.append(section_values["chat_defaults"]["model"])
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft(revision=1))
+        stale = asyncio.create_task(
+            container.commit_staged_provider_setup("stale-model")
+        )
+        await asyncio.sleep(0)
+
+        assert container.stage_provider_setup(
+            _typed_provider_draft(
+                endpoint="https://replacement.test/v1/chat/completions",
+                revision=2,
+            )
+        )
+        assert await stale is False
+        assert written_models == []
+
+        assert await container.commit_staged_provider_setup("current-model") is True
+        assert written_models == ["current-model"]
+
+    @pytest.mark.asyncio
+    async def test_newer_model_lease_before_writer_starts_supersedes_old_model(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        written_models = []
+
+        def writer(section_values, *, delete_keys=None):
+            written_models.append(section_values["chat_defaults"]["model"])
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+        stale = asyncio.create_task(
+            container.commit_staged_provider_setup("stale-model")
+        )
+        await asyncio.sleep(0)
+        current = asyncio.create_task(
+            container.commit_staged_provider_setup("current-model")
+        )
+
+        assert await asyncio.gather(stale, current) == [False, True]
+        assert written_models == ["current-model"]
+
+    @pytest.mark.asyncio
+    async def test_restaging_is_rejected_while_atomic_writer_is_unavoidable(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        started = threading.Event()
+        release = threading.Event()
+
+        def writer(section_values, *, delete_keys=None):
+            started.set()
+            assert release.wait(2)
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        original = _typed_provider_draft()
+        container.stage_provider_setup(original)
+        commit = asyncio.create_task(
+            container.commit_staged_provider_setup("custom-model")
+        )
+        assert await asyncio.to_thread(started.wait, 2)
+
+        assert (
+            container.stage_provider_setup(_typed_provider_draft(revision=2)) is False
+        )
+        assert container.staged_provider_draft is original
+        release.set()
+
+        assert await commit is True
+
+    @pytest.mark.asyncio
+    async def test_writer_exception_releases_operation_for_retry(self, monkeypatch):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        call_count = 0
+
+        def writer(section_values, *, delete_keys=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("private writer detail")
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+
+        assert await container.commit_staged_provider_setup("custom-model") is False
+        assert await container.commit_staged_provider_setup("custom-model") is True
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_caller_cancellation_does_not_duplicate_inflight_write(
+        self, monkeypatch
+    ):
+        container = SetupWizardContainer(SimpleNamespace(app_config={}))
+        started = threading.Event()
+        release = threading.Event()
+        call_count = 0
+
+        def writer(section_values, *, delete_keys=None):
+            nonlocal call_count
+            call_count += 1
+            started.set()
+            assert release.wait(2)
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.provider_setup_persistence."
+            "apply_settings_mutation_to_cli_config",
+            writer,
+        )
+        container.stage_provider_setup(_typed_provider_draft())
+        caller = asyncio.create_task(
+            container.commit_staged_provider_setup("custom-model")
+        )
+        assert await asyncio.to_thread(started.wait, 2)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        follower = asyncio.create_task(
+            container.commit_staged_provider_setup("custom-model")
+        )
+        release.set()
+
+        assert await follower is True
+        assert call_count == 1
+
+    @pytest.mark.asyncio
     async def test_model_continue_calls_atomic_writer_once_and_mirrors_full_success(
         self, monkeypatch
     ):
@@ -470,3 +664,29 @@ class TestWizardAtomicProviderHandoff:
         assert "checkpoint-integration-secret" not in serialized
         assert "credential" not in serialized
         assert "example.test" not in serialized
+
+    @pytest.mark.asyncio
+    async def test_explicit_clear_deletes_both_credential_forms_after_model_commit(
+        self, temp_config
+    ):
+        _write(
+            {
+                "api_settings.custom": {
+                    "api_url": "https://example.test/v1/chat/completions",
+                    "api_key": "old-inline-secret",
+                    "api_key_env_var": "OLD_CUSTOM_KEY",
+                }
+            }
+        )
+        app_config = _reload()
+        container = SetupWizardContainer(SimpleNamespace(app_config=app_config))
+        container.stage_provider_setup(
+            _typed_provider_draft(source="draft", value="", revision=2)
+        )
+
+        assert await container.commit_staged_provider_setup("custom-model") is True
+
+        persisted = tomllib.loads(temp_config.read_text())["api_settings"]["custom"]
+        assert persisted["api_url"] == "https://example.test/v1/chat/completions"
+        assert "api_key" not in persisted
+        assert "api_key_env_var" not in persisted

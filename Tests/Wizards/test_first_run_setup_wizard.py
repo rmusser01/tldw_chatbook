@@ -1,5 +1,6 @@
 """Pilot tests for the first-run setup wizard skeleton."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -35,6 +36,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_WELCOME,
     TRACK_FULL,
     TRACK_QUICK,
+    FirstRunModelDiscoveryKey,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     CLOUD_PROBE_TIMEOUT_SECONDS,
@@ -76,8 +78,7 @@ class _HostApp(App):
 
 class _StyledHostApp(_HostApp):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
     )
 
 
@@ -323,6 +324,77 @@ async def test_next_button_click_drives_quick_track_to_completion():
         }
 
 
+@pytest.mark.asyncio
+async def test_mounted_provider_and_model_advance_checkpoint_then_commit_atomically():
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://mounted.test/v1/chat/completions"}
+        }
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = None
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        checkpoints = []
+        atomic_mutations = []
+
+        async def commit_config(
+            settings,
+            *,
+            delete_keys=None,
+            after_write=None,
+            provider_setup_mutation=None,
+        ):
+            if provider_setup_mutation is not None:
+                atomic_mutations.append(provider_setup_mutation)
+                container._mirror_into_app_config(settings, delete_keys)
+            elif "first_run" in settings:
+                checkpoints.append(settings["first_run"])
+            return True
+
+        container.commit_config = commit_config
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        assert provider_index is not None
+        container.show_step(provider_index)
+        provider_step = container.steps[provider_index]
+        assert isinstance(provider_step, ProviderStep)
+        provider_step.select_provider("custom")
+        provider_step.query_one(
+            "#setup-provider-key-input", Input
+        ).value = "mounted-private-secret"
+
+        await container._advance()
+
+        assert container.steps[container.current_step].config.id == STEP_MODEL
+        assert container.staged_provider_draft is not None
+        assert container.provider_setup_committed is False
+        assert checkpoints[-1]["active_step_id"] == STEP_PROVIDER
+        assert "mounted-private-secret" not in json.dumps(checkpoints[-1])
+
+        model_step = container.steps[container.current_step]
+        assert isinstance(model_step, ModelStep)
+        model_step.query_one("#setup-model-custom", Input).value = "mounted-model"
+        await pilot.pause()
+        await container._advance()
+
+        assert len(atomic_mutations) == 1
+        assert container.provider_setup_committed is True
+        assert container.committed_provider_model == "mounted-model"
+        assert container.steps[container.current_step].config.id == STEP_PROTECT
+        assert checkpoints[-1]["active_step_id"] == STEP_PROTECT
+        assert checkpoints[-1]["draft_values"][STEP_MODEL] == {
+            "model_id": "mounted-model"
+        }
+        assert wizard.app_instance.app_config["chat_defaults"] == {
+            "provider": "custom",
+            "model": "mounted-model",
+        }
+
+
 def _provider_step(
     wizard=None,
     environ=None,
@@ -357,6 +429,19 @@ def _staged_provider_draft(wizard):
     return wizard.stage_provider_setup.call_args.args[0]
 
 
+def _provider_endpoint_config(*provider_keys):
+    endpoints = {
+        "openai": "https://api.openai.com/v1/chat/completions",
+        "ollama": "http://127.0.0.1:11434/v1/chat/completions",
+    }
+    return {
+        "api_settings": {
+            provider_key: {"api_url": endpoints[provider_key]}
+            for provider_key in provider_keys
+        }
+    }
+
+
 class _StepHost(App):
     def __init__(self, step):
         super().__init__()
@@ -378,7 +463,8 @@ async def test_first_run_contacts_only_selected_provider():
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
-            app_config={}, llm_provider_catalog_scope_service=scope_service
+            app_config=_provider_endpoint_config("ollama"),
+            llm_provider_catalog_scope_service=scope_service,
         ),
         note_key_entered=MagicMock(),
         commit_config=AsyncMock(return_value=True),
@@ -434,7 +520,8 @@ async def test_provider_discovery_generation_discards_late_prior_provider():
     scope_service.discover_models = AsyncMock(side_effect=discover_models)
     wizard = SimpleNamespace(
         app_instance=MagicMock(
-            app_config={}, llm_provider_catalog_scope_service=scope_service
+            app_config=_provider_endpoint_config("openai", "ollama"),
+            llm_provider_catalog_scope_service=scope_service,
         ),
         note_key_entered=MagicMock(),
         commit_config=AsyncMock(return_value=True),
@@ -451,22 +538,20 @@ async def test_provider_discovery_generation_discards_late_prior_provider():
         await asyncio.wait_for(ollama_started.wait(), timeout=2)
         await pilot.pause()
 
-        status = str(
-            step.query_one("#setup-provider-probe-status", Static).renderable
-        )
+        status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
         assert "openai" not in status.casefold()
         assert step.selected_provider_key == "ollama"
 
         release_ollama.set()
         await pilot.pause(0.1)
-        status = str(
-            step.query_one("#setup-provider-probe-status", Static).renderable
-        )
+        status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
         assert "ollama" in status.casefold()
         assert "openai" not in status.casefold()
-        assert step._selected_provider_models == {
-            "ollama": ("ollama-scope",)
-        }
+        assert list(step._selected_provider_models.values()) == [("ollama-scope",)]
+        [identity] = step._selected_provider_models
+        assert type(identity) is FirstRunModelDiscoveryKey
+        assert identity.provider_key == "ollama"
+        wizard.staged_provider_draft = step._effective_provider_draft()
 
     wizard.wizard_data = {
         "provider": {"provider_key": "ollama", "provider_value": "ollama"}
@@ -483,9 +568,9 @@ async def test_provider_discovery_generation_discards_late_prior_provider():
         await pilot.pause(0.1)
         model_ids = [
             str(getattr(button, "_model_id", button.label))
-            for button in model_step.query_one(
-                "#setup-model-choice", RadioSet
-            ).query(RadioButton)
+            for button in model_step.query_one("#setup-model-choice", RadioSet).query(
+                RadioButton
+            )
         ]
         assert model_ids == ["ollama-scope"]
 
@@ -501,6 +586,7 @@ async def test_provider_discovery_same_selection_idempotent_and_retry_adds_one()
 
     selected_discovery = AsyncMock(return_value=())
     step = _provider_step(discover=selected_discovery)
+    step.wizard.app_instance.app_config = _provider_endpoint_config("ollama")
     app = _StepHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -549,7 +635,8 @@ async def test_provider_discovery_reentry_restarts_cancelled_request_and_discard
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(
-            app_config={}, llm_provider_catalog_scope_service=scope_service
+            app_config=_provider_endpoint_config("ollama"),
+            llm_provider_catalog_scope_service=scope_service,
         ),
         note_key_entered=MagicMock(),
         commit_config=AsyncMock(return_value=True),
@@ -579,7 +666,10 @@ async def test_provider_discovery_reentry_restarts_cancelled_request_and_discard
         await pilot.pause(0.1)
 
         assert step._selected_discovery_state == "complete"
-        assert step._selected_provider_models == {"ollama": ("current-model",)}
+        assert list(step._selected_provider_models.values()) == [("current-model",)]
+        [identity] = step._selected_provider_models
+        assert type(identity) is FirstRunModelDiscoveryKey
+        assert identity.provider_key == "ollama"
         assert "late-private-value" not in str(status_widget.renderable)
         scope_service.discover_models.assert_awaited_once()
 
@@ -590,6 +680,7 @@ async def test_provider_discovery_complete_then_reentry_does_not_request_again()
 
     selected_discovery = AsyncMock(return_value=())
     step = _provider_step(discover=selected_discovery)
+    step.wizard.app_instance.app_config = _provider_endpoint_config("ollama")
     step.wizard.app_instance.llm_provider_catalog_scope_service = None
     app = _StepHost(step)
 
@@ -605,6 +696,243 @@ async def test_provider_discovery_complete_then_reentry_does_not_request_again()
 
         assert selected_discovery.await_count == 1
         assert step._selected_discovery_state == "complete"
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_uses_exact_draft_settings_and_secret_free_key():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=SimpleNamespace(status="success", models=("exact-model",))
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://exact.test/proxy/v1/chat/completions",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+            llm_provider_catalog_scope_service=scope_service,
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=()))
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        await pilot.pause(0.1)
+
+        call = scope_service.discover_models.await_args
+        assert call.kwargs["provider"] == "custom"
+        assert call.kwargs["staged_settings"] == {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://exact.test/proxy/v1/chat/completions",
+                    "api_key_env_var": "CUSTOM_API_KEY",
+                }
+            }
+        }
+        [(identity, models)] = step._selected_provider_models.items()
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            FirstRunModelDiscoveryKey,
+        )
+
+        assert type(identity) is FirstRunModelDiscoveryKey
+        assert identity.connection_identity == (
+            "custom",
+            "https://exact.test/proxy/v1/chat/completions",
+        )
+        assert identity.credential_source == "environment"
+        assert models == ("exact-model",)
+        assert "CUSTOM_API_KEY" not in repr(identity)
+
+
+@pytest.mark.asyncio
+async def test_provider_credential_revision_change_discards_late_discovery_result():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def discover_models(*, staged_settings, **_kwargs):
+        provider_settings = staged_settings["api_settings"]["custom"]
+        if provider_settings.get("api_key") == "replacement-secret":
+            return SimpleNamespace(status="success", models=("current-model",))
+        first_started.set()
+        try:
+            await release_first.wait()
+        except asyncio.CancelledError:
+            return SimpleNamespace(status="success", models=("late-model",))
+        return SimpleNamespace(status="success", models=("late-model",))
+
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {
+                    "custom": {"api_url": "https://exact.test/v1/chat/completions"}
+                }
+            },
+            llm_provider_catalog_scope_service=scope_service,
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=()))
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+
+        key_input = step.query_one("#setup-provider-key-input", Input)
+        key_input.value = "replacement-secret"
+        await pilot.pause()
+        ok, error = await step.commit()
+        assert ok, error
+        release_first.set()
+        await pilot.pause(0.1)
+
+        assert list(step._selected_provider_models.values()) == [("current-model",)]
+        [identity] = step._selected_provider_models
+        assert identity.credential_source == "draft"
+        assert identity.credential_revision > 0
+        assert "replacement-secret" not in repr(identity)
+
+
+@pytest.mark.asyncio
+async def test_provider_endpoint_change_discards_late_discovery_result():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def discover_models(**_kwargs):
+        started.set()
+        await release.wait()
+        return SimpleNamespace(status="success", models=("stale-model",))
+
+    app_config = {
+        "api_settings": {
+            "custom": {"api_url": "https://first.test/v1/chat/completions"}
+        }
+    }
+    scope_service = MagicMock(discover_models=AsyncMock(side_effect=discover_models))
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config=app_config,
+            llm_provider_catalog_scope_service=scope_service,
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, discover=AsyncMock(return_value=()))
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("custom")
+        await asyncio.wait_for(started.wait(), timeout=2)
+        app_config["api_settings"]["custom"]["api_url"] = (
+            "https://replacement.test/v1/chat/completions"
+        )
+        release.set()
+        await pilot.pause(0.1)
+
+        assert step._selected_provider_models == {}
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_clears_adopted_llama_endpoint_before_custom_commit():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    server = DiscoveredLocalServer(
+        provider_key="llama_cpp",
+        base_url="http://127.0.0.1:8080",
+        model_ids=("llama-model",),
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {
+                    "custom": {"api_url": "https://custom.test/v1/chat/completions"}
+                }
+            },
+            llm_provider_catalog_scope_service=None,
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(
+        wizard=wizard,
+        local_discover=AsyncMock(return_value=(server,)),
+        discover=AsyncMock(return_value=()),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#setup-provider-use-detected")
+        await pilot.pause()
+        assert step.detected_base_url == "http://127.0.0.1:8080"
+
+        step.select_provider("custom")
+        await pilot.pause()
+        assert not hasattr(step, "detected_base_url")
+        ok, error = await step.commit()
+
+        assert ok, error
+        draft = _staged_provider_draft(wizard)
+        assert draft.provider == "custom"
+        assert draft.endpoint == "https://custom.test/v1/chat/completions"
+        assert "127.0.0.1:8080" not in repr(draft)
+
+
+@pytest.mark.asyncio
+async def test_provider_step_stages_unset_declared_environment_source():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={
+                "api_settings": {"openai": {"api_key_env_var": "PRIVATE_OPENAI_KEY"}}
+            }
+        ),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, environ={})
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        ok, error = await step.commit()
+
+        assert ok, error
+        draft = _staged_provider_draft(wizard)
+        assert draft.credential.source == "environment"
+        assert draft.credential.value == "PRIVATE_OPENAI_KEY"
 
 
 @pytest.mark.asyncio
@@ -704,6 +1032,7 @@ async def test_provider_explicit_test_cancels_selected_discovery_before_probe():
         return_value=SimpleNamespace(reachable=True, summary="Provider is reachable.")
     )
     step = _provider_step(discover=AsyncMock(side_effect=discover), probe=probe)
+    step.wizard.app_instance.app_config = _provider_endpoint_config("openai")
     app = _StepHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -718,9 +1047,7 @@ async def test_provider_explicit_test_cancels_selected_discovery_before_probe():
         assert step._selected_discovery_state == "cancelled"
         assert step._selected_provider_models == {}
         probe.assert_awaited_once()
-        status = str(
-            step.query_one("#setup-provider-probe-status", Static).renderable
-        )
+        status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
         assert status.startswith("✓ ")
         assert "late-private-value" not in status
 
@@ -779,9 +1106,7 @@ async def test_provider_explicit_test_feedback_is_preserved():
 
         probe.assert_awaited_once()
         assert probe.await_args.kwargs["provider"] == "openai"
-        status = str(
-            step.query_one("#setup-provider-probe-status", Static).renderable
-        )
+        status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
         assert status.startswith("✓ ")
         assert "reachable" in status.casefold()
 
@@ -1013,28 +1338,40 @@ def test_provider_grouping_orders_popular_then_other_nonempty_sections():
 
     entries = (
         ConsoleProviderCatalogEntry(
-            readiness_key="ollama", execution_key="ollama",
-            display_name="Ollama", requires_api_key=False,
+            readiness_key="ollama",
+            execution_key="ollama",
+            display_name="Ollama",
+            requires_api_key=False,
         ),
         ConsoleProviderCatalogEntry(
-            readiness_key="local_llamacpp", execution_key="custom-openai-api",
-            display_name="local llama.cpp", requires_api_key=False,
+            readiness_key="local_llamacpp",
+            execution_key="custom-openai-api",
+            display_name="local llama.cpp",
+            requires_api_key=False,
         ),
         ConsoleProviderCatalogEntry(
-            readiness_key="openai", execution_key="openai",
-            display_name="OpenAI", requires_api_key=True,
+            readiness_key="openai",
+            execution_key="openai",
+            display_name="OpenAI",
+            requires_api_key=True,
         ),
         ConsoleProviderCatalogEntry(
-            readiness_key="anthropic", execution_key="anthropic",
-            display_name="Anthropic", requires_api_key=True,
+            readiness_key="anthropic",
+            execution_key="anthropic",
+            display_name="Anthropic",
+            requires_api_key=True,
         ),
         ConsoleProviderCatalogEntry(
-            readiness_key="groq", execution_key="groq",
-            display_name="Groq", requires_api_key=True,
+            readiness_key="groq",
+            execution_key="groq",
+            display_name="Groq",
+            requires_api_key=True,
         ),
         ConsoleProviderCatalogEntry(
-            readiness_key="vllm", execution_key="vllm",
-            display_name="vLLM", requires_api_key=False,
+            readiness_key="vllm",
+            execution_key="vllm",
+            display_name="vLLM",
+            requires_api_key=False,
         ),
     )
     # TASK-1498: flat _grouped was replaced by sectioned _grouped_sections —
@@ -1053,8 +1390,7 @@ def test_provider_grouping_orders_popular_then_other_nonempty_sections():
     headings = [
         option
         for option in options
-        if isinstance(option, ProviderChoiceOption)
-        and option.provider_key is None
+        if isinstance(option, ProviderChoiceOption) and option.provider_key is None
     ]
     assert [option.id for option in headings] == [
         "group-popular",
@@ -1434,7 +1770,9 @@ async def test_model_step_provider_change_resets_selection():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1446,7 +1784,8 @@ async def test_model_step_provider_change_resets_selection():
         step.set_selected_model("gpt-5.6-terra")
         assert step.selected_model_id == "gpt-5.6-terra"
         wizard.wizard_data["provider"] = {
-            "provider_key": "anthropic", "provider_value": "Anthropic",
+            "provider_key": "anthropic",
+            "provider_value": "Anthropic",
         }
         step.on_show()
         assert step.selected_model_id == ""
@@ -1454,12 +1793,14 @@ async def test_model_step_provider_change_resets_selection():
 
 @pytest.mark.asyncio
 async def test_model_step_commit_hands_model_to_staged_provider_commit():
-    from unittest.mock import AsyncMock
     from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1467,7 +1808,6 @@ async def test_model_step_commit_hands_model_to_staged_provider_commit():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        step.on_show()
         step.set_selected_model("gpt-5.6-terra")
         ok, error = await step.commit()
         assert ok, error
@@ -1483,7 +1823,9 @@ async def test_model_step_empty_selection_commits_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1509,7 +1851,9 @@ async def test_model_step_clearing_custom_input_clears_stale_selection():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1543,11 +1887,15 @@ async def test_model_step_clearing_custom_input_falls_back_to_radio_selection():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _model_step(wizard, discover_models=AsyncMock(return_value=["radio-model-a"]))
+    step = _model_step(
+        wizard, discover_models=AsyncMock(return_value=["radio-model-a"])
+    )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1577,11 +1925,15 @@ async def test_model_step_commit_reads_pressed_radio_without_changed_event():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
-    step = _model_step(wizard, discover_models=AsyncMock(return_value=["radio-model-a"]))
+    step = _model_step(
+        wizard, discover_models=AsyncMock(return_value=["radio-model-a"])
+    )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1621,7 +1973,9 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1637,13 +1991,13 @@ async def test_model_step_provider_switch_does_not_resurrect_stale_pressed_radio
         assert step.selected_model_id == "model-a"  # sanity: the press registered
 
         wizard.wizard_data["provider"] = {
-            "provider_key": "anthropic", "provider_value": "Anthropic",
+            "provider_key": "anthropic",
+            "provider_value": "Anthropic",
         }
         step.on_show()
         await pilot.pause(0.1)
         ids = [
-            str(getattr(b, "_model_id", b.label))
-            for b in radio_set.query(RadioButton)
+            str(getattr(b, "_model_id", b.label)) for b in radio_set.query(RadioButton)
         ]
         assert ids == ["model-b"]  # the re-render itself landed correctly
 
@@ -1696,13 +2050,16 @@ async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch)
     import tldw_chatbook.config as config_module
 
     monkeypatch.setattr(
-        config_module, "get_cli_providers_and_models",
+        config_module,
+        "get_cli_providers_and_models",
         lambda: {"OpenAI": ["gpt-curated-1", "gpt-curated-2"]},
     )
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
         # provider_value in the RAW form ProviderStep actually persists.
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "openai"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "openai"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1728,14 +2085,18 @@ async def test_model_step_uses_scope_service_when_available():
     from unittest.mock import AsyncMock, MagicMock as Mock
     from types import SimpleNamespace
 
-    scope_result = SimpleNamespace(status="success", models=("svc-model-a", "svc-model-b"))
+    scope_result = SimpleNamespace(
+        status="success", models=("svc-model-a", "svc-model-b")
+    )
     scope_service = Mock()
     scope_service.discover_models = AsyncMock(return_value=scope_result)
     app_instance = MagicMock(app_config={})
     app_instance.llm_provider_catalog_scope_service = scope_service
     wizard = SimpleNamespace(
         app_instance=app_instance,
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1755,7 +2116,9 @@ async def test_model_step_uses_scope_service_when_available():
         # group (like ProviderStep._start_discovery) means only the shape of
         # the *last* call matters here, not the exact invocation count.
         assert scope_service.discover_models.await_args.kwargs == {
-            "mode": "local", "provider": "openai", "staged_settings": None
+            "mode": "local",
+            "provider": "openai",
+            "staged_settings": None,
         }
         radio_set = step.query_one("#setup-model-choice", RadioSet)
         ids = [
@@ -1779,7 +2142,8 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
 
     monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(
-        config_module, "get_cli_providers_and_models",
+        config_module,
+        "get_cli_providers_and_models",
         lambda: {"OpenAI": ["fallback-model"]},
     )
 
@@ -1789,7 +2153,9 @@ async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
@@ -1816,15 +2182,19 @@ def test_model_step_worker_group_is_not_wizard_advance():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=False,
     )
     step = _model_step(wizard)
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
-        coro.close()  # never actually scheduled; avoid a "never awaited" warning
+    def _fake_run_worker(work, **kwargs):
+        close = getattr(work, "close", None)
+        if callable(close):
+            close()
         calls.append(kwargs)
 
     step.run_worker = _fake_run_worker
@@ -1841,7 +2211,8 @@ async def test_rag_step_missing_deps_shows_install_copy_and_commits_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = RagStep(
         wizard=wizard,
@@ -1869,7 +2240,8 @@ async def test_rag_step_commit_reads_pressed_radio_without_changed_event():
         app_instance=MagicMock(
             app_config={"embedding_config": {"models": {"embed-a": {}, "embed-b": {}}}}
         ),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = RagStep(
         wizard=wizard,
@@ -1900,7 +2272,8 @@ async def test_tools_step_commits_only_changed_gates():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ToolsStep(
         wizard=wizard,
@@ -1929,7 +2302,8 @@ async def test_tools_step_fresh_config_no_changes_commits_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ToolsStep(
         wizard=wizard,
@@ -1952,7 +2326,8 @@ async def test_tools_step_on_to_off_transition_writes_false():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={"tools": {"read_file_enabled": True}}),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = ToolsStep(
         wizard=wizard,
@@ -1977,7 +2352,8 @@ async def test_notes_step_commit_writes_directory_and_toggle():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = NotesSyncStep(
         wizard=wizard,
@@ -2003,7 +2379,8 @@ async def test_notes_step_disabled_commits_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = NotesSyncStep(
         wizard=wizard,
@@ -2027,9 +2404,12 @@ async def test_notes_step_enabled_to_disabled_writes_auto_sync_false():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(
-            app_config={"notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}}
+            app_config={
+                "notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}
+            }
         ),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = NotesSyncStep(
         wizard=wizard,
@@ -2055,7 +2435,8 @@ async def test_protect_keys_enables_encryption_via_injected_callable():
     calls = []
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ProtectKeysStep(
         wizard=wizard,
@@ -2078,7 +2459,8 @@ async def test_protect_keys_failure_leaves_step_skippable_with_inline_error():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ProtectKeysStep(
         wizard=wizard,
@@ -2107,7 +2489,8 @@ def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ProtectKeysStep(
         wizard=wizard,
@@ -2174,7 +2557,9 @@ async def test_summary_default_speech_check_skips_service_construction_when_stor
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
     absent_root = tmp_path / "never-created"
-    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: absent_root)
+    monkeypatch.setattr(
+        wizard_module, "managed_model_artifact_root", lambda: absent_root
+    )
     probe = MagicMock()
     monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
 
@@ -2217,7 +2602,9 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
 
     existing_root = tmp_path / "already-there"
     existing_root.mkdir()
-    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: existing_root)
+    monkeypatch.setattr(
+        wizard_module, "managed_model_artifact_root", lambda: existing_root
+    )
     probe = MagicMock(return_value=None)
     monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
 
@@ -2413,7 +2800,7 @@ async def test_summary_first_run_exit_buttons_set_expected_routes():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+    from tldw_chatbook.Constants import TAB_HOME
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -2432,7 +2819,8 @@ async def test_summary_first_run_exit_buttons_set_expected_routes():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert {b.id for b in step.query(Button)} == {
-            "setup-exit-chat", "setup-exit-home",
+            "setup-exit-chat",
+            "setup-exit-home",
         }
         # Direct handler call, not pilot.click(): the actions row sits below
         # what fits in this fixed 120x40 test viewport (same clipping the
@@ -2469,7 +2857,8 @@ async def test_summary_rerun_exit_buttons_are_done_and_go_to_chat():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert {b.id for b in step.query(Button)} == {
-            "setup-exit-done", "setup-exit-chat",
+            "setup-exit-done",
+            "setup-exit-chat",
         }
         # See the comment in the first-run-exit test above: direct handler
         # call, not pilot.click() -- the actions row is clipped below this
@@ -2598,7 +2987,8 @@ async def test_ctrl_n_still_works_after_focus_was_on_a_now_hidden_widget():
             # never be focus targets (TASK-1496/1498).
             return next(
                 (
-                    w for w in step.walk_children(Widget)
+                    w
+                    for w in step.walk_children(Widget)
                     if w.focusable and w.display and not w.has_class("hidden")
                 ),
                 None,
@@ -2746,7 +3136,8 @@ async def test_appearance_step_commits_theme_and_card():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2776,7 +3167,8 @@ async def test_appearance_step_rerun_preselects_configured_theme():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={"general": {"default_theme": "nord"}}),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2803,7 +3195,8 @@ async def test_appearance_step_no_config_theme_preselects_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2829,7 +3222,8 @@ async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouc
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={"general": {"default_theme": "nord"}}),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2866,7 +3260,8 @@ async def test_appearance_step_surprise_me_over_persisted_card_writes_random():
         app_instance=MagicMock(
             app_config={"splash_screen": {"card_selection": "matrix"}}
         ),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2909,7 +3304,8 @@ async def test_appearance_step_fresh_run_untouched_commits_nothing():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -2934,10 +3330,9 @@ async def test_tools_step_rerun_prefills_switches_from_config():
     from unittest.mock import AsyncMock
 
     wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={"tools": {"read_file_enabled": True}}
-        ),
-        commit_config=AsyncMock(return_value=True), rerun=True,
+        app_instance=MagicMock(app_config={"tools": {"read_file_enabled": True}}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
     )
     step = ToolsStep(
         wizard=wizard,
@@ -2995,7 +3390,9 @@ async def test_model_step_with_provider_entry_present_does_not_prefill_stale_mod
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={"chat_defaults": {"model": "gpt-4o"}}),
-        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        wizard_data={
+            "provider": {"provider_key": "openai", "provider_value": "OpenAI"}
+        },
         commit_config=AsyncMock(return_value=True),
         rerun=True,
     )
@@ -3133,7 +3530,9 @@ class TestSetupRadioButtonStructuralState:
                 for rb in container.query(RadioButton)
                 if not isinstance(rb, SetupRadioButton)
             ]
-            assert not plain, f"plain RadioButtons in wizard: {[rb.id or str(rb.label) for rb in plain]}"
+            assert not plain, (
+                f"plain RadioButtons in wizard: {[rb.id or str(rb.label) for rb in plain]}"
+            )
 
 
 @pytest.mark.asyncio
@@ -3147,7 +3546,8 @@ async def test_rag_step_missing_deps_hides_model_list_and_copy_has_no_backticks(
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = RagStep(
         wizard=wizard,
@@ -3174,8 +3574,11 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        wizard_data={"provider": {"provider_key": "anthropic", "provider_value": "anthropic"}},
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        wizard_data={
+            "provider": {"provider_key": "anthropic", "provider_value": "anthropic"}
+        },
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ModelStep(
         wizard=wizard,
@@ -3208,7 +3611,8 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True), rerun=False,
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
     )
     step = ToolsStep(
         wizard=wizard,
@@ -3228,9 +3632,7 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
         for (y1, b1), (y2, _b2) in zip(regions, regions[1:]):
             assert b1 <= y2, f"tool rows overlap: row ending {b1} vs row starting {y2}"
         # Mutating tools carry a visible warning in their description.
-        write_desc = str(
-            step.query_one("#setup-tool-desc-write_file", Static).render()
-        )
+        write_desc = str(step.query_one("#setup-tool-desc-write_file", Static).render())
         assert "⚠" in write_desc
 
 
@@ -3446,7 +3848,8 @@ class TestThemePickerShortlist:
 
         wizard = SimpleNamespace(
             app_instance=MagicMock(app_config=app_config or {}),
-            commit_config=AsyncMock(return_value=True), rerun=False,
+            commit_config=AsyncMock(return_value=True),
+            rerun=False,
         )
         return AppearanceStep(
             wizard=wizard,
@@ -3483,8 +3886,7 @@ class TestThemePickerShortlist:
             await pilot.pause()
             radio_set = step.query_one("#setup-theme-choice", RadioSet)
             current = [
-                b for b in radio_set.query(RadioButton)
-                if "(current)" in str(b.label)
+                b for b in radio_set.query(RadioButton) if "(current)" in str(b.label)
             ]
             assert len(current) == 1
             assert getattr(current[0], "_theme_name") == "textual-light"
@@ -3498,7 +3900,10 @@ class TestThemePickerShortlist:
             await pilot.pause()
             original = str(app.theme)
             target = next(
-                b for b in step.query_one("#setup-theme-choice", RadioSet).query(RadioButton)
+                b
+                for b in step.query_one("#setup-theme-choice", RadioSet).query(
+                    RadioButton
+                )
                 if getattr(b, "_theme_name", "") not in ("", original)
             )
             target.value = True
@@ -3517,8 +3922,7 @@ async def test_provider_list_grouped_popular_first_with_pinned_discovery():
         await pilot.pause()
         choices = step.query_one("#setup-provider-choice", OptionList)
         options = [
-            choices.get_option_at_index(index)
-            for index in range(choices.option_count)
+            choices.get_option_at_index(index) for index in range(choices.option_count)
         ]
         headers = [str(option.prompt) for option in options if option.disabled]
         assert headers[0] == "Popular"
@@ -3565,6 +3969,7 @@ async def test_key_hints_footer_and_test_button_probe():
         assert next_button in app.screen._compositor.visible_widgets
         # TASK-1499: the INITIAL progress render honors the quick default.
         from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
+
         progress = wizard.query_one(WizardProgress)
         assert progress.total_steps == 4
 
@@ -3597,9 +4002,6 @@ async def test_key_hints_footer_and_test_button_probe():
 async def test_provider_reentry_with_visible_discovery_button_focuses_list():
     """Review finding: after discovery unhides the pinned button, re-entering
     Provider must still focus the OptionList, not the earlier-in-DOM button."""
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
         SetupWizardContainer,
     )
@@ -3617,7 +4019,9 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         provider_step = container.steps[container.current_step]
         # Simulate discovery having found a server: banner + button visible.
         provider_step.query_one("#setup-provider-detected").remove_class("hidden")
-        provider_step.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
+        provider_step.query_one("#setup-provider-use-detected", Button).remove_class(
+            "hidden"
+        )
         await pilot.pause(0.1)
         await pilot.press("ctrl+n")  # Provider -> Model
         await pilot.pause(0.2)
@@ -3785,9 +4189,7 @@ class TestComposeCrashPolicy:
             )
             container.show_step(container.steps.index(summary))
             await pilot.pause(0.4)
-            rendered = str(
-                summary.query_one("#setup-summary-rows", Static).render()
-            )
+            rendered = str(summary.query_one("#setup-summary-rows", Static).render())
             assert "RAG" in rendered
             assert "couldn't be shown" in rendered
 
@@ -3837,9 +4239,7 @@ class TestComposeCrashPolicy:
             )
 
     @pytest.mark.asyncio
-    async def test_repeated_retry_failure_has_one_recovery_surface(
-        self, monkeypatch
-    ):
+    async def test_repeated_retry_failure_has_one_recovery_surface(self, monkeypatch):
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
             ProviderStep,
             SetupWizardContainer,
@@ -4007,6 +4407,7 @@ class TestComposeCrashPolicy:
                 monkeypatch.setattr(failed_step, "remove", blocked_remove)
                 monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             else:
+
                 async def blocked_checkpoint():
                     started.set()
                     await release.wait()
@@ -4114,6 +4515,7 @@ class TestComposeCrashPolicy:
                 monkeypatch.setattr(failed_step, "remove", blocked_remove)
                 monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             else:
+
                 async def blocked_checkpoint():
                     started.set()
                     await release.wait()
@@ -4152,9 +4554,7 @@ class TestComposeCrashPolicy:
             assert app.wizard_results == [None]
 
             release.set()
-            task_results = await asyncio.gather(
-                *recovery_tasks, return_exceptions=True
-            )
+            task_results = await asyncio.gather(*recovery_tasks, return_exceptions=True)
             await pilot.pause(0.2)
 
             assert task_results == [None]
@@ -4178,9 +4578,7 @@ class TestComposeCrashPolicy:
 
         monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
         wizard = _make_wizard()
-        wizard.app_instance.app_config = {
-            "first_run": {"setup_completed": False}
-        }
+        wizard.app_instance.app_config = {"first_run": {"setup_completed": False}}
         app = _HostApp(wizard)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
@@ -4202,14 +4600,11 @@ class TestComposeCrashPolicy:
             }
             assert container.wizard_data == saved_data
             assert (
-                wizard.app_instance.app_config["first_run"]["setup_completed"]
-                is False
+                wizard.app_instance.app_config["first_run"]["setup_completed"] is False
             )
 
     @pytest.mark.asyncio
-    async def test_finish_later_persists_checkpoint_and_dismisses(
-        self, monkeypatch
-    ):
+    async def test_finish_later_persists_checkpoint_and_dismisses(self, monkeypatch):
         from unittest.mock import AsyncMock
 
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
@@ -4235,9 +4630,7 @@ class TestComposeCrashPolicy:
             assert app.wizard_result is None
 
     @pytest.mark.asyncio
-    async def test_finish_later_write_failure_keeps_recovery_visible(
-        self, monkeypatch
-    ):
+    async def test_finish_later_write_failure_keeps_recovery_visible(self, monkeypatch):
         from unittest.mock import AsyncMock
 
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
@@ -4309,8 +4702,7 @@ class TestComposeCrashPolicy:
                 # No select_track()/Next/note_key_entered() call yet -- this
                 # is the wizard's INITIAL state, straight off mount.
                 failed_step = next(
-                    s for s in container.steps
-                    if s.config and s.config.id == STEP_MODEL
+                    s for s in container.steps if s.config and s.config.id == STEP_MODEL
                 )
                 assert failed_step.compose_failed is True
                 assert failed_step.required is True
@@ -4351,8 +4743,7 @@ class TestComposeCrashPolicy:
                 container.select_track(TRACK_FULL)
                 await pilot.pause(0.1)
                 failed_step = next(
-                    s for s in container.steps
-                    if s.config and s.config.id == STEP_RAG
+                    s for s in container.steps if s.config and s.config.id == STEP_RAG
                 )
                 assert failed_step.compose_failed is True
                 notice = str(
@@ -4360,7 +4751,8 @@ class TestComposeCrashPolicy:
                 )
                 assert "skipped" in notice.lower()
                 markers = [
-                    w for w in failed_step.walk_children(Widget)
+                    w
+                    for w in failed_step.walk_children(Widget)
                     if isinstance(w, Static) and "partial-marker" in str(w.render())
                 ]
                 assert not markers, (
@@ -4389,11 +4781,13 @@ class TestComposeCrashPolicy:
                 await pilot.pause(0.2)
                 container = wizard.query_one(SetupWizardContainer)
                 welcome_step = next(
-                    s for s in container.steps
+                    s
+                    for s in container.steps
                     if s.config and s.config.id == STEP_WELCOME
                 )
                 provider_step = next(
-                    s for s in container.steps
+                    s
+                    for s in container.steps
                     if s.config and s.config.id == STEP_PROVIDER
                 )
                 assert welcome_step.compose_failed is True

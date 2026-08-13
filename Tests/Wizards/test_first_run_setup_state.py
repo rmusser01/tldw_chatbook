@@ -813,6 +813,20 @@ class TestFirstRunProviderContracts:
             "llama_cpp": True
         }
 
+    def test_effective_llama_draft_uses_same_root_identity_as_commit(self):
+        resolver = getattr(setup_state, "resolve_first_run_provider_draft", None)
+        assert callable(resolver)
+
+        resolved = resolver(
+            _first_run_provider_draft(
+                provider="llama_cpp",
+                endpoint="http://127.0.0.1:8080/v1/chat/completions",
+            ),
+            {},
+        )
+
+        assert resolved.endpoint == "http://127.0.0.1:8080"
+
     @pytest.mark.parametrize(
         "endpoint",
         [
@@ -849,6 +863,120 @@ class TestFirstRunProviderContracts:
         values = mutation.section_values["api_settings.custom"]
         assert values["base_url"] == "https://example.test/proxy/v1"
         assert "api_url" not in values
+
+    @pytest.mark.parametrize(
+        ("provider", "configured_key", "configured_endpoint", "expected_endpoint"),
+        [
+            (
+                "custom",
+                "api_url",
+                "https://custom.test/proxy/v1/chat/completions",
+                "https://custom.test/proxy/v1/chat/completions",
+            ),
+            (
+                "custom",
+                "api_base_url",
+                "https://custom.test/proxy/v1",
+                "https://custom.test/proxy/v1",
+            ),
+            (
+                "custom",
+                "api_base",
+                "https://custom.test/proxy/v1",
+                "https://custom.test/proxy/v1",
+            ),
+            (
+                "custom",
+                "base_url",
+                "https://custom.test/proxy/v1",
+                "https://custom.test/proxy/v1",
+            ),
+            (
+                "custom",
+                "endpoint",
+                "https://custom.test/proxy/v1/chat/completions",
+                "https://custom.test/proxy/v1/chat/completions",
+            ),
+            (
+                "llama_cpp",
+                "api_url",
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "http://127.0.0.1:8080",
+            ),
+        ],
+    )
+    def test_blank_endpoint_preserves_valid_owned_endpoint_alias(
+        self,
+        provider,
+        configured_key,
+        configured_endpoint,
+        expected_endpoint,
+    ):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(provider=provider, endpoint=""),
+            "selected-model",
+            {
+                "api_settings": {
+                    provider: {configured_key: configured_endpoint},
+                }
+            },
+        )
+
+        provider_values = mutation.section_values[f"api_settings.{provider}"]
+        assert provider_values[configured_key] == expected_endpoint
+        assert configured_key not in mutation.delete_keys.get(
+            f"api_settings.{provider}", ()
+        )
+        assert mutation.section_values["provider_setup.confirmed"][provider] is True
+
+    @pytest.mark.parametrize("provider", ["custom", "llama_cpp"])
+    def test_blank_endpoint_rejects_endpoint_required_provider_without_existing_value(
+        self, provider
+    ):
+        with pytest.raises(ValueError, match="endpoint"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(provider=provider, endpoint=""),
+                "selected-model",
+                {"api_settings": {provider: {}}},
+            )
+
+    @pytest.mark.parametrize("provider", ["custom", "llama_cpp"])
+    def test_blank_endpoint_rejects_malformed_existing_owned_value(self, provider):
+        with pytest.raises(ValueError, match="endpoint"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(provider=provider, endpoint=""),
+                "selected-model",
+                {"api_settings": {provider: {"api_url": "not a valid endpoint"}}},
+            )
+
+    def test_custom_openai_alias_uses_shared_owner_and_rejects_malformed_table(self):
+        with pytest.raises(TypeError, match="Provider configuration"):
+            setup_state.build_first_run_provider_commit(
+                _first_run_provider_draft(
+                    provider="custom",
+                    endpoint="https://custom.test/v1/chat/completions",
+                ),
+                "selected-model",
+                {"api_settings": {"Custom OpenAI": []}},
+            )
+
+    def test_custom_openai_alias_preserves_its_owned_table_name(self):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(
+                provider="Custom OpenAI",
+                endpoint="https://custom.test/v1/chat/completions",
+            ),
+            "selected-model",
+            {"api_settings": {"Custom OpenAI": {"base_url": "https://old.test/v1"}}},
+        )
+
+        assert mutation.section_values["api_settings.Custom OpenAI"]["base_url"] == (
+            "https://custom.test/v1"
+        )
+        assert mutation.section_values["chat_defaults"] == {
+            "provider": "custom",
+            "model": "selected-model",
+        }
 
     @pytest.mark.parametrize(
         ("source", "value", "expected_source", "set_key", "delete_key"),
@@ -895,6 +1023,50 @@ class TestFirstRunProviderContracts:
         )
         assert mutation.semantic_identity.credential_source == "stored"
         assert "existing-secret" not in repr(mutation)
+
+    def test_none_source_preserves_unset_environment_declaration(self):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(source="none", value="", revision=6),
+            "custom-model",
+            {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://example.test/v1/chat/completions",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+        )
+
+        provider_values = mutation.section_values["api_settings.custom"]
+        assert provider_values["api_key_env_var"] == "CUSTOM_API_KEY"
+        assert "api_key_env_var" not in mutation.delete_keys.get(
+            "api_settings.custom", ()
+        )
+        assert mutation.semantic_identity.credential_source == "environment"
+
+    def test_none_source_prefers_declared_environment_over_legacy_inline_value(self):
+        mutation = setup_state.build_first_run_provider_commit(
+            _first_run_provider_draft(source="none", value="", revision=7),
+            "custom-model",
+            {
+                "api_settings": {
+                    "custom": {
+                        "api_url": "https://example.test/v1/chat/completions",
+                        "api_key": "legacy-inline-secret",
+                        "api_key_env_var": "CUSTOM_API_KEY",
+                    }
+                }
+            },
+        )
+
+        provider_values = mutation.section_values["api_settings.custom"]
+        assert provider_values["api_key_env_var"] == "CUSTOM_API_KEY"
+        assert "api_key_env_var" not in mutation.delete_keys.get(
+            "api_settings.custom", ()
+        )
+        assert "api_key" in mutation.delete_keys["api_settings.custom"]
+        assert mutation.semantic_identity.credential_source == "environment"
 
     @pytest.mark.parametrize(
         ("model_id", "app_config"),
@@ -1076,7 +1248,27 @@ class TestSecretPresence:
         )
         assert presence.env_var == "OPENAI_API_KEY"
         assert presence.env_var_set is True
+        assert presence.env_var_declared is True
         assert presence.configured is True
+
+    def test_unset_declared_env_var_remains_owned_configuration(self):
+        cfg = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
+        presence = read_provider_secret_presence(cfg, {}, provider_key="openai")
+
+        assert presence.env_var == "OPENAI_API_KEY"
+        assert presence.env_var_set is False
+        assert presence.env_var_declared is True
+
+    def test_alias_owned_unset_env_var_remains_declared(self):
+        cfg = {
+            "api_settings": {"Custom OpenAI": {"api_key_env_var": "PRIVATE_CUSTOM_KEY"}}
+        }
+
+        presence = read_provider_secret_presence(cfg, {}, provider_key="custom")
+
+        assert presence.env_var == "PRIVATE_CUSTOM_KEY"
+        assert presence.env_var_set is False
+        assert presence.env_var_declared is True
 
     def test_unconfigured(self):
         presence = read_provider_secret_presence({}, {}, provider_key="openai")
