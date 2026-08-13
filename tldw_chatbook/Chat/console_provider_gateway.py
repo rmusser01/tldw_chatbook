@@ -96,6 +96,20 @@ MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
 """Maximum model-ID context included in user-visible provider error copy."""
+_CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
+
+
+def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
+    """Resolve ADR-059's pinned DeepSeek mode without changing legacy default."""
+    candidate = provider_settings.get("api_mode", "chat_completions")
+    if not isinstance(candidate, str):
+        raise ChatConfigurationError("DeepSeek API mode must be a string.")
+    normalized = candidate.strip().lower()
+    if normalized not in _CONTINUATION_PROTOCOLS:
+        raise ChatConfigurationError(
+            "DeepSeek API mode must be 'responses' or 'chat_completions'."
+        )
+    return normalized
 
 
 @dataclass(slots=True)
@@ -432,7 +446,7 @@ class ConsoleProviderResolution:
             breakpoint. Set only for Anthropic resolutions (and only when
             ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
             which drops the kwarg entirely in ``_chat_api_kwargs``.
-        api_mode: Pinned QwenCloud wire mode; ``None`` for every other provider.
+        api_mode: Pinned QwenCloud or DeepSeek wire mode; ``None`` elsewhere.
     """
 
     provider: str
@@ -1559,6 +1573,28 @@ class ConsoleProviderGateway:
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
                 )
+
+        elif identity.execution_key == "deepseek":
+            try:
+                api_mode = _normalize_deepseek_api_mode(provider_settings)
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "DeepSeek blocked: invalid API mode setting. Choose "
+                        "'responses' or 'chat_completions' in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+            effective_base_url = effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
         else:
             effective_base_url = effective_provider_endpoint(
                 identity.readiness_key,
@@ -1628,8 +1664,10 @@ class ConsoleProviderGateway:
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
         continuation_protocol = (
-            "responses"
-            if identity.execution_key in {"moonshot", "zai", "deepseek"}
+            "chat_completions"
+            if identity.execution_key in {"moonshot", "zai"}
+            else api_mode
+            if identity.execution_key == "deepseek"
             else None
         )
 

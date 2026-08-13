@@ -49,6 +49,141 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selected_provider", "provider_key", "model", "base_url", "api_mode", "protocol"),
+    [
+        (
+            "Moonshot",
+            "moonshot",
+            "kimi-latest",
+            "https://api.moonshot.ai/v1",
+            None,
+            "chat_completions",
+        ),
+        (
+            "ZAI",
+            "zai",
+            "glm-4.5",
+            "https://api.z.ai/api/paas/v4",
+            None,
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            None,
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            "  ChAt_CoMpLeTiOnS  ",
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            "  ReSpOnSeS  ",
+            "responses",
+        ),
+    ],
+)
+async def test_real_resolution_pins_provider_continuation_protocol_before_prepare(
+    selected_provider: str,
+    provider_key: str,
+    model: str,
+    base_url: str,
+    api_mode: str | None,
+    protocol: str,
+) -> None:
+    settings = {
+        "api_key": f"{provider_key}-test-key",
+        "model": model,
+        "api_base_url": base_url,
+    }
+    if api_mode is not None:
+        settings["api_mode"] = api_mode
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {provider_key: settings}},
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=selected_provider)
+    )
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": provider_key,
+            "protocol": protocol,
+            "model": model,
+            "api_base_url": base_url,
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "answer",
+                    "reasoning_blocks": ["private"],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    target = ContinuationRestoreTarget(provider_key, model, protocol, base_url)
+
+    assert resolution.ready is True
+    assert resolution.continuation_protocol == protocol
+    assert resolution.api_mode == (protocol if provider_key == "deepseek" else None)
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        [{"_owner": "a1", "role": "assistant", "content": "answer"}],
+        continuation_target=target,
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_owner_key="_owner",
+    )
+    assert prepared.continuation_groups[0].checkpoint == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_deepseek_resolution_rejects_invalid_present_api_mode() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "deepseek": {
+                    "api_key": "DEEPSEEK-SECRET-CANARY",
+                    "model": "deepseek-v4-flash",
+                    "api_mode": "response",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="deepseek")
+    )
+
+    assert resolution.ready is False
+    assert "DeepSeek" in resolution.visible_copy
+    assert "API mode" in resolution.visible_copy
+    assert "DEEPSEEK-SECRET-CANARY" not in resolution.visible_copy
+
+
 def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -> None:
     checkpoint = parse_provider_continuation_json(
         {
@@ -1008,6 +1143,7 @@ async def test_qwencloud_resolution_pins_normalized_mode_and_base(
     assert resolved.ready is True
     assert resolved.execution_key == "qwencloud"
     assert resolved.api_mode == "responses"
+    assert resolved.continuation_protocol is None
     assert resolved.base_url == "https://workspace.example.test/compatible-mode/v1"
 
 
@@ -1229,17 +1365,28 @@ async def test_qwencloud_resolution_rejects_present_malformed_saved_base_before_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider", "model", "settings"),
+    ("provider", "model", "settings", "expected_api_mode"),
     [
-        ("openai", "gpt-4.1", {"api_key": "openai-key"}),
-        ("deepseek", "deepseek-chat", {"api_key": "deepseek-key"}),
-        ("anthropic", "claude-sonnet-4-6", {"api_key": "anthropic-key"}),
+        ("openai", "gpt-4.1", {"api_key": "openai-key"}, None),
+        (
+            "deepseek",
+            "deepseek-chat",
+            {"api_key": "deepseek-key"},
+            "chat_completions",
+        ),
+        (
+            "anthropic",
+            "claude-sonnet-4-6",
+            {"api_key": "anthropic-key"},
+            None,
+        ),
     ],
 )
-async def test_non_qwen_resolutions_omit_api_mode(
+async def test_non_qwen_resolution_api_mode_isolated_to_deepseek(
     provider: str,
     model: str,
     settings: dict[str, str],
+    expected_api_mode: str | None,
 ) -> None:
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
@@ -1253,7 +1400,8 @@ async def test_non_qwen_resolutions_omit_api_mode(
     )
 
     assert resolved.ready is True
-    assert resolved.api_mode is None
+    assert resolved.api_mode == expected_api_mode
+    assert resolved.continuation_protocol == expected_api_mode
 
 
 @pytest.mark.asyncio
