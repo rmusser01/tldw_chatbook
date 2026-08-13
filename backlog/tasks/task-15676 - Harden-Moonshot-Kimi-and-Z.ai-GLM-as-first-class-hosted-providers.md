@@ -1,7 +1,7 @@
 ---
 id: TASK-15676
 title: Harden Moonshot Kimi and Z.ai GLM as first-class hosted providers
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-12 20:45'
 labels: []
@@ -34,3 +34,34 @@ Bring the existing Moonshot AI and Z.ai integrations up to the same first-class 
 - [ ] #9 QwenCloud Chat behavior remains unchanged after any shared parser extraction, proven by its complete contract suite and mutation checks.
 - [ ] #10 Documentation and optional doubly-gated isolated live tests cover the current defaults, endpoints, controls, tools, recovery, and no-paid-default contract.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Establish focused baselines for the existing Moonshot, Z.ai, QwenCloud,
+   Console native-tool, Settings, readiness, and model-discovery contracts.
+2. Add the minimal provider-neutral hosted Chat-Completions URL, HTTP ownership,
+   SSE framing, and OpenAI-shaped normalization boundary, preserving QwenCloud
+   behavior through focused parity tests.
+3. Migrate Moonshot/Kimi and Z.ai/GLM behind provider-local resolution, payload,
+   finish, usage, and durable-reasoning policies while retaining public handler
+   compatibility.
+4. Carry frozen provider resolution, terminal metadata, private continuation,
+   and usage through the existing Console/AgentService path, then prove joined
+   function-tool continuation and cancellation through loopback HTTP.
+5. Refresh defaults, readiness, canonical Settings, and model discovery without
+   changing explicit historical selections or unrelated providers.
+6. Update user documentation, add default-skipped isolated live-test gates, run
+   only the focused provider-related verification authorized for this task,
+   self-review each acceptance criterion, and record observed evidence.
+
+Detailed plan:
+`Docs/superpowers/plans/2026-08-12-kimi-zai-hosted-chat-completions-implementation.md`
+
+ADR required: yes
+
+ADR path:
+`backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md`
+
+Reason: this task implements ADR-063's reusable hosted Chat wire boundary and
+provider-specific durable continuation policies; no additional decision is
+needed.
