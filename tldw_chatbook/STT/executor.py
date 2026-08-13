@@ -676,7 +676,14 @@ class LocalSTTExecutor:
         self,
         reference: tuple[str, str, str],
     ) -> bool:
-        """Retire an idle resident that leases one exact managed artifact."""
+        """Retire an idle resident that leases one exact managed artifact.
+
+        Args:
+            reference: Canonical artifact ID, revision, and variant.
+
+        Returns:
+            True only when a matching idle generation is proven retired.
+        """
 
         canonical = _canonical_dependency_refs(
             (reference,),

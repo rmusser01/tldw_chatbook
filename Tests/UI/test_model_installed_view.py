@@ -96,7 +96,7 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
     )
     app = _build_test_app()
 
-    class _Executor:
+    class ExecutorDouble:
         def recycle_idle_managed_reference(
             self,
             reference: tuple[str, str, str],
@@ -107,7 +107,7 @@ async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
         def close(self) -> None:
             return None
 
-    app._local_stt_executor = _Executor()
+    app._local_stt_executor = ExecutorDouble()
     monkeypatch.setattr(
         app,
         "_create_local_stt_executor",
@@ -741,6 +741,7 @@ def test_delete_recycle_callback_failure_is_path_private(
         module.logger.remove(sink_id)
 
     assert service.delete.call_count == 1
+    assert "RuntimeError" in "".join(logs)
     assert marker not in "".join(logs)
     assert marker not in str(fake_app.notify.mock_calls)
 

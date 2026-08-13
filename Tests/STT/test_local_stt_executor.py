@@ -79,6 +79,8 @@ from tldw_chatbook.STT.executor_worker import (
     _validate_reuse,
 )
 
+FAST_LEASE_TIMEOUT_SECONDS = 0.01
+
 
 def _identity(**overrides: object) -> ModelIdentity:
     values: dict[str, object] = {
@@ -1636,7 +1638,10 @@ def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
 
         assert first.results[0].payload["runtime_load_number"] == 1
         assert second.results[0].payload["runtime_load_number"] == 1
-        contender = ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01)
+        contender = ModelArtifactService(
+            tmp_path / "store",
+            lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
+        )
         for reference in (root.reference, dependency.reference):
             with pytest.raises(ArtifactInUseError):
                 contender.delete(reference)
@@ -1669,7 +1674,7 @@ def test_idle_resident_recycle_releases_exact_managed_lease(
         with pytest.raises(ArtifactInUseError):
             ModelArtifactService(
                 tmp_path / "store",
-                lease_timeout_seconds=0.01,
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
             ).delete(target)
 
         assert (
@@ -1716,7 +1721,7 @@ def test_active_resident_refuses_recycle_without_cancelling_attempt(
         with pytest.raises(ArtifactInUseError):
             ModelArtifactService(
                 tmp_path / "store",
-                lease_timeout_seconds=0.01,
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
             ).delete(dependency.reference)
     finally:
         executor.force_stop("active-recycle")
@@ -1878,9 +1883,10 @@ def test_external_runtime_holds_exact_vad_lease_across_reuse_and_close(
         )
         _validate_reuse(request, resident)
         with pytest.raises(ArtifactInUseError):
-            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
-                dependency.reference
-            )
+            ModelArtifactService(
+                tmp_path / "store",
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
+            ).delete(dependency.reference)
     finally:
         resident.close()
 
@@ -2048,7 +2054,10 @@ def test_external_dependency_failure_keeps_stable_worker_taxonomy(
         monkeypatch.setattr(
             artifacts,
             "ModelArtifactService",
-            lambda root: ModelArtifactService(root, lease_timeout_seconds=0.01),
+            lambda root: ModelArtifactService(
+                root,
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
+            ),
         )
     request, _model = _external_dependency_request(
         tmp_path,
@@ -2188,9 +2197,10 @@ def test_executor_recycles_before_dispatch_when_external_vad_reference_changes(
         first_generation = submit("first-vad", first_dependency.reference, first)
         _wait_for_terminal(first)
         with pytest.raises(ArtifactInUseError):
-            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
-                first_dependency.reference
-            )
+            ModelArtifactService(
+                tmp_path / "store",
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
+            ).delete(first_dependency.reference)
 
         second_generation = submit("second-vad", second_dependency.reference, second)
         _wait_for_terminal(second)
@@ -2200,9 +2210,10 @@ def test_executor_recycles_before_dispatch_when_external_vad_reference_changes(
         assert second.failures == []
         ModelArtifactService(tmp_path / "store").delete(first_dependency.reference)
         with pytest.raises(ArtifactInUseError):
-            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
-                second_dependency.reference
-            )
+            ModelArtifactService(
+                tmp_path / "store",
+                lease_timeout_seconds=FAST_LEASE_TIMEOUT_SECONDS,
+            ).delete(second_dependency.reference)
     finally:
         executor.close()
 

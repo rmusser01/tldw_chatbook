@@ -542,12 +542,13 @@ class InstalledView(Widget):
                 return
             try:
                 recycled = self._recycle_idle(reference)
-            except Exception:
+            except Exception as recycle_exc:
                 logger.error(
-                    "Managed model idle recycle failed for {}@{}/{}",
+                    "Managed model idle recycle failed for {}@{}/{}; error_type={}",
                     reference.artifact_id,
                     reference.revision,
                     reference.variant,
+                    type(recycle_exc).__name__,
                 )
                 self.app.call_from_thread(
                     self._apply_lifecycle_result,
