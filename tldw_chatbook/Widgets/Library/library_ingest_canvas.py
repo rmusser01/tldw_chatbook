@@ -43,6 +43,9 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_web_scope_note,
     library_ingest_retry_label,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
 
 
 def _command_short_name(command: str) -> str:
@@ -986,12 +989,6 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
 #: bottom row saying more content exists, shown only while the canvas
 #: actually overflows -- a mid-sentence clip must never be the only signal.
 INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
-
-
-from tldw_chatbook.Widgets.Library.library_canvas_sync import (
-    PostRecomposeCallback,
-)
-
 
 class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.

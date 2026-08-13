@@ -20,9 +20,7 @@ evidence for dev's converted sites, not only for the ones this branch added.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, Static
-
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_selection_updates import _spy_screen_recomposes
@@ -175,7 +173,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
     "trigger",
     ["select_toggle", "select_all", "sort_open"],
 )
-async def test_converted_notes_sites_keep_focus_inside_the_canvas(trigger):
+async def test_converted_notes_sites_keep_focus_inside_the_canvas(monkeypatch, trigger):
     """CRITICAL: a converted site with no explicit ``then=`` must still
     restore focus.
 
@@ -206,10 +204,16 @@ async def test_converted_notes_sites_keep_focus_inside_the_canvas(trigger):
         await pilot.pause()
         assert screen.focused is not None and screen.focused.id == selector.lstrip("#")
 
+        recompose_calls = _spy_screen_recomposes(monkeypatch)
+
         screen.query_one(selector, Button).press()
         await pilot.pause()
         await pilot.pause()
 
+        # Discriminating: a whole-screen fallback would restore focus through
+        # dev's own rehydration, so without this the assertion below would
+        # pass for the wrong reason.
+        assert recompose_calls == []
         # Focus must still be somewhere inside the notes canvas -- never
         # stranded on the rail/nav chrome outside it.
         focused = screen.focused
@@ -221,7 +225,7 @@ async def test_converted_notes_sites_keep_focus_inside_the_canvas(trigger):
 
 
 @pytest.mark.asyncio
-async def test_converted_notes_site_keeps_focus_on_a_real_key_press():
+async def test_converted_notes_site_keeps_focus_on_a_real_key_press(monkeypatch):
     """The same guarantee via the real keyboard, not a programmatic press."""
     app = _build_test_app()
     _seed_conversations(app, [], notes=_notes(4))
@@ -232,10 +236,13 @@ async def test_converted_notes_site_keeps_focus_on_a_real_key_press():
         screen.query_one("#library-notes-select-toggle", Button).focus()
         await pilot.pause()
 
+        recompose_calls = _spy_screen_recomposes(monkeypatch)
+
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
 
+        assert recompose_calls == []  # see the sibling test: discriminating
         assert screen._library_notes_select_mode is True
         focused = screen.focused
         assert focused is not None
@@ -320,3 +327,39 @@ async def test_notes_footer_tier_follows_a_canvas_scoped_sync():
             screen._library_notes_footer_shortcuts(),
         )
         assert ("esc", "done") in screen._library_notes_footer_shortcuts()
+
+
+@pytest.mark.asyncio
+async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypatch):
+    """The list -> loading -> editor row press is a DOUBLE canvas sync.
+
+    Dev's row press syncs the canvas to its loading surface, then again to the
+    editor once the detail lands. Two syncs mean the first recompose can still
+    be awaiting ``mount_all`` when the second one's state arrives -- so a
+    follow-up fired at the end of the first recompose runs against children
+    that are already stale, and focus lands nowhere useful.
+
+    ``_apply_post_compose_state`` already gates on its own mounted children;
+    this pins the same guarantee for the queued follow-up itself.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_notes(4))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_notes_canvas(host, pilot)
+        row = screen.query_one("#library-notes-row-0", Button)
+        row.focus()
+        await pilot.pause()
+
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None
+        canvas = screen.query_one("#library-notes-canvas")
+        assert canvas in focused.ancestors_with_self, (
+            f"focus escaped the notes canvas to {focused.id!r} on row -> editor"
+        )

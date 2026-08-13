@@ -92,6 +92,18 @@ class PostRecomposeCallback:
         self._after_recompose()
         if callback is None:
             return
+        # A newer recompose is already queued: this widget's children are
+        # about to be replaced again, so firing the follow-up now would run it
+        # against a tree that is already stale. Textual re-arms
+        # ``_recompose_required`` whenever ``refresh(recompose=True)`` is
+        # called, which is exactly what a second ``sync_state`` landing while
+        # this recompose was awaiting ``mount_all`` does -- the shape the
+        # notes canvas's own ``_apply_post_compose_state`` guard was added for
+        # (list -> loading -> editor row press). Re-queue instead of dropping,
+        # so the follow-up runs once, against the final children.
+        if getattr(self, "_recompose_required", False):
+            self._post_recompose_callback = callback
+            return
         try:
             callback()
         except Exception:

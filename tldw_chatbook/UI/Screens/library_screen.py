@@ -1445,7 +1445,20 @@ def _sync_library_canvas(
         # the restore runs first (portable focus + scroll), then the site's
         # own follow-up gets the last word on where focus lands.
         follow_up: Callable[[], None] | None = then
-        if screen._library_notes_workflow_active():
+        # Gated on the KIND, not on the screen-level workflow predicate
+        # (review m5): the identity is the notes canvas's, and
+        # ``_library_notes_workflow_active()`` is also true while a
+        # media/ingest/search sync runs from a Notes rail row, which would
+        # build and restore an identity for a canvas that is not on screen.
+        if kind == "notes" and sync_kwargs.get("mode") == getattr(canvas, "mode", None):
+            # ...and only for an IN-SURFACE sync. On a surface TRANSITION
+            # (list -> loading -> editor) the capture is worthless: the
+            # handlers flip the notes view before calling this, so
+            # ``_capture_library_notes_focus_identity`` already reports the
+            # DESTINATION region with an empty semantic role -- restoring it
+            # resolves to a fallback target (measured: the rail row), which is
+            # worse than leaving focus to the transition's own arming path
+            # (``_arm_library_note_editor`` + its explicit editor identity).
             identity = screen._capture_library_notes_focus_identity()
 
             def _restore_then_explicit(
@@ -1460,23 +1473,19 @@ def _sync_library_canvas(
         if follow_up is not None:
             canvas.queue_after_recompose(follow_up)
         canvas.sync_state(*sync_args, **sync_kwargs)
-        # task-15457: the one thing a canvas sync cannot skip.
-        # ``LibraryScreen.refresh`` (the override) re-derives the footer on
-        # every whole-screen recompose, so these sites used to get it for
-        # free. Two footer tiers genuinely change under a targeted sync:
-        # the Notes tier branches on select mode and on the sort strip's
-        # visibility (``_library_notes_footer_shortcuts``), and the shared
-        # choice-strip tier advertises "enter choose … / esc cancel" while
-        # a media/prompts/skills/export strip is open
-        # (``_library_open_choice_strip``). Applied HERE, at the one choke
-        # point every converted site passes through, rather than per call
-        # site -- the media bulk-delete confirm's own two hand-added
-        # ``_register_footer_shortcuts()`` calls are the precedent for how
-        # easily a per-site version is forgotten.
-        if kind == "notes":
-            screen._apply_library_notes_footer_context()
-        else:
-            screen._register_footer_shortcuts()
+        # NOTE (task-15457 review): a footer re-derivation was added here and
+        # then REMOVED after probing. Both footer tiers that a targeted sync
+        # can flip -- the Notes tier (select mode / sort-strip visibility) and
+        # the shared choice-strip tier -- are already kept honest by dev's own
+        # mechanism: ``LibraryScreen.refresh`` calls
+        # ``_apply_library_notes_footer_context()`` on EVERY refresh, not only
+        # on ``recompose=True``, and every footer-flipping sync has a focus
+        # follow-up whose ``set_focus``/``scroll_visible`` triggers one.
+        # Verified by disabling both branches: the Notes select-mode and the
+        # media type-strip footers both stayed current. Keeping an
+        # unfalsifiable branch is worse than the coupling it guards, so it is
+        # gone; the coupling itself is recorded in the task file's residuals.
+
     except Exception:
         logger.debug(
             f"Library {kind} canvas sync failed; falling back to full recompose.",
@@ -9328,17 +9337,25 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_context = False
         self._library_note_editor_armed = False
         if self.is_mounted:
-            _sync_library_canvas(self, "notes")
-            self.call_after_refresh(self._arm_library_note_editor)
-            self.call_after_refresh(
-                self._restore_library_notes_focus_identity,
-                LibraryNotesFocusIdentity(
-                    stage="notes",
-                    region="editor",
-                    note_id=note_id,
-                    semantic_role="body",
-                ),
+            editor_identity = LibraryNotesFocusIdentity(
+                stage="notes",
+                region="editor",
+                note_id=note_id,
+                semantic_role="body",
             )
+
+            def arm_and_focus_editor() -> None:
+                # Deterministic (task-15457 review I4b): both of these used to
+                # ride ``call_after_refresh``, which has no ordering against a
+                # recompose driven by the CANVAS's own pump -- so on the
+                # list -> loading -> editor row press they ran against the
+                # loading children and left focus outside the canvas. Arming
+                # is dirty-tracking, not cosmetics: a miss leaves the editor
+                # unarmed, so this is the one that must not be lost.
+                self._arm_library_note_editor()
+                self._restore_library_notes_focus_identity(editor_identity)
+
+            _sync_library_canvas(self, "notes", then=arm_and_focus_editor)
 
     def _begin_library_note_load(self, note_id: str) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
@@ -12901,14 +12918,24 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
-        if self._library_media_type_choices_visible:
-            then: Callable[[], None] = lambda: self._focus_library_choice_strip_active(
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
                 ".library-media-type-choice",
                 self._library_media_type_filter,
             )
-        else:
-            then = lambda: self._focus_library_control("#library-media-type-filter")
-        _sync_library_canvas(self, "media", then=then)
+
+        def focus_opener() -> None:
+            self._focus_library_control("#library-media-type-filter")
+
+        _sync_library_canvas(
+            self,
+            "media",
+            then=(
+                focus_open_strip
+                if self._library_media_type_choices_visible
+                else focus_opener
+            ),
+        )
 
     @on(Button.Pressed, ".library-media-type-choice")
     def handle_library_media_type_choice(self, event: Button.Pressed) -> None:
@@ -14067,16 +14094,24 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = (
             not self._library_skills_sort_choices_visible
         )
-        if self._library_skills_sort_choices_visible:
-            skills_then: Callable[[], None] = (
-                lambda: self._focus_library_choice_strip_active(
-                    ".library-skills-sort-choice",
-                    self._library_skills_sort,
-                )
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
+                ".library-skills-sort-choice",
+                self._library_skills_sort,
             )
-        else:
-            skills_then = lambda: self._focus_library_control("#library-skills-sort")
-        _sync_library_canvas(self, "skills", then=skills_then)
+
+        def focus_opener() -> None:
+            self._focus_library_control("#library-skills-sort")
+
+        _sync_library_canvas(
+            self,
+            "skills",
+            then=(
+                focus_open_strip
+                if self._library_skills_sort_choices_visible
+                else focus_opener
+            ),
+        )
 
     @on(Button.Pressed, ".library-skills-sort-choice")
     def handle_library_skills_sort_choice(self, event: Button.Pressed) -> None:
@@ -14740,8 +14775,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_script_grant = False
         self._library_skill_editor_armed = False
         if self.is_mounted:
-            _sync_library_canvas(self, "skills")
-            self.call_after_refresh(self._arm_library_skill_editor)
+            # Deterministic (task-15457 review I4b): arming is
+            # dirty-tracking, not cosmetics -- a follow-up lost to the
+            # canvas-pump race leaves the editor unarmed, so it rides the
+            # canvas's own post-recompose hook rather than the screen's.
+            _sync_library_canvas(self, "skills", then=self._arm_library_skill_editor)
         # Task 7: not part of ``get_skill``'s response, so it needs its own
         # off-thread fetch -- see ``_refresh_library_skill_script_grant``.
         self._refresh_library_skill_script_grant()
@@ -17320,8 +17358,9 @@ class LibraryScreen(BaseAppScreen):
         )
         self._load_library_prompt_memberships()
         if self.is_mounted:
-            _sync_library_canvas(self, "prompts")
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            # See the skills twin: arming must not be lost to the
+            # canvas-pump race (task-15457 review I4b).
+            _sync_library_canvas(self, "prompts", then=self._arm_library_prompt_editor)
 
     def _adopt_library_prompt_persisted_detail(
         self,
