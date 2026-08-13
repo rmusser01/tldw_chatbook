@@ -307,6 +307,60 @@ at YOUR head before porting X. One of the four items in this reconciliation's
 brief (selection into windowed-out history) was already implemented and
 working; porting it blind would have duplicated a mechanism inside a PR whose
 whole purpose was undoing duplication.
+### Fourth instance: TASK-15457, 2026-08-12/13 — found only when the rebase would not apply
+
+**Two complete implementations of TASK-15457 ("Library: convert per-click
+whole-screen recomposes to canvas-scoped sync") existed simultaneously, and
+neither session knew.** Codex's landed on `dev` as `976dbafcb`
+("perf(library): scope frequent updates to canvases") on 2026-08-12 and marked
+the task **Done**; the other ran 2026-08-11→13 on
+`task/15457-library-recompose`, through two review rounds, and was discovered
+only when the coordinator tried to merge it and dev had moved.
+
+Both wrote a file at the SAME path, `Tests/UI/test_library_canvas_scoped_sync.py`
+(441 lines vs 687), and both edited the same task file. The duplication was
+invisible to every check either session ran: tests passed on both sides, the
+task file on the branch still said `In Progress` because dev's `Done` was on a
+commit the branch predated, and `git status` was clean.
+
+**What made this one different from 595/596: the duplicate WON on scope, and
+the survivor was the defects.** Dev's implementation converted more sites (143
+→ 102 vs 152 → 132) and moved the list→editor loading views into their owning
+canvases. So all eight conversion slices were dropped as superseded. What
+survived was the part the other implementation lacked — four defects that
+reproduced RED against dev's own code: an unmirrored `_selected_media_id` (the
+media chooser opened a filtered-out item), focus escaping the canvas on every
+converted site, a dropped compact-mode scroll offset, and unarmed editors on
+the row→editor transition. **Roughly 1,200 lines of implementation reduced to
+~190 lines of portable delta.**
+
+**The specific check that would have caught it, and why the published one did
+not.** The 595/596 lesson prescribes `gh pr list --search "<id>"` before
+designing and periodically during a long build. That still would not have
+fired here: `976dbafcb` reached dev as part of a batch whose PR title names
+neither the task id nor the Library screen. The check that works for a task
+this long-running is against **dev itself**, not the PR list:
+
+```bash
+git log origin/dev --oneline -S "task-15457" -- backlog/tasks/ | head   # task file touched?
+git log origin/dev --oneline -- "Tests/**/*canvas_scoped_sync*"          # my test path claimed?
+git fetch -q origin && git log --oneline $(git merge-base origin/dev HEAD)..origin/dev -- <the files I am editing>
+```
+
+Run the third one before every review round, not just at merge. A task whose
+work spans days will outlive any snapshot of dev taken at its start.
+
+**Related trap this surfaced:** a parallel implementation can carry the same
+defects yours does. Do not assume the version that reached dev first is the
+correct one — the four defects above shipped `Done`, and one of them (the notes
+footer) *appeared* fine only because an unrelated per-refresh mechanism masked
+it, which a non-discriminating test then "confirmed". Probe by disabling the
+mechanism you think is responsible before claiming it is.
+
+**Note for whoever merges this:** the third-instance block for this lesson
+(TASK-15455) is on `dev` but was NOT in this branch's rebase base
+(`74c8cf7043`), so this entry appends to the TASK-595/596 section instead. If
+both land, renumber the instances so the sequence reads 1-2-3-4.
 
 ---
 
