@@ -6,9 +6,11 @@ import copy
 import json
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.Chat import console_agent_bridge
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -35,6 +37,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRestoreTarget,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -362,6 +370,88 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     # The fenced tool JSON never streamed into the assistant answer.
     assert FENCE_OPEN not in store.get_message(aid).content
     assert store.get_message(aid).content == "It is 42."
+
+
+def test_joined_continuation_never_logs_private_tool_arguments_or_results(
+    tmp_path, monkeypatch
+):
+    """Operational bridge logs must not serialize restored private fields."""
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    async def private_result(self, expression):
+        assert expression == "PRIVATE_ARGUMENT_CANARY"
+        return {"value": "PRIVATE_RESULT_CANARY"}
+
+    monkeypatch.setattr(CalculatorTool, "execute", private_result)
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("PRIVATE_REASONING_CANARY",),
+                calls=(
+                    ContinuationCall(
+                        call_id="PRIVATE_CALL_ID_CANARY",
+                        name="calculator",
+                        arguments='{"expression":"PRIVATE_ARGUMENT_CANARY"}',
+                        state="pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+    db = AgentRunsDB(tmp_path / "private-resume.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    assistant.provider_continuation = checkpoint
+    assistant.provider_continuation_message_version = 1
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["finished"]]),
+    )
+    captured: list[str] = []
+    sink = logger.add(lambda record: captured.append(str(record)), level="DEBUG")
+    try:
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            assistant.id,
+            resolution=SimpleNamespace(
+                provider="Moonshot",
+                execution_key="moonshot",
+            ),
+            restore_provider_continuation=checkpoint,
+            restore_provider_target=ContinuationRestoreTarget(
+                provider="moonshot",
+                model="kimi-k2",
+                protocol="chat_completions",
+                api_base_url="https://api.moonshot.ai/v1",
+            ),
+            expand_provider_continuation=lambda _checkpoint: [],
+            resume_provider_continuation=True,
+        )
+    finally:
+        logger.remove(sink)
+
+    assert any(step.kind == STEP_TOOL_RESULT for step in outcome.steps)
+    joined = "\n".join(captured)
+    assert "agent_kind=primary tool=calculator" in joined
+    assert "PRIVATE_ARGUMENT_CANARY" not in joined
+    assert "PRIVATE_RESULT_CANARY" not in joined
+    assert "PRIVATE_CALL_ID_CANARY" not in joined
+    assert "PRIVATE_REASONING_CANARY" not in joined
 
 
 class _RefusingBuiltinGate:

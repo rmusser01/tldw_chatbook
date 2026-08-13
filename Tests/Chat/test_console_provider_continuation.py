@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
@@ -10,7 +13,11 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_controller import (
+    ConsoleChatController,
+    ConsoleSubmitResult,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
@@ -326,6 +333,239 @@ async def test_resume_without_translator_sets_specific_unavailable_warning() -> 
             "Continuation replay support is not enabled for this provider integration. "
             "Enable or configure it, or Discard the interrupted run."
         )
+    finally:
+        database.close_connection()
+
+
+async def test_live_continuation_owner_rejects_every_recovery_action() -> None:
+    """A checkpoint written by the current run is not an interruption yet."""
+    database, store, session, owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            raise AssertionError("live continuation must not be translated")
+
+        async def resolve_for_send(self, _selection):
+            self.calls += 1
+            raise AssertionError("live continuation must not reach the provider")
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=object(),
+    )
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        controller._active_assistant_message_ids[session.id] = owner.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=session.id,
+        )
+
+        for action in ("resume", "take_over", "discard"):
+            assert not await controller.recover_provider_continuation(
+                action, owner.id, version
+            )
+
+        assert gateway.calls == 0
+        assert store.get_message(owner.id).provider_continuation is not None
+        assert "still active" in (
+            store.get_message(owner.id).provider_continuation_warning or ""
+        )
+        assert controller.send_refusal_copy(session.id) == (
+            "A run is already running in this tab."
+        )
+
+        # A stale STREAMING stamp without the exact active owner is not liveness.
+        controller._active_assistant_message_ids.pop(session.id)
+        assert await controller.recover_provider_continuation(
+            "discard", owner.id, version
+        )
+    finally:
+        database.close_connection()
+
+
+async def test_resume_excludes_visible_owner_and_reports_failed_completion(
+    monkeypatch,
+) -> None:
+    """The canonical restore owns the interrupted assistant turn exactly once."""
+    database, store, session, owner = _store_with_checkpoint(
+        content="VISIBLE-OWNER-MUST-NOT-BE-DUPLICATED"
+    )
+    translated = {"role": "assistant", "content": "CANONICAL-OWNER-ONCE"}
+
+    class Gateway:
+        def expand_provider_continuation(self, _checkpoint):
+            return [translated]
+
+        async def resolve_for_send(self, _selection):
+            return SimpleNamespace(
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        agent_bridge=object(),
+    )
+    captured: list[dict] = []
+
+    async def fail_after_acceptance(**kwargs):
+        captured.extend(kwargs["provider_messages"])
+        captured.extend(
+            kwargs["expand_provider_continuation"](
+                kwargs["restore_provider_continuation"]
+            )
+        )
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, "Provider request failed."),
+            session_id=session.id,
+        )
+        return ConsoleSubmitResult(True, True, "Provider request failed.")
+
+    monkeypatch.setattr(controller, "_run_agent_reply", fail_after_acceptance)
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        assert all(
+            row.get("content") != "VISIBLE-OWNER-MUST-NOT-BE-DUPLICATED"
+            for row in captured
+        )
+        assert captured.count(translated) == 1
+        recovered = store.get_message(owner.id)
+        assert recovered.provider_continuation is not None
+        assert "failed" in (recovered.provider_continuation_warning or "").lower()
+    finally:
+        database.close_connection()
+
+
+async def test_concurrent_resume_is_serialized_at_controller_session_boundary(
+    monkeypatch,
+) -> None:
+    database, store, session, owner = _store_with_checkpoint(content="Visible")
+    resolving = asyncio.Event()
+    release = asyncio.Event()
+
+    class Gateway:
+        calls = 0
+
+        def expand_provider_continuation(self, _checkpoint):
+            return []
+
+        async def resolve_for_send(self, _selection):
+            self.calls += 1
+            resolving.set()
+            await release.wait()
+            return SimpleNamespace(
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    gateway = Gateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=object(),
+    )
+
+    async def complete_checkpoint(**_kwargs):
+        current_version = store.get_message(
+            owner.id
+        ).provider_continuation_message_version
+        assert current_version is not None
+        store.discard_provider_continuation(
+            owner.id, expected_message_version=current_version
+        )
+        return ConsoleSubmitResult(True, True, "done")
+
+    monkeypatch.setattr(controller, "_run_agent_reply", complete_checkpoint)
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        first = asyncio.create_task(
+            controller.recover_provider_continuation("resume", owner.id, version)
+        )
+        await asyncio.wait_for(resolving.wait(), timeout=1)
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        assert gateway.calls == 1
+        release.set()
+        assert await first
+        assert session.id not in controller._provider_continuation_recovery_sessions
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("status", "visible_copy", "expected_warning"),
+    [
+        (ConsoleRunStatus.FAILED, "Provider request failed.", "Recovery failed"),
+        (ConsoleRunStatus.FAILED, "Response stopped/cancelled.", "Recovery failed"),
+        (ConsoleRunStatus.STOPPED, "Response stopped.", "Recovery stopped"),
+    ],
+)
+async def test_accepted_recovery_is_false_while_checkpoint_remains_active(
+    monkeypatch,
+    status: ConsoleRunStatus,
+    visible_copy: str,
+    expected_warning: str,
+) -> None:
+    database, store, session, owner = _store_with_checkpoint(content="Visible")
+
+    class Gateway:
+        def expand_provider_continuation(self, _checkpoint):
+            return []
+
+        async def resolve_for_send(self, _selection):
+            return SimpleNamespace(
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        agent_bridge=object(),
+    )
+
+    async def accepted_but_incomplete(**_kwargs):
+        controller._active_assistant_message_ids[session.id] = owner.id
+        controller._active_stream_tasks[session.id] = asyncio.current_task()
+        controller._set_run_state(
+            ConsoleRunState(status, visible_copy), session_id=session.id
+        )
+        return ConsoleSubmitResult(True, True, visible_copy)
+
+    monkeypatch.setattr(controller, "_run_agent_reply", accepted_but_incomplete)
+    try:
+        version = store.get_message(owner.id).provider_continuation_message_version
+        assert version is not None
+        assert not await controller.recover_provider_continuation(
+            "resume", owner.id, version
+        )
+        assert expected_warning in (
+            store.get_message(owner.id).provider_continuation_warning or ""
+        )
+        assert not controller.provider_continuation_owner_is_live(owner.id)
+        assert session.id not in controller._active_assistant_message_ids
     finally:
         database.close_connection()
 

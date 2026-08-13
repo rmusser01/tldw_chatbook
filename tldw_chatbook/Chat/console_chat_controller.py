@@ -1328,6 +1328,7 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._provider_continuation_recovery_sessions: set[str] = set()
         self._stop_requested = False
         #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
         #: (unlike ``_stop_requested``, which every run's own lifecycle
@@ -2269,7 +2270,10 @@ class ConsoleChatController:
             A human-readable refusal message if the send must be blocked
             right now, otherwise ``None`` when the send is allowed.
         """
-        if self.store.interrupted_provider_continuation_message(session_id) is not None:
+        interrupted = self.store.interrupted_provider_continuation_message(session_id)
+        if interrupted is not None and not self.provider_continuation_owner_is_live(
+            interrupted.id
+        ):
             return (
                 "Recover the interrupted tool run before sending a new message: "
                 "Resume or Discard it first."
@@ -2306,15 +2310,7 @@ class ConsoleChatController:
         expected_message_version: int,
     ) -> bool:
         """Perform one explicit, optimistic recovery action."""
-        if action == "discard":
-            try:
-                return self.store.discard_provider_continuation(
-                    message_id,
-                    expected_message_version=expected_message_version,
-                )
-            except Exception:
-                return False
-        if action not in {"resume", "take_over"}:
+        if action not in {"resume", "take_over", "discard"}:
             return False
         try:
             message = self.store.get_message(message_id)
@@ -2322,6 +2318,48 @@ class ConsoleChatController:
             session_id = self.store.session_id_for_message(message_id)
         except KeyError:
             return False
+        if self.provider_continuation_owner_is_live(message_id):
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "This tool run is still active. Wait for it to finish or Stop it before recovery.",
+            )
+            return False
+        if session_id in self._provider_continuation_recovery_sessions:
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "A recovery action is already running. Wait for it to finish.",
+            )
+            return False
+        self._provider_continuation_recovery_sessions.add(session_id)
+        try:
+            if action == "discard":
+                try:
+                    return self.store.discard_provider_continuation(
+                        message_id,
+                        expected_message_version=expected_message_version,
+                    )
+                except Exception:
+                    return False
+            return await self._resume_provider_continuation(
+                action=action,
+                message=message,
+                checkpoint=checkpoint,
+                session_id=session_id,
+                expected_message_version=expected_message_version,
+            )
+        finally:
+            self._provider_continuation_recovery_sessions.discard(session_id)
+
+    async def _resume_provider_continuation(
+        self,
+        *,
+        action: str,
+        message: ConsoleChatMessage,
+        checkpoint: ProviderContinuationCheckpoint | None,
+        session_id: str,
+        expected_message_version: int,
+    ) -> bool:
+        """Validate and execute one serialized Resume or Take over action."""
         if (
             checkpoint is None
             or checkpoint.state != "active"
@@ -2335,10 +2373,12 @@ class ConsoleChatController:
             )
         ):
             return False
-        translator = getattr(self.provider_gateway, "expand_provider_continuation", None)
+        translator = getattr(
+            self.provider_gateway, "expand_provider_continuation", None
+        )
         if not callable(translator) or self._agent_bridge is None:
             self.store.set_provider_continuation_warning(
-                message_id,
+                message.id,
                 "Continuation replay support is not enabled for this provider integration. "
                 "Enable or configure it, or Discard the interrupted run.",
             )
@@ -2348,7 +2388,7 @@ class ConsoleChatController:
         )
         if not getattr(resolution, "ready", False):
             self.store.set_provider_continuation_warning(
-                message_id,
+                message.id,
                 "Provider credentials are not ready. Fix Settings, then retry.",
             )
             return False
@@ -2366,23 +2406,80 @@ class ConsoleChatController:
             validate_continuation_restore(checkpoint, target)
         except Exception:
             self.store.set_provider_continuation_warning(
-                message_id,
+                message.id,
                 "Pinned provider settings no longer match. Restore those settings or Discard.",
             )
             return False
-        result = await self._run_agent_reply(
-            resolution=resolution,
-            provider_messages=self._provider_messages_for_session(session_id),
-            assistant_message_id=message_id,
-            prepare_retry=False,
-            variant_mode=False,
-            restore_provider_continuation=checkpoint,
-            restore_provider_target=target,
-            expand_provider_continuation=translator,
-            resume_provider_continuation=True,
-            turn_context=self.resolve_turn_execution_context(session_id),
+        recovery_task = asyncio.current_task()
+        try:
+            await self._run_agent_reply(
+                resolution=resolution,
+                provider_messages=self._provider_messages_for_session(
+                    session_id, before_message_id=message.id
+                ),
+                assistant_message_id=message.id,
+                prepare_retry=False,
+                variant_mode=False,
+                restore_provider_continuation=checkpoint,
+                restore_provider_target=target,
+                expand_provider_continuation=translator,
+                resume_provider_continuation=True,
+                turn_context=self.resolve_turn_execution_context(session_id),
+            )
+        finally:
+            if (
+                self._active_stream_tasks.get(session_id) is recovery_task
+                and self._active_assistant_message_ids.get(session_id) == message.id
+            ):
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
+                self._stop_requested = False
+        try:
+            current = self.store.get_message(message.id)
+        except KeyError:
+            return False
+        current_checkpoint = current.provider_continuation
+        if current_checkpoint is None or current_checkpoint.state != "active":
+            return True
+        status = self.run_state_for(session_id).status
+        if status is ConsoleRunStatus.STOPPED:
+            warning = (
+                "Recovery stopped before the interrupted run completed. "
+                "Resume again or Discard it."
+            )
+        elif status is ConsoleRunStatus.FAILED:
+            warning = (
+                "Recovery failed before the interrupted run completed. "
+                "Check provider settings and retry, or Discard it."
+            )
+        else:
+            warning = (
+                "Recovery did not complete the interrupted run. "
+                "Retry when the provider is ready, or Discard it."
+            )
+        self.store.set_provider_continuation_warning(message.id, warning)
+        return False
+
+    def provider_continuation_owner_is_live(self, message_id: str) -> bool:
+        """Return whether the exact continuation owner still belongs to a live run."""
+        try:
+            session_id = self.store.session_id_for_message(message_id)
+        except KeyError:
+            return False
+        return (
+            self._active_assistant_message_ids.get(session_id) == message_id
+            and not self.run_state_for(session_id).is_send_allowed
         )
-        return result.accepted
+
+    def provider_continuation_recovery_message(
+        self,
+    ) -> ConsoleChatMessage | None:
+        """Return the recoverable owner, excluding this controller's live run."""
+        message = self.store.provider_continuation_recovery_message()
+        if message is None or self.provider_continuation_owner_is_live(message.id):
+            return None
+        return message
 
     def provider_continuation_replay_available(self) -> bool:
         """Return whether the selected gateway exposes a replay translator."""

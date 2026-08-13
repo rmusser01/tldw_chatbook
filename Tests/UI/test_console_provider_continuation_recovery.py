@@ -20,7 +20,10 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -160,17 +163,20 @@ class _RegionApp(App):
         *,
         replay_available: bool = True,
         on_action=None,
+        owner_live=None,
     ) -> None:
         super().__init__()
         self.message_builder = message_builder
         self.replay_available = replay_available
         self.on_action = on_action or (lambda *_args: True)
+        self.owner_live = owner_live or (lambda _message: False)
 
     def compose(self) -> ComposeResult:
         yield ProviderContinuationTranscriptRegion(
             session_surface_builder=lambda: Static("Visible transcript"),
             recovery_message_builder=self.message_builder,
             recovery_replay_available_builder=lambda: self.replay_available,
+            recovery_owner_live_builder=self.owner_live,
             on_recovery_action=self.on_action,
         )
 
@@ -365,6 +371,63 @@ async def test_failed_recovery_without_new_warning_reenables_safe_actions() -> N
         )
 
 
+async def test_real_region_hides_live_owner_then_exposes_interruption() -> None:
+    """Only an owner no longer registered to a live run is recoverable."""
+    database = CharactersRAGDB(":memory:", "console-continuation-live-ui")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Live owner")
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Visible preface",
+            persist=True,
+        )
+        store.persist_provider_continuation_event(
+            ToolBatchReady(
+                ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+                _message().provider_continuation,
+                None,
+            )
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=object(),
+            agent_bridge=object(),
+        )
+        controller._active_assistant_message_ids[session.id] = owner.id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=session.id,
+        )
+        app = _RegionApp(
+            lambda: store.provider_continuation_recovery_message(),
+            owner_live=lambda message: controller.provider_continuation_owner_is_live(
+                message.id
+            ),
+            on_action=controller.recover_provider_continuation,
+        )
+        async with app.run_test(size=(48, 18)) as pilot:
+            await pilot.pause()
+            region = app.screen.query_one(ProviderContinuationTranscriptRegion)
+            callout = app.screen.query_one(ProviderContinuationRecoveryCallout)
+            assert not callout.display
+
+            controller._active_assistant_message_ids.pop(session.id)
+            region.sync_recovery()
+            await pilot.pause()
+            assert callout.display
+            discard = callout.query_one("#console-continuation-discard", Button)
+            discard.focus()
+            await pilot.pause()
+            assert app.focused is discard
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            assert store.get_message(owner.id).provider_continuation is None
+    finally:
+        database.close_connection()
+
+
 async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> None:
     database = CharactersRAGDB(":memory:", "console-continuation-reactive-ui")
     app_instance = _build_test_app()
@@ -414,6 +477,16 @@ async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> 
                     None,
                 )
             )
+            controller = console._ensure_console_chat_controller()
+            controller._active_assistant_message_ids[session_id] = owner.id
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+                session_id=session_id,
+            )
+            await console._sync_native_console_chat_ui()
+            assert not callout.display
+
+            controller._active_assistant_message_ids.pop(session_id)
             await console._sync_native_console_chat_ui()
             assert callout.display
             assert "Interrupted tool run" in str(

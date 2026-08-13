@@ -32,9 +32,10 @@ def provider_continuation_recovery_state(
     message: ConsoleChatMessage | None,
     *,
     replay_available: bool = False,
+    owner_live: bool = False,
 ) -> ProviderContinuationRecoveryState | None:
     """Project an assistant checkpoint into fixed user-facing recovery copy."""
-    if message is None:
+    if message is None or owner_live:
         return None
     if message.provider_continuation is None and message.provider_continuation_warning:
         return ProviderContinuationRecoveryState(
@@ -277,11 +278,15 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         recovery_message_builder: Callable[[], ConsoleChatMessage | None],
         on_recovery_action: ContinuationAction,
         recovery_replay_available_builder: Callable[[], bool] = lambda: False,
+        recovery_owner_live_builder: Callable[[ConsoleChatMessage], bool] = (
+            lambda _message: False
+        ),
         **kwargs: object,
     ) -> None:
         super().__init__(session_surface_builder=session_surface_builder, **kwargs)
         self._recovery_message_builder = recovery_message_builder
         self._recovery_replay_available_builder = recovery_replay_available_builder
+        self._recovery_owner_live_builder = recovery_owner_live_builder
         self._on_recovery_action = on_recovery_action
 
     def compose(self) -> ComposeResult:
@@ -297,9 +302,15 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             yield self._session_surface_builder()
 
     def _recovery_state(self) -> ProviderContinuationRecoveryState | None:
+        message = self._recovery_message_builder()
         return provider_continuation_recovery_state(
-            self._recovery_message_builder(),
+            message,
             replay_available=self._recovery_replay_available_builder(),
+            owner_live=(
+                self._recovery_owner_live_builder(message)
+                if message is not None
+                else False
+            ),
         )
 
     def sync_recovery(self) -> None:
