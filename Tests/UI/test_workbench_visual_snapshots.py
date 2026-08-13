@@ -195,16 +195,13 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
 async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
     size: tuple[int, int], approval_count: int
 ) -> None:
-    app = _build_test_app()
+    app = _build_test_app(configured_default="home")
     app.console_pending_approval_count = approval_count
-    existing_config = app.app_config
-    _configure_native_ready_console(app)
-    existing_config.update(app.app_config)
-    app.app_config = existing_config
     _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
+            _configure_native_ready_console(app)
             await _open_console(app, pilot)
             await _wait_until(
                 pilot,
