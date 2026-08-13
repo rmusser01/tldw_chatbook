@@ -72,6 +72,9 @@ _DELETE_RECOVERY_TEXT = {
     "recycle-check": "Checking for an idle model to unload…",
     "recycle-retry": "Idle model unloaded; retrying deletion…",
 }
+_IMPORT_CANCELLED_TEXT = (
+    "Import cancelled. The original file and prior models are unchanged."
+)
 
 
 def _is_gguf(path: Path) -> bool:
@@ -761,6 +764,11 @@ class InstalledView(Widget):
         thread_entered.set()
         try:
             if cancel_event.is_set():
+                app.call_from_thread(
+                    self._apply_import_failure,
+                    generation,
+                    _IMPORT_CANCELLED_TEXT,
+                )
                 return
             try:
                 service = self._service_for_worker()
@@ -785,7 +793,7 @@ class InstalledView(Widget):
                     self._apply_import_failure,
                     generation,
                     (
-                        "Import cancelled. The original file and prior models are unchanged."
+                        _IMPORT_CANCELLED_TEXT
                         if cancelled
                         else local_import_failure_message(exc)
                     ),

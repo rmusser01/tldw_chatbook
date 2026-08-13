@@ -1665,6 +1665,91 @@ async def test_physical_cancel_sets_service_probe_and_preserves_source(
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
 @pytest.mark.allow_network
 @pytest.mark.asyncio
+async def test_attached_queued_cancel_settles_without_entering_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel before thread entry settles the mounted import lane safely."""
+    import asyncio
+
+    from textual.worker import Worker
+
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    source = tmp_path / "PRIVATE-QUEUED-CANCEL.gguf"
+    source.write_bytes(b"user-owned")
+    service = _ImportServiceFake(
+        lambda _source, _cancelled, _progress: LocalGGUFImportResult(
+            _import_reference(),
+            False,
+        )
+    )
+    lane_changes: list[bool] = []
+    view = InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        on_import_lane_changed=lane_changes.append,
+    )
+    view._loaded = True
+    view._rows = _unmanaged_inventory(source)
+    app = _StyledInstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        worker_queued = asyncio.Event()
+        release_executor = asyncio.Event()
+        original_run_threaded = Worker._run_threaded
+
+        async def hold_before_executor(worker):
+            worker_queued.set()
+            await release_executor.wait()
+            return await original_run_threaded(worker)
+
+        monkeypatch.setattr(Worker, "_run_threaded", hold_before_executor)
+        view._begin_import(source)
+        await _wait_until(pilot, worker_queued.is_set)
+        worker = next(
+            worker for worker in app.workers if worker.group == "installed_gguf_import"
+        )
+        cancel = view.query_one("#installed-gguf-import-cancel", Button)
+        app.screen.set_focus(cancel)
+        try:
+            await pilot.press("enter")
+            assert cancel.disabled is True
+            assert "Cancelling import…" in _rendered_static_text(view)
+        finally:
+            release_executor.set()
+        await worker.wait()
+        await _wait_until(pilot, lambda: not view._import_active)
+        await _wait_until(
+            pilot,
+            lambda: len(view.query("#installed-gguf-import-retry")) == 1,
+        )
+        retry = view.query_one("#installed-gguf-import-retry", Button)
+        await _wait_until(
+            pilot,
+            lambda: retry.has_focus,
+        )
+
+        rendered = _rendered_static_text(view)
+        notices = " ".join(item.message for item in app._notifications)
+        assert "Import cancelled" in rendered
+        assert str(source) not in rendered
+        assert str(source) not in notices
+        assert service.import_sources == []
+        assert service.activation_calls == []
+        assert lane_changes == [True, False]
+        for selector in (
+            "#installed-models-refresh",
+            "#installed-models-repair",
+            "#installed-models-import-gguf",
+            ".model-import",
+        ):
+            assert view.query_one(selector, Button).disabled is False
+
+
+# Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.allow_network
+@pytest.mark.asyncio
 async def test_finalizing_disables_cancel_before_promotion(tmp_path: Path) -> None:
     """The synchronous Finalizing callback closes cancellation before commit."""
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
