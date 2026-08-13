@@ -56,10 +56,13 @@
 - Create: `tldw_chatbook/TTS/audio_cpp_artifact_catalog.py`
 - Create: `scripts/refresh_audio_cpp_artifact_manifest.py`
 - Create: `Tests/TTS/test_audio_cpp_artifact_catalog.py`
+- Modify: `pyproject.toml`
+- Modify: `MANIFEST.in`
+- Modify: `Tests/Packaging/test_installed_distribution.py`
 
 - [ ] **Step 1: Write failing manifest-boundary tests**
 
-Cover exact repository/commit validation, duplicate package keys, duplicate upstream/managed paths, traversal, missing size/SHA/license facts, and a guard that runtime loading succeeds while `urllib.request.urlopen` raises if touched. Recipe admission is deliberately deferred until Task 3, after Task 2 has completed the registry.
+Cover exact repository/commit validation, duplicate JSON/package/path facts, traversal and drive paths, controls, malformed URLs, missing size/SHA/license facts, bounded manifest dimensions/bytes, and a guard that runtime loading succeeds while `urllib.request.urlopen` raises if touched. Recipe admission is deliberately deferred until Task 3, after Task 2 has completed the registry.
 
 ```python
 def test_manifest_is_pinned_and_runtime_load_is_network_free(monkeypatch):
@@ -103,11 +106,11 @@ Do not duplicate family, display name, runtime constraint, task, backend evidenc
 
 - [ ] **Step 4: Add the explicit-revision maintainer refresh command**
 
-Use only the standard library. Require `--commit` to match exactly 40 lowercase hex characters, fetch only immutable revision endpoints, stream/hash bounded Git-managed files, accept LFS SHA-256/size facts, preserve existing human-reviewed license fields by package key, and emit deterministic sorted JSON to stdout or an explicit output path. It must refuse `main`, missing reviewed license data, and unknown file shapes.
+Use only the standard library. Require `--commit` to match exactly 40 lowercase hex characters, fetch only immutable revision endpoints, follow only validated same-origin/same-repository/same-commit `rel="next"` pagination with page and aggregate-byte limits, stream/hash bounded Git-managed files, accept strict exact-type LFS SHA-256/size facts, preserve existing human-reviewed license fields by package key, and emit deterministic sorted JSON to stdout or an explicit output path. It must refuse `main`, missing reviewed license data, cross-origin/drifted pagination, and unknown file shapes.
 
-- [ ] **Step 5: Prove the empty runtime manifest and refresh output are deterministic**
+- [ ] **Step 5: Package the runtime manifest and prove deterministic refresh**
 
-Assert the checked-in manifest is the exact pinned header plus an empty package list, the loader performs no recipe join or network work, and two refreshes over the same recorded upstream fixture emit byte-identical sorted JSON. Task 3 will audit and populate real package rows only after Task 2 makes every reviewed recipe available.
+Declare the JSON explicitly in both wheel package-data and sdist `MANIFEST.in`. Assert wheel and sdist membership and successful network-free loading from an isolated wheel install. Also assert the checked-in manifest is the exact pinned header plus an empty package list and two refreshes over the same recorded multi-page upstream fixture emit byte-identical sorted JSON. Task 3 will audit and populate real package rows only after Task 2 makes every reviewed recipe available.
 
 - [ ] **Step 6: Run tests and static checks**
 
@@ -117,6 +120,7 @@ Run:
 ../../.venv/bin/python -m pytest Tests/TTS/test_audio_cpp_artifact_catalog.py -q
 ../../.venv/bin/python -m ruff check tldw_chatbook/TTS/audio_cpp_artifact_catalog.py scripts/refresh_audio_cpp_artifact_manifest.py Tests/TTS/test_audio_cpp_artifact_catalog.py
 ../../.venv/bin/python -m mypy tldw_chatbook/TTS/audio_cpp_artifact_catalog.py
+../../.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py -q
 ```
 
 Expected: all pass; no test contacts Hugging Face.
@@ -124,7 +128,7 @@ Expected: all pass; no test contacts Hugging Face.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tldw_chatbook/TTS/audio_cpp_artifact_catalog.py tldw_chatbook/TTS/audio_cpp_artifact_manifest.json scripts/refresh_audio_cpp_artifact_manifest.py Tests/TTS/test_audio_cpp_artifact_catalog.py
+git add tldw_chatbook/TTS/audio_cpp_artifact_catalog.py tldw_chatbook/TTS/audio_cpp_artifact_manifest.json scripts/refresh_audio_cpp_artifact_manifest.py Tests/TTS/test_audio_cpp_artifact_catalog.py pyproject.toml MANIFEST.in Tests/Packaging/test_installed_distribution.py Docs/superpowers/plans/2026-08-13-audio-cpp-model-library-integration.md
 git commit -m "feat(tts): add audio cpp artifact manifest foundation"
 ```
 

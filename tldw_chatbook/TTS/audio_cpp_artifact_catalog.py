@@ -7,6 +7,8 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Any
+import unicodedata
+from urllib.parse import urlsplit
 
 
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
@@ -25,6 +27,14 @@ _PACKAGE_FIELDS = {
     "files",
 }
 _FILE_FIELDS = {"source_path", "managed_path", "size_bytes", "sha256"}
+_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+_MAX_PACKAGES = 67
+_MAX_FILES_PER_PACKAGE = 256
+_MAX_TOTAL_FILES = 4096
+_MAX_TOKEN_BYTES = 256
+_MAX_PATH_BYTES = 1024
+_MAX_LICENSE_URL_BYTES = 2048
+_MAX_USAGE_NOTICE_BYTES = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,9 +97,24 @@ def _fields(value: dict[str, Any], expected: set[str], label: str) -> None:
         raise ValueError(f"{label} has unknown fields: {', '.join(sorted(extra))}")
 
 
-def _string(value: object, label: str) -> str:
-    if type(value) is not str or not value.strip():
-        raise TypeError(f"{label} must be a non-empty string")
+def _unsafe_text(value: str) -> bool:
+    return any(
+        character in {"\x00", "\r", "\n"}
+        or unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+        for character in value
+    )
+
+
+def _string(value: object, label: str, *, max_bytes: int = _MAX_TOKEN_BYTES) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{label} must be a string")
+    if (
+        not value
+        or value != value.strip()
+        or _unsafe_text(value)
+        or len(value.encode("utf-8")) > max_bytes
+    ):
+        raise ValueError(f"{label} must be bounded safe text")
     return value
 
 
@@ -100,12 +125,14 @@ def _positive_integer(value: object, label: str) -> int:
 
 
 def _relative_path(value: object, label: str) -> str:
-    path = _string(value, label)
+    path = _string(value, label, max_bytes=_MAX_PATH_BYTES)
     parts = path.split("/")
     pure_path = PurePosixPath(path)
     windows_path = PureWindowsPath(path)
     if (
         "\\" in path
+        or "$" in path
+        or "%" in path
         or pure_path.is_absolute()
         or windows_path.is_absolute()
         or bool(windows_path.drive)
@@ -137,6 +164,8 @@ def _package(raw: object, index: int) -> AudioCppArtifactPackage:
     files_raw = _array(item["files"], f"{label}.files")
     if not files_raw:
         raise ValueError(f"{label}.files must not be empty")
+    if len(files_raw) > _MAX_FILES_PER_PACKAGE:
+        raise ValueError(f"{label}.files exceeds {_MAX_FILES_PER_PACKAGE}")
     files = tuple(
         _source_file(file_raw, f"{label}.files[{file_index}]")
         for file_index, file_raw in enumerate(files_raw)
@@ -146,21 +175,40 @@ def _package(raw: object, index: int) -> AudioCppArtifactPackage:
         if len(paths) != len(set(paths)):
             raise ValueError(f"{label} has duplicate {attribute}")
 
-    license_url = _string(item["license_url"], f"{label}.license_url")
-    if not license_url.startswith("https://"):
-        raise ValueError(f"{label}.license_url must use https")
+    license_url = _string(
+        item["license_url"],
+        f"{label}.license_url",
+        max_bytes=_MAX_LICENSE_URL_BYTES,
+    )
+    if any(character.isspace() for character in license_url):
+        raise ValueError(f"{label}.license_url must be a valid https URL")
+    try:
+        parsed_license_url = urlsplit(license_url)
+        hostname = parsed_license_url.hostname
+        _ = parsed_license_url.port
+    except ValueError as exc:
+        raise ValueError(f"{label}.license_url must be a valid https URL") from exc
+    if (
+        parsed_license_url.scheme != "https"
+        or not hostname
+        or parsed_license_url.username is not None
+        or parsed_license_url.password is not None
+    ):
+        raise ValueError(f"{label}.license_url must be a valid https URL")
     return AudioCppArtifactPackage(
         recipe_id=_string(item["recipe_id"], f"{label}.recipe_id"),
         recipe_revision=_positive_integer(
             item["recipe_revision"], f"{label}.recipe_revision"
         ),
-        package_variant=_string(
-            item["package_variant"], f"{label}.package_variant"
-        ),
+        package_variant=_string(item["package_variant"], f"{label}.package_variant"),
         artifact_id=_string(item["artifact_id"], f"{label}.artifact_id"),
         license_id=_string(item["license_id"], f"{label}.license_id"),
         license_url=license_url,
-        usage_notice=_string(item["usage_notice"], f"{label}.usage_notice"),
+        usage_notice=_string(
+            item["usage_notice"],
+            f"{label}.usage_notice",
+            max_bytes=_MAX_USAGE_NOTICE_BYTES,
+        ),
         files=files,
     )
 
@@ -196,10 +244,18 @@ def parse_audio_cpp_artifact_source_manifest(
     if expected_commit is not None and commit != expected_commit:
         raise ValueError(f"commit must be the pinned revision {expected_commit}")
 
-    packages = tuple(
-        _package(item, index)
-        for index, item in enumerate(_array(root["packages"], "packages"))
-    )
+    packages_raw = _array(root["packages"], "packages")
+    if len(packages_raw) > _MAX_PACKAGES:
+        raise ValueError(f"packages exceeds {_MAX_PACKAGES}")
+    packages_list: list[AudioCppArtifactPackage] = []
+    total_files = 0
+    for index, item in enumerate(packages_raw):
+        package = _package(item, index)
+        total_files += len(package.files)
+        if total_files > _MAX_TOTAL_FILES:
+            raise ValueError(f"total files exceeds {_MAX_TOTAL_FILES}")
+        packages_list.append(package)
+    packages = tuple(packages_list)
     keys = [package.key for package in packages]
     if len(keys) != len(set(keys)):
         raise ValueError("duplicate package key")
@@ -211,10 +267,31 @@ def parse_audio_cpp_artifact_source_manifest(
 
 def load_audio_cpp_artifact_source_manifest(
     path: Path | None = None,
+    *,
+    expected_commit: str | None = AUDIO_CPP_ARTIFACT_COMMIT,
 ) -> AudioCppArtifactSourceManifest:
     """Load the checked-in pinned manifest without performing network work."""
 
     manifest_path = path or Path(__file__).with_name("audio_cpp_artifact_manifest.json")
-    with manifest_path.open("r", encoding="utf-8") as handle:
-        raw = json.load(handle)
-    return parse_audio_cpp_artifact_source_manifest(raw)
+    with manifest_path.open("rb") as handle:
+        content = handle.read(_MAX_MANIFEST_BYTES + 1)
+    if len(content) > _MAX_MANIFEST_BYTES:
+        raise ValueError(f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON object key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        manifest_text = content.decode("utf-8")
+        raw = json.loads(manifest_text, object_pairs_hook=reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("manifest is not valid UTF-8 JSON") from exc
+    return parse_audio_cpp_artifact_source_manifest(
+        raw,
+        expected_commit=expected_commit,
+    )

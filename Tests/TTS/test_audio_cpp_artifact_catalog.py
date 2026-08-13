@@ -17,6 +17,10 @@ import pytest
 
 REPOSITORY = "audio-cpp/audio.cpp-gguf"
 COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
+TREE_URL = (
+    f"https://huggingface.co/api/models/{REPOSITORY}/tree/{COMMIT}"
+    "?recursive=true&expand=true"
+)
 
 
 def _valid_manifest() -> dict[str, Any]:
@@ -166,6 +170,27 @@ def test_manifest_rejects_path_traversal_or_absolute_paths(
 
 
 @pytest.mark.parametrize(
+    "value",
+    [" model.gguf", "model.gguf ", "model$.gguf", "model%2e.gguf", "model\n.gguf"],
+)
+@pytest.mark.parametrize("path_field", ["source_path", "managed_path"])
+def test_manifest_paths_match_recipe_safe_relative_path_rules(
+    tmp_path: Path,
+    path_field: str,
+    value: str,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    payload["packages"][0]["files"][0][path_field] = value
+
+    with pytest.raises(ValueError, match=path_field):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+@pytest.mark.parametrize(
     ("scope", "field"),
     [
         ("file", "size_bytes"),
@@ -220,10 +245,196 @@ def test_manifest_uses_exact_json_types(
         load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("recipe_id", "x" * 257),
+        ("usage_notice", "é" * 2049),
+    ],
+)
+def test_manifest_rejects_oversized_text_facts(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    payload["packages"][0][field] = value
+
+    with pytest.raises(ValueError, match=field):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+def test_manifest_rejects_oversized_path_bytes(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    payload["packages"][0]["files"][0]["source_path"] = "é" * 513
+
+    with pytest.raises(ValueError, match="source_path"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+@pytest.mark.parametrize(
+    "value", ["notice\nline", "notice\x00line", "notice\u200bline"]
+)
+def test_manifest_rejects_control_characters_in_text(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    payload["packages"][0]["usage_notice"] = value
+
+    with pytest.raises(ValueError, match="usage_notice"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://",
+        "https:///LICENSE",
+        "http://example.invalid/LICENSE",
+        " https://example.invalid/LICENSE",
+        "https://example.invalid/LICENSE\n",
+        "https://example.invalid/LI\x00CENSE",
+    ],
+)
+def test_manifest_rejects_malformed_license_urls(tmp_path: Path, value: str) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    payload["packages"][0]["license_url"] = value
+
+    with pytest.raises(ValueError, match="license_url"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+def test_manifest_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        '{"repository":"audio-cpp/audio.cpp-gguf",'
+        '"repository":"audio-cpp/audio.cpp-gguf",'
+        f'"commit":"{COMMIT}","packages":[]}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        load_audio_cpp_artifact_source_manifest(path)
+
+
+def test_manifest_rejects_non_utf8_json(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    path = tmp_path / "manifest.json"
+    path.write_bytes(json.dumps(_valid_manifest()).encode("utf-16"))
+
+    with pytest.raises(ValueError, match="UTF-8 JSON"):
+        load_audio_cpp_artifact_source_manifest(path)
+
+
+def test_manifest_loader_reads_bounded_bytes_before_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_artifact_catalog as catalog_module
+
+    path = tmp_path / "manifest.json"
+    path.write_bytes(b" " * 33)
+    monkeypatch.setattr(catalog_module, "_MAX_MANIFEST_BYTES", 32)
+
+    with pytest.raises(ValueError, match="manifest exceeds"):
+        catalog_module.load_audio_cpp_artifact_source_manifest(path)
+
+
+def test_manifest_rejects_more_than_67_packages(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    template = payload["packages"][0]
+    payload["packages"] = []
+    for index in range(68):
+        package = copy.deepcopy(template)
+        package["recipe_id"] = f"recipe-{index}"
+        package["artifact_id"] = f"artifact-{index}"
+        package["package_variant"] = f"variant-{index}"
+        payload["packages"].append(package)
+
+    with pytest.raises(ValueError, match="packages exceeds"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+def test_manifest_rejects_more_than_256_files_in_one_package(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    template = payload["packages"][0]["files"][0]
+    payload["packages"][0]["files"] = [
+        {
+            **template,
+            "source_path": f"source/{index}.gguf",
+            "managed_path": f"managed/{index}.gguf",
+        }
+        for index in range(257)
+    ]
+
+    with pytest.raises(ValueError, match="files exceeds"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+def test_manifest_rejects_more_than_4096_total_files(tmp_path: Path) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+    package_template = payload["packages"][0]
+    file_template = package_template["files"][0]
+    payload["packages"] = []
+    for package_index in range(17):
+        package = copy.deepcopy(package_template)
+        package["recipe_id"] = f"recipe-{package_index}"
+        package["artifact_id"] = f"artifact-{package_index}"
+        package["package_variant"] = f"variant-{package_index}"
+        package["files"] = [
+            {
+                **file_template,
+                "source_path": f"source/{package_index}/{file_index}.gguf",
+                "managed_path": f"managed/{package_index}/{file_index}.gguf",
+            }
+            for file_index in range(256)
+        ]
+        payload["packages"].append(package)
+
+    with pytest.raises(ValueError, match="total files exceeds"):
+        load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
 class _Response(io.BytesIO):
-    def __init__(self, content: bytes) -> None:
+    def __init__(self, content: bytes, headers: dict[str, str] | None = None) -> None:
         super().__init__(content)
-        self.headers = {"Content-Length": str(len(content))}
+        self.headers = {"Content-Length": str(len(content)), **(headers or {})}
 
     def __enter__(self) -> _Response:
         return self
@@ -252,7 +463,7 @@ def test_refresh_is_immutable_bounded_and_byte_deterministic(tmp_path: Path) -> 
         },
     ]
     manifest_path = _write_manifest(tmp_path, payload)
-    tree = json.dumps(
+    first_page = json.dumps(
         [
             {
                 "type": "file",
@@ -260,6 +471,10 @@ def test_refresh_is_immutable_bounded_and_byte_deterministic(tmp_path: Path) -> 
                 "oid": "b" * 40,
                 "size": len(git_content),
             },
+        ]
+    ).encode()
+    second_page = json.dumps(
+        [
             {
                 "type": "file",
                 "path": "example/model.gguf",
@@ -269,13 +484,19 @@ def test_refresh_is_immutable_bounded_and_byte_deterministic(tmp_path: Path) -> 
             },
         ]
     ).encode()
+    page_two_url = TREE_URL + "&cursor=page2"
     opened_urls: list[str] = []
 
     def recorded_urlopen(request: object) -> _Response:
         url = getattr(request, "full_url", str(request))
         opened_urls.append(url)
-        if "/api/models/" in url:
-            return _Response(tree)
+        if url == TREE_URL:
+            return _Response(
+                first_page,
+                {"Link": f'<{page_two_url}>; rel="next"'},
+            )
+        if url == page_two_url:
+            return _Response(second_page)
         if url.endswith("/resolve/" + COMMIT + "/example/config.json"):
             return _Response(git_content)
         raise AssertionError(f"unexpected URL: {url}")
@@ -290,6 +511,158 @@ def test_refresh_is_immutable_bounded_and_byte_deterministic(tmp_path: Path) -> 
     assert opened_urls
     assert all(COMMIT in url for url in opened_urls)
     assert all("/main/" not in url and not url.endswith("/main") for url in opened_urls)
+
+
+def test_refresh_follows_validated_second_tree_page(tmp_path: Path) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+    page_two_url = TREE_URL + "&cursor=page2"
+    responses = {
+        TREE_URL: _Response(b"[]", {"Link": f'<{page_two_url}>; rel="next"'}),
+        page_two_url: _Response(
+            json.dumps(
+                [
+                    {
+                        "type": "file",
+                        "path": "example/model.gguf",
+                        "oid": "a" * 40,
+                        "size": 10,
+                        "lfs": {"oid": "b" * 64, "size": 10},
+                    }
+                ]
+            ).encode()
+        ),
+    }
+    opened: list[str] = []
+
+    def recorded_urlopen(request: object) -> _Response:
+        url = getattr(request, "full_url", str(request))
+        opened.append(url)
+        return responses[url]
+
+    output = refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+    assert json.loads(output)["packages"][0]["files"][0]["sha256"] == "b" * 64
+    assert opened == [TREE_URL, page_two_url]
+
+
+@pytest.mark.parametrize(
+    "next_url",
+    [
+        "https://evil.invalid/api/models/audio-cpp/audio.cpp-gguf/tree/"
+        + COMMIT
+        + "?cursor=x",
+        "https://huggingface.co/api/models/other/repository/tree/"
+        + COMMIT
+        + "?cursor=x",
+        "https://huggingface.co/api/models/audio-cpp/audio.cpp-gguf/tree/"
+        + "0" * 40
+        + "?cursor=x",
+    ],
+)
+def test_refresh_rejects_unsafe_pagination_links(
+    tmp_path: Path,
+    next_url: str,
+) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+
+    def recorded_urlopen(_request: object) -> _Response:
+        return _Response(b"[]", {"Link": f'<{next_url}>; rel="next"'})
+
+    with pytest.raises(ValueError, match="pagination"):
+        refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+
+@pytest.mark.parametrize("link", ["not-a-link", '<https://huggingface.co>; rel="next'])
+def test_refresh_rejects_malformed_pagination_links(
+    tmp_path: Path,
+    link: str,
+) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+
+    def recorded_urlopen(_request: object) -> _Response:
+        return _Response(b"[]", {"Link": link})
+
+    with pytest.raises(ValueError, match="pagination"):
+        refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+
+def test_refresh_rejects_pagination_cycles(tmp_path: Path) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+
+    def recorded_urlopen(_request: object) -> _Response:
+        return _Response(b"[]", {"Link": f'<{TREE_URL}>; rel="next"'})
+
+    with pytest.raises(ValueError, match="pagination cycle"):
+        refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+
+def test_refresh_rejects_duplicate_paths_across_pages(tmp_path: Path) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import refresh_manifest_bytes
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+    page_two_url = TREE_URL + "&cursor=page2"
+    entry = {
+        "type": "file",
+        "path": "example/model.gguf",
+        "oid": "a" * 40,
+        "size": 10,
+        "lfs": {"oid": "b" * 64, "size": 10},
+    }
+
+    def recorded_urlopen(request: object) -> _Response:
+        url = getattr(request, "full_url", str(request))
+        headers = {"Link": f'<{page_two_url}>; rel="next"'} if url == TREE_URL else {}
+        return _Response(json.dumps([entry]).encode(), headers)
+
+    with pytest.raises(ValueError, match="duplicate path"):
+        refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
+
+
+def test_refresh_bounds_pagination_pages_and_aggregate_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.refresh_audio_cpp_artifact_manifest as refresh_module
+
+    manifest_path = _write_manifest(tmp_path, _valid_manifest())
+    monkeypatch.setattr(refresh_module, "_MAX_TREE_PAGES", 1)
+
+    def page_limited_urlopen(_request: object) -> _Response:
+        return _Response(b"[]", {"Link": f'<{TREE_URL}&cursor=two>; rel="next"'})
+
+    with pytest.raises(ValueError, match="page limit"):
+        refresh_module.refresh_manifest_bytes(
+            manifest_path, COMMIT, urlopen=page_limited_urlopen
+        )
+
+    monkeypatch.setattr(refresh_module, "_MAX_TREE_PAGES", 32)
+    monkeypatch.setattr(refresh_module, "_MAX_TREE_TOTAL_BYTES", 1)
+
+    def byte_limited_urlopen(_request: object) -> _Response:
+        return _Response(b"[]")
+
+    with pytest.raises(ValueError, match="aggregate byte limit"):
+        refresh_module.refresh_manifest_bytes(
+            manifest_path, COMMIT, urlopen=byte_limited_urlopen
+        )
+
+
+@pytest.mark.parametrize("header", ["exceeds", "-1", " 5", "True", "+5"])
+def test_read_bounded_normalizes_invalid_content_length(header: str) -> None:
+    from scripts.refresh_audio_cpp_artifact_manifest import _read_bounded
+
+    response = _Response(b"data", {"Content-Length": header})
+
+    with pytest.raises(ValueError, match="payload has an invalid Content-Length"):
+        _read_bounded(response, 8, "payload")
 
 
 @pytest.mark.parametrize("commit", ["main", "A" * 40, "0" * 39, "0" * 41])

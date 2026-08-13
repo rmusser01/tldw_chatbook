@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any, BinaryIO, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import urllib.request
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +22,7 @@ from audio_cpp_artifact_catalog import (  # noqa: E402
     AudioCppArtifactPackage,
     AudioCppArtifactSourceFile,
     AudioCppArtifactSourceManifest,
-    parse_audio_cpp_artifact_source_manifest,
+    load_audio_cpp_artifact_source_manifest,
 )
 
 
@@ -30,13 +30,15 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_OID_RE = re.compile(r"[0-9a-f]{40}\Z")
 _MAX_TREE_BYTES = 8 * 1024 * 1024
+_MAX_TREE_TOTAL_BYTES = 32 * 1024 * 1024
+_MAX_TREE_PAGES = 32
 _MAX_GIT_FILE_BYTES = 16 * 1024 * 1024
 _CHUNK_BYTES = 1024 * 1024
+_LINK_RE = re.compile(
+    r'\s*<([^<>]+)>\s*;\s*rel=(?:"([^"]+)"|([A-Za-z][A-Za-z0-9_-]*))\s*\Z'
+)
 _DEFAULT_MANIFEST = (
-    _REPOSITORY_ROOT
-    / "tldw_chatbook"
-    / "TTS"
-    / "audio_cpp_artifact_manifest.json"
+    _REPOSITORY_ROOT / "tldw_chatbook" / "TTS" / "audio_cpp_artifact_manifest.json"
 )
 UrlOpen = Callable[[urllib.request.Request], BinaryIO]
 
@@ -53,13 +55,18 @@ def _read_bounded(response: BinaryIO, limit: int, label: str) -> bytes:
     headers = getattr(response, "headers", {})
     declared = headers.get("Content-Length") if headers is not None else None
     if declared is not None:
+        if (
+            type(declared) is not str
+            or not declared.isascii()
+            or not declared.isdigit()
+        ):
+            raise ValueError(f"{label} has an invalid Content-Length")
         try:
-            if int(declared) > limit:
-                raise ValueError(f"{label} exceeds the {limit}-byte limit")
+            declared_size = int(declared)
         except ValueError as exc:
-            if "exceeds" in str(exc):
-                raise
             raise ValueError(f"{label} has an invalid Content-Length") from exc
+        if declared_size > limit:
+            raise ValueError(f"{label} exceeds the {limit}-byte limit")
 
     chunks: list[bytes] = []
     total = 0
@@ -73,14 +80,65 @@ def _read_bounded(response: BinaryIO, limit: int, label: str) -> bytes:
         chunks.append(chunk)
 
 
-def _request_json(url: str, urlopen: UrlOpen) -> object:
-    request = urllib.request.Request(url, headers={"User-Agent": "tldw-chatbook-maintainer"})
+def _request_json(
+    url: str,
+    urlopen: UrlOpen,
+    limit: int,
+    label: str,
+) -> tuple[object, str | None, int]:
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "tldw-chatbook-maintainer"}
+    )
     with urlopen(request) as response:
-        content = _read_bounded(response, _MAX_TREE_BYTES, "repository tree")
+        content = _read_bounded(response, limit, label)
+        headers = getattr(response, "headers", {})
+        link = headers.get("Link") if headers is not None else None
     try:
-        return json.loads(content)
+        return json.loads(content), link, len(content)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("repository tree is not valid JSON") from exc
+
+
+def _next_page_url(
+    link_header: object,
+    repository: str,
+    commit: str,
+) -> str | None:
+    if link_header is None:
+        return None
+    if type(link_header) is not str or not link_header:
+        raise ValueError("pagination Link header is malformed")
+
+    next_urls: list[str] = []
+    for part in link_header.split(","):
+        match = _LINK_RE.fullmatch(part)
+        if match is None:
+            raise ValueError("pagination Link header is malformed")
+        relations = (match.group(2) or match.group(3)).split()
+        if "next" in relations:
+            next_urls.append(match.group(1))
+    if not next_urls:
+        return None
+    if len(next_urls) != 1:
+        raise ValueError("pagination Link header has multiple next links")
+
+    next_url = next_urls[0]
+    if any(character.isspace() for character in next_url):
+        raise ValueError("pagination next link is unsafe")
+    try:
+        parsed = urlsplit(next_url)
+    except ValueError as exc:
+        raise ValueError("pagination next link is malformed") from exc
+    expected_path = f"/api/models/{quote(repository, safe='/')}/tree/{commit}"
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "huggingface.co"
+        or parsed.path != expected_path
+        or not parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("pagination next link changed origin, repository, or commit")
+    return next_url
 
 
 def _fetch_tree(
@@ -93,21 +151,46 @@ def _fetch_tree(
         f"https://huggingface.co/api/models/{repository_path}/tree/{commit}"
         "?recursive=true&expand=true"
     )
-    raw = _request_json(url, urlopen)
-    if type(raw) is not list:
-        raise ValueError("repository tree must be an array")
-
     entries: dict[str, dict[str, Any]] = {}
-    for index, value in enumerate(raw):
-        if type(value) is not dict:
-            raise ValueError(f"repository tree entry {index} has unknown file shape")
-        path = value.get("path")
-        if type(path) is not str or not path:
-            raise ValueError(f"repository tree entry {index} has unknown file shape")
-        if path in entries:
-            raise ValueError(f"repository tree contains duplicate path {path!r}")
-        entries[path] = value
-    return entries
+    seen_urls: set[str] = set()
+    total_bytes = 0
+    for page_index in range(_MAX_TREE_PAGES):
+        if url in seen_urls:
+            raise ValueError("repository tree pagination cycle")
+        seen_urls.add(url)
+        remaining = _MAX_TREE_TOTAL_BYTES - total_bytes
+        if remaining <= 0:
+            raise ValueError("repository tree aggregate byte limit exceeded")
+        page_limit = min(_MAX_TREE_BYTES, remaining)
+        label = (
+            "repository tree aggregate byte limit"
+            if remaining < _MAX_TREE_BYTES
+            else "repository tree page"
+        )
+        raw, link, page_bytes = _request_json(url, urlopen, page_limit, label)
+        total_bytes += page_bytes
+        if type(raw) is not list:
+            raise ValueError("repository tree must be an array")
+        for item_index, value in enumerate(raw):
+            if type(value) is not dict:
+                raise ValueError(
+                    f"repository tree entry {page_index}:{item_index} has unknown file shape"
+                )
+            path = value.get("path")
+            if type(path) is not str or not path:
+                raise ValueError(
+                    f"repository tree entry {page_index}:{item_index} has unknown file shape"
+                )
+            if path in entries:
+                raise ValueError(f"repository tree contains duplicate path {path!r}")
+            entries[path] = value
+        next_url = _next_page_url(link, repository, commit)
+        if next_url is None:
+            return entries
+        if next_url in seen_urls:
+            raise ValueError("repository tree pagination cycle")
+        url = next_url
+    raise ValueError("repository tree pagination page limit exceeded")
 
 
 def _git_file_facts(
@@ -131,7 +214,9 @@ def _git_file_facts(
     repository_path = quote(repository, safe="/")
     source_path = quote(path, safe="/")
     url = f"https://huggingface.co/{repository_path}/resolve/{commit}/{source_path}"
-    request = urllib.request.Request(url, headers={"User-Agent": "tldw-chatbook-maintainer"})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "tldw-chatbook-maintainer"}
+    )
     digest = hashlib.sha256()
     received = 0
     with urlopen(request) as response:
@@ -217,10 +302,10 @@ def refresh_manifest_bytes(
     """Refresh integrity facts while retaining reviewed mappings and licenses."""
 
     commit = validate_commit(commit)
-    with manifest_path.open("r", encoding="utf-8") as handle:
-        current = parse_audio_cpp_artifact_source_manifest(
-            json.load(handle), expected_commit=None
-        )
+    current = load_audio_cpp_artifact_source_manifest(
+        manifest_path,
+        expected_commit=None,
+    )
     if not current.packages:
         refreshed = AudioCppArtifactSourceManifest(current.repository, commit, ())
     else:
@@ -256,7 +341,12 @@ def refresh_manifest_bytes(
                     license_id=package.license_id,
                     license_url=package.license_url,
                     usage_notice=package.usage_notice,
-                    files=tuple(sorted(files, key=lambda item: (item.managed_path, item.source_path))),
+                    files=tuple(
+                        sorted(
+                            files,
+                            key=lambda item: (item.managed_path, item.source_path),
+                        )
+                    ),
                 )
             )
         refreshed = AudioCppArtifactSourceManifest(
