@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -57,6 +59,9 @@ def _tree_projection() -> LibraryNotesTreeProjection:
                 depth=1,
                 folder_id="ideas",
                 breadcrumb="Personal / Ideas",
+                protected=True,
+                semantic_status="connected",
+                status_text="⇄ Sync managed",
                 expanded=True,
                 version=1,
             ),
@@ -142,7 +147,7 @@ async def test_tree_projection_renders_hierarchy_and_placement_metadata(widget_p
 
         assert [str(button.label) for button in folders] == [
             "▾ Personal",
-            "  ▾ Ideas",
+            "  ▾ Ideas  ⇄ Sync managed",
             "▾ Unfiled",
         ]
         assert [button.note_id for button in notes] == ["n1", "n2"]
@@ -193,3 +198,74 @@ async def test_tree_managed_state_remains_legible_without_color(widget_pilot):  
         row = pilot.app.query_one(".library-notes-row", Button)
         assert "! Needs owner review" in str(row.label)
         assert row.has_class("library-notes-tree-needs-attention")
+
+
+async def test_selected_folder_exposes_manual_folder_actions(widget_pilot):  # noqa: F811
+    projection = _tree_projection()
+    manual_rows = tuple(
+        replace(row, protected=False, semantic_status="normal", status_text="")
+        if row.placement_id == "folder:ideas"
+        else row
+        for row in projection.rows
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=LibraryNotesTreeProjection(
+            rows=manual_rows,
+            next_note_offset=projection.next_note_offset,
+        ),
+        tree_selected_placement_id="folder:ideas",
+    ) as pilot:
+        await pilot.pause()
+        assert pilot.app.query_one("#library-notes-folder-new", Button)
+        assert pilot.app.query_one("#library-notes-folder-rename", Button).disabled is False
+        assert pilot.app.query_one("#library-notes-folder-move", Button).disabled is False
+        assert pilot.app.query_one("#library-notes-folder-remove", Button).disabled is False
+
+
+async def test_selected_managed_folder_disables_folder_mutations(widget_pilot):  # noqa: F811
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+        tree_selected_placement_id="folder:ideas",
+    ) as pilot:
+        await pilot.pause()
+        for button_id in (
+            "#library-notes-folder-new",
+            "#library-notes-folder-rename",
+            "#library-notes-folder-move",
+            "#library-notes-folder-remove",
+        ):
+            button = pilot.app.query_one(button_id, Button)
+            assert button.disabled is True
+            assert "sync" in str(button.tooltip).lower()
+
+
+async def test_managed_placement_disables_move_and_remove_but_allows_add(
+    widget_pilot,  # noqa: F811
+):
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+        tree_selected_placement_id="note:ideas:n1",
+    ) as pilot:
+        await pilot.pause()
+        assert pilot.app.query_one("#library-notes-placement-add", Button).disabled is False
+        assert pilot.app.query_one("#library-notes-placement-move", Button).disabled is True
+        remove = pilot.app.query_one("#library-notes-placement-remove", Button)
+        assert remove.disabled is True
+        assert "sync" in str(remove.tooltip).lower()
+
+
+async def test_deleted_folder_receipt_exposes_restore_action(widget_pilot):  # noqa: F811
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=_tree_projection(),
+        tree_deleted_folder_available=True,
+    ) as pilot:
+        await pilot.pause()
+        assert pilot.app.query_one("#library-notes-folder-restore", Button)

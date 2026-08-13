@@ -6,6 +6,7 @@ from tldw_chatbook.Library.library_notes_tree_state import (
     UNFILED_PLACEMENT_ID,
     LibraryNotesTreeIdentity,
     build_library_notes_tree,
+    merge_note_folder_pages,
     reconcile_library_notes_tree_identity,
 )
 from tldw_chatbook.Notes.note_folder_models import (
@@ -205,6 +206,40 @@ def test_managed_and_restored_without_owner_are_textually_distinct_and_protected
     assert active.semantic_status == "connected"
     assert inactive.semantic_status == "needs_attention"
 
+    protected_folder = projection.row(FolderPlacementId.folder("work"))
+    assert protected_folder is not None and protected_folder.protected
+    assert protected_folder.semantic_status == "needs_attention"
+    assert protected_folder.status_text == "! Needs owner review"
+
+
+def test_managed_folder_protection_propagates_to_loaded_ancestors():
+    parent = _folder("work", None, "/Work")
+    child = _folder("project", "work", "/Work/Project")
+    projection = build_library_notes_tree(
+        root_page=_page(folders=(parent,)),
+        expanded_page=_page(
+            folders=(child,),
+            memberships=(
+                _membership(
+                    "managed",
+                    "project",
+                    "n1",
+                    ownership="managed",
+                    owner_id="root-a",
+                ),
+            ),
+            notes=({"id": "n1", "title": "Plan"},),
+        ),
+        expanded_folder_ids={"work", "project"},
+    )
+
+    work = projection.row(FolderPlacementId.folder("work"))
+    project = projection.row(FolderPlacementId.folder("project"))
+    assert work is not None and work.protected
+    assert project is not None and project.protected
+    assert work.status_text == "⇄ Sync managed"
+    assert project.semantic_status == "connected"
+
 
 def test_projection_exposes_bounded_more_rows_for_each_cursor():
     projection = build_library_notes_tree(
@@ -292,3 +327,22 @@ def test_filter_shows_every_matching_placement_with_its_breadcrumb():
         "Reading / Garden plan",
     ]
     assert all(row.label != "Unrelated" for row in projection.rows)
+
+
+def test_bounded_pages_merge_by_domain_identity_without_duplicates():
+    first = _page(
+        folders=(_folder("a", None, "/A"),),
+        notes=({"id": "n1", "title": "One"},),
+        next_note_offset=1,
+    )
+    second = _page(
+        folders=(_folder("a", None, "/A"), _folder("b", None, "/B")),
+        notes=(
+            {"id": "n1", "title": "One"},
+            {"id": "n2", "title": "Two"},
+        ),
+    )
+    merged = merge_note_folder_pages(first, second)
+    assert [folder.folder_id for folder in merged.folders] == ["a", "b"]
+    assert [note["id"] for note in merged.notes] == ["n1", "n2"]
+    assert merged.next_offset is None

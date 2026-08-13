@@ -33,6 +33,38 @@ def empty_note_folder_page() -> NoteFolderPage:
     )
 
 
+def merge_note_folder_pages(
+    base: NoteFolderPage, incoming: NoteFolderPage
+) -> NoteFolderPage:
+    """Merge continued bounded pages by stable storage identity."""
+    folders = {folder.folder_id: folder for folder in base.folders}
+    folders.update({folder.folder_id: folder for folder in incoming.folders})
+    memberships = {
+        membership.membership_id: membership for membership in base.memberships
+    }
+    memberships.update(
+        {
+            membership.membership_id: membership
+            for membership in incoming.memberships
+        }
+    )
+    notes = {_record_id(note): note for note in base.notes}
+    notes.update({_record_id(note): note for note in incoming.notes})
+    return NoteFolderPage(
+        folders=tuple(folders.values()),
+        memberships=tuple(memberships.values()),
+        notes=tuple(notes.values()),
+        total_folders=max(base.total_folders, incoming.total_folders),
+        total_notes=max(base.total_notes, incoming.total_notes),
+        next_offset=incoming.next_offset,
+        next_folder_offset=incoming.next_folder_offset,
+        total_memberships=max(
+            base.total_memberships, incoming.total_memberships
+        ),
+        next_membership_offset=incoming.next_membership_offset,
+    )
+
+
 @dataclass(frozen=True)
 class LibraryNotesTreeRow:
     """One visible folder, virtual Unfiled, or note-placement row."""
@@ -208,6 +240,20 @@ def build_library_notes_tree(
     memberships_by_folder: dict[str, list[NoteFolderMembership]] = {}
     for membership in memberships:
         memberships_by_folder.setdefault(membership.folder_id, []).append(membership)
+    managed_folder_active: dict[str, bool] = {}
+    for membership in memberships:
+        if membership.ownership != "managed":
+            continue
+        folder_id: str | None = membership.folder_id
+        seen: set[str] = set()
+        while folder_id is not None and folder_id not in seen:
+            seen.add(folder_id)
+            managed_folder_active[folder_id] = (
+                managed_folder_active.get(folder_id, True)
+                and membership.owner_active
+            )
+            folder = folders.get(folder_id)
+            folder_id = folder.parent_id if folder is not None else None
     children: dict[str | None, list[NoteFolder]] = {}
     for folder in folders.values():
         children.setdefault(folder.parent_id, []).append(folder)
@@ -226,6 +272,16 @@ def build_library_notes_tree(
 
     def add_folder(folder: NoteFolder, depth: int) -> None:
         expanded = folder.folder_id in expanded_folder_ids
+        protected = folder.folder_id in managed_folder_active
+        owner_active = managed_folder_active.get(folder.folder_id, True)
+        semantic_status: LibraryNotesTreeSemanticStatus = "normal"
+        status_text = ""
+        if protected and owner_active:
+            semantic_status = "connected"
+            status_text = "⇄ Sync managed"
+        elif protected:
+            semantic_status = "needs_attention"
+            status_text = "! Needs owner review"
         rows.append(
             LibraryNotesTreeRow(
                 placement_id=FolderPlacementId.folder(folder.folder_id),
@@ -234,6 +290,11 @@ def build_library_notes_tree(
                 depth=depth,
                 folder_id=folder.folder_id,
                 breadcrumb=folder.path.strip("/").replace("/", " / "),
+                ownership="managed" if protected else None,
+                owner_active=owner_active,
+                protected=protected,
+                semantic_status=semantic_status,
+                status_text=status_text,
                 expanded=expanded,
                 version=folder.version,
             )

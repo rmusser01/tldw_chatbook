@@ -1381,6 +1381,12 @@ ConsoleRunLogModal {
     color: $ds-status-warning;
 }
 
+.library-notes-folder-row.is-selected,
+.library-notes-tree-note-row.is-selected {
+    text-style: bold;
+    background: $ds-focus-bg;
+}
+
 
 /* Same look as .library-notes-row, on a separate class: the notes Create
    view's Blank note / template rows must not also match the list view's
