@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 import io
 import tomllib
 import wave
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ from textual import on
 from textual.app import App
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from Tests.TTS.test_console_speak_autoplay import _FakeApp
 from Tests.TTS.test_stts_audio_cpp_generation import (
@@ -23,25 +23,25 @@ from Tests.TTS.test_stts_audio_cpp_generation import (
     _NativeService,
     _Response,
 )
+from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _wait_for_selector,
 )
 from Tests.UI.test_settings_speech_tts_panel import (
+    _audio_cpp_state,
     _StyledDestinationHarness,
     _StyledPanelHarness,
-    _audio_cpp_state,
 )
 from Tests.UI.test_speech_profile_navigation import (
-    _SpeechHost,
     _playground_ready,
+    _SpeechHost,
     _wait_until,
 )
-from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from Tests.UI.test_studio_tts_preferences import _Host, _Store
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook import config as config_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -64,7 +64,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -415,6 +414,41 @@ async def test_global_and_studio_controls_have_programmatic_labels_and_text_stat
         assert "only the Speech Studio" in _rendered_text(
             studio.query_one("#studio-tts-scope", Static)
         )
+
+
+async def test_global_details_disclosures_are_accessible_and_unframed() -> None:
+    app = _AccessiblePanelHarness(
+        state=_audio_cpp_state(saved_provider=True),
+        observation=None,
+        current_configuration_revision=41,
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#panel")
+        focus_chain = tuple(app.screen.focus_chain)
+
+        for selector in (
+            "#settings-speech-details",
+            "#settings-speech-scope-inspector",
+        ):
+            disclosure = panel.query_one(selector, Collapsible)
+            title = disclosure.query_one("CollapsibleTitle")
+            assert disclosure.collapsed is True
+            assert title.can_focus
+            assert title in focus_chain
+            assert not any(
+                ancestor.has_class("settings-focus-card")
+                for ancestor in disclosure.ancestors
+            )
+
+        primary = " ".join(
+            _rendered_text(widget)
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "current status" in primary
+        assert "revision" not in primary
+        assert "provider_configuration" not in primary
 
 
 async def test_keyboard_order_reaches_primary_actions_and_status_does_not_steal_focus() -> (

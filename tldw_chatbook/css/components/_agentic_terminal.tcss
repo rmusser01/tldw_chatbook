@@ -6108,6 +6108,34 @@ _CredentialClearModal {
     margin-right: 0;
 }
 
+#settings-speech-details,
+#settings-speech-scope-inspector {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 1 0 0 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#settings-speech-details > CollapsibleTitle,
+#settings-speech-scope-inspector > CollapsibleTitle {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    padding: 1;
+}
+
+#settings-speech-details > Contents,
+#settings-speech-scope-inspector > Contents {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
 /* One row per backend inside the Backends block -- label, status badge,
    Enabled checkbox, default marker, Test button. height:auto (not the
    base .settings-input-row's fixed height:1) so the row never clips a

@@ -27,7 +27,7 @@ from textual.events import DescendantFocus
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 from textual.worker import NoActiveWorker, get_current_worker
 
 from tldw_chatbook.Chat.console_voice_input import (
@@ -527,6 +527,11 @@ class _SpeechSettingsCard(Vertical):
 class SpeechTTSSettingsPanel(Vertical):
     """Edit application-wide Speech/TTS defaults and one provider at a time."""
 
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("s", "save", "Save Speech & TTS", show=False),
+        Binding("r", "revert", "Revert Speech & TTS", show=False),
+    ]
+
     class DraftModified(Message):
         """Report whether the panel has an unsaved non-secret draft."""
 
@@ -662,6 +667,28 @@ class SpeechTTSSettingsPanel(Vertical):
 
         self._sync_responsive_layout()
         self._apply_audio_cpp_mode_visibility()
+
+    def command_allowed(self, command: str) -> bool:
+        """Allow printable letter commands only when text entry is not focused."""
+
+        is_letter_shortcut = (
+            len(command) == 1 and command.isprintable() and command.isalpha()
+        )
+        return not (
+            is_letter_shortcut and isinstance(self.app.focused, (Input, TextArea))
+        )
+
+    def action_save(self) -> None:
+        """Run the panel Save shortcut after text-entry ownership is checked."""
+
+        if self.command_allowed("s"):
+            self.request_save()
+
+    async def action_revert(self) -> None:
+        """Run the panel Revert shortcut after text-entry ownership is checked."""
+
+        if self.command_allowed("r") and self.has_unsaved_changes():
+            await self.revert_to_saved()
 
     def on_resize(self) -> None:
         """Keep labels and actions inside the available Settings detail width."""
@@ -1090,9 +1117,8 @@ class SpeechTTSSettingsPanel(Vertical):
         if environment_owned and environment_variable is not None:
             controls.append(
                 Static(
-                    "Effective source: Environment "
-                    f"({environment_variable}, read-only). The displayed value is "
-                    "the saved local fallback and does not override the environment.",
+                    "This value is managed outside Chatbook. The displayed value is "
+                    "a local fallback and cannot override the active value.",
                     classes="settings-detail-row",
                     markup=False,
                 )
@@ -1109,16 +1135,18 @@ class SpeechTTSSettingsPanel(Vertical):
     def _credential(self, provider_id: str) -> Vertical:
         state = self.state.credentials[provider_id]
         action_label = "Replace credential" if state.local_saved else "Set credential"
-        source_copy = f"Effective source: {state.source.value}"
-        if state.source.value == "Environment":
-            source_copy += f" ({state.environment_variable}, read-only)"
-        if state.local_shadowed:
-            source_copy += "; saved local fallback is shadowed by the environment"
+        source_copy = (
+            "Credential is available outside Chatbook."
+            if state.source.value == "Environment"
+            else "A local credential is available."
+            if state.local_saved
+            else "No credential is saved in Chatbook."
+        )
         controls: list[Button | Static] = [
             Static(source_copy, classes="settings-status-row", markup=False),
             Static(
-                "Local credentials are stored as local config secrets. "
-                f"Using {state.environment_variable} is the safer portable option.",
+                "Use an external credential when possible; locally saved credentials "
+                "remain on this device.",
                 classes="settings-detail-row",
                 markup=False,
             ),
@@ -1419,6 +1447,9 @@ class SpeechTTSSettingsPanel(Vertical):
         """Refresh source and draft-impact copy without provider work."""
 
         updates = {
+            "#settings-speech-default-status": (
+                f"Default voice setup: {self._defaults_configuration_state().value}."
+            ),
             "#settings-speech-default-source": (
                 "Global default selection: "
                 f"{self._defaults_configuration_state().value} — effective source "
@@ -1429,6 +1460,9 @@ class SpeechTTSSettingsPanel(Vertical):
                 f"{self.state.provider_sources[self.configure_provider].value}."
             ),
             "#settings-speech-draft-impact": self._draft_impact_copy(),
+            "#settings-speech-provider-current-status": (
+                f"Current status: {self._connection_readiness().connection.value}."
+            ),
         }
         for selector, copy in updates.items():
             try:
@@ -1612,7 +1646,6 @@ class SpeechTTSSettingsPanel(Vertical):
         yield _SpeechSettingsCard(
             self._compose_inspector_body,
             id=self._INSPECTOR_CARD_ID,
-            classes="settings-focus-card",
         )
 
         with Horizontal(id="settings-speech-actions", classes="settings-action-row"):
@@ -1720,10 +1753,8 @@ class SpeechTTSSettingsPanel(Vertical):
             ]
         yield Static("Global defaults", classes="destination-section")
         yield Static(
-            "Global default selection: "
-            f"{self._defaults_configuration_state().value} — effective source "
-            f"{self.state.defaults_source.value}.",
-            id="settings-speech-default-source",
+            f"Default voice setup: {self._defaults_configuration_state().value}.",
+            id="settings-speech-default-status",
             classes="settings-status-row",
             markup=False,
         )
@@ -1843,48 +1874,6 @@ class SpeechTTSSettingsPanel(Vertical):
                 markup=False,
             )
             yield Static(
-                self._audio_cpp_observation_copy(audio_cpp_choices),
-                id="settings-speech-audio-cpp-observation-provenance",
-                classes="settings-detail-row",
-                markup=False,
-            )
-            yield Static(
-                "Selected provider setup source: "
-                f"{self.state.provider_sources[self.configure_provider].value}.",
-                id="settings-speech-provider-source",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield Static(
-                self._draft_impact_copy(),
-                id="settings-speech-draft-impact",
-                classes="settings-status-row",
-                markup=False,
-            )
-            projection = self._status_projection()
-            dirty_connection = self._provider_connection_draft_dirty(
-                self.configure_provider
-            )
-            for row in projection.rows(dirty_draft=dirty_connection):
-                yield Static(
-                    row.copy,
-                    id=f"settings-speech-status-{row.row_id}",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-            yield Static(
-                self._connection_status_copy(),
-                id="settings-speech-status-provider-connection",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield Static(
-                "Ordinary Save validates and persists locally. Use Speech Lab for "
-                "connection tests, discovery, generation, and playback.",
-                classes="settings-detail-row",
-                markup=False,
-            )
-            yield Static(
                 "Settings reuses accepted in-memory observations only. Open "
                 "Speech Lab to test the server or refresh models and voices.",
                 classes="settings-detail-row",
@@ -1960,8 +1949,16 @@ class SpeechTTSSettingsPanel(Vertical):
         """
         yield Static("Provider setup", classes="destination-section")
         yield Static(
-            "Configure Provider does not change the Default TTS Provider.",
-            classes="settings-detail-row",
+            f"Task: set up {TTS_PROVIDER_LABELS[self.configure_provider]} for "
+            "application-wide speech.",
+            id="settings-speech-provider-task",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield Static(
+            f"Current status: {self._connection_readiness().connection.value}.",
+            id="settings-speech-provider-current-status",
+            classes="settings-status-row",
             markup=False,
         )
         yield self._row(
@@ -1984,43 +1981,127 @@ class SpeechTTSSettingsPanel(Vertical):
         Reads BOTH the defaults and the configured provider, so it is
         rebuilt alongside whichever of the two cards above changed.
         """
-        yield Static("Configuration inspector", classes="destination-section")
-        yield Static(
-            f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]}",
-            id="settings-speech-inspector-summary",
-            classes="settings-status-row",
-            markup=False,
-        )
-        yield Static(
-            "Selected provider setup source: "
-            f"{self.state.provider_sources[self.configure_provider].value}.",
-            id="settings-speech-provider-source",
-            classes="settings-status-row",
-            markup=False,
-        )
-        yield Static(
-            self._draft_impact_copy(),
-            id="settings-speech-draft-impact",
-            classes="settings-status-row",
-            markup=False,
-        )
-        projection = self._status_projection()
-        dirty_connection = self._provider_connection_draft_dirty(
-            self.configure_provider
-        )
-        for row in projection.rows(dirty_draft=dirty_connection):
+        with Collapsible(
+            title="Configuration details",
+            collapsed=True,
+            id="settings-speech-details",
+        ):
             yield Static(
-                row.copy,
-                id=f"settings-speech-status-{row.row_id}",
+                "Global default selection: "
+                f"{self._defaults_configuration_state().value} — effective source "
+                f"{self.state.defaults_source.value}.",
+                id="settings-speech-default-source",
                 classes="settings-status-row",
                 markup=False,
             )
-        yield Static(
-            "Ordinary Save validates and persists locally. Use Speech Lab for "
-            "connection tests, discovery, generation, and playback.",
-            classes="settings-detail-row",
-            markup=False,
-        )
+            yield Static(
+                "Selected provider setup source: "
+                f"{self.state.provider_sources[self.configure_provider].value}.",
+                id="settings-speech-provider-source",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                self._draft_impact_copy(),
+                id="settings-speech-draft-impact",
+                classes="settings-status-row",
+                markup=False,
+            )
+            saved_revision = self._provider_configuration_revisions.get(
+                self.configure_provider
+            )
+            applied_revision = self._provider_applied_configuration_revisions.get(
+                self.configure_provider
+            )
+            runtime_revision = self._provider_runtime_revisions.get(
+                self.configure_provider
+            )
+            yield Static(
+                f"Owner ID: app_tts.{self.configure_provider}. Revisions: saved "
+                f"{saved_revision if saved_revision is not None else 'none'}, applied "
+                f"{applied_revision if applied_revision is not None else 'none'}, "
+                f"runtime {runtime_revision if runtime_revision is not None else 'none'}.",
+                id="settings-speech-owner-details",
+                classes="settings-status-row",
+                markup=False,
+            )
+            credential = self.state.credentials.get(self.configure_provider)
+            if credential is not None:
+                shadow_copy = (
+                    " A saved local fallback is shadowed."
+                    if credential.local_shadowed
+                    else ""
+                )
+                yield Static(
+                    "Credential provenance: "
+                    f"{credential.source.value}; raw environment key "
+                    f"{credential.environment_variable} (read-only when active)."
+                    f"{shadow_copy}",
+                    id="settings-speech-credential-provenance",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+            environment_fields = GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS.get(
+                self.configure_provider,
+                {},
+            )
+            if environment_fields:
+                raw_keys = ", ".join(sorted(environment_fields.values()))
+                yield Static(
+                    f"Raw environment keys (read-only when active): {raw_keys}.",
+                    id="settings-speech-environment-keys",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+            if self.configure_provider == "audio_cpp":
+                configured_audio_choices = self._audio_cpp_choices()
+                yield Static(
+                    self._audio_cpp_observation_copy(configured_audio_choices),
+                    id="settings-speech-audio-cpp-observation-provenance",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+                yield Static(
+                    self._audio_cpp_draft_attribution_copy(),
+                    id="settings-speech-audio-cpp-draft-attribution",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+
+        with Collapsible(
+            title="Scope inspector",
+            collapsed=True,
+            id="settings-speech-scope-inspector",
+        ):
+            yield Static(
+                f"Selected setup: {TTS_PROVIDER_LABELS[self.configure_provider]}",
+                id="settings-speech-inspector-summary",
+                classes="settings-status-row",
+                markup=False,
+            )
+            projection = self._status_projection()
+            dirty_connection = self._provider_connection_draft_dirty(
+                self.configure_provider
+            )
+            for row in projection.rows(dirty_draft=dirty_connection):
+                yield Static(
+                    row.copy,
+                    id=f"settings-speech-status-{row.row_id}",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+            yield Static(
+                self._connection_status_copy(),
+                id="settings-speech-status-provider-connection",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Static(
+                "Ordinary Save validates and persists locally. Use Speech Lab for "
+                "connection tests, discovery, generation, and playback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
 
     def _compose_realtime_section(self) -> ComposeResult:
         """Build the Realtime engine block: config keys owned by task 6.
@@ -2240,13 +2321,6 @@ class SpeechTTSSettingsPanel(Vertical):
                         classes="settings-status-row",
                         markup=False,
                     )
-                    yield Static(
-                        self._audio_cpp_draft_attribution_copy(),
-                        id="settings-speech-audio-cpp-draft-attribution",
-                        classes="settings-detail-row",
-                        markup=False,
-                    )
-
                 with Vertical(id="settings-speech-audio-cpp-managed-fields"):
                     yield Static(
                         "Managed local server: Chatbook will execute the selected "

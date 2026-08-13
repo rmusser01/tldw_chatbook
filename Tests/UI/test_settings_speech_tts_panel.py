@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import struct
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -19,6 +19,7 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_voice_input import (
     DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
     DEFAULT_REALTIME_MODEL,
@@ -28,7 +29,6 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
 )
-from tldw_chatbook import config as config_module
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -43,8 +43,8 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
     openai_destination_fingerprint,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -58,6 +58,10 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
 )
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+    SpeechTTSRuntimeStatusStore,
+)
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
@@ -65,10 +69,6 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSRuntimeState,
     SpeechTTSRuntimeStatus,
     SpeechTTSStatusFreshness,
-)
-from tldw_chatbook.UI.Speech.speech_runtime_status import (
-    SpeechLocalDependencyAvailability,
-    SpeechTTSRuntimeStatusStore,
 )
 from tldw_chatbook.Widgets.Settings_Widgets import (
     speech_tts_settings_panel as speech_tts_settings_panel_module,
@@ -881,7 +881,15 @@ async def test_settings_connection_uses_sample_over_unsupported_catalog() -> Non
     )
     evidence = ProcessProviderTestEvidenceStore()
     evidence.record_catalog(fingerprint, SpeechTTSConnectionState.UNSUPPORTED)
-    wav = b"RIFF" + (6).to_bytes(4, "little") + b"WAVE\x00\x00"
+    wav = (
+        b"RIFF"
+        + struct.pack("<I", 38)
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, 8_000, 16_000, 2, 16)
+        + b"data"
+        + struct.pack("<I", 2)
+        + b"\x00\x00"
+    )
     assert evidence.record_successful_sample(
         fingerprint,
         status_code=200,
@@ -2884,11 +2892,18 @@ async def test_environment_credential_is_read_only_and_editor_starts_empty() -> 
     async with app.run_test(size=(150, 150)) as pilot:
         credential = app.query_one("#settings-speech-openai-credential")
         rendered = " ".join(str(node.render()) for node in credential.query(Static))
-        assert "Environment" in rendered
-        assert "read-only" in rendered
-        assert "shadowed" in rendered
+        assert "outside Chatbook" in rendered
+        assert "OPENAI_API_KEY" not in rendered
         assert "synthetic-local-fallback" not in rendered
         assert "synthetic-environment-value" not in rendered
+        details = app.query_one("#settings-speech-details", Collapsible)
+        technical_copy = " ".join(str(node.render()) for node in details.query(Static))
+        assert "Environment" in technical_copy
+        assert "OPENAI_API_KEY" in technical_copy
+        assert "read-only" in technical_copy
+        assert "shadowed" in technical_copy
+        assert "synthetic-local-fallback" not in technical_copy
+        assert "synthetic-environment-value" not in technical_copy
 
         edit = app.query_one("#settings-speech-openai-credential-edit", Button)
         edit.scroll_visible(animate=False)
@@ -2958,15 +2973,20 @@ async def test_environment_owned_legacy_paths_are_labeled_and_read_only(
             f"#settings-speech-{provider_id}-{field_id}-browse",
             Button,
         )
-        rendered = " ".join(
-            str(node.render()) for node in app.query(".settings-detail-row")
+        primary_copy = " ".join(
+            str(node.render())
+            for node in app.query(".settings-detail-row")
+            if node.is_on_screen
         )
+        details = app.query_one("#settings-speech-details", Collapsible)
+        technical_copy = " ".join(str(node.render()) for node in details.query(Static))
 
         assert field.disabled is True
         assert browse.disabled is True
-        assert environment_variable in rendered
-        assert "read-only" in rendered
-        assert "/environment/runtime-path" not in rendered
+        assert environment_variable not in primary_copy
+        assert environment_variable in technical_copy
+        assert "read-only" in technical_copy
+        assert "/environment/runtime-path" not in technical_copy
 
 
 @pytest.mark.asyncio
@@ -3141,6 +3161,199 @@ async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() 
 
         request_save.assert_called_once_with()
         revert_to_saved.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
+    app = _StyledPanelHarness(
+        configure_provider="audio_cpp",
+        observation=_audio_cpp_observation(),
+        current_configuration_revision=4,
+    )
+    async with app.run_test(size=(150, 55)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        details = panel.query_one("#settings-speech-details", Collapsible)
+        scope = panel.query_one("#settings-speech-scope-inspector", Collapsible)
+
+        assert details.collapsed is True
+        assert scope.collapsed is True
+        visible_copy = " ".join(
+            str(widget.render())
+            for widget in panel.query(Static)
+            if widget.display and widget.is_on_screen
+        ).casefold()
+        assert "task: set up" in visible_copy
+        assert "current status" in visible_copy
+        assert "revision" not in visible_copy
+        assert "effective source" not in visible_copy
+
+        model = panel.query_one("#settings-speech-model-value", Input)
+        model.value = "task-2-6-unsaved-model"
+        await pilot.pause()
+        assert "Unsaved" in str(
+            panel.query_one("#settings-speech-default-status", Static).render()
+        )
+
+        details.collapsed = False
+        scope.collapsed = False
+        await pilot.pause()
+        assert panel.query_one(
+            "#settings-speech-status-provider-configuration", Static
+        ).is_on_screen
+        assert (
+            "revision"
+            in " ".join(
+                str(widget.render())
+                for widget in details.query(Static)
+                if widget.is_on_screen
+            ).casefold()
+        )
+
+        await panel.recompose()
+        await pilot.pause()
+
+        assert (
+            panel.query_one("#settings-speech-details", Collapsible).collapsed is True
+        )
+        assert (
+            panel.query_one("#settings-speech-scope-inspector", Collapsible).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur() -> (
+    None
+):
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        request_save = Mock()
+        revert_to_saved = AsyncMock()
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "openai"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-openai-base-url",
+            timeout=4.0,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
+        endpoint.value = "http://127.0.0.1:8765/v1/audio/speech"
+        endpoint.focus()
+        await pilot.pause()
+        await pilot.press("end")
+        command_allowed = Mock(wraps=panel.command_allowed)
+        panel.command_allowed = command_allowed
+        await pilot.press("s", "r")
+
+        assert endpoint.value.endswith("speechsr")
+        assert command_allowed.call_args_list == []
+        assert panel.command_allowed("s") is False
+        assert panel.command_allowed("left") is True
+        request_save.assert_not_called()
+        revert_to_saved.assert_not_awaited()
+
+        text_area = TextArea("")
+        await panel.mount(text_area)
+        text_area.focus()
+        await pilot.press("s", "r")
+
+        assert text_area.text == "sr"
+        assert panel.command_allowed("r") is False
+        request_save.assert_not_called()
+        revert_to_saved.assert_not_awaited()
+
+        save = panel.query_one("#settings-speech-save", Button)
+        save.focus()
+        await pilot.press("s")
+        await pilot.pause()
+        request_save.assert_called_once_with()
+        assert any(item.args == ("s",) for item in command_allowed.call_args_list)
+
+        await pilot.press("r")
+        await pilot.pause()
+        revert_to_saved.assert_awaited_once_with()
+        assert any(item.args == ("r",) for item in command_allowed.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        request_save = Mock()
+        revert_to_saved = AsyncMock()
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "openai"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-openai-base-url",
+            timeout=4.0,
+        )
+        panel = screen.query_one(
+            "#settings-speech-tts-panel",
+            SpeechTTSSettingsPanel,
+        )
+        panel.request_save = request_save
+        panel.revert_to_saved = revert_to_saved
+        endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
+
+        endpoint.focus()
+        await pilot.click("#settings-speech-save")
+        request_save.assert_called_once_with()
+
+        endpoint.focus()
+        await pilot.click("#settings-speech-revert")
+        await pilot.pause()
+        revert_to_saved.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+async def test_speech_disclosures_and_actions_remain_reachable(
+    terminal_size: tuple[int, int],
+) -> None:
+    host = _StyledDestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=terminal_size) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        for selector in (
+            "#settings-speech-details",
+            "#settings-speech-scope-inspector",
+        ):
+            disclosure = screen.query_one(selector, Collapsible)
+            title = disclosure.query_one("CollapsibleTitle")
+            title.scroll_visible(animate=False)
+            await pilot.pause()
+            assert title.can_focus
+            assert 0 <= title.region.x
+            assert title.region.x + title.region.width <= pilot.app.size.width
+            assert 0 <= title.region.y < pilot.app.size.height
+
+        save = screen.query_one("#settings-speech-save", Button)
+        save.scroll_visible(animate=False)
+        await pilot.pause()
+        assert 0 <= save.region.y < pilot.app.size.height
 
 
 @pytest.mark.asyncio
