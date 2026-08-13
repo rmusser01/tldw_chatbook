@@ -844,8 +844,8 @@ def test_the_shipped_construction_runs_one_fallback_per_zero_row_sub_leg(
     * AFTER — the shipped `and_then_prefix` defines a fallback, so a sub-leg
       whose primary returns zero rows runs a SECOND statement. Measured over
       the 60 golden queries: 460 statements against the old default's 240,
-      i.e. **220 extra, 92% of sub-legs falling back** on that sparse
-      49-document corpus (an upper bound — the fallback fires only where the
+      i.e. **220 extra, 92% of sub-legs falling back** on the 172-document
+      eval corpus (an upper bound — the fallback fires only where the
       AND primary found nothing, so a denser corpus hits it less).
 
     That extra work is precisely what the pre-registered tie-break weighed,

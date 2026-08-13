@@ -50,6 +50,16 @@ out of the key), which is why TASK-15400 Task 1 put the construction into
 the async key and Task 2 pinned the sync twins rather than leaving them
 unremarked.
 
+**Restated after TASK-15700 (2026-08-13).** The shipped default moved again,
+`and_stopword_trim -> and_then_prefix`, so the paragraph above is unchanged
+in force and only its name is stale: the sync key still asserts the **full
+AND** while the leg now runs a full-AND primary *plus a prefix fallback*.
+The gap between what the key claims and what produced the rows is therefore
+wider than it was, not narrower. The async key is value-keyed and renders
+`fts:and_then_prefix`, so entries cached under the previous construction are
+keyed apart rather than invalidated — correct, at the cost of one run of
+cold misses after the upgrade.
+
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->

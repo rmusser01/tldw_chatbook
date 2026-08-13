@@ -488,7 +488,7 @@ class SearchConfig:
     # NON-EMPTY AND primary is never widened, and the widening rows are
     # confined to tier 2 of the sub-leg merge. The measured price is 220 extra
     # SQLite statements over the 60-query set (460 vs 240; 92% of sub-legs
-    # fall back on this SPARSE 49-document corpus -- an upper bound that
+    # fall back on the 172-document eval corpus -- an upper bound that
     # shrinks as a corpus densifies), wall time indistinguishable, and ZERO
     # measured retrieval difference.
     #

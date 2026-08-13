@@ -16,7 +16,9 @@ every golden query through the real seam across all three profile modes.
 > to fail them. Hybrid overall recall came off the 1.000 ceiling it had sat
 > at since the weighting arc and now reads **0.848** (0.826 at the end of
 > P2ab; TASK-15400's construction flip took it the rest of the way), and the
-> baselines were re-stamped once, deliberately, at the end of each arc. Two candidate
+> baselines were re-stamped once, deliberately, at the end of each arc that
+> moved a cell — TASK-15700 (2026-08-13) moved the default a second time and
+> moved **none**, so it re-stamped nothing and said so. Two candidate
 > classes (`compositional`, `acronym`) proved **unfailable** on this corpus
 > and model and were not authored — that is recorded evidence against two
 > P2c feature premises, not an omission. Start at the **headroom table**
@@ -76,8 +78,8 @@ pytest Tests/RAG_Eval/ -q
 ```
 
 This runs the metrics/gating/fixture-integrity/canonicalization tests —
-currently 138 passed, 4 skipped (the two env-gated test files, two tests
-each). It never touches the embedding model or a real corpus.
+**measured 2026-08-13: 266 passed, 12 skipped** (the skips are the env-gated
+files' tests). It never touches the embedding model or a real corpus.
 
 **The real harness run (opt-in, slow, needs a real model):**
 
@@ -86,9 +88,9 @@ RAG_EVAL=1 pytest Tests/RAG_Eval/ -q -p no:randomly
 ```
 
 This runs everything above *plus* `test_harness_smoke.py` and
-`test_harness_run.py`, which stand up a genuine indexed RAG install (the 49
+`test_harness_run.py`, which stand up a genuine indexed RAG install (the 172
 fixture docs, written through the real writer APIs, embedded and indexed
-through the real batch path) and run all 45 golden queries three times —
+through the real batch path) and run all 60 golden queries three times —
 once per `default_search_mode` (`plain`, `semantic`, `hybrid`). Whole run is
 ~10-15s once the model is warm. `-p no:randomly` is not required (the run
 passes in either order — see Task 7) but keeps the two env-gated tests'
@@ -186,7 +188,7 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | 0.000 | **0.200** | 1 of 5, taken by TASK-15400's construction flip; the residual 4 are bounded by absent CONTENT words and by the MERGE — see below |
+| `prompt` | 5 | 0.000 | 0.000 | **0.200** | 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
 | **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
 
@@ -211,19 +213,26 @@ cells with room to rise, and they are not the same kind of problem:
   and moved the hybrid cell to 0.200. **The other four still miss in every
   mode, and not for a reason a stopword list can fix** — they miss on absent
   CONTENT words (`template`, `building`, `rough`, `turns`, `pulls`,
-  `builds`) and on the absence of plural/singular widening. The
-  constructions that DO answer all five (`or`, `and_then_or`: prompt census
-  5/5) were measured and DISQUALIFIED, on the MERGE rather than on the match
-  form — see the TASK-15400 re-stamp section below. Prompts have no vector
-  leg to hide any of this, so prompts are where it shows. **Do not read this
-  cell as evidence that B2 did not land** — B2's reachability is pinned
-  separately.
+  `builds`). TASK-15700 (2026-08-13) then fixed the merge, added
+  plural/singular widening as a **fallback** (`and_then_prefix`), and the
+  cell **still reads 0.200** — the same one query, now reached by the prefix
+  fallback rather than by the trim. So the residual four are bounded by
+  absent content words, full stop; the two constructions that DO answer all
+  five (`or`, `and_then_or`: prompt census 5/5) were re-measured under the
+  fixed merge and are **still disqualified, for two different reasons and
+  neither of them the merge any more** — see the TASK-15700 section below.
+  Prompts have no vector leg to hide any of this, so prompts are where it
+  shows. **Do not read this cell as evidence that B2 did not land** — B2's
+  reachability is pinned separately.
 
 **Hybrid's 0.152 of overall headroom is real but is mostly those two
 classes.** Do not expect a fusion knob to reach it: `negation` needs a
-capability the pipeline does not have, and the residual `prompt` misses need
-the keyword leg's cross-sub-leg merge fixed (TASK-15700) *plus* a widening
-the merge can then survive. If a
+capability the pipeline does not have, and the residual `prompt` misses have
+now outlived the two levers that were supposed to reach them — the
+cross-sub-leg merge was fixed and a widening that survives it did ship
+(TASK-15700, 2026-08-13), and those four cells did not move. What is left on
+that class is either a capability (stemming/expansion) or the FUSION
+weighting that disqualified the constructions which answer all five. If a
 future weighting change needs evidence that it *adds* something to the
 classes already covered, it still needs a **new** vector-blind fixture
 authored the way the existing one was (see the "VECTOR-BLIND KEYWORD
@@ -342,11 +351,18 @@ The two high-census rows are disqualified, and — this is the arc's finding —
   digit.
 
 So constraint (a) is a property of the **merge**, not of the construction.
-That is now **TASK-15700**, and its counterfactual margin is recorded there:
+That became **TASK-15700**, and its counterfactual margin was recorded here:
 re-fusing the `and_then_or` pass with the fixture restored to leg rank 1 and
 nothing else changed puts it back at **slot 10 of 10** — a merge fix rescues
 it with zero headroom, so fixing the interleave is necessary and *not
 sufficient* for a widening construction to ship.
+
+**Both halves of that prediction held.** TASK-15700 (2026-08-13) fixed the
+merge; `and_then_or`'s rescue came back **at exactly slot 10**, as forecast,
+and the row was disqualified anyway — on constraint (b) this time, by
+fusion rather than by the merge. The construction that did ship
+(`and_then_prefix`) is a widening the fixed merge survives. See the
+TASK-15700 section below.
 
 **What the re-stamp absorbed: exactly ten of the 105 gated metrics, all up,
 all hybrid.**
@@ -417,6 +433,178 @@ and because `corpus_sha256` hashes the fixture files' **bytes**, a comment
 is a fingerprint change: the digest moved, the 105 metrics did not (verified
 by diffing the two stamps), and the committed baselines match the committed
 fixtures.
+
+### The fifth arc, and the re-stamp that did NOT happen: TASK-15700 (2026-08-13)
+
+TASK-15400 closed by naming its own blocker: the keyword leg merged its four
+source sub-legs with `interleave_rankings`, a **round-robin over sub-leg
+position**, so one sub-leg's row COUNT decided every other sub-leg's leg
+rank — and fusion consumes leg rank. TASK-15700 fixed that merge and then
+**re-ran the construction sweep under it**, with two new rows (`prefix`,
+`and_then_prefix`) pre-registered before the run.
+
+Two things shipped. **Part A**: the sub-leg merge is now form-tiered —
+primary-form rows (tier 1) wholly precede fallback-form rows (tier 2),
+interleaved within each tier — so a sub-leg that found nothing can no longer
+demote a sub-leg that found something. **Part B**: the engine leg's default
+MATCH construction moved `and_stopword_trim` → **`and_then_prefix`** (full
+AND first; per-token prefix matching only for a sub-leg whose AND returned
+zero rows).
+
+**The six-row re-run, gated, hybrid, k=10, 60 golden queries:**
+
+```
+row              construction  census  resc  lost  zero  rescue  rank   gate (105 cells)
+and                       and      20     0     0    40     yes     9   REGRESSED (5 past 0.02)
+and_trim    and_stopword_trim      21     1     0    39     yes     9   PASSED  (0 moved)
+or                         or      28     9     1    11      NO     -   REGRESSED (12 past 0.02)
+and_or            and_then_or      29     9     0    11     yes    10   REGRESSED (8 past 0.02, 5 past 0.05)
+prefix                 prefix      23     3     0    36     yes     9   PASSED  (0 moved)
+and_pfx       and_then_prefix      23     3     0    36     yes     9   PASSED  (0 moved)
+```
+
+`lost` = census hits the CONTROL row answered and this row no longer does;
+`resc` = the control's zero-row queries this row's leg now answers. Hard
+constraint (b) was measured in **all three modes** by the gate's own
+`compare_or_update` against the committed baselines, not by the sweep:
+`plain` and `semantic` moved zero cells under every construction.
+
+**What the merge fix bought, measured.** `and_then_or` — the row 15400
+disqualified on the vector-blind rescue — moved **rescue `NO` → `yes` at
+slot 10, and scoped recall 0.429 → 1.000**, and the leg's own form stamps
+say why: `['and', 'or', 'or', …]`, the untouched AND primary leading its nine
+tier-2 fallbacks instead of being round-robined behind them. That is Part A's
+payoff and it reproduces 15400's decomposition in reverse (the four
+note-targeted scoped queries come back; the three media-targeted ones never
+left).
+
+**And it still does not ship.** `and_then_or` is now disqualified on
+constraint **(b)** instead: 8 gated cells past 0.02, 5 past the 0.05 fail
+band (paraphrase and vocabulary_mismatch mrr/ndcg, `overall.mrr` −0.056),
+with recall on those categories at +0.000 — the signature of correct rank-1
+answers being re-ranked rather than lost. The mechanism, recorded so a
+future arc need not re-derive it: **tier 2 confines fallback rows inside the
+keyword leg, but tier 2 still enters FUSION**, where a fallback row that also
+carries a vector rank becomes a MERGED row outscoring any fts-only row.
+Sharper still — all five regressing queries have an EMPTY keyword leg under
+the shipped default, so under `and_then_or` every sub-leg falls back, the leg
+is **100% tier 2**, tier 1 is empty and the partition is the identity
+function. **Part A is structurally INERT on exactly the queries that
+disqualify the row**; no tiering change could have saved it. Its 8-census
+lead over the winner is a fusion-weighting question, not a merge one.
+
+`or` fails for a different reason again, and the merge was never its cause:
+the fixture is **absent from the leg's top-10 entirely**, displaced inside
+the notes sub-leg's own bm25-ordered, LIMITED result set before any merge is
+consulted. A widening PRIMARY puts every row in tier 1, so tiering has
+nothing to tier there.
+
+#### The decision record — the rule's winner and the owner's ruling, never conflated
+
+1. **The pre-registered rule (15400's, verbatim) was applied and ran to
+   completion.** The census-maximal row `and_then_or` (29) is disqualified on
+   (b); `or` on (a) and (b). Qualifiers: {`and_stopword_trim` 21, `prefix`
+   23, `and_then_prefix` 23}. **Max census 23 is a TIE**, and the two tied
+   rows are measurement-identical on every captured axis — same census
+   hit-set, all 105 gated cells unmoved, **all 60 per-query hybrid top-10s
+   and all 60 keyword-leg top-10s identical**, `lost` 0 both ways. The rule's
+   first tie-break is fewest extra FTS **statements**, measured over the 60
+   golden queries: **240 vs 460**. **The rule's winner is `prefix`.**
+2. **The owner ruled `and_then_prefix` ships instead**, applying the standing
+   stability-over-quick-wins ruling to a dimension the tie-break predates:
+   `prefix` widens as a PRIMARY, so Part A's tiering protects it not at all
+   and it carries a measured self-displacement failure mode (12
+   prefix-competitor docs + 1 exact-match doc, top_k=5 → the exact doc gone,
+   inside ONE sub-leg where tiering has nothing to tier). `and_then_prefix` is
+   immune to that by construction — a non-empty AND primary is never widened.
+
+**Read the shipped value correctly: `and_then_prefix` is NOT the rule's
+output.** The rule produced `prefix`; the tie between two
+measurement-identical qualifiers was decided by a standing owner ruling. Both
+halves are stated at every site that records the outcome (`config.py`,
+`_escape_fts5_query`, the flipped test docstrings), and the shipped-default
+pin is named `test_the_shipped_default_is_the_owner_ruled_construction` for
+exactly that reason.
+
+**The price, stated with its bound.** 220 extra SQLite statements over the 60
+golden queries — **92% of sub-legs actually fall back**, not the "up to" a
+definition count implies. That 92% is an **UPPER BOUND belonging to this
+172-document corpus**, not a forecast: the fallback fires precisely when the AND
+primary finds nothing, so a denser corpus hits the primary more often and the
+count falls. Wall time is indistinguishable at this scale (~1.0–1.5s per
+row), so the tie-break was decided on work performed, not time observed.
+
+#### What the flip bought, and what it is not
+
+Leg-level census **20 → 23 of 53** against the pre-arc control (21 → 23
+against the outgoing default), residual zero-row **40 → 36 of 60**. The three
+ids, named because a bare `23` survives trading one hit for another:
+`pm-vendor-chaser` (also reachable by the outgoing trim), plus the two the
+prefix fallback alone reaches — `kw-quillon-mast` ("guy **tension**" against a
+document that says "guy **tensions**") and `kw-thimble-relay` ("relay board
+**swap**" against "**swapping**/**swapped**"). That is the shipped class in
+one line: **a typed content word now matches a document word that STARTS with
+it.** The reverse does not hold — typing `tensions` still will not find
+`tension` — so this is prefix widening, not stemming.
+
+Residual zero-row after the flip, **re-measured per category** (leg-level,
+negatives included, 2026-08-13, at the shipped default):
+
+| category | zero-row / n |
+|---|---|
+| `keyword` | 1 / 16 |
+| `negation` | 2 / 3 |
+| `negative` | 7 / 7 |
+| `paraphrase` | 13 / 13 |
+| `prompt` | 4 / 5 |
+| `scoped` | 0 / 7 |
+| `vocabulary_mismatch` | 9 / 9 |
+| **total** | **36 / 60** |
+
+with the census at 23/53: `keyword` 15/16, `scoped` 7/7, `prompt` 1/5,
+`negation` 0/3, `paraphrase` 0/13, `vocabulary_mismatch` 0/9.
+
+**The new default is NOT a superset of the outgoing one by construction.**
+`and_then_prefix`'s primary is the FULL AND — every token, function words
+included — so a sub-leg whose full AND returns rows never seeks the
+trim-only hits. That nothing was lost (`lost` 0 against both the control and
+the outgoing default) is a **MEASURED fact about this corpus**, never a
+structural guarantee.
+
+#### The vector-blind fixture is on the boundary, not above it
+
+Under the shipped construction `kw-plant-maintenance-record`'s target
+(`note-saltmarsh-hide`) holds **slot 9 of 10** — exactly the slot the
+outgoing default gave it. **This is not headroom, and the distance to slot 11
+must not be quoted as margin.** The row immediately below it is a
+**MATHEMATICAL TIE**: the fixture's fts-only score is `(1−α)/(rrf_k+1) =
+0.3/6` and that row's is `α/(rrf_k+9) = 0.7/14`, and `0.3/6 == 0.7/14 == 1/20`
+**exactly** in rational arithmetic (4 ULPs apart in IEEE-754). It keeps its
+slot on `reciprocal_rank_fusion`'s documented `(-score, fts_rank,
+vector_rank)` tie-break, **not on any margin** — and it sat on that same
+boundary under the old default too. Nothing in this arc adds margin and the
+shipped construction spends none. What would displace it is a **MERGED
+(fts+vector) row**, which is exactly what a widening PRIMARY manufactures:
+`and_then_or` inserts one at slot 9 and pushes the fixture to slot 10. Fusion
+parameters (`rrf_k`/`alpha`/`pool`) own that margin and stayed out of scope.
+
+#### AC#6: the re-stamp is a disclosed NON-EVENT
+
+**Zero of the 105 gated cells moved.** Stronger than a count: the gate's own
+105 printed cell lines are **byte-identical** between a run at the old
+default and a run at the new one, in all three modes. So no baseline file was
+touched in this arc, no stamp was manufactured, and the gate's environment
+fingerprint is the one TASK-15400 committed. A construction change that
+buys leg-level coverage the vector leg was already covering is *supposed* to
+be invisible here — the gain shows in the census and in the zero-row count,
+which is why those two numbers exist.
+
+One deliberate omission for the same reason: **the fixture files were not
+edited.** `corpus_sha256` hashes their bytes, so even a comment correcting
+15400's dated receipts (`golden.toml`'s `# retained:` line still names
+`and_stopword_trim`) would move the fingerprint and force a re-stamp this arc
+did not earn. Those receipts are true of the day they were written; this
+section is the current state.
 
 ## Fail-first authoring: the admission protocol
 
@@ -582,10 +770,14 @@ absent from the tuple entirely rather than sitting in it empty:
   read-only FTS sub-leg and deliberately no vector index, so `semantic`
   reads 0.000 structurally. The category read **0.000 in all three modes**
   until TASK-15400 (2026-08-12); it now reads **0.200 in `hybrid`** — one of
-  the five queries, rescued by shipping `and_stopword_trim` — and 0.000 in
-  the other two modes. The residual is still a bound on the engine's MATCH
-  construction and on its cross-sub-leg merge (TASK-15700), not on prompts
-  retrieval: the sub-leg is proven reachable on the same runtime. See the
+  the five queries — and 0.000 in the other two modes. That one query has
+  been rescued by two different mechanisms without the cell moving: the
+  stopword trim under 15400's `and_stopword_trim`, and the **prefix
+  fallback** under TASK-15700's `and_then_prefix` (2026-08-13), whose full-AND
+  primary returns nothing for it. The residual four are a bound on absent
+  CONTENT words — not on the cross-sub-leg merge, which 15700 fixed without
+  moving them, and not on prompts retrieval: the sub-leg is proven reachable
+  on the same runtime. See the
   headroom table and the `docs`/FTS bullet under "Reading the summary table"
   for the measurement and the caution.
 - **`negative`** — no relevant document exists for the query. Excluded from
@@ -710,6 +902,18 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   prefix matching (rescues 3, held back by the pre-registered promotion bar
   and carrying the same displacement risk, unmeasured at leg level).
 
+  **TASK-15700 then fixed the merge those disqualifications ran through,
+  re-ran the sweep over six rows, and moved the default again (2026-08-13):
+  `and_then_prefix` — census 21 → 23 of 53 (20 → 23 against the pre-arc
+  control), zero-row 39 → 36 of 60, `prompt` census 1/5 (unmoved, new
+  mechanism).** The prefix lead above is what got measured at hybrid level
+  and promoted, as a FALLBACK rather than as the primary: the two extra
+  census hits are `kw-quillon-mast` and `kw-thimble-relay`, both inflection
+  misses ("tension" vs "tensions", "swap" vs "swapped"). `and_then_prefix`
+  ships by OWNER RULING over the rule's own tie-break, which selected the
+  bare `prefix` row — see the TASK-15700 section above for the full record,
+  the 220-statement price, and why zero gated cells moved.
+
   For media, notes and conversations the semantic leg covers all of this
   completely. Prompts have no semantic leg — B2 gave them an FTS sub-leg and
   deliberately no vector index — so the `prompt` category still reads 0.000
@@ -830,7 +1034,8 @@ attempting anything here:
   investigation/product-judgment task, not a defect with an obvious fix.
   **The two keyword paths now diverge deliberately, and this is the record
   of it (TASK-15400 AC#8).** The ENGINE leg builds its MATCH through
-  `RAGService._fts5_match_expressions` and ships `and_stopword_trim`; the
+  `RAGService._fts5_match_expressions` and ships `and_then_prefix`
+  (TASK-15700, 2026-08-13; `and_stopword_trim` before that); the
   Library FOUR-SEAM path still builds its own through
   `build_fts_match_query` and still AND-joins every group. They were not
   unified, for a measured reason rather than a scheduling one: the sweep
@@ -875,6 +1080,21 @@ attempting anything here:
   the MERGE rather than by the match form** — see the re-stamp section
   above, and TASK-15700, which owns the round-robin `interleave_rankings`
   displacement that disqualified them.
+- **TASK-15700 — FIXED, and it changed which mechanism the leg is bounded
+  by.** `RAGService._keyword_search` merged its four source sub-legs with a
+  round-robin over sub-leg POSITION, so one sub-leg's row count decided
+  another sub-leg's leg rank and fusion consumed that rank. The merge is now
+  form-tiered (primary-form rows wholly precede fallback-form rows), which
+  restored `and_then_or`'s vector-blind rescue (`NO` → yes at slot 10) and
+  its scoped recall (0.429 → **1.000**) — the predicted zero-headroom rescue,
+  to the slot. The re-run sweep then moved the default to **`and_then_prefix`
+  by owner ruling** (the rule's own tie-break selected `prefix`): census
+  20 → 23 of 53, zero-row 40 → **36** of 60, **0 of 105 gated cells moved**,
+  at 220 extra FTS statements over the 60 golden queries. `and_then_or` is
+  still disqualified — now on constraint (b), by FUSION (tier-2 fallback rows
+  carrying vector ranks promote to merged rows above rank-1 answers), and
+  Part A is provably inert on those queries because their keyword legs are
+  100% tier 2. The full record is the TASK-15700 section above.
 
 Do not "fix" any of these by editing the harness or the fixtures — the
 harness's job is to keep measuring the real seam accurately; the numbers it

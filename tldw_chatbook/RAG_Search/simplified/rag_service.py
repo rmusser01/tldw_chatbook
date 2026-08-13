@@ -3524,8 +3524,8 @@ class RAGService:
         the exact doc, ``prefix`` returns 5 rows without it), while
         ``and_then_prefix`` never widens a NON-EMPTY AND primary and confines
         widening rows to tier 2. Price: 220 extra SQLite statements on this
-        corpus (92% of sub-legs falling back on a sparse 49-document corpus,
-        an upper bound that shrinks as a corpus densifies), wall time
+        corpus (92% of sub-legs falling back on the 172-document eval
+        corpus, an upper bound that shrinks as a corpus densifies), wall time
         indistinguishable, ZERO measured retrieval difference.
         **``and_then_prefix`` is therefore NOT the rule's own output and must
         never be described as such.**
