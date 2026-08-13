@@ -183,6 +183,28 @@ class _FakeIngestParsePool:
         pass
 
 
+class _RecordingIngestJobStore:
+    """Minimal persistence sink that exposes registry write-through effects."""
+
+    def __init__(self) -> None:
+        self.upserts: list[str] = []
+        self.deletes: list[str] = []
+        self.retries: list[tuple[str, str]] = []
+
+    def upsert_job(self, job: LibraryIngestJob) -> None:
+        self.upserts.append(job.job_id)
+
+    def delete_job(self, job_id: str) -> None:
+        self.deletes.append(job_id)
+
+    def upsert_retry(
+        self,
+        superseded_job: LibraryIngestJob,
+        retry_job: LibraryIngestJob,
+    ) -> None:
+        self.retries.append((superseded_job.job_id, retry_job.job_id))
+
+
 class _FakeLocalSTTExecutor:
     """Manual executor stand-in that records dispatch and emits off-thread."""
 
@@ -423,6 +445,7 @@ async def _wait_for_runner_idle(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
     db = _make_db(tmp_path)
     source = _write_text_file(
@@ -670,6 +693,7 @@ async def test_failing_job_does_not_block_next_queued_job(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -692,11 +716,11 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
     real_run_parse_job = app_module.run_parse_job
     call_count = {"n": 0}
 
-    def _flaky_run_parse_job(file_path, options):
+    def _flaky_run_parse_job(file_path, options, progress_context):
         call_count["n"] += 1
         if call_count["n"] == 1:
             return {"ok": False, "error": "transient parse hiccup", "permanent": False}
-        return real_run_parse_job(file_path, options)
+        return real_run_parse_job(file_path, options, progress_context)
 
     monkeypatch.setattr(app_module, "run_parse_job", _flaky_run_parse_job)
 
@@ -1361,6 +1385,7 @@ async def test_parakeet_retry_keeps_job_local_override_and_scope_path_private(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
     tmp_path: Path,
 ) -> None:
@@ -1395,8 +1420,14 @@ async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
         assert current is not None
         assert current.progress == {
             "phase": "transcribing",
+            "message": "Transcribing audio",
             "cancel_requested": True,
         }
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={**current.progress, "percent": 64.0},
+            persist=False,
+        )
         executor.trigger_event(
             0,
             ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
@@ -1406,6 +1437,7 @@ async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
         assert current is not None
         assert current.progress == {
             "phase": "post-processing",
+            "message": "Post-processing audio",
             "cancel_requested": True,
         }
 
@@ -2196,6 +2228,7 @@ async def test_executor_admits_only_one_local_job_when_legacy_heavy_cap_is_highe
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_network
 async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
     tmp_path: Path,
 ) -> None:
@@ -2205,6 +2238,8 @@ async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
         local_stt_executor=executor,
         local_stt_dispatch_factory=_fake_local_stt_dispatch,
     )
+    store = _RecordingIngestJobStore()
+    app.library_ingest_jobs.attach_store(store)
     source = tmp_path / "speech.wav"
     source.write_bytes(b"fixture")
     wakes: list[str] = []
@@ -2218,6 +2253,7 @@ async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
         await pilot.pause()
         call = executor.calls[0]
         attempt_id = call["attempt_id"]
+        persisted_before_tick = tuple(store.upserts)
 
         executor.trigger_event(
             0,
@@ -2226,8 +2262,12 @@ async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
         await pilot.pause()
         current = app.library_ingest_jobs.get_job(job.job_id)
         assert current is not None
-        assert current.progress == {"phase": "transcribing"}
+        assert current.progress == {
+            "phase": "transcribing",
+            "message": "Transcribing audio",
+        }
         assert "percent" not in current.progress
+        assert tuple(store.upserts) == persisted_before_tick
 
         executor.trigger_result(
             0,
@@ -3181,6 +3221,259 @@ def test_create_pool_progress_resources_close_queue_when_pool_raises(
 
     assert progress_queue.closed is True
     assert progress_queue.cancelled_join is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_pool_submission_binds_generation_and_job_and_applies_transient_progress(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+    store = _RecordingIngestJobStore()
+    app.library_ingest_jobs.attach_store(store)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "progress.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        persisted_before_tick = tuple(store.upserts)
+        lifecycle_notifications: list[str] = []
+        progress_notifications: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+        app.library_ingest_jobs.add_listener(
+            lambda: lifecycle_notifications.append("lifecycle")
+        )
+        app.library_ingest_jobs.add_progress_listener(
+            lambda before, after: progress_notifications.append(
+                (before.progress, after.progress)
+            )
+        )
+
+        assert pool.calls[0]["args"][2] == (generation, job.job_id)
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Extracting page 1 of 4",
+                    25.0,
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Extracting page 1 of 4",
+            "percent": 25.0,
+        }
+        assert tuple(store.upserts) == persisted_before_tick
+        assert lifecycle_notifications == []
+        assert progress_notifications == [
+            (
+                None,
+                {
+                    "phase": "extracting",
+                    "message": "Extracting page 1 of 4",
+                    "percent": 25.0,
+                },
+            )
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_parse_progress_batch_revalidates_nominal_events_and_ignores_unknown_data(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "revalidate.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+
+        class _HostileQueueItem:
+            @property
+            def generation(self) -> int:
+                raise RuntimeError("malformed IPC property")
+
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                object(),
+                _HostileQueueItem(),
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "provider-private-stage",
+                    "raw provider data",
+                    90.0,
+                ),
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Extracting page 2\nof 4\x00",
+                    float("inf"),
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Extracting page 2 of 4",
+        }
+
+
+@pytest.mark.parametrize(
+    "fence",
+    (
+        "shutdown",
+        "handler_generation",
+        "event_generation",
+        "generation_membership",
+        "job_missing",
+        "non_parsing",
+        "terminal",
+        "hidden",
+        "payload_ready",
+    ),
+)
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_parse_progress_batch_rejects_stale_or_ineligible_events(
+    tmp_path: Path,
+    fence: str,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, f"{fence}.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={
+                "phase": "inspecting",
+                "message": "Before stale event",
+                "percent": 5.0,
+            },
+            persist=False,
+        )
+        handler_generation = generation
+        event_generation = generation
+        event_job_id = job.job_id
+
+        if fence == "shutdown":
+            app._ingest_shutdown = True
+        elif fence == "handler_generation":
+            handler_generation += 1
+            event_generation = handler_generation
+            app._ingest_parse_jobs_by_generation[handler_generation] = {job.job_id}
+        elif fence == "event_generation":
+            event_generation += 1
+        elif fence == "generation_membership":
+            app._ingest_parse_jobs_by_generation[generation].remove(job.job_id)
+        elif fence == "job_missing":
+            event_job_id = "ingest-job-missing"
+            app._ingest_parse_jobs_by_generation[generation].add(event_job_id)
+        elif fence == "non_parsing":
+            assert app.library_ingest_jobs.mark_writing(job.job_id) is not None
+        elif fence == "terminal":
+            assert app.library_ingest_jobs.mark_failed(
+                job.job_id, error="settled"
+            ) is not None
+        elif fence == "hidden":
+            assert app.library_ingest_jobs.mark_failed(
+                job.job_id, error="hidden"
+            ) is not None
+            assert app.library_ingest_jobs.dismiss(job.job_id) is not None
+        elif fence == "payload_ready":
+            app._ingest_parsed_payloads[job.job_id] = {"content": "ready"}
+        else:  # pragma: no cover - parameter table is exhaustive
+            raise AssertionError(f"unknown fence: {fence}")
+
+        before = app.library_ingest_jobs.get_job(job.job_id)
+        assert before is not None
+        app._on_ingest_parse_progress_batch(
+            handler_generation,
+            (
+                ParseProgressEvent(
+                    event_generation,
+                    event_job_id,
+                    "extracting",
+                    "After stale event",
+                    75.0,
+                ),
+            ),
+        )
+
+        after = app.library_ingest_jobs.get_job(job.job_id)
+        assert after is not None
+        assert after.progress == before.progress
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
+async def test_late_progress_after_parse_completion_cannot_replace_payload_receipt(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(_make_db(tmp_path), pool_factory=lambda: pool)
+    app._start_library_ingest_queue_if_idle = lambda: None
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(_write_text_file(tmp_path, "complete.txt", "body"))
+        )
+        await pilot.pause()
+        generation = app._ingest_parse_pool_generation
+        app.library_ingest_jobs.update_progress(
+            job.job_id,
+            progress={"phase": "extracting", "message": "Parse receipt"},
+            persist=False,
+        )
+
+        payload = {"content": "parsed"}
+        app._on_ingest_parse_complete(
+            generation,
+            job.job_id,
+            {"ok": True, "payload": payload},
+        )
+        app._on_ingest_parse_progress_batch(
+            generation,
+            (
+                ParseProgressEvent(
+                    generation,
+                    job.job_id,
+                    "extracting",
+                    "Late extraction",
+                    99.0,
+                ),
+            ),
+        )
+
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert app._ingest_parsed_payloads[job.job_id] == payload
+        assert current.progress == {
+            "phase": "extracting",
+            "message": "Parse receipt",
+        }
 
 
 def test_progress_drain_coalesces_latest_event_with_injected_clock() -> None:

@@ -235,6 +235,8 @@ from tldw_chatbook.Local_Ingestion.ingest_parse_progress import (
     INGEST_PARSE_PROGRESS_FLUSH_SECONDS,
     INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE,
     ParseProgressCoalescer,
+    ParseProgressEvent,
+    make_parse_progress_event,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
@@ -1911,6 +1913,13 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+_INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
+    WorkerPhase.PREPARING: "Preparing import",
+    WorkerPhase.LOADING: "Loading source",
+    WorkerPhase.TRANSCRIBING: "Transcribing audio",
+    WorkerPhase.POST_PROCESSING: "Post-processing audio",
+}
+
 # Cap on how many persisted ingest jobs `_restore_ingest_jobs` carries
 # forward on restart (see `Library.library_ingest_jobs.plan_restore`) --
 # keeps startup and the in-memory registry bounded for a long-lived store.
@@ -3541,8 +3550,14 @@ class LibraryIngestQueueMixin:
             return
         existing = self.library_ingest_jobs.get_job(job_id)
         progress = dict(existing.progress or {}) if existing is not None else {}
+        progress.pop("percent", None)
         progress["phase"] = event.phase.value
-        self.library_ingest_jobs.update_progress(job_id, progress=progress)
+        progress["message"] = _INGEST_LOCAL_STT_PHASE_MESSAGES[event.phase]
+        self.library_ingest_jobs.update_progress(
+            job_id,
+            progress=progress,
+            persist=False,
+        )
 
     def _on_ingest_local_stt_result(
         self,
@@ -3774,7 +3789,7 @@ class LibraryIngestQueueMixin:
             try:
                 pool.apply_async(
                     run_parse_job,
-                    (source_path, options),
+                    (source_path, options, (generation, job_id)),
                     callback=functools.partial(
                         self._ingest_pool_callback, generation, job_id
                     ),
@@ -3845,6 +3860,58 @@ class LibraryIngestQueueMixin:
         self._marshal_ingest_pool_call(
             self._handle_broken_ingest_parse_pool, generation, job_id, exc
         )
+
+    def _on_ingest_parse_progress_batch(
+        self,
+        generation: int,
+        events: tuple[ParseProgressEvent, ...],
+    ) -> None:
+        """Apply one validated progress batch for the current parse generation.
+
+        Progress and terminal results travel on separate channels, so this
+        UI-thread boundary rechecks every piece of coordinator authority after
+        IPC. Unknown or malformed queue data is ignored; local live telemetry
+        is projected in memory only.
+        """
+        if self._ingest_shutdown or generation != self._ingest_parse_pool_generation:
+            return
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if generation_jobs is None:
+            return
+
+        for raw_event in events:
+            try:
+                event = make_parse_progress_event(
+                    raw_event.generation,
+                    raw_event.job_id,
+                    raw_event.phase,
+                    raw_event.message,
+                    raw_event.percent,
+                )
+            except Exception:
+                continue
+            if event is None:
+                continue
+            job = self.library_ingest_jobs.get_job(event.job_id)
+            if (
+                event.generation != generation
+                or event.job_id not in generation_jobs
+                or event.job_id in self._ingest_parsed_payloads
+                or job is None
+                or job.state is not IngestJobState.PARSING
+            ):
+                continue
+            progress: dict[str, Any] = {
+                "phase": event.phase,
+                "message": event.message,
+            }
+            if event.percent is not None:
+                progress["percent"] = event.percent
+            self.library_ingest_jobs.update_progress(
+                event.job_id,
+                progress=progress,
+                persist=False,
+            )
 
     def _on_ingest_parse_complete(
         self, generation: int, job_id: str, result: Dict[str, Any]
