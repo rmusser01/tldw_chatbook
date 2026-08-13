@@ -73,6 +73,8 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM,
     FTS_MATCH_CONSTRUCTION_AND_THEN_OR,
     FTS_MATCH_CONSTRUCTION_OR,
+    FTS_MATCH_CONSTRUCTIONS,
+    FTS_MATCH_FORMS_BY_CONSTRUCTION,
     FTS_MATCH_OR,
     RAGService,
     _fusion_doc_key,
@@ -527,6 +529,168 @@ def test_an_unknown_construction_takes_the_conservative_primary_form() -> None:
     """
     service = _make_service(construction="not-a-construction")
     assert service._fts5_primary_form() == FTS_MATCH_AND
+
+
+def test_every_construction_names_the_forms_it_can_run() -> None:
+    """`FTS_MATCH_FORMS_BY_CONSTRUCTION` is total, and honest both ways.
+
+    Every construction has an entry, a construction that can produce a
+    fallback EXPRESSION names a fallback FORM, and one that cannot names
+    ``None``. This is the pin a new construction trips if it adds an
+    expression without adding its form -- the omission the hardcoded
+    fallback stamp used to hide (`_fts_rows_with_fallback` stamped
+    ``FTS_MATCH_OR`` whatever form actually ran).
+    """
+    assert set(FTS_MATCH_FORMS_BY_CONSTRUCTION) == set(FTS_MATCH_CONSTRUCTIONS)
+
+    probes = (
+        "wombat",
+        "wombat burrow",
+        "how does the wombat template work",
+        "notes about the vendor",
+        "what about the",
+    )
+    for construction in FTS_MATCH_CONSTRUCTIONS:
+        service = _make_service(construction=construction)
+        _primary_form, fallback_form = service._fts5_match_forms()
+        can_fall_back = any(
+            service._fts5_match_expressions(query)[1] is not None
+            for query in probes
+        )
+        assert can_fall_back == (fallback_form is not None), (
+            f"{construction!r}: produces a fallback expression="
+            f"{can_fall_back}, names a fallback form={fallback_form!r}"
+        )
+
+
+def test_fallback_rows_are_stamped_with_the_fallbacks_own_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback stamp is DERIVED, not hardcoded to the OR form.
+
+    Today every fallback the engine ships happens to BE the OR form, so no
+    fixture can tell a derived stamp from a hardcoded one by its value
+    alone. This drives the seam instead: the construction is made to declare
+    a fallback form no construction currently uses (standing in for the
+    pre-registered `and_then_prefix` row), and the rows the fallback returns
+    must carry THAT form. A hardcoded `FTS_MATCH_OR` in the fallback branch
+    stamps `"or"` here and reds -- which is exactly the defect that would
+    have made the sweep's negative-composition table attribute prefix rows
+    to the or-form.
+
+    The tiering is asserted alongside it: a novel fallback form is still
+    not the primary, so its rows still land in tier 2.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            media and notes databases.
+        monkeypatch: pytest's monkeypatch fixture; declares the novel
+            fallback form.
+    """
+    novel_form = "prefix"
+    monkeypatch.setattr(
+        RAGService,
+        "_fts5_match_forms",
+        lambda self: (FTS_MATCH_AND, novel_form),
+    )
+
+    media_path = _seed_media(tmp_path, MEDIA_OR_ONLY_ROWS)
+    notes_path = _seed_notes(tmp_path, [NOTE_AND_HIT])
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_AND_THEN_OR,
+        media_db_path=media_path,
+        chachanotes_db_path=notes_path,
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            DISPLACEMENT_QUERY, top_k=10, keyword_source_types={"media", "note"}
+        )
+    )
+
+    stamps = [
+        (r.metadata["source_type"], r.metadata["fts_match"]) for r in results
+    ]
+    assert (
+        "note",
+        FTS_MATCH_AND,
+    ) in stamps, stamps
+    media_stamps = {form for source, form in stamps if source == "media"}
+    assert media_stamps == {novel_form}, stamps
+    assert FTS_MATCH_OR not in {form for _source, form in stamps}, stamps
+
+    # ...and a novel fallback form is still not the primary, so tier 2.
+    assert stamps[0] == ("note", FTS_MATCH_AND), stamps
+    assert {form for _source, form in stamps[1:]} == {novel_form}, stamps
+
+
+def test_an_unstamped_row_lands_in_tier_one_under_every_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing stamp must never DEMOTE a row -- the fail-safe's direction.
+
+    `_keyword_row_metadata` substitutes a default before `_keyword_search`'s
+    partition can see the absence, so that default is the whole fail-safe.
+    It used to be a hardcoded `FTS_MATCH_AND`: probed under the `or`
+    construction, where the primary form is `or`, an unstamped row therefore
+    compared UNEQUAL to the primary and was demoted to tier 2 -- the exact
+    opposite of the stated fail-safe, and live the moment a construction
+    ships whose primary is not the AND form.
+
+    Driven through a sub-leg helper that returns rows without the raw stamp
+    (the shape a new sub-leg author actually produces), not by editing
+    metadata after the fact.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory; holds the seeded
+            media and notes databases.
+        monkeypatch: pytest's monkeypatch fixture; strips the media
+            sub-leg's raw stamp.
+    """
+    original = RAGService._perform_fts5_search
+
+    def unstamped(self, pool, query, limit, allowed_ids=None):
+        rows = original(self, pool, query, limit, allowed_ids)
+        for row in rows:
+            row.pop("fts_match", None)
+        return rows
+
+    monkeypatch.setattr(RAGService, "_perform_fts5_search", unstamped)
+
+    media_path = _seed_media(
+        tmp_path,
+        [
+            ("Wombat burrow survey", "Notes on the wombat burrow entrance survey."),
+            ("Wombat burrow census", "The annual wombat burrow census."),
+        ],
+    )
+    notes_path = _seed_notes(
+        tmp_path, [("Saltmarsh hide", "The hide overlooks the wombat burrow.")]
+    )
+    service = _make_service(
+        construction=FTS_MATCH_CONSTRUCTION_OR,
+        media_db_path=media_path,
+        chachanotes_db_path=notes_path,
+    )
+
+    results = asyncio.run(
+        service._keyword_search(
+            "wombat burrow", top_k=10, keyword_source_types={"media", "note"}
+        )
+    )
+
+    # The media sub-leg arrived unstamped; the notes sub-leg carries the
+    # real `or` primary stamp. One tier, so the round robin is intact and
+    # media (first in source order) still leads. A hardcoded `and` default
+    # tiers the unstamped media rows BEHIND the notes row and reds this.
+    assert [r.metadata["source_type"] for r in results] == [
+        "media",
+        "note",
+        "media",
+    ], [(r.metadata["source_type"], r.metadata["fts_match"]) for r in results]
+    assert {r.metadata["fts_match"] for r in results} == {
+        service._fts5_primary_form()
+    }
 
 
 @pytest.mark.parametrize(

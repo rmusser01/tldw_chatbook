@@ -180,6 +180,29 @@ FTS_MATCH_CONSTRUCTIONS = (
 FTS_MATCH_AND = "and"
 FTS_MATCH_OR = "or"
 
+# Which FORM each construction's PRIMARY and FALLBACK expressions run --
+# deliberately shaped as a pair, parallel to `_fts5_match_expressions`'
+# ``(primary, fallback)`` return, with ``None`` meaning "this construction
+# has no fallback".
+#
+# ONE table (TASK-15700). Three consumers read it and must never disagree:
+# the row stamp in `_fts_rows_with_fallback`, `_keyword_search`'s tier
+# partition (primary-form sub-legs ahead of fallback ones), and
+# `_keyword_row_metadata`'s default for a row that arrived unstamped. Before
+# this table the FALLBACK branch hardcoded ``FTS_MATCH_OR`` while only the
+# primary branch was construction-aware, so a construction whose fallback is
+# NOT the OR form would have stamped its rows ``or``: the tiering would
+# still have worked (any non-primary value lands tier 2) but the sweep's
+# negative-composition table would have attributed those rows to a form
+# they never ran. A construction added here names both of its forms in one
+# edit, or `test_every_construction_names_the_forms_it_can_run` reds.
+FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
+    FTS_MATCH_CONSTRUCTION_AND: (FTS_MATCH_AND, None),
+    FTS_MATCH_CONSTRUCTION_AND_STOPWORD_TRIM: (FTS_MATCH_AND, None),
+    FTS_MATCH_CONSTRUCTION_OR: (FTS_MATCH_OR, None),
+    FTS_MATCH_CONSTRUCTION_AND_THEN_OR: (FTS_MATCH_AND, FTS_MATCH_OR),
+}
+
 # A small fixed English function-word list, consulted by every construction
 # EXCEPT the full AND (`and`, the pre-TASK-15400 construction) -- so it IS
 # consulted on the shipped default path, `and_stopword_trim`'s trimmed AND,
@@ -1690,17 +1713,27 @@ class RAGService:
         #
         # Fallback-ness is f(construction, form), never the stamp alone:
         # under `or` the OR form IS the primary and belongs in tier 1. That
-        # is `_fts5_primary_form()`, the single definition this partition
-        # and the row stamp in `_fts_rows_with_fallback` share, so the two
-        # cannot drift apart about which form was the primary. A row missing
-        # the stamp defaults to the primary, so an unstamped row is never
-        # demoted by accident.
+        # is `_fts5_primary_form()`, reading the one
+        # `FTS_MATCH_FORMS_BY_CONSTRUCTION` table that also produces the row
+        # stamps in `_fts_rows_with_fallback`, so the two cannot drift apart
+        # about which form was the primary. An unstamped row defaults to the
+        # primary and so lands in TIER 1 -- but the `.get` below is the
+        # second half of that fail-safe, not the whole of it:
+        # `_keyword_row_metadata` substitutes its own default first, and
+        # that default is the same `_fts5_primary_form()` for exactly this
+        # reason (it was a hardcoded `and`, which under `or` demoted the
+        # unstamped row -- the opposite of the fail-safe).
         #
         # The partition is over SUB-LEGS, not rows: the fallback fires only
         # when a sub-leg's primary returns zero rows, so within one query a
         # sub-leg's rows are all-primary or all-fallback (pinned per sub-leg
-        # by `test_*_falls_back_independently`). Reading row 0 is therefore
-        # reading the whole sub-leg.
+        # by `test_notes_sub_leg_falls_back_independently`,
+        # `test_conversations_sub_leg_falls_back_independently`,
+        # `test_media_sub_leg_falls_back_independently` and the prompts pair
+        # `test_a_matching_and_never_runs_the_fallback` /
+        # `test_a_zero_row_and_falls_back_to_the_or_form_exactly_once` --
+        # one per sub-leg, for a four-sub-leg fact). Reading row 0 is
+        # therefore reading the whole sub-leg.
         #
         # Cross-tier deduplication is STRUCTURALLY VACUOUS and deliberately
         # absent: each sub-leg emits exactly one `source_type` and
@@ -2934,9 +2967,8 @@ class RAGService:
 
     # === Management Methods ===
 
-    @staticmethod
     def _keyword_row_metadata(
-        item: Dict, content: str, source_type: str
+        self, item: Dict, content: str, source_type: str
     ) -> Dict[str, Any]:
         """Build one keyword-leg row's metadata, for any sub-leg.
 
@@ -2989,7 +3021,17 @@ class RAGService:
             # count plus the arc's mechanism prose are both read off it.
             # Whether an `or` row was a FALLBACK is derived from this plus
             # the construction, never stamped as a second fact.
-            "fts_match": item.get("fts_match", FTS_MATCH_AND),
+            #
+            # The default is the ACTIVE construction's primary form, not a
+            # hardcoded `and` (TASK-15700). This substitution happens BEFORE
+            # `_keyword_search`'s tier partition can see the absence, so the
+            # default here IS the fail-safe direction: an unstamped row must
+            # land in tier 1, never be demoted behind a widened one. Probed
+            # under the `or` construction, the hardcoded `and` did exactly
+            # the opposite -- unreachable while every sub-leg goes through
+            # `_fts_rows_with_fallback`, but live the moment a construction
+            # ships whose primary form is not `and`.
+            "fts_match": item.get("fts_match", self._fts5_primary_form()),
         }
 
     def _process_keyword_results_basic(
@@ -3347,21 +3389,34 @@ class RAGService:
             ten OR rows and the target is not among them (leg rank 11 in the
             k=20 fusion window, fused 0.0188, an order below the cut). No
             merge behaviour is implicated.
-          - Under ``and_then_or`` the fixture's own sub-leg is UNTOUCHED --
-            its row is still an AND row at leg rank 2 -- and it is the MERGE
-            that loses it. ``_keyword_search`` merges the four FTS sub-legs
-            with ``interleave_rankings`` (round-robin, NOT a score merge),
-            so when OTHER sub-legs fall back they inject rows that displace
-            the untouched AND row from leg rank 1 to 2, and hybrid fusion
-            consumes LEG RANK. That one position is the whole distance
-            between rescued and gone. The same displacement decomposes the
-            scoped collapse exactly (the 4 note-targeted scoped queries fall
-            behind a media fallback row; media is first in the round-robin;
-            3 of 7 = 0.429).
+          - Under ``and_then_or`` the fixture's own sub-leg WAS UNTOUCHED --
+            its row was still an AND row, at leg rank 2 -- and it was the
+            MERGE that lost it. ``_keyword_search`` merged the four FTS
+            sub-legs with a single ``interleave_rankings`` round-robin (NOT
+            a score merge), so when OTHER sub-legs fell back they injected
+            rows that displaced the untouched AND row from leg rank 1 to 2,
+            and hybrid fusion consumes LEG RANK. That one position was the
+            whole distance between rescued and gone. The same displacement
+            decomposed the scoped collapse exactly (the 4 note-targeted
+            scoped queries fell behind a media fallback row; media was first
+            in the round-robin; 3 of 7 = 0.429).
 
-          So a widening construction that keeps its own AND rows still has
-          to fix the MERGE; and one that does not keep them (``or``) fails
-          before the merge is even reached.
+          **That merge mechanism is RETIRED (TASK-15700 Part A).** The
+          second bullet is written in the past tense because
+          ``_keyword_search`` now tiers its sub-legs by form: every
+          primary-form sub-leg round-robins ahead of every sub-leg that fell
+          back, and fallback rows fill only the slots the primary tier left,
+          so a widening construction's fallback rows can no longer demote
+          another sub-leg's untouched primary row. It is kept here because
+          it is the measured provenance of that fix.
+
+          The FIRST bullet is NOT retired: under ``or`` the join still loses
+          the fixture before any merge is reached. So a widening
+          construction that keeps its own AND rows no longer has to fix the
+          merge -- the merge is fixed -- while one that widens as its
+          PRIMARY form (``or``, and any prefix-style primary) is something
+          tiering cannot protect by construction, and still has to earn its
+          cells in the sweep.
 
         Whatever changes here, keep each token individually quoted (the
         injection property above, pinned by
@@ -3498,28 +3553,44 @@ class RAGService:
             )
         return FTS_MATCH_CONSTRUCTION_AND
 
+    def _fts5_match_forms(self) -> Tuple[str, Optional[str]]:
+        """The FORMS the active construction's two expressions run.
+
+        `FTS_MATCH_FORMS_BY_CONSTRUCTION` read through
+        `_resolved_fts_match_construction`, so an unrecognized value takes
+        the forms of the conservative ``and`` the leg actually ran rather
+        than of a construction nothing executed. Shaped exactly like
+        `_fts5_match_expressions`' return so the two line up positionally:
+        ``(primary_form, fallback_form)``, the fallback ``None`` when the
+        construction has none.
+
+        Returns:
+            ``(primary_form, fallback_form)`` for the active construction.
+        """
+        return FTS_MATCH_FORMS_BY_CONSTRUCTION[
+            self._resolved_fts_match_construction()
+        ]
+
     def _fts5_primary_form(self) -> str:
         """The FORM the active construction's PRIMARY expression runs.
 
-        ONE definition of "which form is not a fallback" (TASK-15700). Two
-        consumers must never disagree about it: `_keyword_search`'s tier
-        partition, which puts primary-form sub-legs ahead of fallback ones,
-        and `_fts_rows_with_fallback`, which stamps the rows.
+        ONE definition of "which form is not a fallback" (TASK-15700),
+        derived from the same table the row stamp uses. Consumers that must
+        never disagree: `_keyword_search`'s tier partition, which puts
+        primary-form sub-legs ahead of fallback ones, and
+        `_keyword_row_metadata`, whose default for a row that arrived
+        unstamped has to be the value that keeps it in tier 1.
 
         Fallback-ness is f(construction, form), never the stamp alone --
         under the `or` construction the OR form IS the primary, so tiering
         on the stamp by itself would demote every row that construction
-        returns. Resolved through `_resolved_fts_match_construction`, so an
-        unrecognized value takes the same conservative `and` the leg
-        actually ran rather than a form nothing produced.
+        returns.
 
         Returns:
             ``FTS_MATCH_OR`` under the ``or`` construction, otherwise
             ``FTS_MATCH_AND``.
         """
-        if self._resolved_fts_match_construction() == FTS_MATCH_CONSTRUCTION_OR:
-            return FTS_MATCH_OR
-        return FTS_MATCH_AND
+        return self._fts5_match_forms()[0]
 
     def _fts5_match_expressions(self, query: str) -> Tuple[str, Optional[str]]:
         """Build the MATCH expression(s) one search runs (TASK-15400).
@@ -3635,22 +3706,47 @@ class RAGService:
                 fallback)`` pair.
 
         Returns:
-            The rows, each carrying an ``fts_match`` key
-            (``FTS_MATCH_AND`` / ``FTS_MATCH_OR``) that
-            ``_keyword_row_metadata`` promotes into the row's metadata.
+            The rows, each carrying an ``fts_match`` key naming the form
+            that matched them -- the active construction's primary form, or
+            its fallback form when the fallback ran, both read from
+            ``FTS_MATCH_FORMS_BY_CONSTRUCTION``. ``_keyword_row_metadata``
+            promotes the key into the row's metadata.
         """
         primary, fallback = expressions
         rows = run_expression(primary) if primary else []
-        # The primary is an OR form only under the `or` construction; the
-        # stamp names the form, not the position (see FTS_MATCH_AND). Read
-        # from `_fts5_primary_form`, the one definition the merge's tier
-        # partition reads too -- the stamp and the tiering cannot disagree
-        # about which form was the primary if they share the source.
-        form = self._fts5_primary_form()
+        # BOTH stamps come from the construction's own row in
+        # `FTS_MATCH_FORMS_BY_CONSTRUCTION`, never from a hardcoded branch:
+        # the stamp names the form, not the position (see FTS_MATCH_AND), so
+        # the primary is an OR form under `or` and the fallback need not be
+        # an OR form at all. The merge's tier partition reads the same
+        # table, so the stamp and the tiering cannot disagree about which
+        # form was the primary.
+        primary_form, fallback_form = self._fts5_match_forms()
+        form = primary_form
 
         if not rows and fallback:
             rows = run_expression(fallback)
-            form = FTS_MATCH_OR
+            if fallback_form is None:
+                # The construction produced a fallback EXPRESSION while
+                # naming no fallback FORM -- a missed
+                # `FTS_MATCH_FORMS_BY_CONSTRUCTION` entry, unreachable while
+                # `test_every_construction_names_the_forms_it_can_run` is
+                # green. Degrade to the OR form (the only fallback the
+                # engine has ever shipped) and say so once, rather than
+                # stamping the PRIMARY form and letting a widened row into
+                # tier 1.
+                logger.warning(
+                    "Construction {!r} ran a fallback expression but names "
+                    "no fallback form in FTS_MATCH_FORMS_BY_CONSTRUCTION; "
+                    "stamping its rows {!r}. The sweep's form attribution "
+                    "for this construction is not trustworthy until the "
+                    "table names it.",
+                    self._resolved_fts_match_construction(),
+                    FTS_MATCH_OR,
+                )
+                form = FTS_MATCH_OR
+            else:
+                form = fallback_form
 
         for row in rows:
             row["fts_match"] = form

@@ -723,14 +723,24 @@ def test_media_sub_leg_falls_back_independently(
     assert [r.metadata["fts_match"] for r in results] == [FTS_MATCH_OR]
 
 
-def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(
+def test_sub_legs_carry_and_and_fallback_rows_in_one_query_primary_first(
     tmp_path: Path,
 ) -> None:
-    """The spec's deliberate mixed mode: one query, two provenances.
+    """One query, two provenances -- and the primary one leads.
 
     Media matches every token (AND); the prompt only matches through the OR
     fallback. Both rows come back, each stamped with the form that found it
     -- which is what keeps Task 5's mechanism prose table-derived.
+
+    RENAMED (TASK-15700, was
+    `test_sub_legs_interleave_and_and_fallback_rows_in_one_query`): the two
+    provenances are no longer INTERLEAVED. `_keyword_search` tiers them, so
+    the ORDER is now load-bearing and this test asserts it instead of
+    collapsing the results into an order-blind dict. Media happens to be
+    first in the source order here, so the ordering assertion would pass
+    under the old round-robin too -- it is a second witness for the tier
+    order, not the primary one (`Tests/RAG_Search/test_keyword_leg_tiered_merge.py`
+    owns that, with the sources in the order that discriminates).
 
     Args:
         tmp_path: pytest's per-test temporary directory; holds the seeded
@@ -757,6 +767,11 @@ def test_sub_legs_interleave_and_and_fallback_rows_in_one_query(
         r.metadata["source_type"]: r.metadata["fts_match"] for r in results
     }
     assert stamps == {"media": FTS_MATCH_AND, "prompt": FTS_MATCH_OR}
+
+    # The tier order, in sequence: every primary-form row precedes every
+    # fallback row.
+    forms = [r.metadata["fts_match"] for r in results]
+    assert forms == [FTS_MATCH_AND, FTS_MATCH_OR], forms
 
 
 def test_a_query_with_no_searchable_tokens_still_touches_no_database(
