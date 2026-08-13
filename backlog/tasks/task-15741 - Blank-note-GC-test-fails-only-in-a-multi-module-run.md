@@ -1,5 +1,5 @@
 ---
-id: task-15741
+id: TASK-15741
 title: Blank-note GC test fails only in a multi-module run
 status: To Do
 assignee: []

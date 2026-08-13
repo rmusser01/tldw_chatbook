@@ -1,5 +1,5 @@
 ---
-id: task-2371
+id: TASK-2371
 title: Console first send on a fresh session could vanish silently (critique D2)
 status: Done
 assignee:

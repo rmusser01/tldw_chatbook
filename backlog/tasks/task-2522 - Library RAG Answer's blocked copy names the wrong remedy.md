@@ -1,5 +1,5 @@
 ---
-id: task-2522
+id: TASK-2522
 title: Library RAG Answer's blocked copy names the wrong remedy
 status: Done
 assignee: []

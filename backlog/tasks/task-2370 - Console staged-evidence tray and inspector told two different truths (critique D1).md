@@ -1,5 +1,5 @@
 ---
-id: task-2370
+id: TASK-2370
 title: Console staged-evidence tray and inspector told two different truths (critique D1)
 status: Done
 assignee:

@@ -1,5 +1,5 @@
 ---
-id: task-2151
+id: TASK-2151
 title: RAG answer display clamp should cut at a word boundary with ellipsis
 status: To Do
 assignee: []
