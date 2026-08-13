@@ -12,6 +12,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents import run_log as run_log_module
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat import console_history_budget
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -19,6 +21,11 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleProviderSelection,
@@ -32,6 +39,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class BlockedGateway:
@@ -86,6 +94,40 @@ class CapturingGateway(StreamingGateway):
     async def resolve_for_send(self, selection):
         self.selection = selection
         return await super().resolve_for_send(selection)
+
+
+class ContinuationHistoryGateway(ConsoleProviderGateway):
+    """Real preparation with an in-process dispatch sink."""
+
+    def __init__(self):
+        super().__init__(environ={})
+        self.prepared = None
+        self.prepare_kwargs = None
+
+    async def resolve_for_send(self, selection):
+        return ConsoleProviderResolution(
+            provider="deepseek",
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-v4-flash",
+            ready=True,
+            readiness_key="deepseek",
+            execution_key="deepseek",
+            max_tokens=10,
+            continuation_protocol="responses",
+        )
+
+    def prepare_chat_request(self, resolution, messages, **kwargs):
+        self.prepare_kwargs = kwargs
+        return super().prepare_chat_request(
+            resolution,
+            messages,
+            context_window_override_tokens=600,
+            **kwargs,
+        )
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.prepared = messages
+        yield "ok"
 
 
 class WipBlockedGateway:
@@ -3560,6 +3602,235 @@ def _arm_session(store):
     if session.settings is None:
         session.settings = ConsoleSessionSettings(provider="llama_cpp")
     return session
+
+
+def _controller_history_checkpoint(canary: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [canary * 80],
+                    "calls": [
+                        {
+                            "call_id": "joined-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def _controller_active_history_checkpoint(call_state: str):
+    return parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["ACTIVE-SWITCH-PRIVATE-CANARY"],
+                    "calls": [
+                        {
+                            "call_id": "active-switch-call",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": call_state,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    old_user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="old"
+    )
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    checkpoint = _controller_history_checkpoint("CONTROLLER-PRIVATE-CANARY ")
+    store._message_or_raise(owner.id).provider_continuation = checkpoint
+    gateway = ContinuationHistoryGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    source_snapshot = store.messages_for_session(session.id)
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert [row["content"] for row in gateway.prepared.messages_payload] == [
+        "current"
+    ]
+    assert gateway.prepare_kwargs["continuation_sidecar"][0].owner_message_id == owner.id
+    assert "CONTROLLER-PRIVATE-CANARY" not in repr(gateway.prepared)
+    assert store.get_message(old_user.id).content == "old"
+    assert store.get_message(owner.id).content == "old answer"
+    assert source_snapshot[1].provider_continuation == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_EVICT_ENABLED", "true")
+    monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_EVICT_MIN_RECENT_ROUNDS", "1")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        console_history_budget, "get_model_token_limit", lambda *a, **k: 650
+    )
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(owner.id).provider_continuation = (
+        _controller_history_checkpoint("JOINED-PRIVATE-CANARY ")
+    )
+    gateway = ContinuationHistoryGateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="task6"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert not any(row.get("content") == "old answer" for row in gateway.prepared)
+    assert any(row.get("content") == "current" for row in gateway.prepared)
+    assert all("_native_message_id" not in row for row in gateway.prepared)
+    assert "JOINED-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
+async def test_provider_switch_ignores_unrelated_completed_continuation_history():
+    class OpenAIGateway(ContinuationHistoryGateway):
+        async def resolve_for_send(self, selection):
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+            )
+
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(owner.id).provider_continuation = (
+        _controller_history_checkpoint("PROVIDER-SWITCH-PRIVATE-CANARY ")
+    )
+    gateway = OpenAIGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.accepted
+    assert gateway.prepared is not None
+    assert any(
+        row.get("content") == "old answer"
+        for row in gateway.prepared.messages_payload
+    )
+    assert gateway.prepare_kwargs["continuation_sidecar"] == ()
+    assert "PROVIDER-SWITCH-PRIVATE-CANARY" not in repr(gateway.prepared)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call_state", ["pending", "executing"])
+async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
+    call_state: str,
+):
+    store = ConsoleChatStore()
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="old")
+    owner = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer"
+    )
+    store._message_or_raise(owner.id).provider_continuation = (
+        _controller_history_checkpoint("COMPLETE-BEFORE-RESOLUTION ")
+    )
+
+    class SwitchingGateway(ContinuationHistoryGateway):
+        provider_calls = 0
+
+        async def resolve_for_send(self, selection):
+            store._message_or_raise(owner.id).provider_continuation = (
+                _controller_active_history_checkpoint(call_state)
+            )
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=10,
+            )
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.provider_calls += 1
+            yield "must not dispatch"
+
+    gateway = SwitchingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft("current")
+
+    assert result.visible_copy == (
+        "Recover the interrupted tool run before sending a new message: "
+        "Resume or Discard it first."
+    )
+    assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+    assert gateway.provider_calls == 0
+    assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 
 @pytest.mark.asyncio

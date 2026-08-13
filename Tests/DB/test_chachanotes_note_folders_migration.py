@@ -54,7 +54,7 @@ def _insert_folder(connection: sqlite3.Connection, folder_id: str = "folder-1") 
 def test_fresh_database_has_v36_folder_schema(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="fresh")
     try:
-        assert _schema_version(db) == 36
+        assert _schema_version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert EXPECTED_FOLDER_TABLES <= _table_names(db)
     finally:
         db.close_connection()
@@ -98,7 +98,7 @@ def test_v35_database_migrates_without_assigning_existing_notes(
             "SELECT COUNT(*) AS count FROM note_folder_memberships"
         ).fetchone()["count"]
 
-        assert _schema_version(migrated) == 36
+        assert _schema_version(migrated) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert migrated.get_note_by_id(note_id) is not None
         assert count == 0
     finally:

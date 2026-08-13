@@ -7,6 +7,11 @@ import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationValidationError,
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -172,6 +177,7 @@ class SyncEnvelopeBuilder:
         variant_index: int | None = None,
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
+        provider_continuation_json: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
@@ -188,6 +194,7 @@ class SyncEnvelopeBuilder:
             variant_index: Optional currently selected variant index.
             variant_count: Optional number of available variants for the message.
             selected_variant_id: Optional selected variant identifier.
+            provider_continuation_json: Optional canonical private continuation.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after this mutation.
 
@@ -211,14 +218,49 @@ class SyncEnvelopeBuilder:
             routing_metadata["variant_count"] = variant_count
         if selected_variant_id is not None:
             routing_metadata["selected_variant_id"] = selected_variant_id
+        payload = {"content": content, "role": role}
+        if provider_continuation_json is not None and provider_continuation_json != "":
+            if role != "assistant":
+                raise ContinuationValidationError(
+                    "Invalid provider continuation data."
+                ) from None
+            checkpoint = parse_provider_continuation_json(provider_continuation_json)
+            payload["provider_continuation_json"] = dump_provider_continuation_json(
+                checkpoint
+            )
         return self._encrypted_envelope(
             domain="chat",
             entity_id=message_id,
             operation="upsert",
             stable_key=stable_key,
-            payload={"content": content, "role": role},
+            payload=payload,
             payload_clear={},
             routing_metadata=routing_metadata,
+            base_version=base_version,
+            entity_version=entity_version,
+        )
+
+    def build_chat_message_delete(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        base_version: str | int | None = None,
+        entity_version: str | int | None = None,
+    ) -> SyncV2Envelope:
+        """Build a clear Chat message tombstone without private row data."""
+        clear = {"deleted": True}
+        return self._clear_envelope(
+            domain="chat",
+            entity_id=message_id,
+            operation="delete",
+            stable_key=f"{conversation_id}:{message_id}",
+            payload_clear=clear,
+            routing_metadata={
+                "conversation_id": conversation_id,
+                "entity_kind": "message",
+            },
+            payload_hash=self._payload_hash(clear),
             base_version=base_version,
             entity_version=entity_version,
         )

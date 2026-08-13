@@ -31,6 +31,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationValidationError,
+    parse_provider_continuation_json,
+    read_provider_continuation_json,
+)
 from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -66,6 +71,8 @@ CANARIES = (
     "TOOL-SCHEMA-DESCRIPTION-CANARY",
     "TOOL-SCHEMA-ENUM-CANARY",
     "HUGGINGFACE-USER-CANARY",
+    "CONTINUATION-CREDENTIAL-CANARY",
+    "CONTINUATION-RAW-BODY-CANARY",
 )
 
 
@@ -106,6 +113,31 @@ def _assert_canaries_absent(*values: object) -> None:
     rendered = "\n".join(str(value) for value in values)
     for canary in CANARIES:
         assert canary not in rendered
+
+
+def test_sensitive_continuation_validation_never_logs_or_chains_private_data() -> None:
+    private_value = {
+        "schema_version": 1,
+        "checkpoint_revision": 1,
+        "provider": "deepseek",
+        "protocol": "responses",
+        "model": "deepseek-test",
+        "api_base_url": "https://api.deepseek.example.test/v1",
+        "state": "active",
+        "rounds": [],
+        "credential": "CONTINUATION-CREDENTIAL-CANARY",
+        "raw_provider_body": "CONTINUATION-RAW-BODY-CANARY",
+    }
+
+    with _captured_logs() as logs, pytest.raises(ContinuationValidationError) as caught:
+        parse_provider_continuation_json(private_value)
+
+    tolerant = read_provider_continuation_json(private_value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert tolerant.checkpoint is None
+    assert tolerant.warning == "Exact tool continuation was discarded."
+    _assert_canaries_absent(caught.value, repr(caught.value), logs, tolerant)
 
 
 def _transport_logger_state() -> dict[str, dict[str, object]]:

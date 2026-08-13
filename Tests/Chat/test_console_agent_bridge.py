@@ -6,9 +6,12 @@ import copy
 import json
 import threading
 import time
+from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.Chat import console_agent_bridge
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -35,6 +38,14 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRestoreTarget,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -362,6 +373,88 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     # The fenced tool JSON never streamed into the assistant answer.
     assert FENCE_OPEN not in store.get_message(aid).content
     assert store.get_message(aid).content == "It is 42."
+
+
+def test_joined_continuation_never_logs_private_tool_arguments_or_results(
+    tmp_path, monkeypatch
+):
+    """Operational bridge logs must not serialize restored private fields."""
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    async def private_result(self, expression):
+        assert expression == "PRIVATE_ARGUMENT_CANARY"
+        return {"value": "PRIVATE_RESULT_CANARY"}
+
+    monkeypatch.setattr(CalculatorTool, "execute", private_result)
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("PRIVATE_REASONING_CANARY",),
+                calls=(
+                    ContinuationCall(
+                        call_id="PRIVATE_CALL_ID_CANARY",
+                        name="calculator",
+                        arguments='{"expression":"PRIVATE_ARGUMENT_CANARY"}',
+                        state="pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+    db = AgentRunsDB(tmp_path / "private-resume.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    assistant.provider_continuation = checkpoint
+    assistant.provider_continuation_message_version = 1
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["finished"]]),
+    )
+    captured: list[str] = []
+    sink = logger.add(lambda record: captured.append(str(record)), level="DEBUG")
+    try:
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            assistant.id,
+            resolution=SimpleNamespace(
+                provider="Moonshot",
+                execution_key="moonshot",
+            ),
+            restore_provider_continuation=checkpoint,
+            restore_provider_target=ContinuationRestoreTarget(
+                provider="moonshot",
+                model="kimi-k2",
+                protocol="chat_completions",
+                api_base_url="https://api.moonshot.ai/v1",
+            ),
+            expand_provider_continuation=lambda _checkpoint: [],
+            resume_provider_continuation=True,
+        )
+    finally:
+        logger.remove(sink)
+
+    assert any(step.kind == STEP_TOOL_RESULT for step in outcome.steps)
+    joined = "\n".join(captured)
+    assert "agent_kind=primary tool=calculator" in joined
+    assert "PRIVATE_ARGUMENT_CANARY" not in joined
+    assert "PRIVATE_RESULT_CANARY" not in joined
+    assert "PRIVATE_CALL_ID_CANARY" not in joined
+    assert "PRIVATE_REASONING_CANARY" not in joined
 
 
 class _RefusingBuiltinGate:
@@ -4089,6 +4182,194 @@ def test_run_reply_returns_runoutcome_done():
     assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
+
+
+def test_run_reply_passes_private_continuation_sidecar_to_agent_service():
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("BRIDGE-PRIVATE-CANARY",),
+                calls=(
+                    ContinuationCall(
+                        call_id="c",
+                        name="lookup",
+                        arguments="{}",
+                        state="completed",
+                    ),
+                ),
+            ),
+        ),
+    )
+    sidecar = (ProviderContinuationSidecar("a-old", checkpoint),)
+    target = ContinuationRestoreTarget(
+        "deepseek",
+        "deepseek-v4-flash",
+        "responses",
+        "https://api.deepseek.com/v1",
+    )
+
+    with patch.object(
+        AgentService, "run_turn", return_value=("run-1", outcome)
+    ) as run_turn:
+        bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "assistant", "content": "old", "_owner": "a-old"}],
+            should_cancel=lambda: False,
+            continuation_sidecar=sidecar,
+            continuation_target=target,
+            continuation_owner_key="_owner",
+        )
+
+    assert run_turn.call_args.kwargs["continuation_sidecar"] is sidecar
+    assert run_turn.call_args.kwargs["continuation_target"] is target
+    assert run_turn.call_args.kwargs["continuation_owner_key"] == "_owner"
+
+
+def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
+    class CapturingGateway(ConsoleProviderGateway):
+        def __init__(self) -> None:
+            super().__init__(config_provider=lambda: {}, environ={})
+            self.dispatched: list[object] = []
+
+        async def stream_chat(self, resolution, messages, tools=None, **_kwargs):
+            self.dispatched.append(messages)
+            yield "finished"
+
+    target = ContinuationRestoreTarget(
+        "moonshot", "kimi-k3", "chat_completions", "https://api.moonshot.ai/v1"
+    )
+    prior = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="prior visible",
+                reasoning_blocks=("PRIOR-PRIVATE-REASONING",),
+                calls=(),
+            ),
+        ),
+    )
+    active = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("ACTIVE-PRIVATE-REASONING",),
+                calls=(
+                    ContinuationCall(
+                        call_id="active-call",
+                        name="calculator",
+                        arguments='{"expression":"2+2"}',
+                        state="pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+    gateway = CapturingGateway()
+    db = AgentRunsDB(tmp_path / "resume-prepared.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    aid = assistant.id
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    store.get_message(aid).provider_continuation = active
+    store.get_message(aid).provider_continuation_message_version = 1
+    resolution = ConsoleProviderResolution(
+        provider="Moonshot",
+        base_url="https://api.moonshot.ai/v1",
+        model="kimi-k3",
+        ready=True,
+        readiness_key="moonshot",
+        execution_key="moonshot",
+        streaming=True,
+        continuation_protocol="chat_completions",
+    )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        resolution=resolution,
+        model="kimi-k3",
+        agent_messages=[
+            {"role": "assistant", "content": "prior visible", "_owner": "prior"},
+            {"role": "user", "content": "continue"},
+        ],
+        restore_provider_continuation=active,
+        restore_provider_target=target,
+        expand_provider_continuation=lambda _checkpoint: [
+            {"role": "assistant", "content": "ACTIVE-CANONICAL-ONCE"}
+        ],
+        resume_provider_continuation=True,
+        continuation_sidecar=(ProviderContinuationSidecar("prior", prior),),
+        continuation_target=target,
+        continuation_owner_key="_owner",
+    )
+
+    # This foundation-only fake emits no terminal provider checkpoint, so the
+    # runtime correctly rejects the turn after the request seam under test.
+    assert outcome.status == "error"
+    assert len(gateway.dispatched) == 1
+    prepared = gateway.dispatched[0]
+    assert isinstance(prepared, PreparedProviderRequest)
+    assert [group.owner_message_id for group in prepared.continuation_groups] == [
+        "prior"
+    ]
+    without_private = gateway.prepare_chat_request(
+        resolution,
+        replace(
+            prepared.semantic,
+            compactable=tuple(
+                replace(unit, continuation_groups=())
+                for unit in prepared.semantic.compactable
+            ),
+            active_continuation_groups=(),
+        ),
+        continuation_target=target,
+    )
+    assert (
+        prepared.accounting.total_input_tokens
+        > without_private.accounting.total_input_tokens
+    )
+    assert sum(
+        row.get("content") == "ACTIVE-CANONICAL-ONCE"
+        for row in prepared.messages_payload
+    ) == 1
 
 
 def test_run_reply_returns_runoutcome_error():

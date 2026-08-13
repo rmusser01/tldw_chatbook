@@ -140,6 +140,32 @@ the rest of the session.
 
 ## Features & controls
 
+### Conversation and `.chatbook` portability
+
+Current `.chatbook` packages preserve a conversation's complete included
+message graph: stable export-local message and parent identities, branches,
+assistant variants and their order, the selected leaf, deleted eligibility,
+and each assistant owner's validated provider-continuation checkpoint. Import
+validates and remaps the complete graph before attaching any checkpoint, so an
+ID collision cannot move private state to a sibling variant. Opening or
+importing a package never starts or resumes tools.
+
+Ordinary conversation JSON is intentionally narrower. It exports only the
+active path with an explicit public message projection and, when present, an
+`_private.provider_continuation` field attached to that assistant item. It does
+not serialize whole database rows, off-path variants, transient UI fields, or
+metadata bags. Older flat `.chatbook` packages remain readable, but when they
+cannot prove the private field's exact owner, visible messages import and exact
+tool continuation is discarded with a safe warning.
+
+Both formats can therefore contain private model state, tool arguments, and
+provider-bound tool results. Protect them as you would the full conversation;
+Chatbook adds no separate file encryption. Text, Markdown, rendered transcript,
+clipboard-message, search/FTS, summary, title, log, error, and usage exports do
+not include this private field. Invalid, unknown-version, contradictory, or
+oversized private data is dropped while usable visible messages still import,
+and the warning never quotes the rejected data.
+
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |

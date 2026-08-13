@@ -41,6 +41,247 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    parse_provider_continuation_json,
+)
+from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selected_provider", "provider_key", "model", "base_url", "api_mode", "protocol"),
+    [
+        (
+            "Moonshot",
+            "moonshot",
+            "kimi-latest",
+            "https://api.moonshot.ai/v1",
+            None,
+            "chat_completions",
+        ),
+        (
+            "ZAI",
+            "zai",
+            "glm-4.5",
+            "https://api.z.ai/api/paas/v4",
+            None,
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            None,
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            "  ChAt_CoMpLeTiOnS  ",
+            "chat_completions",
+        ),
+        (
+            "deepseek",
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com",
+            "  ReSpOnSeS  ",
+            "responses",
+        ),
+    ],
+)
+async def test_real_resolution_pins_provider_continuation_protocol_before_prepare(
+    selected_provider: str,
+    provider_key: str,
+    model: str,
+    base_url: str,
+    api_mode: str | None,
+    protocol: str,
+) -> None:
+    settings = {
+        "api_key": f"{provider_key}-test-key",
+        "model": model,
+        "api_base_url": base_url,
+    }
+    if api_mode is not None:
+        settings["api_mode"] = api_mode
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {provider_key: settings}},
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=selected_provider)
+    )
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": provider_key,
+            "protocol": protocol,
+            "model": model,
+            "api_base_url": base_url,
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "answer",
+                    "reasoning_blocks": ["private"],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    target = ContinuationRestoreTarget(provider_key, model, protocol, base_url)
+
+    assert resolution.ready is True
+    assert resolution.continuation_protocol == protocol
+    assert resolution.api_mode == (protocol if provider_key == "deepseek" else None)
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        [{"_owner": "a1", "role": "assistant", "content": "answer"}],
+        continuation_target=target,
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_owner_key="_owner",
+    )
+    assert prepared.continuation_groups[0].checkpoint == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_deepseek_resolution_rejects_invalid_present_api_mode() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "deepseek": {
+                    "api_key": "DEEPSEEK-SECRET-CANARY",
+                    "model": "deepseek-v4-flash",
+                    "api_mode": "response",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="deepseek")
+    )
+
+    assert resolution.ready is False
+    assert "DeepSeek" in resolution.visible_copy
+    assert "API mode" in resolution.visible_copy
+    assert "DEEPSEEK-SECRET-CANARY" not in resolution.visible_copy
+
+
+def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -> None:
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "old answer",
+                    "reasoning_blocks": ["GATEWAY-PRIVATE-CANARY " * 30],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": "done",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    messages = [
+        {"_owner": "u1", "role": "user", "content": "old"},
+        {
+            "_owner": "a1",
+            "role": "assistant",
+            "content": "old answer",
+        },
+        {"_owner": "u2", "role": "user", "content": "current"},
+    ]
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-v4-flash",
+        ready=True,
+        execution_key="deepseek",
+        max_tokens=10,
+        continuation_protocol="responses",
+    )
+    target = ContinuationRestoreTarget(
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+    )
+
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        messages,
+        context_window_override_tokens=600,
+        continuation_target=target,
+        continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+        continuation_owner_key="_owner",
+    )
+    ordinary = gateway.prepare_chat_request(
+        resolution,
+        [
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current"},
+        ],
+        context_window_override_tokens=600,
+    )
+
+    assert prepared.dropped_units == 1
+    assert ordinary.dropped_units == 0
+    assert [row["content"] for row in prepared.messages_payload] == ["current"]
+    assert all("provider_continuation" not in row for row in prepared.messages_payload)
+    assert "GATEWAY-PRIVATE-CANARY" not in repr(prepared)
+    assert messages[1] == {
+        "_owner": "a1",
+        "role": "assistant",
+        "content": "old answer",
+    }
+
+    with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        gateway.prepare_chat_request(
+            resolution,
+            messages,
+            continuation_target=dataclasses.replace(target, model="wrong-model"),
+            continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+            continuation_owner_key="_owner",
+        )
+    with pytest.raises(ContinuationConflictError, match="restore target mismatch"):
+        gateway.prepare_chat_request(
+            dataclasses.replace(resolution, provider="moonshot"),
+            messages,
+            continuation_target=target,
+            continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
+            continuation_owner_key="_owner",
+        )
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
@@ -902,6 +1143,7 @@ async def test_qwencloud_resolution_pins_normalized_mode_and_base(
     assert resolved.ready is True
     assert resolved.execution_key == "qwencloud"
     assert resolved.api_mode == "responses"
+    assert resolved.continuation_protocol is None
     assert resolved.base_url == "https://workspace.example.test/compatible-mode/v1"
 
 
@@ -1123,17 +1365,28 @@ async def test_qwencloud_resolution_rejects_present_malformed_saved_base_before_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider", "model", "settings"),
+    ("provider", "model", "settings", "expected_api_mode"),
     [
-        ("openai", "gpt-4.1", {"api_key": "openai-key"}),
-        ("deepseek", "deepseek-chat", {"api_key": "deepseek-key"}),
-        ("anthropic", "claude-sonnet-4-6", {"api_key": "anthropic-key"}),
+        ("openai", "gpt-4.1", {"api_key": "openai-key"}, None),
+        (
+            "deepseek",
+            "deepseek-chat",
+            {"api_key": "deepseek-key"},
+            "chat_completions",
+        ),
+        (
+            "anthropic",
+            "claude-sonnet-4-6",
+            {"api_key": "anthropic-key"},
+            None,
+        ),
     ],
 )
-async def test_non_qwen_resolutions_omit_api_mode(
+async def test_non_qwen_resolution_api_mode_isolated_to_deepseek(
     provider: str,
     model: str,
     settings: dict[str, str],
+    expected_api_mode: str | None,
 ) -> None:
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
@@ -1147,7 +1400,8 @@ async def test_non_qwen_resolutions_omit_api_mode(
     )
 
     assert resolved.ready is True
-    assert resolved.api_mode is None
+    assert resolved.api_mode == expected_api_mode
+    assert resolved.continuation_protocol == expected_api_mode
 
 
 @pytest.mark.asyncio
@@ -4882,9 +5136,7 @@ def test_aclose_does_not_close_a_still_running_childs_client():
         return gateway._active_http_client()
 
     try:
-        child_client = asyncio.run_coroutine_threadsafe(
-            touch(), child_loop
-        ).result(5)
+        child_client = asyncio.run_coroutine_threadsafe(touch(), child_loop).result(5)
         assert child_client.is_closed is False
 
         async def close_from_the_app_loop() -> None:
@@ -4909,9 +5161,9 @@ def test_aclose_does_not_close_a_still_running_childs_client():
         assert again is child_client
     finally:
         try:
-            asyncio.run_coroutine_threadsafe(
-                child_client.aclose(), child_loop
-            ).result(5)
+            asyncio.run_coroutine_threadsafe(child_client.aclose(), child_loop).result(
+                5
+            )
         except Exception:  # noqa: BLE001 -- teardown best-effort
             pass
         child_loop.call_soon_threadsafe(child_loop.stop)

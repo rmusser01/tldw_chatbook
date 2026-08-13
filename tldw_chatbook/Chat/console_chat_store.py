@@ -11,6 +11,13 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import (
+    FinalContinuation,
+    ProviderContinuationEvent,
+    ToolBatchReady,
+    ToolCallExecuting,
+    ToolCallFinished,
+)
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_trace_models import (
@@ -51,7 +58,14 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+    transition_provider_call,
+)
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
@@ -234,6 +248,7 @@ class ConsoleChatPersistence(Protocol):
         attachments: Sequence[Mapping[str, Any]] | None = None,
         usage_json: str | None = None,
         metadata_json: str | None = None,
+        preserve_provider_continuation: bool = False,
     ) -> bool:
         """Update persisted message content.
 
@@ -401,6 +416,20 @@ class ConsoleChatSyncProducer(Protocol):
 
     def enqueue_chat_message(self, **kwargs: Any) -> dict[str, Any]:
         """Enqueue a Chat message into the Sync v2 local outbox."""
+
+    def reconcile_chat_message_intent(self, **kwargs: Any) -> dict[str, Any]:
+        """Project an exact committed source intent into durable sync state."""
+
+    def reconcile_chat_message_delete_intent(self, **kwargs: Any) -> dict[str, Any]:
+        """Project an exact committed tombstone into durable sync state."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationDurabilityResult:
+    """Bounded, private-data-free result for the execution durability barrier."""
+
+    ready: bool
+    reason: str
 
 
 def _utc_now_iso() -> str:
@@ -706,6 +735,7 @@ class ConsoleChatStore:
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
+        remote_active: bool = False,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -767,14 +797,150 @@ class ConsoleChatStore:
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
         self._resolve_context_policy_on_resume(session.id)
+        restored_nodes = self._hydrate_provider_continuations_from_persistence(
+            persisted_conversation_id,
+            list(all_nodes),
+            remote_active=remote_active,
+        )
         self._ingest_full_tree(
             session.id,
-            all_nodes,
+            restored_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
+        )
+        self._reconcile_restored_chat_sync_intents(
+            session.id, str(persisted_conversation_id)
         )
         self._hydrate_generation_metadata_from_persistence(session.id)
         self._bump_payload_revision(session.id)
         return session
+
+    def _hydrate_provider_continuations_from_persistence(
+        self,
+        conversation_id: str,
+        nodes: list[ConsoleChatMessage],
+        *,
+        remote_active: bool = False,
+    ) -> list[ConsoleChatMessage]:
+        """Tolerantly attach private checkpoints without exposing their data."""
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        getter = getattr(database, "get_messages_for_conversation", None)
+        if not callable(getter):
+            return nodes
+        try:
+            rows = getter(conversation_id, limit=100_000)
+        except Exception:
+            logger.warning("Console continuation restore was unavailable.")
+            return nodes
+        by_persisted_id = {
+            node.persisted_message_id: node
+            for node in nodes
+            if node.persisted_message_id is not None
+        }
+        for row in rows:
+            persisted_id = str(row.get("id") or "")
+            safe = read_provider_continuation_json(
+                row.get("provider_continuation_json")
+            )
+            node = by_persisted_id.get(persisted_id)
+            if node is None and (safe.checkpoint is not None or safe.warning):
+                node = ConsoleChatMessage(
+                    id=persisted_id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=str(row.get("content") or ""),
+                    persisted_message_id=persisted_id,
+                    parent_message_id=(
+                        str(row["parent_message_id"])
+                        if row.get("parent_message_id") is not None
+                        else None
+                    ),
+                )
+                nodes.append(node)
+                by_persisted_id[persisted_id] = node
+            if node is None:
+                continue
+            node.parent_message_id = (
+                str(row["parent_message_id"])
+                if row.get("parent_message_id") is not None
+                else None
+            )
+            node.provider_continuation = safe.checkpoint
+            node.provider_continuation_warning = safe.warning
+            node.provider_continuation_remote = bool(
+                safe.checkpoint is not None and remote_active
+            )
+            version = row.get("version")
+            node.provider_continuation_message_version = (
+                version if type(version) is int else None
+            )
+        return nodes
+
+    def _reconcile_restored_chat_sync_intents(
+        self, session_id: str, conversation_id: str
+    ) -> None:
+        """Project exact current unbridged Chat intents during normal restore."""
+        if (
+            self.sync_v2_server_profile_id is None
+            or self.sync_v2_chat_producer is None
+        ):
+            return
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        enumerate_intents = getattr(
+            database, "list_current_committed_chat_sync_intents", None
+        )
+        if not callable(enumerate_intents):
+            return
+        try:
+            intents = enumerate_intents(conversation_id)
+        except Exception:
+            logger.warning("Console continuation sync reconciliation was unavailable.")
+            return
+        producer = self.sync_v2_chat_producer
+        for intent in intents:
+            if not isinstance(intent, Mapping):
+                continue
+            operation = intent.get("operation")
+            message_id = intent.get("message_id")
+            message_version = intent.get("message_version")
+            payload_hash = intent.get("payload_hash")
+            if (
+                operation not in {"upsert", "delete"}
+                or type(message_id) is not str
+                or type(message_version) is not int
+                or type(payload_hash) is not str
+            ):
+                continue
+            reconcile = getattr(
+                producer,
+                "reconcile_chat_message_delete_intent"
+                if operation == "delete"
+                else "reconcile_chat_message_intent",
+                None,
+            )
+            if not callable(reconcile):
+                continue
+            try:
+                result = reconcile(
+                    server_profile_id=self.sync_v2_server_profile_id,
+                    authenticated_principal_id=(
+                        self.sync_v2_authenticated_principal_id
+                    ),
+                    workspace_scope=self.sync_v2_workspace_scope,
+                    message_id=message_id,
+                    message_version=message_version,
+                    payload_hash=payload_hash,
+                )
+            except Exception:
+                logger.bind(message_id=message_id).exception(
+                    "Failed to reconcile restored Chat sync intent"
+                )
+                continue
+            if not isinstance(result, Mapping) or result.get("status") != "enqueued":
+                for message in self._nodes_by_session.get(session_id, {}).values():
+                    if message.persisted_message_id == message_id:
+                        message.provider_continuation_warning = (
+                            "Portable continuation reconciliation is pending."
+                        )
+                        break
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.
@@ -2230,6 +2396,7 @@ class ConsoleChatStore:
             raise ValueError("Wait for response to finish before editing this message.")
         session_id = self._message_session_index[message.id]
         previous_content = message.content
+        descendant_ids = self._subtree_ids(session_id, message.id)[1:]
         on_active_path = self._message_is_on_active_path(message.id)
         provenance_cleared = (
             message.metadata is not None
@@ -2260,8 +2427,54 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
+        persisted = self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
+        if persisted and message.content != previous_content and descendant_ids:
+            self._purge_descendants_invalidated_by_edit(
+                session_id, message.id, descendant_ids
+            )
         return self._snapshot(message)
+
+    def _purge_descendants_invalidated_by_edit(
+        self,
+        session_id: str,
+        owner_id: str,
+        descendant_ids: Sequence[str],
+    ) -> None:
+        """Remove an edited node's stale descendants after the DB tombstones commit."""
+        nodes = self._nodes_by_session.get(session_id, {})
+        persisted_ids = [
+            nodes[node_id].persisted_message_id
+            for node_id in descendant_ids
+            if node_id in nodes and nodes[node_id].persisted_message_id is not None
+        ]
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        tombstone_reader = getattr(database, "get_message_tombstones", None)
+        if callable(tombstone_reader):
+            self._project_sync_v2_message_deletes(tombstone_reader(persisted_ids))
+
+        children_map = self._children_by_parent.get(session_id, {})
+        children_map.pop(owner_id, None)
+        removed = set(descendant_ids)
+        for node_id in descendant_ids:
+            self.clear_terminal_citation_state(node_id)
+            nodes.pop(node_id, None)
+            children_map.pop(node_id, None)
+            self._native_parent_by_message.pop(node_id, None)
+            self._message_session_index.pop(node_id, None)
+            self._stream_chunks_by_message.pop(node_id, None)
+            self._stream_materialized_counts.pop(node_id, None)
+            self._pending_persistence_message_ids.discard(node_id)
+            self._variant_stream_bases.pop(node_id, None)
+            self._variant_restored_message_ids.discard(node_id)
+            self._failed_retry_message_ids.discard(node_id)
+            self._message_speech_revisions.pop(node_id, None)
+        self._purge_tool_markers(session_id, removed)
+        if self._active_leaf_by_session.get(session_id) in removed:
+            self._active_leaf_by_session[session_id] = owner_id
+            self._persist_active_leaf(session_id, owner_id)
+        self._recompute_active_path(session_id)
 
     def presentation_context(
         self, session_id: str, global_default: object
@@ -3073,7 +3286,7 @@ class ConsoleChatStore:
             return False
 
     def delete_message(self, message_id: str) -> ConsoleChatMessage:
-        """Remove a complete Console message from the local transcript."""
+        """Durably tombstone a complete Console message and its subtree."""
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
@@ -3084,6 +3297,13 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
+        tombstones: list[dict[str, Any]] = []
+        if self.persistence is not None and message.persisted_message_id is not None:
+            deleter = getattr(self.persistence, "delete_message_subtree", None)
+            if not callable(deleter):
+                raise RuntimeError("Message deletion could not be persisted.")
+            tombstones = deleter(message_id=message.persisted_message_id)
+            self._project_sync_v2_message_deletes(tombstones)
         children_map = self._children_by_parent.get(session_id, {})
         nodes = self._nodes_by_session.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
@@ -3112,6 +3332,7 @@ class ConsoleChatStore:
         self._purge_tool_markers(session_id, set(subtree_ids))
         if on_active_path:
             self._active_leaf_by_session[session_id] = parent_native_id
+            self._persist_active_leaf(session_id, parent_native_id)
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
         if on_active_path:
@@ -3123,6 +3344,108 @@ class ConsoleChatStore:
         if message_id not in self._message_session_index:
             raise KeyError(f"Unknown Console message: {message_id}")
         return self._message_session_index[message_id]
+
+    def interrupted_provider_continuation_message(
+        self,
+        session_id: str | None = None,
+    ) -> ConsoleChatMessage | None:
+        """Return the active-path owner needing explicit recovery, if any."""
+        target_session_id = session_id or self.active_session_id
+        if target_session_id is None or target_session_id not in self._sessions:
+            return None
+        for message in reversed(self.messages_for_session(target_session_id)):
+            checkpoint = message.provider_continuation
+            if checkpoint is not None and checkpoint.state == "active":
+                return message
+        return None
+
+    def provider_continuation_recovery_message(
+        self,
+        session_id: str | None = None,
+    ) -> ConsoleChatMessage | None:
+        """Return an active owner or safe warning for transcript recovery UI."""
+        target_session_id = session_id or self.active_session_id
+        if target_session_id is None or target_session_id not in self._sessions:
+            return None
+        for message in reversed(self.messages_for_session(target_session_id)):
+            if message.provider_continuation_warning:
+                return message
+            checkpoint = message.provider_continuation
+            if checkpoint is not None and checkpoint.state == "active":
+                return message
+        return None
+
+    def set_provider_continuation_warning(
+        self,
+        message_id: str,
+        warning: str,
+    ) -> None:
+        """Set bounded visible recovery copy without exposing private state."""
+        self._message_or_raise(message_id).provider_continuation_warning = warning
+
+    def discard_provider_continuation(
+        self,
+        message_id: str,
+        *,
+        expected_message_version: int,
+    ) -> bool:
+        """Optimistically clear one whole checkpoint without running tools."""
+        message = self._message_or_raise(message_id)
+        persisted_id = message.persisted_message_id
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        updater = getattr(database, "update_provider_continuation", None)
+        if persisted_id is None or not callable(updater):
+            raise RuntimeError(
+                "Interrupted run could not be discarded; reload and retry."
+            )
+        session_id = self._message_session_index[message_id]
+        children = self._children_by_parent.get(session_id, {})
+        if (
+            not message.content
+            and not message.attachments
+            and message.image_data is None
+            and children.get(message_id)
+        ):
+            raise RuntimeError("Interrupted run changed; reload before discarding.")
+        updater(
+            message_id=persisted_id,
+            expected_message_version=expected_message_version,
+            provider_continuation_json=None,
+        )
+        message.provider_continuation = None
+        message.provider_continuation_message_version = expected_message_version + 1
+        message.provider_continuation_remote = False
+        message.provider_continuation_warning = None
+        if message.content or message.attachments or message.image_data is not None:
+            self._refresh_and_project_provider_continuation(message)
+            self._bump_payload_revision(session_id)
+            return True
+
+        self._project_sync_v2_message_deletes(
+            (
+                {
+                    "message_id": persisted_id,
+                    "version": expected_message_version + 1,
+                },
+            )
+        )
+
+        parent_id = self._native_parent_by_message.pop(message_id, None)
+        siblings = children.get(parent_id, [])
+        if message_id in siblings:
+            siblings.remove(message_id)
+        if not siblings:
+            children.pop(parent_id, None)
+        self._nodes_by_session.get(session_id, {}).pop(message_id, None)
+        self._message_session_index.pop(message_id, None)
+        self._pending_persistence_message_ids.discard(message_id)
+        if self._active_leaf_by_session.get(session_id) == message_id:
+            self._active_leaf_by_session[session_id] = parent_id
+            self._persist_active_leaf(session_id, parent_id)
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        self._bump_conversation_context_epoch(session_id)
+        return True
 
     def active_leaf(self, session_id: str) -> str | None:
         """Return the native id of the session's active-leaf node (or ``None``)."""
@@ -3416,7 +3739,9 @@ class ConsoleChatStore:
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
-            self._persist_existing_message(message)
+            self._persist_existing_message(
+                message, preserve_provider_continuation=True
+            )
             return self._snapshot(message)
 
         try:
@@ -3425,7 +3750,9 @@ class ConsoleChatStore:
                 self._bump_message_speech_revision(message.id)
                 self._bump_payload_revision(session_id)
                 self._settle_failed_retry_context(message, provider_visible=True)
-                self._persist_existing_message(message)
+                self._persist_existing_message(
+                    message, preserve_provider_continuation=True
+                )
                 return self._snapshot(message)
 
             citation_write = None
@@ -3493,7 +3820,7 @@ class ConsoleChatStore:
             message,
             provider_visible=message.status != "failed",
         )
-        self._persist_existing_message(message)
+        self._persist_existing_message(message, preserve_provider_continuation=True)
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
@@ -3534,7 +3861,7 @@ class ConsoleChatStore:
             message,
             provider_visible=message.status != "failed",
         )
-        self._persist_existing_message(message)
+        self._persist_existing_message(message, preserve_provider_continuation=True)
         return self._snapshot(message)
 
     def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:
@@ -4655,6 +4982,7 @@ class ConsoleChatStore:
         *,
         update_feedback: bool = False,
         force_metadata_write: bool = False,
+        preserve_provider_continuation: bool = False,
     ) -> bool:
         if self.persistence is None:
             return True
@@ -4707,10 +5035,69 @@ class ConsoleChatStore:
             )
         ):
             update_kwargs["metadata_json"] = message.metadata.to_json()
+        if self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "preserve_provider_continuation",
+        ):
+            update_kwargs["preserve_provider_continuation"] = (
+                preserve_provider_continuation
+            )
+        had_provider_continuation = message.provider_continuation is not None
         if not self.persistence.update_message_content(**update_kwargs):
             return False
+        if had_provider_continuation:
+            self._refresh_and_project_provider_continuation(message)
+            return True
         self._enqueue_sync_v2_message_if_ready(message)
         return True
+
+    def _refresh_and_project_provider_continuation(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        """Refresh one continuation owner and project its exact committed row."""
+        persisted_id = message.persisted_message_id
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        getter = getattr(database, "get_message_by_id", None)
+        if persisted_id is None or not callable(getter):
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        row = getter(persisted_id)
+        if row is None:
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        safe = read_provider_continuation_json(row.get("provider_continuation_json"))
+        message.provider_continuation = safe.checkpoint
+        message.provider_continuation_message_version = int(row["version"])
+        message.provider_continuation_remote = False
+        message.provider_continuation_warning = safe.warning
+
+        producer = self.sync_v2_chat_producer
+        profile_id = self.sync_v2_server_profile_id
+        reconcile = getattr(producer, "reconcile_chat_message_intent", None)
+        if profile_id is None or not callable(reconcile):
+            return
+        payload: dict[str, Any] = {
+            "content": str(row.get("content") or ""),
+            "role": message.role.value,
+        }
+        if safe.checkpoint is not None:
+            payload["provider_continuation_json"] = dump_provider_continuation_json(
+                safe.checkpoint
+            )
+        try:
+            reconcile(
+                server_profile_id=profile_id,
+                authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                workspace_scope=self.sync_v2_workspace_scope,
+                message_id=persisted_id,
+                message_version=int(row["version"]),
+                payload_hash=canonical_payload_hash(payload),
+            )
+        except Exception:
+            logger.bind(
+                server_profile_id=profile_id,
+                message_id=persisted_id,
+            ).exception(
+                "Failed to project Sync v2 continuation owner after local mutation"
+            )
 
     def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
         if (
@@ -4722,6 +5109,262 @@ class ConsoleChatStore:
             return
         session_id = self._message_session_index[message.id]
         self._persist_new_message(session_id=session_id, message=message)
+
+    def ensure_provider_continuation_durable(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> ContinuationDurabilityResult:
+        """Require exact local intent durability and configured portable projection."""
+        source_db = self.persistence.db if self.persistence is not None else None
+        reader = getattr(source_db, "read_committed_chat_sync_intent", None)
+        if not callable(reader):
+            return ContinuationDurabilityResult(
+                False,
+                "Local continuation storage is unavailable; save the message and retry.",
+            )
+        source_record = reader(
+            message_id=message_id,
+            message_version=message_version,
+            payload_hash=payload_hash,
+        )
+        if source_record is None:
+            return ContinuationDurabilityResult(
+                False,
+                "Local continuation intent is stale or unavailable; save and retry.",
+            )
+        if self.sync_v2_server_profile_id is None:
+            return ContinuationDurabilityResult(True, "local_intent_durable")
+
+        producer = self.sync_v2_chat_producer
+        if producer is None:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection is unavailable; restore sync configuration.",
+            )
+        repository = getattr(producer, "state_repository", None)
+        if repository is None or getattr(repository, "is_durable", False) is not True:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync needs a file-backed state repository; configure one and retry.",
+            )
+        if getattr(producer, "source", None) is not source_db:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync source does not match local continuation storage.",
+            )
+        reconcile = getattr(producer, "reconcile_chat_message_intent", None)
+        if not callable(reconcile):
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection is unavailable; restore sync configuration.",
+            )
+        try:
+            projection = reconcile(
+                server_profile_id=self.sync_v2_server_profile_id,
+                authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                workspace_scope=self.sync_v2_workspace_scope,
+                message_id=message_id,
+                message_version=message_version,
+                payload_hash=payload_hash,
+            )
+            profile = repository.get_sync_v2_profile_state(
+                server_profile_id=self.sync_v2_server_profile_id,
+                authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                workspace_scope=self.sync_v2_workspace_scope,
+            )
+            dataset_id = profile.get("dataset_id") if profile else None
+            persisted_receipt = (
+                repository.get_sync_v2_source_projection_receipt(
+                    server_profile_id=self.sync_v2_server_profile_id,
+                    authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                    workspace_scope=self.sync_v2_workspace_scope,
+                    dataset_id=dataset_id,
+                    domain="chat",
+                    source_entity_id=message_id,
+                    source_version=message_version,
+                    source_payload_hash=payload_hash,
+                )
+                if dataset_id
+                else None
+            )
+        except Exception:
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync projection failed; restore local sync state and retry.",
+            )
+        projected_receipt = (
+            projection.get("receipt") if isinstance(projection, Mapping) else None
+        )
+        if (
+            not isinstance(projection, Mapping)
+            or projection.get("status") != "enqueued"
+            or not isinstance(projected_receipt, Mapping)
+            or persisted_receipt is None
+            or projected_receipt.get("client_envelope_id")
+            != persisted_receipt.get("client_envelope_id")
+            or persisted_receipt.get("source_entity_id") != message_id
+            or persisted_receipt.get("source_version") != message_version
+            or persisted_receipt.get("source_payload_hash") != payload_hash
+        ):
+            return ContinuationDurabilityResult(
+                False,
+                "Portable sync receipt is missing or inconsistent; reconcile and retry.",
+            )
+        return ContinuationDurabilityResult(True, "portable_projection_durable")
+
+    def persist_provider_continuation_event(
+        self,
+        event: ProviderContinuationEvent,
+    ) -> None:
+        """Commit one runtime continuation event before its next side effect.
+
+        The runtime callback is synchronous because it is invoked on the
+        controller's existing agent worker thread. Persistent primary runs
+        use the schema-v37 dedicated create/update operations; explicitly
+        ephemeral runs retain no checkpoint and remain non-resumable.
+
+        Args:
+            event: Typed lifecycle event emitted by the shared agent runtime.
+
+        Raises:
+            RuntimeError: If ownership, optimistic state, persistence, or the
+                durability barrier cannot be proven without private details.
+        """
+        context = event.context
+        if context.durability == "ephemeral":
+            return
+        if context.agent_kind != "primary" or not context.owner_message_id:
+            raise RuntimeError("Durable continuation needs a distinct assistant owner.")
+        message = self._message_or_raise(context.owner_message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        persistence = self.persistence
+        database = getattr(persistence, "db", None) if persistence is not None else None
+        if database is None:
+            raise RuntimeError(
+                "Provider continuation could not be saved; retry or discard the interrupted run."
+            )
+
+        checkpoint, content = self._continuation_event_value(message, event)
+        private_json = dump_provider_continuation_json(checkpoint)
+        if private_json is None:
+            raise RuntimeError("Durable continuation state is unavailable.")
+
+        message_version: int | None
+        if message.persisted_message_id is None:
+            if not isinstance(event, ToolBatchReady) or (
+                event.expected_checkpoint_revision is not None
+            ):
+                raise RuntimeError("Durable continuation owner is unavailable.")
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if conversation_id is None:
+                raise RuntimeError(
+                    "Provider continuation could not be saved; retry or discard the interrupted run."
+                )
+            creator = getattr(database, "create_assistant_with_continuation", None)
+            if not callable(creator):
+                raise RuntimeError("Durable continuation storage is unavailable.")
+            creator(
+                message_id=message.id,
+                conversation_id=conversation_id,
+                parent_message_id=self._previous_persisted_message_id(message),
+                content=content,
+                provider_continuation_json=private_json,
+            )
+            message.persisted_message_id = message.id
+            self._pending_persistence_message_ids.discard(message.id)
+            message_version = 1
+        else:
+            version_reader = getattr(persistence, "get_message_version", None)
+            durable_version = (
+                version_reader(message.persisted_message_id)
+                if callable(version_reader)
+                else None
+            )
+            message_version = message.provider_continuation_message_version
+            if message_version is None:
+                message_version = durable_version
+            if durable_version != message_version:
+                raise RuntimeError("Continuation version conflict; reload and retry.")
+            updater = getattr(database, "update_provider_continuation", None)
+            if type(message_version) is not int or not callable(updater):
+                raise RuntimeError("Durable continuation version is unavailable.")
+            updater(
+                message_id=message.persisted_message_id,
+                expected_message_version=message_version,
+                provider_continuation_json=private_json,
+                content=content,
+            )
+            message_version += 1
+
+        message.provider_continuation = checkpoint
+        message.provider_continuation_message_version = message_version
+        message.provider_continuation_remote = False
+        message.content = content
+        payload = {
+            "content": content,
+            "provider_continuation_json": private_json,
+            "role": ConsoleMessageRole.ASSISTANT.value,
+        }
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        durability = self.ensure_provider_continuation_durable(
+            message_id=message.persisted_message_id,
+            message_version=message_version,
+            payload_hash=canonical_payload_hash(payload),
+        )
+        if not durability.ready:
+            raise RuntimeError(durability.reason)
+        message.provider_continuation_warning = None
+
+    @staticmethod
+    def _continuation_event_value(
+        message: ConsoleChatMessage,
+        event: ProviderContinuationEvent,
+    ) -> tuple[ProviderContinuationCheckpoint, str]:
+        """Resolve a typed event without logging its private payload."""
+        current = message.provider_continuation
+        if isinstance(event, ToolBatchReady):
+            if event.expected_checkpoint_revision is None:
+                if current is not None:
+                    raise RuntimeError("Continuation revision conflict.")
+            elif (
+                current is None
+                or current.checkpoint_revision != event.expected_checkpoint_revision
+            ):
+                raise RuntimeError("Continuation revision conflict.")
+            return event.checkpoint, message.content
+        if current is None:
+            raise RuntimeError("Durable continuation owner is unavailable.")
+        if isinstance(event, ToolCallExecuting):
+            checkpoint = transition_provider_call(
+                current,
+                call_id=event.call_id,
+                expected_revision=event.expected_checkpoint_revision,
+                target="executing",
+            )
+            return checkpoint, message.content
+        if isinstance(event, ToolCallFinished):
+            checkpoint = transition_provider_call(
+                current,
+                call_id=event.call_id,
+                expected_revision=event.expected_checkpoint_revision,
+                target=event.target_state,
+                result=event.result,
+            )
+            return checkpoint, message.content
+        if isinstance(event, FinalContinuation):
+            if event.expected_checkpoint_revision is None:
+                if current is not None:
+                    raise RuntimeError("Continuation revision conflict.")
+            elif current.checkpoint_revision != event.expected_checkpoint_revision:
+                raise RuntimeError("Continuation revision conflict.")
+            return event.checkpoint, event.assistant_content
+        raise RuntimeError("Unsupported continuation event.")
 
     def _enqueue_sync_v2_message_if_ready(
         self,
@@ -4778,6 +5421,34 @@ class ConsoleChatStore:
                 conversation_id=conversation_id,
                 message_id=message.persisted_message_id,
             ).exception("Failed to enqueue Sync v2 chat message after local mutation")
+
+    def _project_sync_v2_message_deletes(
+        self, tombstones: Iterable[Mapping[str, Any]]
+    ) -> None:
+        """Best-effort projection of already-committed local tombstones."""
+        producer = self.sync_v2_chat_producer
+        profile_id = self.sync_v2_server_profile_id
+        reconcile = getattr(producer, "reconcile_chat_message_delete_intent", None)
+        if profile_id is None or not callable(reconcile):
+            return
+        payload_hash = canonical_payload_hash({"deleted": True})
+        for tombstone in tombstones:
+            try:
+                reconcile(
+                    server_profile_id=profile_id,
+                    authenticated_principal_id=self.sync_v2_authenticated_principal_id,
+                    workspace_scope=self.sync_v2_workspace_scope,
+                    message_id=str(tombstone["message_id"]),
+                    message_version=int(tombstone["version"]),
+                    payload_hash=payload_hash,
+                )
+            except Exception:
+                logger.bind(
+                    server_profile_id=profile_id,
+                    message_id=tombstone.get("message_id"),
+                ).exception(
+                    "Failed to project Sync v2 Chat tombstone after local mutation"
+                )
 
     def _sync_message_sequence(self, message: ConsoleChatMessage) -> int | None:
         """Return ``message``'s 1-based sync-eligible position on the active path.

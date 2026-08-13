@@ -20,7 +20,7 @@ class ChatbookVersion(Enum):
     """Chatbook format versions."""
 
     V1 = "1.0"
-    V2 = "2.0"  # Future version
+    V2 = "2.0"
 
 
 class ContentType(Enum):

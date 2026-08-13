@@ -46,7 +46,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence
+from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+        ChatSyncDeleteIntentRecord,
+        ChatSyncIntentRecord,
+    )
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -76,6 +82,38 @@ _UNSET = object()
 # still stored as 'global' or 'workspace'. Used by the Library Browse ▸
 # Conversations snapshot so Console workspace chats are listed and counted.
 CONVERSATION_SCOPE_ALL = "all"
+
+
+def _validated_provider_continuation(value: object) -> tuple[Any, str]:
+    """Return a parsed checkpoint and canonical private JSON."""
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationValidationError,
+        dump_provider_continuation_json,
+        parse_provider_continuation_json,
+    )
+
+    try:
+        checkpoint = parse_provider_continuation_json(value)
+        canonical = dump_provider_continuation_json(checkpoint)
+        if canonical is not None:
+            return checkpoint, canonical
+    except ContinuationValidationError:
+        pass
+    raise InputError("Invalid provider continuation data.") from None
+
+
+def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
+    """Keep complete Kimi K3 final content on its exact assistant owner."""
+    if (
+        checkpoint.provider == "moonshot"
+        and checkpoint.model == "kimi-k3"
+        and checkpoint.state == "complete"
+        and not checkpoint.rounds[-1].calls
+        and checkpoint.rounds[-1].assistant_content != content
+    ):
+        raise InputError(
+            "Continuation content does not match assistant message."
+        ) from None
 
 
 # --- Custom Exceptions ---
@@ -163,7 +201,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 36  # Local note folders and memberships (TASK-15705).
+    _CURRENT_SCHEMA_VERSION = 37  # Durable provider continuation on assistant messages.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -4896,6 +4934,7 @@ UPDATE db_schema_version
                 / "migrations"
                 / "chachanotes_v35_to_v36_note_folders.sql"
             )
+
             with self.transaction() as cursor:
                 pending = ""
                 for line in migration_path.read_text(encoding="utf-8").splitlines(
@@ -4920,6 +4959,74 @@ UPDATE db_schema_version
         except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
             raise SchemaError(
                 f"Migration from V35 to V36 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v36_to_v37(self, conn: sqlite3.Connection) -> None:
+        """Add private provider continuation to the owning message row."""
+        if self._get_db_version(conn) != 36:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V36→V37] Migration requires schema version 36"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v36_to_v37_provider_continuation.sql"
+        )
+        try:
+            columns = {
+                row["name"]: row for row in conn.execute("PRAGMA table_info(messages)")
+            }
+            continuation_column = columns.get("provider_continuation_json")
+            if continuation_column is not None:
+                default = continuation_column["dflt_value"]
+                has_non_null_value = (
+                    conn.execute(
+                        "SELECT 1 FROM messages "
+                        "WHERE provider_continuation_json IS NOT NULL LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+                if (
+                    continuation_column["type"].strip().upper() != "TEXT"
+                    or continuation_column["notnull"] != 0
+                    or (default is not None and str(default).strip().upper() != "NULL")
+                    or has_non_null_value
+                ):
+                    raise SchemaError(
+                        "Provider continuation column is incompatible with schema V37"
+                    )
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    statement = pending
+                    pending = ""
+                    if (
+                        continuation_column is not None
+                        and statement.lstrip().startswith("-- Migration:")
+                        and "ALTER TABLE messages ADD COLUMN" in statement
+                    ):
+                        continue
+                    cursor.execute(statement)
+                if pending.strip():
+                    raise SchemaError(
+                        "Provider continuation migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 37:
+                    raise SchemaError(
+                        "Provider continuation schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V36 to V37 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -5089,6 +5196,7 @@ UPDATE db_schema_version
                     33: self._migrate_from_v33_to_v34,
                     34: self._migrate_from_v34_to_v35,
                     35: self._migrate_from_v35_to_v36,
+                    36: self._migrate_from_v36_to_v37,
                 }
 
                 if current_db_version == 0:
@@ -7726,7 +7834,7 @@ UPDATE db_schema_version
             "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
             "m.version, m.client_id, m.deleted, m.feedback, m.role, "
             "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants, "
-            "m.usage_json, m.metadata_json "
+            "m.usage_json, m.metadata_json, m.provider_continuation_json "
             "FROM messages m "
             "JOIN conversations c ON m.conversation_id = c.id "
             "WHERE m.conversation_id = ? AND m.deleted = 0 "
@@ -7773,7 +7881,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7807,7 +7915,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -8580,18 +8688,6 @@ UPDATE db_schema_version
         for field in required_fields:
             if field not in msg_data:  # Removed "not msg_data[field]" for 'content'
                 raise InputError(f"Required field '{field}' is missing for message.")
-        if not msg_data.get("content") and not msg_data.get("image_data"):
-            raise InputError("Message must have text content or image data.")
-        if msg_data.get("image_data") and not msg_data.get("image_mime_type"):
-            raise InputError("image_mime_type is required if image_data is provided.")
-
-        client_id = msg_data.get("client_id") or self.client_id
-        if not client_id:
-            raise InputError("Client ID is required for message.")
-
-        now = self._get_current_utc_timestamp_iso()
-        timestamp = msg_data.get("timestamp") or now
-
         # Determine role from sender or use provided role
         role = msg_data.get("role")
         if not role:
@@ -8608,12 +8704,43 @@ UPDATE db_schema_version
             else:
                 role = "assistant"  # Default for character names
 
+        provider_continuation_json = None
+        if msg_data.get("provider_continuation_json") is not None:
+            if role != "assistant":
+                raise InputError(
+                    "Provider continuation requires an assistant message."
+                ) from None
+            checkpoint, provider_continuation_json = _validated_provider_continuation(
+                msg_data["provider_continuation_json"]
+            )
+            _validate_continuation_owner_content(
+                checkpoint, msg_data.get("content", "")
+            )
+
+        if (
+            not msg_data.get("content")
+            and not msg_data.get("image_data")
+            and provider_continuation_json is None
+        ):
+            raise InputError(
+                "Message must have text content, image data, or assistant continuation."
+            )
+        if msg_data.get("image_data") and not msg_data.get("image_mime_type"):
+            raise InputError("image_mime_type is required if image_data is provided.")
+
+        client_id = msg_data.get("client_id") or self.client_id
+        if not client_id:
+            raise InputError("Client ID is required for message.")
+
+        now = self._get_current_utc_timestamp_iso()
+        timestamp = msg_data.get("timestamp") or now
+
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
                                       timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
+                                      usage_json, metadata_json, provider_continuation_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
                 """
         params = (
             msg_id,
@@ -8630,6 +8757,7 @@ UPDATE db_schema_version
             role,
             msg_data.get("usage_json"),
             msg_data.get("metadata_json"),
+            provider_continuation_json,
         )
         try:
             with self.transaction():
@@ -8666,6 +8794,215 @@ UPDATE db_schema_version
             logger.error(f"Database error adding message: {e}")
             raise
 
+    def create_assistant_with_continuation(
+        self,
+        *,
+        message_id: str,
+        conversation_id: str,
+        parent_message_id: str | None,
+        content: str,
+        provider_continuation_json: str,
+        expected_conversation_version: int | None = None,
+    ) -> str:
+        """Atomically create one assistant owner and its private checkpoint."""
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(conversation_id) is not str or not conversation_id.strip():
+            raise InputError("Conversation ID is required.")
+        if parent_message_id is not None and (
+            type(parent_message_id) is not str or not parent_message_id.strip()
+        ):
+            raise InputError("Parent message ID must be a non-empty string or None.")
+        if type(content) is not str:
+            raise InputError("Assistant content must be text.")
+        if expected_conversation_version is not None and (
+            type(expected_conversation_version) is not int
+            or expected_conversation_version <= 0
+        ):
+            raise InputError("Expected conversation version must be positive.")
+        checkpoint, canonical = _validated_provider_continuation(
+            provider_continuation_json
+        )
+        _validate_continuation_owner_content(checkpoint, content)
+        now = self._get_current_utc_timestamp_iso()
+
+        try:
+            with self.transaction() as conn:
+                conversation = conn.execute(
+                    "SELECT version, deleted FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                if conversation is None or conversation["deleted"]:
+                    raise InputError("Conversation not found or deleted.")
+                if (
+                    expected_conversation_version is not None
+                    and conversation["version"] != expected_conversation_version
+                ):
+                    raise ConflictError(
+                        "Conversation version conflict.",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+                if parent_message_id is not None:
+                    parent = conn.execute(
+                        "SELECT conversation_id, deleted FROM messages WHERE id = ?",
+                        (parent_message_id,),
+                    ).fetchone()
+                    if (
+                        parent is None
+                        or parent["deleted"]
+                        or parent["conversation_id"] != conversation_id
+                    ):
+                        raise InputError(
+                            "Parent message must be active in the same conversation."
+                        )
+
+                conn.execute(
+                    """
+                    INSERT INTO messages (
+                        id, conversation_id, parent_message_id, sender, content,
+                        image_data, image_mime_type, timestamp, ranking,
+                        last_modified, client_id, version, deleted, role,
+                        usage_json, metadata_json, provider_continuation_json
+                    ) VALUES (?, ?, ?, 'assistant', ?, NULL, NULL, ?, NULL,
+                              ?, ?, 1, 0, 'assistant', NULL, NULL, ?)
+                    """,
+                    (
+                        message_id,
+                        conversation_id,
+                        parent_message_id,
+                        content,
+                        now,
+                        now,
+                        self.client_id,
+                        canonical,
+                    ),
+                )
+            return message_id
+        except sqlite3.IntegrityError as exc:
+            if "messages.id" in str(exc):
+                raise ConflictError(
+                    "Message ID already exists.",
+                    entity="messages",
+                    entity_id=message_id,
+                ) from None
+            raise CharactersRAGDBError(
+                "Database integrity error creating assistant continuation."
+            ) from None
+        except sqlite3.Error:
+            raise CharactersRAGDBError(
+                "Database error creating assistant continuation."
+            ) from None
+
+    def update_provider_continuation(
+        self,
+        *,
+        message_id: str,
+        expected_message_version: int,
+        provider_continuation_json: str | None,
+        content: str | None = None,
+        deleted: bool | None = None,
+    ) -> bool:
+        """Atomically replace one assistant owner's whole private checkpoint."""
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(expected_message_version) is not int or expected_message_version <= 0:
+            raise InputError("Expected message version must be positive.")
+        if content is not None and type(content) is not str:
+            raise InputError("Assistant content must be text or None.")
+        if deleted is not None and type(deleted) is not bool:
+            raise InputError("Deleted must be a boolean or None.")
+        checkpoint = None
+        canonical = None
+        if provider_continuation_json is not None:
+            checkpoint, canonical = _validated_provider_continuation(
+                provider_continuation_json
+            )
+
+        try:
+            with self.transaction() as conn:
+                current = conn.execute(
+                    """
+                    SELECT role, content, image_data, deleted, version,
+                           EXISTS (
+                               SELECT 1
+                                 FROM message_attachments AS attachment
+                                WHERE attachment.message_id = messages.id
+                           ) AS has_attachments
+                      FROM messages
+                     WHERE id = ?
+                    """,
+                    (message_id,),
+                ).fetchone()
+                if current is None:
+                    raise ConflictError(
+                        "Message not found.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                if current["version"] != expected_message_version:
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+                if current["role"] != "assistant":
+                    raise InputError(
+                        "Provider continuation requires an assistant message."
+                    )
+
+                next_content = current["content"] if content is None else content
+                if checkpoint is not None:
+                    _validate_continuation_owner_content(checkpoint, next_content)
+                if canonical is None:
+                    required_deleted = not (
+                        bool(next_content)
+                        or bool(current["image_data"])
+                        or bool(current["has_attachments"])
+                    )
+                    if deleted is not None and deleted != required_deleted:
+                        raise InputError(
+                            "Deleted state conflicts with continuation discard semantics."
+                        )
+                    next_deleted = required_deleted
+                else:
+                    next_deleted = current["deleted"] if deleted is None else deleted
+
+                now = self._get_current_utc_timestamp_iso()
+                cursor = conn.execute(
+                    """
+                    UPDATE messages
+                       SET provider_continuation_json = ?, content = ?, deleted = ?,
+                           last_modified = ?, version = ?, client_id = ?
+                     WHERE id = ? AND version = ?
+                    """,
+                    (
+                        canonical,
+                        next_content,
+                        int(next_deleted),
+                        now,
+                        expected_message_version + 1,
+                        self.client_id,
+                        message_id,
+                        expected_message_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConflictError(
+                        "Message version conflict.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+            return True
+        except sqlite3.IntegrityError:
+            raise CharactersRAGDBError(
+                "Database integrity error updating assistant continuation."
+            ) from None
+        except sqlite3.Error:
+            raise CharactersRAGDBError(
+                "Database error updating assistant continuation."
+            ) from None
+
     def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific message by its UUID.
@@ -8682,7 +9019,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -9086,7 +9423,7 @@ UPDATE db_schema_version
                    {image_col}, m.image_mime_type, m.timestamp, m.ranking,
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -9144,6 +9481,7 @@ UPDATE db_schema_version
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                        m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
+                       m.provider_continuation_json,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
@@ -9182,7 +9520,12 @@ UPDATE db_schema_version
             raise
 
     def update_message(
-        self, message_id: str, update_data: Dict[str, Any], expected_version: int
+        self,
+        message_id: str,
+        update_data: Dict[str, Any],
+        expected_version: int,
+        *,
+        preserve_provider_continuation: bool = False,
     ) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
@@ -9217,6 +9560,8 @@ UPDATE db_schema_version
         """
         if not update_data:
             raise InputError("No data provided for message update.")
+        if type(preserve_provider_continuation) is not bool:
+            raise InputError("Preserve provider continuation must be a boolean.")
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -9282,20 +9627,51 @@ UPDATE db_schema_version
         where_values = [message_id, expected_version]
         final_params_for_execute = tuple(current_params_for_set_clause + where_values)
 
-        query = f"UPDATE messages SET {', '.join(current_fields_to_update_sql)} WHERE id = ? AND version = ? AND deleted = 0"
-
         try:
             with self.transaction() as conn:
-                current_db_version = self._get_current_db_version(
-                    conn, "messages", "id", message_id
-                )
-
-                if current_db_version != expected_version:
+                current = conn.execute(
+                    "SELECT conversation_id, version, deleted, content, "
+                    "provider_continuation_json "
+                    "FROM messages WHERE id = ?",
+                    (message_id,),
+                ).fetchone()
+                if current is None or current["deleted"]:
                     raise ConflictError(
-                        f"Message ID {message_id} update failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
+                        f"Message ID {message_id} is unavailable.",
                         entity="messages",
                         entity_id=message_id,
                     )
+                if current["version"] != expected_version:
+                    raise ConflictError(
+                        f"Message ID {message_id} update failed: version mismatch (db has {current['version']}, client expected {expected_version}).",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+
+                content_changed = (
+                    "content" in update_data
+                    and update_data["content"] != current["content"]
+                )
+                private_json = current["provider_continuation_json"]
+                if content_changed and private_json is not None:
+                    checkpoint, _canonical = _validated_provider_continuation(
+                        private_json
+                    )
+                    try:
+                        _validate_continuation_owner_content(
+                            checkpoint, update_data["content"]
+                        )
+                    except InputError:
+                        if preserve_provider_continuation:
+                            raise
+                        current_fields_to_update_sql.append(
+                            "provider_continuation_json = NULL"
+                        )
+
+                query = (
+                    f"UPDATE messages SET {', '.join(current_fields_to_update_sql)} "
+                    "WHERE id = ? AND version = ? AND deleted = 0"
+                )
 
                 cursor = conn.execute(query, final_params_for_execute)
 
@@ -9313,6 +9689,38 @@ UPDATE db_schema_version
                     elif final_state["version"] != expected_version:
                         msg = f"Message ID {message_id} version changed to {final_state['version']} concurrently."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
+
+                if content_changed:
+                    conn.execute(
+                        """
+                        WITH RECURSIVE descendants(id) AS (
+                            SELECT id
+                              FROM messages
+                             WHERE parent_message_id = ?
+                               AND conversation_id = ? AND deleted = 0
+                            UNION
+                            SELECT child.id
+                              FROM messages AS child
+                              JOIN descendants AS parent
+                                ON child.parent_message_id = parent.id
+                             WHERE child.deleted = 0
+                               AND child.conversation_id = ?
+                        )
+                        UPDATE messages
+                           SET deleted = 1,
+                               last_modified = ?,
+                               version = version + 1,
+                               client_id = ?
+                         WHERE id IN (SELECT id FROM descendants)
+                        """,
+                        (
+                            message_id,
+                            current["conversation_id"],
+                            current["conversation_id"],
+                            now,
+                            self.client_id,
+                        ),
+                    )
 
                 logger.info(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
@@ -9549,6 +9957,124 @@ UPDATE db_schema_version
             )
             raise
 
+    def soft_delete_message_subtree(
+        self, message_id: str, expected_version: int
+    ) -> List[Dict[str, Any]]:
+        """Atomically soft-delete an active message and all active descendants.
+
+        The returned rows describe the committed tombstones so callers can
+        project the exact entity versions to another outbox after this local
+        transaction succeeds. Provider-continuation sidecars remain attached
+        to tombstoned rows for audit/recovery diagnostics, but normal reads can
+        no longer expose them.
+        """
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction() as conn:
+            current = conn.execute(
+                "SELECT conversation_id, version, deleted FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if current is None:
+                raise ConflictError(
+                    f"Message ID {message_id} not found.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["deleted"]:
+                return []
+            if current["version"] != expected_version:
+                raise ConflictError(
+                    f"Soft delete for Message ID {message_id} failed: "
+                    f"version mismatch (db has {current['version']}, "
+                    f"client expected {expected_version}).",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+
+            rows = conn.execute(
+                """
+                WITH RECURSIVE subtree(id) AS (
+                    SELECT id FROM messages
+                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                    UNION
+                    SELECT child.id
+                      FROM messages AS child
+                      JOIN subtree AS parent ON child.parent_message_id = parent.id
+                     WHERE child.deleted = 0
+                       AND child.conversation_id = ?
+                )
+                SELECT id, conversation_id, version
+                  FROM messages
+                 WHERE id IN (SELECT id FROM subtree)
+                """,
+                (message_id, current["conversation_id"], current["conversation_id"]),
+            ).fetchall()
+            conn.execute(
+                """
+                WITH RECURSIVE subtree(id) AS (
+                    SELECT id FROM messages
+                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                    UNION
+                    SELECT child.id
+                      FROM messages AS child
+                      JOIN subtree AS parent ON child.parent_message_id = parent.id
+                     WHERE child.deleted = 0
+                       AND child.conversation_id = ?
+                )
+                UPDATE messages
+                   SET deleted = 1,
+                       last_modified = ?,
+                       version = version + 1,
+                       client_id = ?
+                 WHERE id IN (SELECT id FROM subtree)
+                """,
+                (
+                    message_id,
+                    current["conversation_id"],
+                    current["conversation_id"],
+                    now,
+                    self.client_id,
+                ),
+            )
+            return [
+                {
+                    "message_id": row["id"],
+                    "conversation_id": row["conversation_id"],
+                    "version": row["version"] + 1,
+                }
+                for row in rows
+            ]
+
+    def get_message_tombstones(
+        self, message_ids: Sequence[str]
+    ) -> List[Dict[str, Any]]:
+        """Return committed tombstone identities and versions for exact IDs.
+
+        Args:
+            message_ids: Message IDs to inspect.
+
+        Returns:
+            Committed tombstone identity, conversation, and version mappings.
+        """
+        ids = [message_id for message_id in message_ids if message_id]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT id, conversation_id, version FROM messages "
+                f"WHERE deleted = 1 AND id IN ({placeholders})",
+                tuple(ids),
+            ).fetchall()
+        return [
+            {
+                "message_id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "version": row["version"],
+            }
+            for row in rows
+        ]
+
     def update_message_feedback(
         self, message_id: str, feedback: str, expected_version: int
     ) -> bool:
@@ -9749,7 +10275,8 @@ UPDATE db_schema_version
                 cursor = conn.execute(
                     """
                     SELECT id, content, sender, role, variant_number, is_selected_variant,
-                           total_variants, timestamp, last_modified, version, feedback
+                           total_variants, timestamp, last_modified, version, feedback,
+                           provider_continuation_json
                     FROM messages 
                     WHERE (id = ? OR variant_of = ?) AND deleted = 0
                     ORDER BY variant_number
@@ -9849,7 +10376,12 @@ UPDATE db_schema_version
         """
         safe_search_term = f'"{content_query}"'
         base_query = """
-                     SELECT m.*
+                     SELECT m.id, m.conversation_id, m.parent_message_id,
+                            m.sender, m.content, m.image_data, m.image_mime_type,
+                            m.timestamp, m.ranking, m.last_modified, m.deleted,
+                            m.client_id, m.version, m.feedback, m.role, m.variant_of,
+                            m.variant_number, m.is_selected_variant, m.total_variants,
+                            m.usage_json, m.metadata_json
                      FROM messages_fts fts
                               JOIN messages m ON fts.rowid = m.rowid
                      WHERE fts.messages_fts MATCH ? \
@@ -12236,6 +12768,421 @@ UPDATE db_schema_version
         return [dict(row) for row in cursor.fetchall()]
 
     # --- Sync Log Methods ---
+    def read_committed_chat_sync_intent(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> "ChatSyncIntentRecord | None":
+        """Return one exact committed message intent without exposing private data.
+
+        Args:
+            message_id: Exact message owner ID.
+            message_version: Exact committed message version.
+            payload_hash: Expected canonical whole-message payload hash.
+
+        Returns:
+            The validated committed source record, or ``None`` when the
+            source proof is absent, ambiguous, invalid, or uncommitted.
+        """
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+            ChatSyncIntentRecord,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if (
+            type(message_id) is not str
+            or not message_id
+            or type(message_version) is not int
+            or message_version < 1
+            or type(payload_hash) is not str
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", payload_hash)
+        ):
+            return None
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return None
+        try:
+            query = """
+                SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                       m.role, m.content, m.image_mime_type,
+                       m.provider_continuation_json, m.timestamp, m.ranking,
+                       m.last_modified, m.deleted, m.client_id, m.version,
+                       intent.operation, intent.payload
+                  FROM messages AS m
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.id = ? AND m.version = ?
+                 ORDER BY intent.change_id
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (message_id, message_version),
+                ).fetchall()
+                if len(rows) != 1:
+                    return None
+                row = rows[0]
+                base_payload_hash = self._previous_committed_chat_payload_hash(
+                    conn,
+                    message_id=message_id,
+                    conversation_id=row["conversation_id"],
+                    role=row["role"],
+                    message_version=message_version,
+                )
+            if row["deleted"] or row["operation"] not in {"create", "update"}:
+                return None
+            intent_payload = json.loads(row["payload"])
+            if type(intent_payload) is not dict:
+                return None
+
+            def intent_value(value: Any) -> Any:
+                if isinstance(value, datetime):
+                    return (
+                        value.astimezone(timezone.utc)
+                        .isoformat(timespec="milliseconds")
+                        .replace("+00:00", "Z")
+                    )
+                return value
+
+            expected_intent = {
+                "id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "parent_message_id": row["parent_message_id"],
+                "sender": row["sender"],
+                "content": row["content"],
+                "image_mime_type": row["image_mime_type"],
+                "provider_continuation_json": row["provider_continuation_json"],
+                "timestamp": intent_value(row["timestamp"]),
+                "ranking": row["ranking"],
+                "last_modified": intent_value(row["last_modified"]),
+                "deleted": row["deleted"],
+                "client_id": row["client_id"],
+                "version": row["version"],
+            }
+            if intent_payload != expected_intent:
+                return None
+
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+            envelope_payload = {"content": content, "role": role}
+            if private_json is not None:
+                envelope_payload["provider_continuation_json"] = private_json
+            if canonical_payload_hash(envelope_payload) != payload_hash:
+                return None
+            return ChatSyncIntentRecord(
+                conversation_id=row["conversation_id"],
+                message_id=row["id"],
+                role=role,
+                content=content,
+                parent_message_id=row["parent_message_id"],
+                provider_continuation_json=private_json,
+                message_version=message_version,
+                payload_hash=payload_hash,
+                base_payload_hash=base_payload_hash,
+            )
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return None
+
+    @staticmethod
+    def _previous_committed_chat_payload_hash(
+        conn: sqlite3.Connection,
+        *,
+        message_id: str,
+        conversation_id: str,
+        role: str,
+        message_version: int,
+    ) -> str | None:
+        """Return the immediate prior committed whole-record hash, if provable."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if message_version <= 1:
+            return None
+        rows = conn.execute(
+            """
+            SELECT operation, payload
+              FROM sync_log
+             WHERE entity = 'messages'
+               AND entity_id = ?
+               AND version = ?
+             ORDER BY change_id
+            """,
+            (message_id, message_version - 1),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        operation = rows[0]["operation"]
+        payload = json.loads(rows[0]["payload"])
+        if type(payload) is not dict:
+            return None
+        if operation == "delete":
+            if (
+                payload.get("id") != message_id
+                or payload.get("version") != message_version - 1
+                or payload.get("deleted") != 1
+            ):
+                return None
+            return canonical_payload_hash({"deleted": True})
+        if operation not in {"create", "update"}:
+            return None
+        if (
+            payload.get("id") != message_id
+            or payload.get("conversation_id") != conversation_id
+            or payload.get("version") != message_version - 1
+            or payload.get("deleted") != 0
+            or type(payload.get("content")) is not str
+        ):
+            return None
+        private_json = payload.get("provider_continuation_json")
+        if private_json is not None:
+            if role != "assistant" or type(private_json) is not str:
+                return None
+            private_json = dump_provider_continuation_json(
+                parse_provider_continuation_json(private_json)
+            )
+            if private_json != payload.get("provider_continuation_json"):
+                return None
+        base_payload = {"content": payload["content"], "role": role}
+        if private_json is not None:
+            base_payload["provider_continuation_json"] = private_json
+        return canonical_payload_hash(base_payload)
+
+    def read_committed_chat_delete_intent(
+        self,
+        *,
+        message_id: str,
+        message_version: int,
+        payload_hash: str,
+    ) -> "ChatSyncDeleteIntentRecord | None":
+        """Return one exact committed message tombstone intent.
+
+        Args:
+            message_id: Exact tombstoned message ID.
+            message_version: Exact committed tombstone version.
+            payload_hash: Expected canonical delete payload hash.
+
+        Returns:
+            The validated committed delete source, or ``None`` when its
+            proof is absent, ambiguous, invalid, or uncommitted.
+        """
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
+            ChatSyncDeleteIntentRecord,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if (
+            type(message_id) is not str
+            or not message_id
+            or type(message_version) is not int
+            or message_version < 1
+            or type(payload_hash) is not str
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", payload_hash)
+        ):
+            return None
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return None
+        try:
+            query = """
+                SELECT m.id, m.conversation_id, m.deleted, m.version,
+                       m.last_modified, m.client_id, m.role, m.content,
+                       m.provider_continuation_json,
+                       intent.operation, intent.payload
+                  FROM messages AS m
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.id = ? AND m.version = ?
+                 ORDER BY intent.change_id
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (message_id, message_version),
+                ).fetchall()
+                if len(rows) != 1:
+                    return None
+                row = rows[0]
+            if not row["deleted"] or row["operation"] != "delete":
+                return None
+            intent_payload = json.loads(row["payload"])
+            expected_intent = {
+                "id": row["id"],
+                "deleted": 1,
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "client_id": row["client_id"],
+            }
+            if isinstance(expected_intent["last_modified"], datetime):
+                expected_intent["last_modified"] = (
+                    expected_intent["last_modified"]
+                    .astimezone(timezone.utc)
+                    .isoformat(timespec="milliseconds")
+                    .replace("+00:00", "Z")
+                )
+            if intent_payload != expected_intent or canonical_payload_hash(
+                {"deleted": True}
+            ) != payload_hash:
+                return None
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+            base_payload = {"content": content, "role": role}
+            if private_json is not None:
+                base_payload["provider_continuation_json"] = private_json
+            return ChatSyncDeleteIntentRecord(
+                conversation_id=row["conversation_id"],
+                message_id=row["id"],
+                message_version=message_version,
+                payload_hash=payload_hash,
+                base_payload_hash=canonical_payload_hash(base_payload),
+            )
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return None
+
+    def list_current_committed_chat_sync_intents(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        """List exact current Chat intents for one restored conversation.
+
+        Args:
+            conversation_id: Restored conversation whose current message
+                intents should be reconciled.
+
+        Returns:
+            Validated current intent descriptors safe to pass to the
+            idempotent Chat Sync-v2 reconcilers.
+        """
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationValidationError,
+            dump_provider_continuation_json,
+            parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+
+        if type(conversation_id) is not str or not conversation_id:
+            return []
+        conn = self.get_connection()
+        if conn.in_transaction:
+            return []
+        try:
+            query = """
+                SELECT m.id, m.conversation_id, m.role, m.content,
+                       m.provider_continuation_json, m.deleted, m.version,
+                       intent.operation
+                  FROM messages AS m
+                  JOIN conversations AS c
+                    ON c.id = m.conversation_id AND c.deleted = 0
+                  JOIN sync_log AS intent
+                    ON intent.entity = 'messages'
+                   AND intent.entity_id = m.id
+                   AND intent.version = m.version
+                 WHERE m.conversation_id = ?
+                   AND (
+                       (m.deleted = 1 AND intent.operation = 'delete') OR
+                       (m.deleted = 0 AND intent.operation IN ('create', 'update'))
+                   )
+                   AND 1 = (
+                       SELECT COUNT(*)
+                         FROM sync_log AS duplicate
+                        WHERE duplicate.entity = 'messages'
+                          AND duplicate.entity_id = m.id
+                          AND duplicate.version = m.version
+                   )
+                 ORDER BY m.timestamp, m.id
+                """
+            with self.transaction() as conn:
+                rows = conn.execute(
+                    query,
+                    (conversation_id,),
+                ).fetchall()
+            intents: List[Dict[str, Any]] = []
+            for row in rows:
+                message_id = row["id"]
+                message_version = row["version"]
+                if row["deleted"]:
+                    payload_hash = canonical_payload_hash({"deleted": True})
+                    source = self.read_committed_chat_delete_intent(
+                        message_id=message_id,
+                        message_version=message_version,
+                        payload_hash=payload_hash,
+                    )
+                    operation = "delete"
+                else:
+                    role = row["role"]
+                    content = row["content"]
+                    if type(role) is not str or type(content) is not str:
+                        continue
+                    private_json = row["provider_continuation_json"]
+                    if private_json is not None:
+                        if role != "assistant" or type(private_json) is not str:
+                            continue
+                        private_json = dump_provider_continuation_json(
+                            parse_provider_continuation_json(private_json)
+                        )
+                        if private_json != row["provider_continuation_json"]:
+                            continue
+                    payload = {"content": content, "role": role}
+                    if private_json is not None:
+                        payload["provider_continuation_json"] = private_json
+                    payload_hash = canonical_payload_hash(payload)
+                    source = self.read_committed_chat_sync_intent(
+                        message_id=message_id,
+                        message_version=message_version,
+                        payload_hash=payload_hash,
+                    )
+                    operation = "upsert"
+                if source is None or source.conversation_id != conversation_id:
+                    continue
+                intents.append(
+                    {
+                        "message_id": message_id,
+                        "message_version": message_version,
+                        "operation": operation,
+                        "payload_hash": payload_hash,
+                    }
+                )
+            return intents
+        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+            return []
+
     def get_sync_log_entries(
         self,
         since_change_id: int = 0,

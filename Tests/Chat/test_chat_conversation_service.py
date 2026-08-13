@@ -291,12 +291,14 @@ def test_normalize_conversation_row_defaults_missing_system_prompt_to_none():
             "variant_number": 2,
             "is_selected_variant": 1,
             "total_variants": 3,
+            "provider_continuation_json": '{"schema_version":1}',
         }
     )
     assert message["parent_message_id"] == "msg-root"
     assert message["topology"]["parent_message_id"] == "msg-root"
     assert message["variant"]["variant_of"] == "msg-base"
     assert message["variant"]["is_selected_variant"] is True
+    assert message["provider_continuation_json"] == '{"schema_version":1}'
 
 
 def test_legacy_character_conversation_defaults_missing_assistant_id_to_character_id():

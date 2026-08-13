@@ -50,13 +50,18 @@ def _seed_v32_database(path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str
         v32_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 32)
         db = CharactersRAGDB(path, client_id="v32-seed")
         conversation_id = db.add_conversation({"title": "legacy summary"})
-        boundary_id = db.add_message(
-            {
-                "conversation_id": conversation_id,
-                "sender": "user",
-                "content": "old turn",
-            }
-        )
+        boundary_id = "legacy-boundary"
+        timestamp = "2026-01-01T00:00:00+00:00"
+        with db.transaction() as transaction:
+            transaction.execute(
+                """
+                INSERT INTO messages (
+                    id, conversation_id, sender, content, timestamp,
+                    last_modified, client_id, version, deleted, role
+                ) VALUES (?, ?, 'user', 'old turn', ?, ?, 'v32-seed', 1, 0, 'user')
+                """,
+                (boundary_id, conversation_id, timestamp, timestamp),
+            )
         db.set_conversation_context_summary(
             conversation_id, "legacy recap", boundary_id
         )
@@ -94,7 +99,7 @@ def test_fresh_database_reaches_current_with_local_tables(tmp_path) -> None:
     )
     table_names = {str(row[0]) for row in rows}
 
-    assert _version(db) == 36  # bumped by TASK-15705
+    assert _version(db) == db._CURRENT_SCHEMA_VERSION
     assert EXPECTED_TABLES <= table_names
 
     sync_triggers = (
@@ -130,7 +135,7 @@ def test_migration_preserves_valid_legacy_summary_as_inactive_memory(
         .fetchone()
     )
 
-    assert _version(db) == 36  # bumped by TASK-15705
+    assert _version(db) == db._CURRENT_SCHEMA_VERSION
     assert row is not None
     assert row["conversation_id"] == conversation_id
     assert row["boundary_message_id"] == boundary_id
@@ -154,7 +159,7 @@ def test_v33_policy_migrates_with_inherited_text_representation(
     db = CharactersRAGDB(path, client_id="v34-open")
     result = ConsoleContextRepository(db).load_policy(conversation_id)
 
-    assert _version(db) == 36  # bumped by TASK-15705
+    assert _version(db) == db._CURRENT_SCHEMA_VERSION
     assert result.error is None
     assert result.overrides.custom_budget_tokens == 12_000
     assert result.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC

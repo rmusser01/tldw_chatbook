@@ -30,22 +30,36 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
     PreparedProviderRequest,
+    WireStyle,
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
     thaw_json,
 )
-from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
+from tldw_chatbook.Chat.console_history_budget import (
+    DEFAULT_PER_IMAGE_TOKENS,
+    ProviderContinuationSidecar,
+    is_deleted_history_value,
+    provider_continuation_owner_groups,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    validate_continuation_restore,
+)
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.qwencloud import (
     normalize_qwencloud_api_mode,
@@ -82,6 +96,20 @@ MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
 """Application hard ceiling for one auxiliary completion's output allowance."""
 PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
 """Maximum model-ID context included in user-visible provider error copy."""
+_CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
+
+
+def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
+    """Resolve ADR-064's pinned DeepSeek mode without changing legacy default."""
+    candidate = provider_settings.get("api_mode", "chat_completions")
+    if not isinstance(candidate, str):
+        raise ChatConfigurationError("DeepSeek API mode must be a string.")
+    normalized = candidate.strip().lower()
+    if normalized not in _CONTINUATION_PROTOCOLS:
+        raise ChatConfigurationError(
+            "DeepSeek API mode must be 'responses' or 'chat_completions'."
+        )
+    return normalized
 
 
 @dataclass(slots=True)
@@ -418,7 +446,7 @@ class ConsoleProviderResolution:
             breakpoint. Set only for Anthropic resolutions (and only when
             ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
             which drops the kwarg entirely in ``_chat_api_kwargs``.
-        api_mode: Pinned QwenCloud wire mode; ``None`` for every other provider.
+        api_mode: Pinned QwenCloud or DeepSeek wire mode; ``None`` elsewhere.
     """
 
     provider: str
@@ -446,6 +474,7 @@ class ConsoleProviderResolution:
     streaming: bool = True
     prompt_caching: bool | None = None
     api_mode: str | None = None
+    continuation_protocol: str | None = None
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -1017,6 +1046,9 @@ class ConsoleProviderGateway:
         context_window_override_tokens: int | None = None,
         apply_safety_window: bool = True,
         response_format: Mapping[str, Any] | None = None,
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_owner_key: str | None = None,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -1025,13 +1057,88 @@ class ConsoleProviderGateway:
         bound but never labeled as provider-verified.
         """
 
-        semantic = (
-            messages
-            if isinstance(messages, PreparedConsoleRequest)
-            else build_console_request(messages, tools=tools or ())
-        )
         if isinstance(messages, PreparedConsoleRequest) and tools is not None:
             raise ValueError("tools are already owned by PreparedConsoleRequest")
+        sidecar = tuple(continuation_sidecar)
+        if sidecar and (continuation_target is None or not continuation_owner_key):
+            raise ValueError(
+                "continuation target and owner key are required for private history"
+            )
+        if continuation_target is not None and (
+            continuation_target.provider,
+            continuation_target.model,
+            continuation_target.api_base_url,
+        ) != (
+            provider_config_key(resolution.provider),
+            resolution.model or "",
+            normalize_generic_endpoint_for_compare(resolution.base_url),
+        ):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        if (
+            continuation_target is not None
+            and resolution.continuation_protocol is not None
+            and continuation_target.protocol != resolution.continuation_protocol
+        ):
+            raise ContinuationConflictError(
+                "Continuation restore target mismatch."
+            ) from None
+        if isinstance(messages, PreparedConsoleRequest):
+            continuation_groups = (
+                tuple(
+                    group
+                    for unit in messages.compactable
+                    for group in unit.continuation_groups
+                )
+                + messages.active_continuation_groups
+            )
+            if continuation_groups and continuation_target is None:
+                raise ValueError(
+                    "continuation_target is required for provider continuation history"
+                )
+            if continuation_target is not None:
+                for group in continuation_groups:
+                    validate_continuation_restore(group.checkpoint, continuation_target)
+            semantic = messages
+        elif not sidecar:
+            if any("provider_continuation" in message for message in messages):
+                raise ValueError(
+                    "continuation_target is required for provider continuation history"
+                )
+            semantic = build_console_request(messages, tools=tools or ())
+        else:
+            assert continuation_target is not None
+            assert continuation_owner_key is not None
+            selected_owner_ids = {
+                message.get(continuation_owner_key)
+                for message in messages
+                if not is_deleted_history_value(message.get("deleted"))
+                and type(message.get(continuation_owner_key)) is str
+            }
+            selected_sidecar = tuple(
+                item for item in sidecar if item.owner_message_id in selected_owner_ids
+            )
+            continuation_groups = provider_continuation_owner_groups(
+                selected_sidecar, target=continuation_target
+            )
+            owner_ids = {group.owner_message_id for group in continuation_groups}
+            visible_messages: list[dict[str, Any]] = []
+            for message in messages:
+                if is_deleted_history_value(message.get("deleted")):
+                    continue
+                row = dict(message)
+                owner_id = row.pop(continuation_owner_key, None)
+                row.pop("provider_continuation", None)
+                row.pop("deleted", None)
+                if type(owner_id) is str and owner_id in owner_ids:
+                    row[CONTINUATION_OWNER_KEY] = owner_id
+                visible_messages.append(row)
+            semantic = build_console_request(
+                visible_messages,
+                tools=tools or (),
+                continuation_groups=continuation_groups,
+            )
 
         capabilities: Mapping[str, Any] = {}
         try:
@@ -1066,7 +1173,7 @@ class ConsoleProviderGateway:
             requested_response_tokens=resolution.max_tokens,
             context_window_override_tokens=context_window_override_tokens,
         )
-        wire_style = (
+        wire_style: WireStyle = (
             "distinct_roles"
             if resolution.provider in {"llama_cpp", "local_llamacpp"}
             else "single_preamble"
@@ -1466,6 +1573,28 @@ class ConsoleProviderGateway:
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
                 )
+
+        elif identity.execution_key == "deepseek":
+            try:
+                api_mode = _normalize_deepseek_api_mode(provider_settings)
+            except ChatConfigurationError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    model=model,
+                    visible_copy=(
+                        "DeepSeek blocked: invalid API mode setting. Choose "
+                        "'responses' or 'chat_completions' in Settings."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+
+            effective_base_url = effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
         else:
             effective_base_url = effective_provider_endpoint(
                 identity.readiness_key,
@@ -1534,6 +1663,13 @@ class ConsoleProviderGateway:
             prompt_caching = bool(
                 _caching_config_value(app_config).get("anthropic_enabled", True)
             )
+        continuation_protocol = (
+            "chat_completions"
+            if identity.execution_key in {"moonshot", "zai"}
+            else api_mode
+            if identity.execution_key == "deepseek"
+            else None
+        )
 
         return ConsoleProviderResolution(
             provider=selection.provider,
@@ -1546,6 +1682,7 @@ class ConsoleProviderGateway:
             api_key_source=readiness.api_key_source,
             prompt_caching=prompt_caching,
             api_mode=api_mode,
+            continuation_protocol=continuation_protocol,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,

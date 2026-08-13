@@ -32,6 +32,14 @@ class ChatSyncAdapter:
                     conflict_type="chat_message_hash_mismatch",
                     message="A chat message with this stable ID already has different content.",
                 )
+        if envelope.operation == "delete":
+            call_if_present(
+                local_store,
+                "delete_chat_message",
+                stable_key,
+                envelope.payload_hash,
+            )
+            return {"status": "applied"}
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
         call_if_present(
             local_store,
