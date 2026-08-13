@@ -1520,6 +1520,131 @@ async def test_lifecycleless_message_stop_cannot_touch_owned_same_message(
 
 
 @pytest.mark.asyncio
+async def test_rejected_same_id_stop_preserves_owned_cached_artifact(tmp_path) -> None:
+    artifact = tmp_path / "newer.wav"
+    artifact.write_bytes(b"RIFF-newer")
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="same-message",
+        request_id=2,
+        validator=lambda: True,
+        callback=lambda _state: None,
+    )
+    lifecycle.report("playing")
+    stop_requested = __import__("threading").Event()
+    handler = TTSEventHandler()
+    handler._audio_files[lifecycle.message_id] = artifact
+    handler._active_file_playback_owner = lifecycle
+    handler._active_file_playback_stop = (lifecycle.message_id, stop_requested)
+    handler._last_played = (lifecycle.message_id, artifact)
+    outcomes: list[bool] = []
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="stop",
+            message_id=lifecycle.message_id,
+            outcome_callback=outcomes.append,
+        )
+    )
+
+    assert outcomes == [False]
+    assert lifecycle.state == "playing"
+    assert handler._active_file_playback_owner is lifecycle
+    assert handler._active_file_playback_stop == (
+        lifecycle.message_id,
+        stop_requested,
+    )
+    assert handler._last_played == (lifecycle.message_id, artifact)
+    assert handler._audio_files[lifecycle.message_id] == artifact
+    assert artifact.read_bytes() == b"RIFF-newer"
+
+
+@pytest.mark.asyncio
+async def test_exact_file_stop_exception_retains_owner_for_successful_retry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    artifact = tmp_path / "retry.wav"
+    artifact.write_bytes(b"RIFF-retry")
+    states: list[str] = []
+    lifecycle = TTSPlaybackLifecycle(
+        message_id="message-1",
+        request_id=1,
+        validator=lambda: True,
+        callback=states.append,
+    )
+    lifecycle.report("playing")
+    states.clear()
+    stop_requested = __import__("threading").Event()
+    playback_started = __import__("threading").Event()
+    playback_started.set()
+    handler = TTSEventHandler()
+    handler._audio_files[lifecycle.message_id] = artifact
+    handler._active_file_playback_owner = lifecycle
+    handler._active_file_playback_stop = (lifecycle.message_id, stop_requested)
+    handler._active_file_playback_started = playback_started
+    handler._last_played = (lifecycle.message_id, artifact)
+    attempts = 0
+
+    def stop_file(_path) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("player stop failed")
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.TTS_Events.tts_events.stop_audio_playback_if_current",
+        stop_file,
+    )
+    first_outcomes: list[bool] = []
+    second_outcomes: list[bool] = []
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="stop",
+            message_id=lifecycle.message_id,
+            playback_lifecycle=lifecycle,
+            outcome_callback=first_outcomes.append,
+        )
+    )
+
+    assert first_outcomes == [False]
+    assert states == []
+    assert lifecycle.state == "playing"
+    assert stop_requested.is_set() is False
+    assert handler._active_file_playback_owner is lifecycle
+    assert handler._active_file_playback_stop == (
+        lifecycle.message_id,
+        stop_requested,
+    )
+    assert handler._active_file_playback_started is playback_started
+    assert handler._last_played == (lifecycle.message_id, artifact)
+    assert handler._audio_files[lifecycle.message_id] == artifact
+    assert artifact.exists()
+
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            action="stop",
+            message_id=lifecycle.message_id,
+            playback_lifecycle=lifecycle,
+            outcome_callback=second_outcomes.append,
+        )
+    )
+
+    assert attempts == 2
+    assert second_outcomes == [True]
+    assert states == ["stopped"]
+    assert lifecycle.state == "stopped"
+    assert stop_requested.is_set() is True
+    assert handler._active_file_playback_owner is None
+    assert handler._active_file_playback_stop is None
+    assert handler._active_file_playback_started is None
+    assert handler._last_played is None
+    assert lifecycle.message_id not in handler._audio_files
+    assert artifact.exists() is False
+
+
+@pytest.mark.asyncio
 async def test_bare_stop_settles_stream_and_file_owners(
     tmp_path,
     monkeypatch,

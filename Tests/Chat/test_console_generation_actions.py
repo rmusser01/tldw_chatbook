@@ -1006,6 +1006,46 @@ async def test_real_handler_stop_order_settles_and_notifies_once(monkeypatch):
     assert [args[0] for args, _kwargs in notified] == ["Stopped speaking."]
 
 
+@pytest.mark.asyncio
+async def test_rejected_owned_stop_retains_lifecycle_for_retry():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Speaking.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    generation = screen._message._begin_console_speech_presentation(message.id)
+    lifecycle = TTSPlaybackLifecycle(
+        message_id=message.id,
+        request_id=generation,
+        validator=lambda: True,
+        callback=lambda state: screen._message._settle_console_speech_presentation(
+            message.id,
+            generation,
+            state=state,
+        ),
+    )
+    screen._message._console_speech_owner = lifecycle
+    lifecycle.report("playing")
+
+    async def reject_stop(event: TTSPlaybackEvent) -> None:
+        event.report_outcome(False)
+
+    screen.app_instance.control_tts_playback = reject_stop
+    button = Button("stop", id=f"console-message-action-speak-stop-{message.id}")
+
+    assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+
+    assert lifecycle.state == "playing"
+    assert screen._message._console_speech_owner is lifecycle
+    assert screen._console_speaking_message_id == message.id
+    assert screen._console_speech_states[message.id] == "failed"
+    assert screen._message._console_speech_request_generation == generation
+
+
 # --- F5 (task-9 review): /generate-image dispatch gate in a temporary chat --
 
 

@@ -1559,11 +1559,18 @@ class ConsoleMessageController:
                 self._console_speech_pending_stop = None
                 if self._console_speech_request_generation != stop_generation:
                     return
-                self._console_speech_request_generation += 1
-                if self._console_speech_owner is stop_owner:
-                    self._console_speech_owner = None
-                if self._console_speaking_message_id == message.id:
-                    self._console_speaking_message_id = None
+                retryable_owner = bool(
+                    not accepted
+                    and stop_owner is not None
+                    and stop_owner.state not in {"stopped", "failed"}
+                    and self._console_speech_owner is stop_owner
+                )
+                if not retryable_owner:
+                    self._console_speech_request_generation += 1
+                    if self._console_speech_owner is stop_owner:
+                        self._console_speech_owner = None
+                    if self._console_speaking_message_id == message.id:
+                        self._console_speaking_message_id = None
                 self._console_speech_states[message.id] = (
                     "stopped" if accepted else "failed"
                 )

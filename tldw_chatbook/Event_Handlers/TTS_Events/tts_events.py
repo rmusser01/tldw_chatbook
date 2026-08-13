@@ -643,6 +643,7 @@ class TTSEventHandler:
         self._active_file_playback_task: asyncio.Task[None] | None = None
         self._active_file_playback_owner: TTSPlaybackLifecycle | None = None
         self._active_file_playback_stop: tuple[str, threading.Event] | None = None
+        self._active_file_playback_started: threading.Event | None = None
         self._active_stream_playback_owner: TTSPlaybackLifecycle | None = None
         self._playback_handoff_lock = asyncio.Lock()
         self._console_generation_owner: _ConsoleGenerationOwner | None = None
@@ -3177,6 +3178,7 @@ class TTSEventHandler:
         audio_file: Path,
         lifecycle: TTSPlaybackLifecycle,
         stop_requested: threading.Event,
+        playback_started: threading.Event,
     ) -> None:
         """Start and monitor one Console clip from the real player state."""
         from tldw_chatbook.TTS.audio_player import get_audio_player
@@ -3184,6 +3186,7 @@ class TTSEventHandler:
         loop = asyncio.get_running_loop()
 
         def report_started() -> None:
+            playback_started.set()
             loop.call_soon_threadsafe(lifecycle.report, "playing")
 
         try:
@@ -3216,6 +3219,8 @@ class TTSEventHandler:
                 self._active_file_playback_owner = None
             if self._active_file_playback_stop == (message_id, stop_requested):
                 self._active_file_playback_stop = None
+            if self._active_file_playback_started is playback_started:
+                self._active_file_playback_started = None
             async with self._audio_files_lock:
                 if self._last_played == (message_id, audio_file):
                     self._last_played = None
@@ -3230,6 +3235,7 @@ class TTSEventHandler:
         stream_stop_accepted = False
         generation_stop_accepted = False
         file_stop_accepted = False
+        file_stop_retryable_failure = False
         if event.action == "stop":
             generation_owner = self._console_generation_owner
             generation_stop_accepted = await self._cancel_console_generation(
@@ -3273,29 +3279,71 @@ class TTSEventHandler:
                     )
                 )
                 handoff = self._active_file_playback_stop
+                playback_started = self._active_file_playback_started
                 if file_owner_matches and file_owner is not None:
-                    if handoff is not None and handoff[0] == file_owner.message_id:
+                    matching_handoff = bool(
+                        handoff is not None and handoff[0] == file_owner.message_id
+                    )
+                    pending_start = bool(
+                        matching_handoff
+                        and playback_started is not None
+                        and not playback_started.is_set()
+                    )
+                    if pending_start:
+                        file_stop_accepted = True
                         handoff[1].set()
-                    if self._active_file_playback_owner is file_owner:
-                        self._active_file_playback_owner = None
-                    if self._active_file_playback_stop == handoff:
-                        self._active_file_playback_stop = None
-            if file_owner_matches and file_owner is not None:
-                async with self._audio_files_lock:
-                    last_played = self._last_played
-                    if (
-                        last_played is not None
-                        and last_played[0] == file_owner.message_id
-                    ):
-                        self._last_played = None
+                        if self._active_file_playback_owner is file_owner:
+                            self._active_file_playback_owner = None
+                        if self._active_file_playback_stop == handoff:
+                            self._active_file_playback_stop = None
+                        if self._active_file_playback_started is playback_started:
+                            self._active_file_playback_started = None
                     else:
-                        last_played = None
-                if last_played is not None:
-                    stop_audio_playback_if_current(last_played[1])
-                file_stop_accepted = True
+                        async with self._audio_files_lock:
+                            last_played = self._last_played
+                            if (
+                                last_played is None
+                                or last_played[0] != file_owner.message_id
+                            ):
+                                last_played = None
+
+                            if last_played is not None:
+                                try:
+                                    file_stop_accepted = (
+                                        stop_audio_playback_if_current(last_played[1])
+                                    )
+                                except Exception as exc:
+                                    file_stop_retryable_failure = True
+                                    logger.warning(
+                                        "Owned TTS file stop failed; ownership retained "
+                                        "for retry ({})",
+                                        type(exc).__name__,
+                                    )
+                                else:
+                                    file_stop_retryable_failure = not file_stop_accepted
+                            elif matching_handoff:
+                                # Older internal state may have a handoff
+                                # without the newer started marker.
+                                file_stop_accepted = True
+                            else:
+                                file_stop_retryable_failure = True
+
+                            if file_stop_accepted:
+                                if matching_handoff and handoff is not None:
+                                    handoff[1].set()
+                                if self._last_played == last_played:
+                                    self._last_played = None
+                                if self._active_file_playback_owner is file_owner:
+                                    self._active_file_playback_owner = None
+                                if self._active_file_playback_stop == handoff:
+                                    self._active_file_playback_stop = None
+                                if self._active_file_playback_started is playback_started:
+                                    self._active_file_playback_started = None
+
+            if file_stop_accepted and file_owner is not None:
                 file_owner.report_terminal("stopped")
 
-            if bare_stop:
+            if bare_stop and file_owner is None:
                 file_stop_accepted = (
                     await self._stop_prior_legacy_clip(bare_stop=True)
                     or file_stop_accepted
@@ -3311,6 +3359,7 @@ class TTSEventHandler:
                 event.report_outcome(False)
                 return
             stop_requested = threading.Event()
+            playback_started = threading.Event()
             async with self._playback_handoff_lock:
                 if not lifecycle.is_current():
                     event.report_outcome(False)
@@ -3329,6 +3378,7 @@ class TTSEventHandler:
                     event.message_id,
                     stop_requested,
                 )
+                self._active_file_playback_started = playback_started
             async with self._audio_files_lock:
                 audio_file = self._audio_files.get(event.message_id)
                 playback_cancelled = bool(
@@ -3354,6 +3404,8 @@ class TTSEventHandler:
                         stop_requested,
                     ):
                         self._active_file_playback_stop = None
+                    if self._active_file_playback_started is playback_started:
+                        self._active_file_playback_started = None
                 lifecycle.report_terminal("failed")
                 event.report_outcome(False)
                 return
@@ -3365,6 +3417,7 @@ class TTSEventHandler:
                     audio_file,
                     lifecycle,
                     stop_requested,
+                    playback_started,
                 )
             )
             self._active_file_playback_task = task
@@ -3433,7 +3486,11 @@ class TTSEventHandler:
             # deletion doesn't rewrite the player's recorded Path).
             normalized_id = event.message_id or "adhoc"
             last_played = None
-            if self._active_file_playback_owner is None:
+            legacy_file_stop_branch = bool(
+                event.playback_lifecycle is None
+                and self._active_file_playback_owner is None
+            )
+            if legacy_file_stop_branch:
                 async with self._audio_files_lock:
                     last_played = self._last_played
                     if last_played is not None and last_played[0] == normalized_id:
@@ -3466,11 +3523,13 @@ class TTSEventHandler:
                     "nothing was playing"
                 )
             # Clean up the (likely already-gone) cached file entry too.
-            await self._cleanup_audio_file(event.message_id)
+            if file_stop_accepted or legacy_file_stop_branch:
+                await self._cleanup_audio_file(event.message_id)
             if event.playback_lifecycle is not None:
-                event.playback_lifecycle.report_terminal(
-                    "stopped" if accepted else "failed"
-                )
+                if accepted:
+                    event.playback_lifecycle.report_terminal("stopped")
+                elif not file_stop_retryable_failure:
+                    event.playback_lifecycle.report_terminal("failed")
             event.report_outcome(accepted)
         elif event.action == "stop":
             event.report_outcome(
