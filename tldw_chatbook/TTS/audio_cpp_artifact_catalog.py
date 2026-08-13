@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
@@ -35,6 +36,12 @@ _MAX_TOKEN_BYTES = 256
 _MAX_PATH_BYTES = 1024
 _MAX_LICENSE_URL_BYTES = 2048
 _MAX_USAGE_NOTICE_BYTES = 4096
+_URL_HOST_LABEL = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z",
+    re.ASCII,
+)
+_URL_PATH = re.compile(r"(?:/[A-Za-z0-9._~!$&'()*+,;=:@%\-]*)*\Z", re.ASCII)
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})", re.ASCII)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +150,82 @@ def _relative_path(value: object, label: str) -> str:
     return path
 
 
+def _valid_url_hostname(hostname: str, *, bracketed: bool) -> bool:
+    if bracketed:
+        try:
+            ipaddress.IPv6Address(hostname)
+        except ValueError:
+            return False
+        return True
+    if ":" in hostname:
+        return False
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    labels = ascii_hostname.removesuffix(".").split(".")
+    return (
+        bool(labels)
+        and all(_URL_HOST_LABEL.fullmatch(label) is not None for label in labels)
+        and len(ascii_hostname) <= 254
+    )
+
+
+def _valid_url_authority(authority: str, hostname: str) -> bool:
+    bracketed = authority.startswith("[")
+    if bracketed:
+        closing_bracket = authority.find("]")
+        if closing_bracket < 0:
+            return False
+        raw_hostname = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+    else:
+        if "[" in authority or "]" in authority or authority.count(":") > 1:
+            return False
+        raw_hostname, separator, port_text = authority.rpartition(":")
+        if not separator:
+            raw_hostname = authority
+        elif not port_text.isdigit():
+            return False
+    return raw_hostname.casefold() == hostname.casefold() and _valid_url_hostname(
+        hostname,
+        bracketed=bracketed,
+    )
+
+
+def _validate_canonical_https_url(value: str, label: str) -> None:
+    if (
+        "?" in value
+        or "#" in value
+        or "\\" in value
+        or any(character.isspace() for character in value)
+        or _INVALID_PERCENT_ESCAPE.search(value) is not None
+    ):
+        raise ValueError(f"{label} must be a canonical credential-free https URL")
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            f"{label} must be a canonical credential-free https URL"
+        ) from exc
+    if (
+        parsed.scheme != "https"
+        or not value.startswith("https://")
+        or parsed.hostname is None
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not _valid_url_authority(parsed.netloc, parsed.hostname)
+        or _URL_PATH.fullmatch(parsed.path) is None
+    ):
+        raise ValueError(f"{label} must be a canonical credential-free https URL")
+
+
 def _source_file(raw: object, label: str) -> AudioCppArtifactSourceFile:
     item = _object(raw, label)
     _fields(item, _FILE_FIELDS, label)
@@ -180,21 +263,7 @@ def _package(raw: object, index: int) -> AudioCppArtifactPackage:
         f"{label}.license_url",
         max_bytes=_MAX_LICENSE_URL_BYTES,
     )
-    if any(character.isspace() for character in license_url):
-        raise ValueError(f"{label}.license_url must be a valid https URL")
-    try:
-        parsed_license_url = urlsplit(license_url)
-        hostname = parsed_license_url.hostname
-        _ = parsed_license_url.port
-    except ValueError as exc:
-        raise ValueError(f"{label}.license_url must be a valid https URL") from exc
-    if (
-        parsed_license_url.scheme != "https"
-        or not hostname
-        or parsed_license_url.username is not None
-        or parsed_license_url.password is not None
-    ):
-        raise ValueError(f"{label}.license_url must be a valid https URL")
+    _validate_canonical_https_url(license_url, f"{label}.license_url")
     return AudioCppArtifactPackage(
         recipe_id=_string(item["recipe_id"], f"{label}.recipe_id"),
         recipe_revision=_positive_integer(

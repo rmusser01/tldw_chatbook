@@ -307,6 +307,14 @@ def test_manifest_rejects_control_characters_in_text(
         " https://example.invalid/LICENSE",
         "https://example.invalid/LICENSE\n",
         "https://example.invalid/LI\x00CENSE",
+        "https://example.invalid\\evil/LICENSE",
+        "https://example.invalid/LICENSE?token=secret",
+        "https://example.invalid/LICENSE#fragment",
+        "https://user:password@example.invalid/LICENSE",
+        "https://:443/LICENSE",
+        "https://example.invalid:invalid/LICENSE",
+        "https://exa_mple.invalid/LICENSE",
+        "https://example.invalid/not|canonical",
     ],
 )
 def test_manifest_rejects_malformed_license_urls(tmp_path: Path, value: str) -> None:
@@ -319,6 +327,22 @@ def test_manifest_rejects_malformed_license_urls(tmp_path: Path, value: str) -> 
 
     with pytest.raises(ValueError, match="license_url"):
         load_audio_cpp_artifact_source_manifest(_write_manifest(tmp_path, payload))
+
+
+def test_manifest_accepts_canonical_credential_free_https_license_url(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        load_audio_cpp_artifact_source_manifest,
+    )
+
+    payload = _valid_manifest()
+
+    manifest = load_audio_cpp_artifact_source_manifest(
+        _write_manifest(tmp_path, payload)
+    )
+
+    assert manifest.packages[0].license_url == "https://example.invalid/LICENSE"
 
 
 def test_manifest_rejects_duplicate_json_object_keys(tmp_path: Path) -> None:
