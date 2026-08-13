@@ -14,10 +14,11 @@ WORKFLOW_PATH = PROJECT_ROOT / ".github/workflows/task-2062-2-gguf-source-eviden
 REQUIRED_NODES = (
     "Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_symlink",
     "Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_windows_reparse_point",
-    "Tests/LLM_Management/test_gguf_server_sources.py::test_external_replacement_after_inspection_fails_final_recheck_before_popen",
+    "Tests/LLM_Management/test_gguf_server_sources.py::test_external_identity_change_after_inspection_fails_final_recheck_before_popen",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_external_source_validation_is_worker_thread_store_free_and_read_only",
     "Tests/LLM_Management/test_gguf_source_modes.py::test_acquire_managed_gguf_returns_exact_declared_payload_and_open_lease",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_managed_transfer_precedes_popen_and_spawn_failure_closes_once",
+    "Tests/LLM_Management/test_gguf_server_sources.py::test_successful_stop_of_managed_worker_closes_lease_after_process_death",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_cancel_before_managed_preparation_releases_claim_without_acquire",
     "Tests/LLM_Management/test_server_lifecycle_resources.py::test_process_exit_closes_resource_only_after_exact_death",
     "Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_lease_blocks_delete_until_exact_claim_and_process_death",

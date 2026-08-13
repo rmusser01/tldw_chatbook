@@ -922,29 +922,33 @@ def test_external_source_rejections_happen_before_popen_without_private_output(
     assert "not a gguf" not in captured
 
 
-def test_external_replacement_after_inspection_fails_final_recheck_before_popen(
+def test_external_identity_change_after_inspection_fails_final_recheck_before_popen(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "PRIVATE_SELECTED.gguf"
-    replacement = tmp_path / "PRIVATE_REPLACEMENT.gguf"
     _write_sparse_gguf(source)
-    replacement.write_bytes(make_gguf(architecture="llama", name="Replacement"))
+    original_size = source.stat().st_size
     selection = _selection(GGUFSourceMode.EXTERNAL, external_path=source)
     app = _App()
     claim = _reserve(app, "llamacpp", selection)
     original_inspect = events.inspect_gguf_structure
 
-    def inspect_then_replace(handle: Any, *, file_size: int) -> object:
+    def inspect_then_mutate(handle: Any, *, file_size: int) -> object:
         inspected = original_inspect(handle, file_size=file_size)
-        replacement.replace(source)
+        # Opening the same file for append remains portable while the admission
+        # layer holds its read handle, unlike replacing an open file on Windows.
+        with source.open("ab") as stream:
+            stream.write(b"\0")
+            stream.flush()
+            os.fsync(stream.fileno())
         return inspected
 
-    monkeypatch.setattr(events, "inspect_gguf_structure", inspect_then_replace)
+    monkeypatch.setattr(events, "inspect_gguf_structure", inspect_then_mutate)
     monkeypatch.setattr(
         events,
         "run_server_subprocess",
-        lambda *_args, **_kwargs: pytest.fail("replaced source reached Popen"),
+        lambda *_args, **_kwargs: pytest.fail("changed source reached Popen"),
     )
 
     result = events.run_llamacpp_server_worker(
@@ -965,6 +969,7 @@ def test_external_replacement_after_inspection_fails_final_recheck_before_popen(
             "The selected external GGUF changed during validation. Retry.",
         )
     ]
+    assert source.stat().st_size == original_size + 1
     assert selection.external_path == source
     assert "PRIVATE" not in repr(
         (result, app.destination.state_changes, app.loguru_logger.records)
