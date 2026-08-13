@@ -145,6 +145,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
+        mutation_status: str = "",
         dirty: bool = False,
         can_update_original: bool = False,
         include_starter_content: bool = False,
@@ -173,6 +174,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
+        self.mutation_status = mutation_status
         self.dirty = dirty
         self.can_update_original = can_update_original
         self.include_starter_content = include_starter_content
@@ -527,6 +529,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
+        elif self.mutation_status:
+            yield Static(
+                self.mutation_status,
+                id="library-prompts-mutation-status",
+                classes="destination-purpose",
+                markup=False,
+            )
         elif selection_reason:
             yield Static(
                 selection_reason,
@@ -738,20 +747,38 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             return
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
+                if self.mutation_in_flight:
+                    yield Static(
+                        _MUTATION_PROGRESS,
+                        id="library-prompts-mutation-progress",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
                 yield Button(
-                    "‹ Back to list",
+                    library_disabled_action_label(
+                        "‹ Back to list", self.mutation_in_flight
+                    ),
                     id="library-prompt-back",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=self.mutation_in_flight,
                 )
                 yield Static("Name", classes="library-prompt-field-label", markup=False)
-                yield Input(value=editor_state.name, id="library-prompt-name")
+                yield Input(
+                    value=editor_state.name,
+                    id="library-prompt-name",
+                    disabled=self.mutation_in_flight,
+                )
                 # Task 8b U4: rendered label only -- the DB/record field name
                 # (``details``, ``#library-prompt-details``) is untouched.
                 yield Static(
                     "Description", classes="library-prompt-field-label", markup=False
                 )
-                yield Input(value=editor_state.details, id="library-prompt-details")
+                yield Input(
+                    value=editor_state.details,
+                    id="library-prompt-details",
+                    disabled=self.mutation_in_flight,
+                )
                 yield Static(
                     (
                         f"{editor_state.artifact_type.title()} · "
@@ -775,11 +802,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         embedded=True,
                         id="library-prompt-block-editor",
                     )
+                    block_editor.disabled = self.mutation_in_flight
                     yield block_editor
                     yield Checkbox(
                         "Include current text as starter content",
                         value=self.include_starter_content,
                         id="library-prompt-recipe-starter",
+                        disabled=self.mutation_in_flight,
                     )
                 else:
                     yield Static(
@@ -793,7 +822,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         id="library-prompt-convert",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=not editor_state.can_convert_as_new,
+                        disabled=(
+                            self.mutation_in_flight
+                            or not editor_state.can_convert_as_new
+                        ),
                     )
                     if convert.disabled:
                         convert.tooltip = (
@@ -833,11 +865,16 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     value=editor_state.keywords_csv,
                     placeholder="Keywords (comma-separated)",
                     id="library-prompt-keywords",
+                    disabled=self.mutation_in_flight,
                 )
                 yield Static(
                     "Author", classes="library-prompt-field-label", markup=False
                 )
-                yield Input(value=editor_state.author, id="library-prompt-author")
+                yield Input(
+                    value=editor_state.author,
+                    id="library-prompt-author",
+                    disabled=self.mutation_in_flight,
+                )
                 yield Static(
                     prompt_editor_meta_line(editor_state, dirty=self.dirty),
                     id="library-prompt-meta",
@@ -867,6 +904,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id="library-prompt-open-existing",
                             classes="library-canvas-action",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
                 if self.membership_state is not None:
                     yield Static(
@@ -886,8 +924,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         classes="library-canvas-action",
                         compact=True,
                         disabled=not (
-                            self.membership_state.can_manage
-                            or self.membership_state.can_retry_load
+                            not self.mutation_in_flight
+                            and (
+                                self.membership_state.can_manage
+                                or self.membership_state.can_retry_load
+                            )
                         ),
                     )
                     yield Button(
@@ -895,7 +936,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         id="library-prompt-memberships-apply",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=not self.membership_state.can_apply,
+                        disabled=(
+                            self.mutation_in_flight
+                            or not self.membership_state.can_apply
+                        ),
                     )
                     yield Static(
                         self._membership_status(self.membership_state),
@@ -906,12 +950,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 # Keep the empty region mounted for an unsaved editor so its
                 # first successful create can reveal history without
                 # remounting the editor fields or persistent action strip.
-                yield LibraryPromptHistoryRegion(
+                history_region = LibraryPromptHistoryRegion(
                     self.history_state,
                     dirty=self.dirty,
                     current_compatible=self.history_current_compatible,
                     id="library-prompt-history-region",
                 )
+                history_region.disabled = self.mutation_in_flight
+                yield history_region
 
             with Vertical(id="library-prompt-editor-actions"):
                 if self.conflict:
@@ -920,12 +966,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         id="library-prompt-conflict-save-new",
                         classes="library-canvas-action console-action-primary",
                         compact=True,
+                        disabled=self.mutation_in_flight,
                     )
                     yield Button(
                         "Reload",
                         id="library-prompt-conflict-reload",
                         classes="library-canvas-action",
                         compact=True,
+                        disabled=self.mutation_in_flight,
                     )
                 else:
                     with Vertical(id="library-prompt-actions-primary"):
@@ -939,9 +987,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action console-action-primary",
                             compact=True,
                             disabled=(
-                                editor_state.prompt_id is not None
-                                and (
-                                    block_state is None or not self.can_update_original
+                                self.mutation_in_flight
+                                or (
+                                    editor_state.prompt_id is not None
+                                    and (
+                                        block_state is None
+                                        or not self.can_update_original
+                                    )
                                 )
                             ),
                         )
@@ -951,6 +1003,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id="library-prompt-insert-console",
                             classes="library-canvas-action",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
 
                         yield Button(
@@ -958,12 +1011,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id="library-prompt-export",
                             classes="library-canvas-action",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
                         yield Button(
                             "Copy Markdown",
                             id="library-prompt-copy",
                             classes="library-canvas-action",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
                     with Vertical(id="library-prompt-actions-lifecycle"):
                         yield Button(
@@ -971,12 +1026,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id="library-prompt-duplicate",
                             classes="library-canvas-action",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
                         yield Button(
                             "Delete",
                             id="library-prompt-delete",
                             classes="library-canvas-action library-media-action-danger",
                             compact=True,
+                            disabled=self.mutation_in_flight,
                         )
 
     @staticmethod

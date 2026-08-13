@@ -2976,6 +2976,7 @@ class LibraryScreen(BaseAppScreen):
         # browse result, rail count, and receipt. Admission is shared so the
         # two directions cannot interleave through separate worker groups.
         self._library_prompts_mutation_in_flight: bool = False
+        self._library_prompt_mutation_status: str = ""
         self._library_prompt_delete_receipt: PromptBatchDeleteResult | None = None
         # Task 8b Fix wave 1 (Minor): the exact name that triggered the
         # current "name-in-use" status, captured at the moment that status
@@ -8297,6 +8298,7 @@ class LibraryScreen(BaseAppScreen):
                                 self._library_prompt_block_state is not None
                             ),
                             membership_state=self._library_prompt_collections_controller.membership_state,
+                            mutation_in_flight=self._library_prompts_mutation_in_flight,
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -8332,6 +8334,7 @@ class LibraryScreen(BaseAppScreen):
                                 self._library_prompt_block_state is not None
                             ),
                             membership_state=self._library_prompt_collections_controller.membership_state,
+                            mutation_in_flight=self._library_prompts_mutation_in_flight,
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -8356,6 +8359,7 @@ class LibraryScreen(BaseAppScreen):
                         ),
                         delete_receipt=self._library_prompt_delete_receipt,
                         mutation_in_flight=self._library_prompts_mutation_in_flight,
+                        mutation_status=self._library_prompt_mutation_status,
                         id="library-prompts-canvas",
                     )
                 elif (
@@ -9080,6 +9084,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_prompt_memberships(self, state) -> None:
         """Patch only membership controls; preserve editor inputs and undo state."""
+        if self._library_prompts_mutation_in_flight:
+            return
         try:
             self.query_one(
                 "#library-prompts-canvas", LibraryPromptsListCanvas
@@ -9122,6 +9128,8 @@ class LibraryScreen(BaseAppScreen):
         Back-to-list path requests this invalidated exact scope once the list
         owns the canvas again. Prompt Save state is never changed here.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_browse_controller.invalidate()
         self._refresh_local_source_snapshot()
 
@@ -17823,6 +17831,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _arm_library_prompt_editor(self) -> None:
         """Enable dirty-tracking once the prompt editor is mounted."""
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_editor_armed = True
 
     @property
@@ -17904,6 +17914,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_prompt_history_action_is_current(self, event: Any) -> bool:
         """Reject semantic actions emitted by an outgoing history region."""
+        if self._library_prompts_mutation_in_flight:
+            return False
         return self._library_prompt_history_controller.matches_scope(
             prompt_uuid=event.prompt_uuid,
             scope_token=event.scope_token,
@@ -18029,7 +18041,7 @@ class LibraryScreen(BaseAppScreen):
         expected_current_version: int,
     ) -> None:
         """Revalidate the modal's captured target, then start one restore."""
-        if not confirmed:
+        if self._library_prompts_mutation_in_flight or not confirmed:
             return
         request = self._library_prompt_history_controller.begin_restore(
             dirty=self._library_prompt_dirty,
@@ -18053,7 +18065,11 @@ class LibraryScreen(BaseAppScreen):
         self, request: PromptHistoryRestoreRequest
     ) -> None:
         """Conditionally restore through the scope service off the UI path."""
+        if self._library_prompts_mutation_in_flight:
+            return
         outcome = await self._library_prompt_history_controller.restore(request)
+        if self._library_prompts_mutation_in_flight:
+            return
         if outcome is None:
             return
         if outcome.kind == "conflict":
@@ -18165,6 +18181,8 @@ class LibraryScreen(BaseAppScreen):
         the transition only (not every subsequent keystroke) since the
         flag/marker do not change again until Save or navigation.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if not self._library_prompt_editor_armed:
             return
         if self._library_prompt_text_fields_match_state():
@@ -18203,6 +18221,8 @@ class LibraryScreen(BaseAppScreen):
         self, state: PromptBlockEditorState
     ) -> None:
         """Adopt one child-editor transition without recomposing its widgets."""
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_block_state = state
         if isinstance(self._library_prompt_detail, Mapping):
             detail = dict(self._library_prompt_detail)
@@ -18233,12 +18253,16 @@ class LibraryScreen(BaseAppScreen):
         self, event: Checkbox.Changed
     ) -> None:
         """Persist the explicit Recipe starter-content choice for this draft."""
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_include_starter_content = bool(event.value)
 
     @on(Button.Pressed, "#library-prompt-convert")
     def handle_library_prompt_convert(self, event: Button.Pressed) -> None:
         """Convert valid compatibility lanes into a detached Prompt draft."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         editor_state = self._current_library_prompt_editor_state()
         if not editor_state.can_convert_as_new:
             return
@@ -18281,6 +18305,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Save the child working copy as a detached Prompt record."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_block_state = event.state
         self.run_worker(
             self._save_library_prompt(target_artifact_type="prompt", save_as_new=True),
@@ -18293,6 +18319,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Save the child working copy as a detached Recipe record."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_block_state = event.state
         self.run_worker(
             self._save_library_prompt(target_artifact_type="recipe", save_as_new=True),
@@ -18305,6 +18333,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Conditionally update the captured Prompt/Recipe source version."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_block_state = event.state
         self.run_worker(
             self._save_library_prompt(
@@ -18320,6 +18350,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Use the Library editor's existing dirty-aware back behavior."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if not await self._flush_library_prompt_save():
             return
         self._reset_library_prompt_editor_state()
@@ -18334,6 +18366,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Apply only executable Prompts; Recipes become unsaved Prompt copies."""
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self._library_prompt_block_state = event.state
         self._apply_library_prompt_working_copy(
             state=event.state,
@@ -18658,7 +18692,8 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 candidate = None
             if (
-                selected_prompt_id != self._selected_prompt_id
+                self._library_prompts_mutation_in_flight
+                or selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -18694,7 +18729,8 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 fresh = None
             if (
-                selected_prompt_id != self._selected_prompt_id
+                self._library_prompts_mutation_in_flight
+                or selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -18727,7 +18763,8 @@ class LibraryScreen(BaseAppScreen):
                 f"Library prompt save failed for {prompt_id!r}."
             )
             if (
-                selected_prompt_id != self._selected_prompt_id
+                self._library_prompts_mutation_in_flight
+                or selected_prompt_id != self._selected_prompt_id
                 or self._library_prompts_view != "editor"
             ):
                 return
@@ -18753,7 +18790,8 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if (
-            selected_prompt_id != self._selected_prompt_id
+            self._library_prompts_mutation_in_flight
+            or selected_prompt_id != self._selected_prompt_id
             or self._library_prompts_view != "editor"
         ):
             return
@@ -18941,6 +18979,8 @@ class LibraryScreen(BaseAppScreen):
         user_prompt: str | None,
     ) -> None:
         """Stage a Prompt, or detach a Recipe into an unsaved Prompt copy."""
+        if self._library_prompts_mutation_in_flight:
+            return
         notify = getattr(self.app_instance, "notify", None)
         if state.artifact_type == "recipe":
             prompt_state = set_artifact_type(state, "prompt")
@@ -18987,6 +19027,8 @@ class LibraryScreen(BaseAppScreen):
         user_prompt: str | None,
     ) -> None:
         """Open the shared Prompt dialog or stage a variable-free User append."""
+        if self._library_prompts_mutation_in_flight:
+            return
         notify = getattr(self.app_instance, "notify", None)
         target_getter = getattr(
             self.app_instance,
@@ -19073,7 +19115,7 @@ class LibraryScreen(BaseAppScreen):
         def _stage_dialog_result(
             application: PromptVariableApplication | None,
         ) -> None:
-            if application is None:
+            if self._library_prompts_mutation_in_flight or application is None:
                 return
             live_target = _current_console_target()
             if live_target != target:
@@ -19103,6 +19145,8 @@ class LibraryScreen(BaseAppScreen):
                 Console" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         notify = getattr(self.app_instance, "notify", None)
         if self._library_prompts_view != "editor":
             return
@@ -19319,6 +19363,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Export…" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         await self._export_library_prompt()
 
     async def _export_library_prompt(self) -> None:
@@ -19333,6 +19379,8 @@ class LibraryScreen(BaseAppScreen):
         mapping, so unlike Save there is nothing to flush first -- the
         export reflects exactly what's on screen, including unsaved edits.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
         if self._library_prompt_action_artifact_type() is None:
@@ -19642,6 +19690,8 @@ class LibraryScreen(BaseAppScreen):
             artifact_fields: Optional structured Prompt/Recipe metadata
                 captured with the live block working copy.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         notify = getattr(self.app_instance, "notify", None)
         if not selected_path:
             if callable(notify):
@@ -19704,6 +19754,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Duplicate" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_view != "editor":
             return
         if self._library_prompt_action_artifact_type() is None:
@@ -19915,14 +19967,22 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         mutation_token = int(pending)
+        focus_identity = (
+            self._library_prompt_nearest_survivor_focus(targets)
+            if selection_generation is not None
+            else None
+        )
+        self._library_prompt_mutation_status = ""
         self._library_prompts_mutation_in_flight = True
         self._library_prompt_delete_inflight_fingerprint = pending
+        self._sync_library_prompt_mutation_presentation()
         self.run_worker(
             self._delete_library_prompts(
                 targets,
                 selection_generation=selection_generation,
                 editor_prompt_id=editor_prompt_id,
                 mutation_token=mutation_token,
+                focus_identity=focus_identity,
             ),
             exclusive=True,
             group="library_prompt_mutation",
@@ -19935,6 +19995,7 @@ class LibraryScreen(BaseAppScreen):
         selection_generation: int | None,
         editor_prompt_id: int | None,
         mutation_token: int,
+        focus_identity: str | None = None,
     ) -> None:
         """Atomically delete one editor target or the selected batch."""
         selected_batch = selection_generation is not None
@@ -19944,7 +20005,7 @@ class LibraryScreen(BaseAppScreen):
             if not callable(delete_prompts):
                 if selected_batch:
                     self._notify_library_prompt_delete_failure(
-                        "Could not delete the selected items. Nothing was deleted."
+                        "Bulk Prompt actions are unavailable."
                     )
                 else:
                     self._update_library_prompt_status_static(
@@ -19952,11 +20013,13 @@ class LibraryScreen(BaseAppScreen):
                     )
                 return
             try:
-                result = await self._run_library_service_call(
-                    delete_prompts,
-                    mode="local",
-                    targets=targets,
-                    isolate_in_worker=True,
+                result = await self._await_library_prompt_mutation_call(
+                    self._run_library_service_call(
+                        delete_prompts,
+                        mode="local",
+                        targets=targets,
+                        isolate_in_worker=True,
+                    )
                 )
             except PromptConflictError:
                 if selected_batch:
@@ -20004,6 +20067,7 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return
             self._library_prompt_delete_receipt = result
+            self._library_prompt_mutation_status = ""
             self._local_source_counts["prompts"] = max(
                 0, self._local_source_counts.get("prompts", 0) - len(targets)
             )
@@ -20016,7 +20080,7 @@ class LibraryScreen(BaseAppScreen):
                     self._library_prompt_browse_controller.scope,
                     page=1,
                 ),
-                focus_identity=None,
+                focus_identity=focus_identity,
             )
             self._refresh_local_source_snapshot()
         finally:
@@ -20028,8 +20092,94 @@ class LibraryScreen(BaseAppScreen):
                     self.refresh(recompose=True)
                     self.call_after_refresh(
                         self._restore_library_prompts_focus,
-                        "library-prompts-select",
+                        focus_identity or "library-prompts-select",
                     )
+
+    async def _await_library_prompt_mutation_call(self, awaitable: Any) -> Any:
+        """Drain an admitted service task even if its Textual worker is cancelled."""
+        task = asyncio.create_task(awaitable)
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.done():
+                    return task.result()
+
+    def _sync_library_prompt_mutation_presentation(self) -> None:
+        """Project mutation ownership into the currently mounted Prompt canvas."""
+        try:
+            canvas = self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.mutation_in_flight = self._library_prompts_mutation_in_flight
+        canvas.mutation_status = self._library_prompt_mutation_status
+        if canvas.mode != "editor":
+            canvas.refresh(recompose=True)
+            return
+        for control in canvas.query("Input, Checkbox, Button"):
+            control.disabled = self._library_prompts_mutation_in_flight
+        for selector in (
+            "#library-prompt-block-editor",
+            "#library-prompt-history-region",
+        ):
+            try:
+                canvas.query_one(selector, Widget).disabled = (
+                    self._library_prompts_mutation_in_flight
+                )
+            except (NoMatches, QueryError):
+                pass
+        if self._library_prompts_mutation_in_flight and not canvas.query(
+            "#library-prompts-mutation-progress"
+        ):
+            try:
+                content = canvas.query_one("#library-prompt-editor-content", Widget)
+                back = canvas.query_one("#library-prompt-back", Button)
+            except (NoMatches, QueryError):
+                return
+            content.mount(
+                Static(
+                    "Updating selected items…",
+                    id="library-prompts-mutation-progress",
+                    classes="destination-purpose",
+                    markup=False,
+                ),
+                before=back,
+            )
+
+    def _library_prompt_nearest_survivor_focus(
+        self, targets: tuple[PromptBatchTarget, ...]
+    ) -> str | None:
+        """Choose the next page row after the focused deletion, else previous."""
+        row_ids = tuple(
+            row.prompt_id for row in self._build_library_prompts_state().rows
+        )
+        deleted_ids = {target.local_id for target in targets}
+        if not row_ids or not deleted_ids.intersection(row_ids):
+            return None
+        focused = self._library_prompts_focus_identity()
+        focused_id: int | None = None
+        prefix = "library-prompt-row-"
+        if isinstance(focused, str) and focused.startswith(prefix):
+            try:
+                focused_id = int(focused.removeprefix(prefix))
+            except ValueError:
+                focused_id = None
+        anchor = (
+            row_ids.index(focused_id)
+            if focused_id in deleted_ids and focused_id in row_ids
+            else min(
+                index
+                for index, row_id in enumerate(row_ids)
+                if row_id in deleted_ids
+            )
+        )
+        for index in range(anchor + 1, len(row_ids)):
+            if row_ids[index] not in deleted_ids:
+                return f"library-prompt-row-{row_ids[index]}"
+        for index in range(anchor - 1, -1, -1):
+            if row_ids[index] not in deleted_ids:
+                return f"library-prompt-row-{row_ids[index]}"
+        return None
 
     def _library_prompt_mutation_is_current(
         self,
@@ -20059,6 +20209,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_library_prompt_delete_failure(self, message: str) -> None:
         """Show bounded aggregate failure copy without sensitive detail."""
+        self._library_prompt_mutation_status = message
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
@@ -20092,6 +20243,8 @@ class LibraryScreen(BaseAppScreen):
         mutation_token = self._library_prompt_mutation_generation
         self._library_prompts_mutation_in_flight = True
         self._library_prompt_delete_inflight_fingerprint = str(mutation_token)
+        self._library_prompt_mutation_status = ""
+        self._sync_library_prompt_mutation_presentation()
         self.run_worker(
             self._undo_library_prompt_delete(receipt, mutation_token),
             exclusive=True,
@@ -20127,11 +20280,13 @@ class LibraryScreen(BaseAppScreen):
             restore_prompts = getattr(service, "restore_deleted_prompts", None)
             if not callable(restore_prompts):
                 raise TypeError("missing batch restore capability")
-            result = await self._run_library_service_call(
-                restore_prompts,
-                mode="local",
-                targets=receipt.targets,
-                isolate_in_worker=True,
+            result = await self._await_library_prompt_mutation_call(
+                self._run_library_service_call(
+                    restore_prompts,
+                    mode="local",
+                    targets=receipt.targets,
+                    isolate_in_worker=True,
+                )
             )
             expected_ids = tuple(target.local_id for target in receipt.targets)
             if (
@@ -20149,6 +20304,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             if self._library_prompt_delete_receipt is receipt:
                 self._library_prompt_delete_receipt = None
+            self._library_prompt_mutation_status = ""
             self._local_source_counts["prompts"] = (
                 self._local_source_counts.get("prompts", 0) + len(receipt.entries)
             )
@@ -20162,10 +20318,13 @@ class LibraryScreen(BaseAppScreen):
             )
             self._refresh_local_source_snapshot()
         except Exception:
+            self._library_prompt_mutation_status = (
+                "Could not restore the deleted items; Undo is still available."
+            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    "Could not restore selected items; the receipt is still available.",
+                    self._library_prompt_mutation_status,
                     severity="warning",
                 )
         finally:
@@ -20197,6 +20356,8 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "Open existing" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         if self._library_prompts_view != "editor":
             return
         self.run_worker(
@@ -20226,6 +20387,8 @@ class LibraryScreen(BaseAppScreen):
         Args:
             None.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         name = self._library_prompt_name_in_use
         if not name:
             fields = self._read_library_prompt_editor_fields()
@@ -20304,6 +20467,8 @@ class LibraryScreen(BaseAppScreen):
         Args:
             overwrite: ``True`` for Overwrite, ``False`` for Reload.
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         snapshot = self._library_prompt_conflict_snapshot
         if snapshot is None:
             return
@@ -20463,6 +20628,8 @@ class LibraryScreen(BaseAppScreen):
             snapshot: The conflict banner's kept editor state (the
                 create attempt's live field values at Save time).
         """
+        if self._library_prompts_mutation_in_flight:
+            return
         if not overwrite:
             self._enter_library_prompt_create_editor()
             if self.is_mounted:
@@ -20625,6 +20792,8 @@ class LibraryScreen(BaseAppScreen):
                 "Save as new" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         snapshot = self._library_prompt_conflict_snapshot
         if snapshot is None:
             return
@@ -20675,6 +20844,8 @@ class LibraryScreen(BaseAppScreen):
                 "Reload" action.
         """
         event.stop()
+        if self._library_prompts_mutation_in_flight:
+            return
         self.run_worker(
             self._resolve_library_prompt_conflict(overwrite=False),
             exclusive=True,
