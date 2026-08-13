@@ -354,6 +354,9 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagPanel,
     LibrarySkillsListCanvas,
+    PROMPT_DISCARD_TOOLTIP_BUSY,
+    PROMPT_DISCARD_TOOLTIP_CLEAN,
+    PROMPT_DISCARD_TOOLTIP_DIRTY,
     SKILL_DISCARD_TOOLTIP_CLEAN,
     SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
@@ -464,9 +467,7 @@ _LIBRARY_PROMPT_WRITE_WORKER_GROUPS = frozenset(
         _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
     }
 )
-_LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY = (
-    "Prompt changes are still in progress. Try again when they finish."
-)
+_LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY = PROMPT_DISCARD_TOOLTIP_BUSY
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
@@ -568,6 +569,9 @@ LIBRARY_PROMPT_SAVE_STATUS_COPY = {
 # dedicated cap of their own -- reuses the note body's generous ceiling,
 # same reasoning as ``LIBRARY_PROMPT_TEXT_MAX_CHARS`` above.
 LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
+LIBRARY_PROMPT_DIRTY_VETO_COPY = (
+    "Unsaved Prompt changes — Save or Discard changes first."
+)
 # Exact outcome copy for the skill editor's #library-skill-save-status line,
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see
@@ -6089,6 +6093,8 @@ class LibraryScreen(BaseAppScreen):
         note_flush = await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
+        if not prompt_flush_allowed:
+            self._notify_prompt_dirty_veto()
         if not skill_flush_allowed:
             # task-449: the app-level navigation veto only logs, so tell
             # the user why the tab switch was refused -- same toast as the
@@ -8552,6 +8558,7 @@ class LibraryScreen(BaseAppScreen):
                             ),
                             membership_state=self._library_prompt_collections_controller.membership_state,
                             mutation_in_flight=self._library_prompts_mutation_in_flight,
+                            write_in_flight=self._library_prompt_write_worker_is_active(),
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -8588,6 +8595,7 @@ class LibraryScreen(BaseAppScreen):
                             ),
                             membership_state=self._library_prompt_collections_controller.membership_state,
                             mutation_in_flight=self._library_prompts_mutation_in_flight,
+                            write_in_flight=self._library_prompt_write_worker_is_active(),
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -18497,6 +18505,7 @@ class LibraryScreen(BaseAppScreen):
         if not was_dirty:
             self._update_library_prompt_meta_static()
             self._sync_library_prompt_history_region()
+            self._set_library_prompt_discard_enabled(True)
 
     @on(Input.Changed, "#library-prompt-name")
     @on(Input.Changed, "#library-prompt-author")
@@ -18540,6 +18549,7 @@ class LibraryScreen(BaseAppScreen):
         if not was_dirty:
             self._update_library_prompt_meta_static()
             self._sync_library_prompt_history_region()
+            self._set_library_prompt_discard_enabled(True)
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged
@@ -18614,7 +18624,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._await_library_prompt_durable_call(
+            self._await_library_prompt_save_call(
                 self._save_library_prompt(
                     target_artifact_type="prompt", save_as_new=True
                 )
@@ -18632,7 +18642,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._await_library_prompt_durable_call(
+            self._await_library_prompt_save_call(
                 self._save_library_prompt(
                     target_artifact_type="recipe", save_as_new=True
                 )
@@ -18650,7 +18660,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._await_library_prompt_durable_call(
+            self._await_library_prompt_save_call(
                 self._save_library_prompt(
                     target_artifact_type=event.state.artifact_type,
                     save_as_new=False,
@@ -18860,6 +18870,26 @@ class LibraryScreen(BaseAppScreen):
         outer_save.label = "Update original"
         outer_save.disabled = not can_update
 
+    def _set_library_prompt_discard_enabled(
+        self, enabled: bool, *, write_in_flight: bool | None = None
+    ) -> None:
+        """Patch the Prompt Discard action without remounting live fields."""
+        if write_in_flight is None:
+            write_in_flight = self._library_prompt_write_worker_is_active()
+        busy = self._library_prompts_mutation_in_flight or write_in_flight
+        for button in self.query("#library-prompt-discard"):
+            if isinstance(button, Button):
+                button.disabled = busy or not enabled
+                button.tooltip = (
+                    PROMPT_DISCARD_TOOLTIP_BUSY
+                    if busy
+                    else (
+                        PROMPT_DISCARD_TOOLTIP_DIRTY
+                        if enabled
+                        else PROMPT_DISCARD_TOOLTIP_CLEAN
+                    )
+                )
+
     @on(Button.Pressed, "#library-prompt-save")
     def handle_library_prompt_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open prompt, bypassing no debounce (there is
@@ -18872,7 +18902,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self.run_worker(
-            self._await_library_prompt_durable_call(self._save_library_prompt()),
+            self._await_library_prompt_save_call(self._save_library_prompt()),
             exclusive=True,
             group="library_prompt_save",
         )
@@ -19196,6 +19226,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_prompt_detached_structured = False
             self._library_prompt_original_name = name
             self._library_prompt_dirty = False
+        self._set_library_prompt_discard_enabled(False)
         # Targeted updates only (no recompose): the fields already hold the
         # user's just-saved text, so nothing there needs to change -- only
         # the meta line's version and the status line need to reflect the
@@ -19285,6 +19316,12 @@ class LibraryScreen(BaseAppScreen):
             ``False`` when a dirty edit must be resolved first.
         """
         return not self._library_prompt_dirty
+
+    def _notify_prompt_dirty_veto(self) -> None:
+        """Explain a dirty Prompt navigation veto without exposing content."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(LIBRARY_PROMPT_DIRTY_VETO_COPY, severity="warning")
 
     def _apply_library_prompt_working_copy(
         self,
@@ -19510,6 +19547,28 @@ class LibraryScreen(BaseAppScreen):
             system_prompt=raw_system_prompt,
             user_prompt=raw_user_prompt,
         )
+
+    @on(Button.Pressed, "#library-prompt-discard")
+    def handle_library_prompt_discard(self, event: Button.Pressed) -> None:
+        """Leave the Prompt editor without persisting its working copy.
+
+        Args:
+            event: Button press event emitted by the editor's Discard action.
+        """
+        event.stop()
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_write_worker_is_active()
+            or not self._library_prompt_dirty
+        ):
+            return
+        self._reset_library_prompt_editor_state()
+        self._request_library_prompts_browse(
+            self._library_prompt_browse_controller.scope,
+            focus_identity=None,
+        )
+        self._refresh_local_source_snapshot()
+        self._arm_library_list_entry_focus()
 
     @on(Button.Pressed, "#library-prompt-back")
     async def handle_library_prompt_back(self, event: Button.Pressed) -> None:
@@ -20453,6 +20512,25 @@ class LibraryScreen(BaseAppScreen):
                 if task.done():
                     return task.result()
 
+    async def _await_library_prompt_save_call(self, awaitable: Any) -> Any:
+        """Keep Discard interlocked for the full durable save lifetime.
+
+        Args:
+            awaitable: Admitted Prompt save operation to drain to settlement.
+
+        Returns:
+            The save operation's settled result.
+        """
+        self._set_library_prompt_discard_enabled(
+            self._library_prompt_dirty, write_in_flight=True
+        )
+        try:
+            return await self._await_library_prompt_durable_call(awaitable)
+        finally:
+            self._set_library_prompt_discard_enabled(
+                self._library_prompt_dirty, write_in_flight=False
+            )
+
     def _sync_library_prompt_mutation_presentation(self) -> None:
         """Project mutation ownership into the currently mounted Prompt canvas."""
         try:
@@ -21197,7 +21275,7 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         self.call_after_refresh(
             lambda: self.run_worker(
-                self._await_library_prompt_durable_call(
+                self._await_library_prompt_save_call(
                     self._save_library_prompt(
                         target_artifact_type=artifact_type,
                         save_as_new=True,
@@ -21220,7 +21298,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self.run_worker(
-            self._await_library_prompt_durable_call(
+            self._await_library_prompt_save_call(
                 self._resolve_library_prompt_conflict(overwrite=False)
             ),
             exclusive=True,

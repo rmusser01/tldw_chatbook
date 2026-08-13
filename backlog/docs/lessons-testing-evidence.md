@@ -3662,3 +3662,25 @@ not just re-run the flaky test and hope: inject the exact transient exception
 deterministically (a fake service that raises on its Nth call, not the Mth) so the
 flap is reproducible on demand, and mutation-test the fix by temporarily re-
 merging the domains to confirm the ORIGINAL failure message comes back verbatim.
+
+---
+
+## A parent `on_mount()` cannot assume nested descendants are mounted (TASK-2702, 2026-08-13)
+
+**Incident.** Three Library Prompt-history tests repeatedly crashed while a
+`PromptBlockEditor` was being replaced during rapid recomposition. Its `on_mount()`
+queried `#prompt-editor-validation`, a grandchild inside the editor's status container,
+and raised `NoMatches`. Instrumentation at the exception showed the editor was attached
+and all three direct containers already existed, but their nested children did not. An
+unconditional `call_after_refresh` removed that race, then exposed the opposite defect:
+two ordinary-mount tests observed an empty footer because they legitimately inspected it
+before the deferred callback ran.
+
+**What to do.** A Textual parent's Mount event guarantees neither that every descendant
+message pump has finished mounting nor that consumers will wait through an extra refresh.
+Initialize synchronously when the required descendants are present; if `NoMatches` proves
+the nested-mount window is still open, defer that same initialization once. The deferred
+callback must no-op when its original widget has detached. Verify both paths: a rapid real
+recompose must kill the synchronous-only implementation, while an immediate normal-mount
+assertion must kill unconditional deferral. TASK-2702's final full Prompt-canvas run passed
+279 tests only after both boundaries were pinned together.

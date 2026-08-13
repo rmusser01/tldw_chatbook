@@ -68,6 +68,11 @@ _PAGE_UNAVAILABLE_REASON = (
     "Current page is unavailable; selected items remain available for Export or Delete."
 )
 _MUTATION_PROGRESS = "Updating selected items…"
+PROMPT_DISCARD_TOOLTIP_CLEAN = "No unsaved Prompt changes to discard."
+PROMPT_DISCARD_TOOLTIP_DIRTY = "Return to the Prompt list without saving these changes."
+PROMPT_DISCARD_TOOLTIP_BUSY = (
+    "Prompt changes are still in progress. Try again when they finish."
+)
 
 
 def _compact_receipt_name(value: str, limit: int = 42) -> str:
@@ -76,6 +81,7 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
+
 
 class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     """Render the Library prompts canvas: the list view, or the prompt editor.
@@ -120,6 +126,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             constructor argument only matters for the handful of flows that
             already do a full recompose while dirty (initial load, Duplicate,
             conflict entry/resolution).
+        write_in_flight: Editor mode only. Keeps Discard disabled while an
+            admitted Prompt writer may still persist the working copy.
         import_open: List-view only. When ``True``, renders the inline
             Import row (a path ``Input`` for a file OR folder, plus
             Import/Cancel actions) below the Sort/Import…/Export… toolbar.
@@ -158,6 +166,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         | PromptBatchDeleteResult
         | None = None,
         mutation_in_flight: bool = False,
+        write_in_flight: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -184,6 +193,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.membership_state = membership_state
         self.delete_receipt = delete_receipt
         self.mutation_in_flight = mutation_in_flight
+        self.write_in_flight = write_in_flight
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -1035,6 +1045,26 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             compact=True,
                             disabled=self.mutation_in_flight,
                         )
+                yield Button(
+                    "Discard changes",
+                    id="library-prompt-discard",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=(
+                        self.mutation_in_flight
+                        or self.write_in_flight
+                        or not self.dirty
+                    ),
+                    tooltip=(
+                        PROMPT_DISCARD_TOOLTIP_BUSY
+                        if self.mutation_in_flight or self.write_in_flight
+                        else (
+                            PROMPT_DISCARD_TOOLTIP_DIRTY
+                            if self.dirty
+                            else PROMPT_DISCARD_TOOLTIP_CLEAN
+                        )
+                    ),
+                )
 
     @staticmethod
     def _membership_ids_summary(

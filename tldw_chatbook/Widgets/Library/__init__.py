@@ -12,7 +12,12 @@ from .library_media_canvas import LibraryMediaCanvas
 from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_notes_canvas import LibraryNotesCanvas
-from .library_prompts_canvas import LibraryPromptsListCanvas
+from .library_prompts_canvas import (
+    PROMPT_DISCARD_TOOLTIP_BUSY,
+    PROMPT_DISCARD_TOOLTIP_CLEAN,
+    PROMPT_DISCARD_TOOLTIP_DIRTY,
+    LibraryPromptsListCanvas,
+)
 from .library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
     LibraryNavigationRailHandle,
@@ -60,6 +65,9 @@ from .library_skills_canvas import (
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
+    "PROMPT_DISCARD_TOOLTIP_BUSY",
+    "PROMPT_DISCARD_TOOLTIP_CLEAN",
+    "PROMPT_DISCARD_TOOLTIP_DIRTY",
     "SKILL_DISCARD_TOOLTIP_CLEAN",
     "SKILL_DISCARD_TOOLTIP_DIRTY",
     "LibraryCollectionsPanel",
