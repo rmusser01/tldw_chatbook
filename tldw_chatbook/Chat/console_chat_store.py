@@ -680,6 +680,7 @@ class ConsoleChatStore:
         # completions. It distinguishes duplicate callback delivery from a
         # later regeneration of the same message without retaining text.
         self._message_completion_generations: dict[str, int] = {}
+        self._message_completion_epoch = 0
         # Cost-ticker PR3: per-session monotonic counter of payload-affecting
         # mutations, so the cost chip knows when its cache-break fingerprint
         # needs recomputing. Process-local, like the speech revisions above.
@@ -740,7 +741,10 @@ class ConsoleChatStore:
                 logger.warning("Console completion subscriber failed")
 
     def _record_message_completed(self, session_id: str, message_id: str) -> None:
-        self._message_completion_generations[message_id] += 1
+        self._message_completion_epoch += 1
+        self._message_completion_generations[message_id] = (
+            self._message_completion_epoch
+        )
         self._publish_message_completed(session_id, message_id)
 
     def message_completion_generation(self, message_id: str) -> int:

@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 _DELEGATED_CLEANUP_FAILURE_NOTE = (
     "Legacy TTS cleanup also failed during caller cancellation"
 )
+_ALLTALK_DEFAULT_ENDPOINT = "http://127.0.0.1:7851"
 
 
 class UnknownLegacyModelError(LookupError):
@@ -289,6 +290,31 @@ def legacy_provider_config(
     return {"app_config": projected}
 
 
+def legacy_provider_outbound_endpoint(
+    provider_id: str,
+    app_config: Mapping[str, Any],
+) -> str:
+    """Resolve one legacy adapter's endpoint from its immutable config."""
+    if provider_id == "elevenlabs":
+        return "https://api.elevenlabs.io"
+    if provider_id not in {"openai", "alltalk"}:
+        return "http://localhost"
+    app_tts = app_config.get("app_tts")
+    settings = app_tts if isinstance(app_tts, Mapping) else {}
+    if provider_id == "openai":
+        endpoint = settings.get("OPENAI_BASE_URL")
+        return (
+            endpoint
+            if isinstance(endpoint, str) and endpoint
+            else "https://api.openai.com/v1/audio/speech"
+        )
+    for key in ("ALLTALK_TTS_URL", "ALLTALK_TTS_URL_DEFAULT"):
+        endpoint = settings.get(key)
+        if isinstance(endpoint, str) and endpoint:
+            return endpoint
+    return _ALLTALK_DEFAULT_ENDPOINT
+
+
 def resolve_legacy_route(internal_model_id: str) -> LegacyRoute:
     provider_id = LEGACY_ROUTES.get(internal_model_id)
     if provider_id is None and internal_model_id.removeprefix(
@@ -490,6 +516,12 @@ class LegacyBackendHost:
         self._manager_detached = False
         self._close_task: asyncio.Task[None] | None = None
         self._manager_close_task: asyncio.Task[None] | None = None
+
+    def admitted_outbound_endpoint(self) -> str:
+        return legacy_provider_outbound_endpoint(
+            self.provider_id,
+            self._app_config,
+        )
 
     async def _get_manager(self) -> TTSBackendManager:
         async with self._manager_lock:
@@ -702,6 +734,9 @@ class LegacyTTSAdapter:
 
     async def ensure_ready(self) -> None:
         return
+
+    def admitted_outbound_endpoint(self) -> str:
+        return self.host.admitted_outbound_endpoint()
 
     async def get_catalog(
         self,

@@ -459,6 +459,11 @@ class AudioCppAdapter:
         """Perform the first authoritative refresh and cache fresh readiness."""
         await self._refresh_catalog(force=False)
 
+    def admitted_outbound_endpoint(self) -> str:
+        """Return the exact base URL bound to this ready adapter generation."""
+        client = self._require_request_client()
+        return str(client.base_url).rstrip("/")
+
     def preflight_clone_source(self) -> None:
         """Reject non-Guided local-reference authority without side effects."""
         if not self._clone_source_authorized():

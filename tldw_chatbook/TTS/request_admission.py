@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
-TTSAdmissionAuthorizer = Callable[[str, Mapping[str, object]], bool]
+TTSAdmissionAuthorizer = Callable[[str, str], bool]
 
 
 @dataclass(frozen=True, slots=True, repr=False)

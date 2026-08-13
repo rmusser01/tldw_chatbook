@@ -161,6 +161,32 @@ def test_message_completed_subscription_emits_each_successful_regeneration() -> 
     ]
 
 
+def test_completion_generation_remains_monotonic_across_same_id_restore() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Original.",
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "Before restore.")
+    store.finalize_variant_stream(message.id)
+    before_restore = store.message_completion_generation(message.id)
+    restored_messages = store.messages_for_session(session.id)
+
+    store.restore_state(
+        sessions=[replace(session)],
+        messages_by_session={session.id: restored_messages},
+        active_session_id=session.id,
+    )
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "After restore.")
+    store.finalize_variant_stream(message.id)
+
+    assert store.message_completion_generation(message.id) > before_restore
+
+
 def test_message_completed_subscription_add_variant_emits_but_selection_does_not() -> None:
     store = ConsoleChatStore()
     session = store.create_session()

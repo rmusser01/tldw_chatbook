@@ -44,7 +44,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSNativeCapabilitySnapshot,
     TTSNativeCloneAdapter,
     TTSNativeCloneDependencyAdapter,
-    TTSCloneGenerationEvidence,
+    TTSOutboundEndpointAdapter,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
@@ -765,6 +765,7 @@ class _AdmittedTTSOperation:
         clone_execution: _ResolvedTTSCloneExecutionAuthority | None,
         clone_requirement: TTSCloneRecipeRequirement | None,
         clone_materializer: TTSCloneReferenceMaterializer | None,
+        admission_authorizer: TTSAdmissionAuthorizer | None,
     ) -> None:
         self._request = request
         self._resources = resources
@@ -776,6 +777,7 @@ class _AdmittedTTSOperation:
         self._clone_execution = clone_execution
         self._clone_requirement = clone_requirement
         self._clone_materializer = clone_materializer
+        self._admission_authorizer = admission_authorizer
         self._claimed = False
         self._used = False
         self._executing = False
@@ -829,6 +831,7 @@ class _AdmittedTTSOperation:
             ):
                 await lease.adapter.ensure_ready()
                 if self._clone_execution is None:
+                    self._authorize_outbound(lease)
                     response = await lease.adapter.synthesize(self._request, safe_sink)
                 else:
                     adapter = lease.adapter
@@ -907,6 +910,7 @@ class _AdmittedTTSOperation:
                         provider_revision=lease.configuration_revision,
                         applied_provider_generation=lease.applied_generation,
                     )
+                    self._authorize_outbound(lease)
                     response = await adapter.synthesize_clone(
                         admitted_request,
                         safe_sink,
@@ -1000,6 +1004,25 @@ class _AdmittedTTSOperation:
                 cleanup_task.add_done_callback(self._observe_cleanup)
             raise closed_error
         return managed_response, clone_evidence
+
+    def _authorize_outbound(self, lease: TTSAdapterLease) -> None:
+        authorizer = self._admission_authorizer
+        if authorizer is None:
+            return
+        adapter = lease.adapter
+        authorized = False
+        try:
+            if isinstance(adapter, TTSOutboundEndpointAdapter):
+                authorized = authorizer(
+                    lease.provider_id,
+                    adapter.admitted_outbound_endpoint(),
+                )
+        except Exception:
+            authorized = False
+        if authorized is not True:
+            raise TTSConfigurationRevisionError(
+                "TTS provider destination authorization changed"
+            )
 
     async def close(self) -> None:
         """Release an admitted operation that has not started execution."""
@@ -1336,25 +1359,6 @@ class TTSService:
             reservation.release_if_untransferred()
             raise
 
-        if admission_authorizer is not None:
-            try:
-                authorized = admission_authorizer(
-                    lease.provider_id,
-                    lease.applied_config,
-                )
-            except Exception:
-                authorized = False
-            if authorized is not True:
-                authorization_error = TTSConfigurationRevisionError(
-                    "TTS provider destination authorization changed"
-                )
-                await _cleanup_preserving_primary(
-                    lease.release,
-                    authorization_error,
-                )
-                reservation.release_if_untransferred()
-                raise authorization_error
-
         preparation = self._audio_cpp_preparation.get()
         clone_reference = None if clone_execution is None else clone_execution.reference
         clone_requirement = (
@@ -1430,6 +1434,7 @@ class TTSService:
                         )
             except BaseException as error:
                 await _cleanup_preserving_primary(lease.release, error)
+                reservation.release_if_untransferred()
                 raise
 
         resources = _OperationResources(lease, reservation)
@@ -1449,6 +1454,7 @@ class TTSService:
             clone_execution=clone_execution,
             clone_requirement=clone_requirement,
             clone_materializer=self._clone_materializer,
+            admission_authorizer=admission_authorizer,
         )
         self._admitted_operations.add(operation)
         if self._close_signal.is_set():
@@ -1456,6 +1462,26 @@ class TTSService:
             await _cleanup_preserving_primary(operation.close, closed_error)
             raise closed_error
         return operation
+
+    async def resolve_provider_outbound_endpoint(self, provider_id: str) -> str:
+        """Resolve the exact endpoint of one ready adapter under its lease."""
+        lease = await self.registry.acquire(provider_id)
+        try:
+            if provider_id == "audio_cpp":
+                await lease.adapter.ensure_ready()
+            adapter = lease.adapter
+            if not isinstance(adapter, TTSOutboundEndpointAdapter):
+                raise TTSConfigurationRevisionError(
+                    "TTS provider destination is unavailable"
+                )
+            endpoint = adapter.admitted_outbound_endpoint()
+            if not isinstance(endpoint, str) or not endpoint:
+                raise TTSConfigurationRevisionError(
+                    "TTS provider destination is unavailable"
+                )
+            return endpoint
+        finally:
+            await lease.release()
 
     async def _close_admitted_operation_preserving_primary(
         self,

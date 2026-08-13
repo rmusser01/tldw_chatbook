@@ -560,6 +560,60 @@ async def test_regeneration_pending_behind_failed_speech_stays_paused() -> None:
 
 
 @pytest.mark.asyncio
+async def test_regeneration_destination_await_rechecks_failure_pause_before_dispatch(
+) -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("First answer.")
+    first_outcome = harness.outcomes.pop()
+    harness.destination_gate = asyncio.Event()
+
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Second answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await asyncio.sleep(0)
+    assert harness.destination_resolutions >= 3
+
+    first_outcome(False)
+    assert harness.session.speech_preferences.paused is True
+    harness.destination_gate.set()
+    await harness.drain()
+
+    assert harness.spoken == [message.id]
+
+
+@pytest.mark.asyncio
+async def test_same_id_restore_accepts_new_completion_and_drops_old_generation(
+) -> None:
+    harness = AutoSpeakHarness()
+    await harness.enable()
+    message = await harness.complete_reply("Original answer.")
+    harness.outcomes.pop()(True)
+    restored_session = replace(harness.session)
+    restored_messages = harness.store.messages_for_session(harness.session.id)
+    harness.destination_gate = asyncio.Event()
+
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Pre-restore answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await asyncio.sleep(0)
+    harness.store.restore_state(
+        sessions=[restored_session],
+        messages_by_session={restored_session.id: restored_messages},
+        active_session_id=restored_session.id,
+    )
+    harness.destination_gate.set()
+    await harness.drain()
+
+    harness.store.begin_variant_stream(message.id)
+    harness.store.append_stream_chunk(message.id, "Post-restore answer.")
+    harness.store.finalize_variant_stream(message.id)
+    await harness.drain()
+
+    assert harness.spoken == [message.id, message.id]
+
+
+@pytest.mark.asyncio
 async def test_regeneration_pending_behind_speech_drops_after_active_change() -> None:
     harness = AutoSpeakHarness()
     await harness.enable()

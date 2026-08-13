@@ -606,7 +606,7 @@ class ConsoleAutoSpeakCoordinator:
     ) -> None:
         if self._modal_open:
             return
-        disposition, destination = await self._disposition(
+        disposition, destination, preference_epoch = await self._disposition(
             token, operation_generation, active_epoch
         )
         if (
@@ -623,6 +623,7 @@ class ConsoleAutoSpeakCoordinator:
                 completion_generation,
                 active_epoch,
                 destination=destination,
+                expected_preference_epoch=preference_epoch,
                 revalidated=True,
             )
             return
@@ -644,32 +645,43 @@ class ConsoleAutoSpeakCoordinator:
         token: tuple[str, str],
         operation_generation: int,
         active_epoch: int,
-    ) -> tuple[AutoSpeakDisposition, ConsoleTTSDestination | None]:
+    ) -> tuple[AutoSpeakDisposition, ConsoleTTSDestination | None, int | None]:
         store = self._store_accessor()
         session_id, message_id = token
         active = self._active_session()
         if active is None or active.id != session_id:
-            return AutoSpeakDisposition.BACKGROUND, None
+            return AutoSpeakDisposition.BACKGROUND, None, None
         try:
             message = store.get_message(message_id)
+            preference_epoch = store.speech_preference_epoch(session_id)
         except KeyError:
-            return AutoSpeakDisposition.INELIGIBLE, None
+            return AutoSpeakDisposition.INELIGIBLE, None, None
         preferences = active.speech_preferences
         if preferences.auto_speak is not True:
-            return AutoSpeakDisposition.DISABLED, None
+            return AutoSpeakDisposition.DISABLED, None, preference_epoch
         if preferences.paused is True:
-            return AutoSpeakDisposition.PAUSED, None
+            return AutoSpeakDisposition.PAUSED, None, preference_epoch
         if self._hands_free_active() is not False:
-            return AutoSpeakDisposition.HANDSFREE_OWNS, None
+            return AutoSpeakDisposition.HANDSFREE_OWNS, None, preference_epoch
         destination = await self._current_destination(
             active, operation_generation, active_epoch
         )
         if not self._operation_is_current(
             operation_generation, session_id, active_epoch
         ):
-            return AutoSpeakDisposition.BACKGROUND, None
+            return AutoSpeakDisposition.BACKGROUND, None, None
         if self._hands_free_active() is not False:
-            return AutoSpeakDisposition.HANDSFREE_OWNS, None
+            return AutoSpeakDisposition.HANDSFREE_OWNS, None, None
+        try:
+            current_epoch = store.speech_preference_epoch(session_id)
+        except KeyError:
+            return AutoSpeakDisposition.INELIGIBLE, None, None
+        if current_epoch != preference_epoch:
+            return AutoSpeakDisposition.INELIGIBLE, None, current_epoch
+        active = self._active_session()
+        if active is None or active.id != session_id:
+            return AutoSpeakDisposition.BACKGROUND, None, current_epoch
+        preferences = active.speech_preferences
         fingerprint = destination.fingerprint if destination is not None else ""
         disposition = decide_auto_speak(
             message,
@@ -681,7 +693,7 @@ class ConsoleAutoSpeakCoordinator:
                 hands_free_active=self._hands_free_active(),
             ),
         )
-        return disposition, destination
+        return disposition, destination, current_epoch
 
     def _show_completion_consent(
         self,
@@ -720,7 +732,7 @@ class ConsoleAutoSpeakCoordinator:
                         "error",
                     )
                     return
-                disposition, current = await self._disposition(
+                disposition, current, preference_epoch = await self._disposition(
                     token, operation_generation, active_epoch
                 )
                 if (
@@ -737,6 +749,7 @@ class ConsoleAutoSpeakCoordinator:
                         completion_generation,
                         active_epoch,
                         destination=current,
+                        expected_preference_epoch=preference_epoch,
                         revalidated=True,
                     )
             finally:
@@ -766,6 +779,7 @@ class ConsoleAutoSpeakCoordinator:
         active_epoch: int,
         *,
         destination: ConsoleTTSDestination | None = None,
+        expected_preference_epoch: int | None = None,
         revalidated: bool = False,
     ) -> None:
         if (
@@ -785,9 +799,11 @@ class ConsoleAutoSpeakCoordinator:
                 )
             return
         if not revalidated:
-            disposition, destination = await self._disposition(
-                token, operation_generation, active_epoch
-            )
+            (
+                disposition,
+                destination,
+                expected_preference_epoch,
+            ) = await self._disposition(token, operation_generation, active_epoch)
             if (
                 disposition is not AutoSpeakDisposition.SPEAK
                 or not self._operation_is_current(
@@ -803,7 +819,28 @@ class ConsoleAutoSpeakCoordinator:
         store = self._store_accessor()
         try:
             preference_epoch = store.speech_preference_epoch(token[0])
+            active = self._active_session()
+            message = store.get_message(token[1])
         except KeyError:
+            return
+        if (
+            expected_preference_epoch is None
+            or preference_epoch != expected_preference_epoch
+            or active is None
+            or active.id != token[0]
+            or self._hands_free_active() is not False
+            or decide_auto_speak(
+                message,
+                session_id=token[0],
+                context=AutoSpeakContext(
+                    preferences=active.speech_preferences,
+                    destination_fingerprint=destination.fingerprint,
+                    active_session_id=store.active_session_id or "",
+                    hands_free_active=self._hands_free_active(),
+                ),
+            )
+            is not AutoSpeakDisposition.SPEAK
+        ):
             return
         dispatch_generation = self._next_dispatch_generation
         self._next_dispatch_generation += 1

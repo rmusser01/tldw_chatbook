@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+import inspect
 import re
 import threading
 import time
@@ -1153,6 +1154,12 @@ class TTSEventHandler:
         if provider_id not in {"audio_cpp", "openai", "alltalk"}:
             return "http://localhost"
 
+        resolver = getattr(service, "resolve_provider_outbound_endpoint", None)
+        if callable(resolver):
+            resolved = resolver(provider_id)
+            if inspect.isawaitable(resolved):
+                return await resolved
+
         configuration = await service.registry.provider_configuration_snapshot(
             provider_id
         )
@@ -1457,16 +1464,14 @@ class TTSEventHandler:
 
         def authorize_destination(
             admitted_provider_id: str,
-            applied_config: Mapping[str, object],
+            admitted_endpoint: str,
         ) -> bool:
             if expected_destination_fingerprint is None:
                 return True
             try:
-                raw_endpoint = self._provider_endpoint_from_applied_config(
-                    admitted_provider_id,
-                    applied_config,
+                endpoint = normalize_openai_compatible_endpoint(
+                    admitted_endpoint
                 )
-                endpoint = normalize_openai_compatible_endpoint(raw_endpoint)
                 admitted_fingerprint = (
                     "sha256:"
                     f"{openai_destination_fingerprint(admitted_provider_id, endpoint)}"
@@ -1571,6 +1576,11 @@ class TTSEventHandler:
                         speed=exact_request.speed,
                         provider_options=exact_request.options,
                     )
+                    authorization_kwargs = (
+                        {"admission_authorizer": admission_authorizer}
+                        if admission_authorizer is not None
+                        else {}
+                    )
                     if resolution.source == "assigned":
                         (
                             response,
@@ -1587,7 +1597,7 @@ class TTSEventHandler:
                                 reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
-                            admission_authorizer=admission_authorizer,
+                            **authorization_kwargs,
                         )
                     else:
                         assert resolution.source == "default_profile"
@@ -1606,7 +1616,7 @@ class TTSEventHandler:
                                 reference=resolution.reference,
                             ),
                             progress_sink=progress_sink,
-                            admission_authorizer=admission_authorizer,
+                            **authorization_kwargs,
                         )
                     requested_selection = TTSRequestedSelectionSnapshot(
                         provider_id=effective_selection.provider_id,
@@ -1624,11 +1634,16 @@ class TTSEventHandler:
                         requested_selection,
                     )
                 else:
+                    authorization_kwargs = (
+                        {"admission_authorizer": admission_authorizer}
+                        if admission_authorizer is not None
+                        else {}
+                    )
                     response = await service.synthesize_default(
                         text=text,
                         voice_override=voice,
                         progress_sink=progress_sink,
-                        admission_authorizer=admission_authorizer,
+                        **authorization_kwargs,
                     )
                 if (
                     not isinstance(response.provider_id, str)

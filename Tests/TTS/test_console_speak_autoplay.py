@@ -519,6 +519,44 @@ async def test_final_completion_post_rejection_reports_generation_failure(tmp_pa
     assert "message-1" not in handler._audio_files
 
 
+@pytest.mark.asyncio
+async def test_manual_generation_preserves_legacy_service_call_shape(tmp_path) -> None:
+    async def chunks():
+        yield b"audio"
+
+    class LegacyServiceDouble:
+        def preferences_snapshot(self):
+            return SimpleNamespace(provider_id="openai", speed=1.0)
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None,
+            progress_sink,
+        ):
+            del text, voice_override, progress_sink
+            return TTSAudioResponse(
+                provider_id="openai",
+                model_id="tts-1",
+                audio_format="mp3",
+                content_type="audio/mpeg",
+                byte_stream=chunks(),
+            )
+
+    handler = TTSEventHandler()
+    handler._tts_service = LegacyServiceDouble()
+    handler._create_tts_artifact = MagicMock(return_value=tmp_path / "manual.mp3")
+    handler._post_tts_message = AsyncMock(return_value=True)
+
+    await handler._generate_tts("Manual reply.", "message-1", None)
+
+    assert any(
+        isinstance(call.args[0], TTSCompleteEvent)
+        for call in handler._post_tts_message.await_args_list
+    )
+
+
 class _SpeechRequestControllerStub:
     def __init__(self, store: ConsoleChatStore, post_result) -> None:
         self._store = store
@@ -761,8 +799,12 @@ def test_audio_cpp_admitted_destination_uses_active_mode(
 async def test_destination_authorization_uses_post_capacity_exact_lease_config() -> None:
     adapters: list[FakeAdapter] = []
 
-    def factory(_config: Mapping[str, Any]) -> FakeAdapter:
+    def factory(config: Mapping[str, Any]) -> FakeAdapter:
         adapter = FakeAdapter("openai")
+        endpoint = config["app_config"]["app_tts"]["OPENAI_BASE_URL"]
+        adapter.admitted_outbound_endpoint = (  # type: ignore[attr-defined]
+            lambda: endpoint
+        )
         adapters.append(adapter)
         return adapter
 
@@ -796,16 +838,12 @@ async def test_destination_authorization_uses_post_capacity_exact_lease_config()
     )
     first = await service.synthesize_default(text="occupy capacity")
     authorization_started = asyncio.Event()
-    observed: list[tuple[str, Mapping[str, object]]] = []
+    observed: list[tuple[str, str]] = []
 
-    def authorize(provider_id: str, applied_config: Mapping[str, object]) -> bool:
-        observed.append((provider_id, applied_config))
+    def authorize(provider_id: str, endpoint: str) -> bool:
+        observed.append((provider_id, endpoint))
         authorization_started.set()
-        nested = applied_config["app_config"]
-        assert isinstance(nested, Mapping)
-        app_tts = nested["app_tts"]
-        assert isinstance(app_tts, Mapping)
-        return app_tts["OPENAI_BASE_URL"] == "https://a.example/v1"
+        return endpoint == "https://a.example/v1"
 
     waiting = asyncio.create_task(
         service.synthesize_default(
@@ -830,7 +868,7 @@ async def test_destination_authorization_uses_post_capacity_exact_lease_config()
         await waiting
 
     assert observed[0][0] == "openai"
-    assert observed[0][1]["generation"] == "two"
+    assert observed[0][1] == "https://b.example/v1"
     assert adapters[-1].synthesize_calls == 0
     await service.close()
     await service.wait_closed()
