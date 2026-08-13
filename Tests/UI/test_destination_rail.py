@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import tldw_chatbook
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+import tldw_chatbook
 from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
 from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle

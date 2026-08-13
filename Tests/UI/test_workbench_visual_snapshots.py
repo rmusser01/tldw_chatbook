@@ -202,7 +202,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
 @pytest.mark.parametrize("size", ((130, 30), (140, 42), (160, 45)))
 @pytest.mark.parametrize("approval_count", (0, 3))
 @pytest.mark.asyncio
-async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
+async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
     size: tuple[int, int], approval_count: int
 ) -> None:
     app = _build_test_app(configured_default="home")
@@ -294,7 +294,7 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
 
             svg = app.export_screenshot(
                 title=(
-                    f"TASK-15705 Inspector Rail Parity {size[0]}x{size[1]} "
+                    f"TASK-15783 Inspector Rail Parity {size[0]}x{size[1]} "
                     f"approvals={approval_count}"
                 ),
                 simplify=True,

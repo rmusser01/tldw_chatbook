@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, Textual 8.x widgets/layout, TCSS, pytest/Textual pilot, repository CSS bundle generator.
 
-**Design spec:** `Docs/superpowers/specs/2026-08-12-task-15705-inspector-rail-parity-design.md`
+**Design spec:** `Docs/superpowers/specs/2026-08-12-task-15783-inspector-rail-parity-design.md`
 
 **ADR required:** no
 
@@ -35,7 +35,7 @@ Task 4 is the only active follow-up scope.
 - Modify `tldw_chatbook/UI/Screens/chat_screen.py`: frame the collapsed Inspector with the standard solid Console frame.
 - Modify `tldw_chatbook/css/components/_agentic_terminal.tcss`: add the Console Inspector full-height/fill rule after the shared compact right-handle rule.
 - Regenerate `tldw_chatbook/css/tldw_cli_modular.tcss`: mechanical production bundle generated from component TCSS.
-- Modify `backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md`: complete acceptance criteria and record verification/implementation notes only after fresh evidence.
+- Modify `backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md`: complete acceptance criteria and record verification/implementation notes only after fresh evidence.
 
 ### Task 1: Pin the broken Inspector geometry
 
@@ -137,7 +137,7 @@ and non-overlap; for count 0, assert no badge. Call:
 
 ```python
 svg = app.export_screenshot(
-    title=f"TASK-15705 Inspector parity {size[0]}x{size[1]} approvals={approval_count}",
+    title=f"TASK-15783 Inspector parity {size[0]}x{size[1]} approvals={approval_count}",
     simplify=True,
 )
 _assert_svg_healthy(svg)
@@ -159,7 +159,7 @@ Run:
 .venv/bin/python -m pytest -q Tests/UI/test_destination_rail.py -k 'inspector or shared_right'
 .venv/bin/python -m pytest -q Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames
 .venv/bin/python -m pytest -q Tests/UI/test_css_build_integrity.py -k inspector_rail
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 ```
 
 Expected: failures show the Inspector is only 3–6 rows, transparent/borderless, the button is three rows, and the real Console handle still uses `console-frame-quiet`. The shared non-Console assertion should pass.
@@ -245,10 +245,10 @@ Run:
 .venv/bin/python -m pytest -q Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames
 .venv/bin/python -m pytest -q Tests/UI/test_console_right_rail.py Tests/UI/test_console_inspector_compact_access.py
 .venv/bin/python -m pytest -q Tests/UI/test_css_build_integrity.py
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 ```
 
-Expected: all selected tests pass with no warnings attributable to TASK-15705.
+Expected: all selected tests pass with no warnings attributable to TASK-15783.
 
 - [ ] **Step 6: Run focused static checks**
 
@@ -272,14 +272,14 @@ git commit -m "fix(console): fill collapsed Inspector rail"
 ### Task 3: Verify the rendered Console and close out the task
 
 **Files:**
-- Modify: `backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md`
+- Modify: `backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md`
 
 - [ ] **Step 1: Re-run the real-Console visual/geometry sweep**
 
 Run:
 
 ```bash
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 ```
 
 Expected: six real-Console mounted states pass (three widths × unbadged/badged),
@@ -292,7 +292,7 @@ Run:
 ```bash
 .venv/bin/python -m pytest -q Tests/UI/test_destination_rail.py Tests/UI/test_console_right_rail.py Tests/UI/test_console_inspector_compact_access.py Tests/UI/test_css_build_integrity.py
 .venv/bin/python -m pytest -q Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 .venv/bin/ruff check tldw_chatbook/Widgets/Console/console_rail_handle.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_destination_rail.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_css_build_integrity.py Tests/UI/test_workbench_visual_snapshots.py
 .venv/bin/ruff format --check tldw_chatbook/Widgets/Console/console_rail_handle.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_destination_rail.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_css_build_integrity.py Tests/UI/test_workbench_visual_snapshots.py
 git diff --check
@@ -312,13 +312,13 @@ Run:
 
 Expected for Done: all three exit zero. If an unrelated/environment baseline
 prevents any gate from completing green, record the exact command and failure
-and leave TASK-15705 In Progress; do not claim the repository Definition of
+and leave TASK-15783 In Progress; do not claim the repository Definition of
 Done is satisfied.
 
 - [ ] **Step 4: Self-review against every acceptance criterion**
 
 Record the implementation base SHA immediately before the RED-test commit,
-then inspect `git diff <implementation-base>..HEAD --` limited to TASK-15705's
+then inspect `git diff <implementation-base>..HEAD --` limited to TASK-15783's
 listed files. Explicitly confirm full height, filled/bordered
 surface, vertical centering, badge containment, unchanged 11-column width and
 tooltips, unchanged shared right handles, bundle parity, and focused test
@@ -329,24 +329,24 @@ evidence. Do not include unrelated working-tree changes.
 Check every acceptance criterion, add concise Implementation Notes with the
 red/green commands and visual evidence, link ADR-017, ADR-043, and both
 spec/plan files,
-and set TASK-15705 to Done only if every repository Definition of Done item is
+and set TASK-15783 to Done only if every repository Definition of Done item is
 actually satisfied. Otherwise leave it In Progress and name the unmet gate.
 
 When every gate is green, use the exact CLI form:
 
 ```bash
-backlog task edit 15705 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --notes "<verified implementation summary>" -s Done --plain
-backlog task 15705 --plain
+backlog task edit 15783 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --notes "<verified implementation summary>" -s Done --plain
+backlog task 15783 --plain
 ```
 
 If a full gate is not green, omit `-s Done`, keep the task In Progress, and put
 the exact unmet gate in `--notes`. Before implementation begins, assign it with
-`backlog task edit 15705 -a @codex -s "In Progress" --plain`.
+`backlog task edit 15783 -a @codex -s "In Progress" --plain`.
 
 - [ ] **Step 6: Commit closeout documentation**
 
 ```bash
-git add 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
+git add 'backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md'
 git commit -m "docs(console): record Inspector rail parity verification"
 ```
 
@@ -360,7 +360,7 @@ git commit -m "docs(console): record Inspector rail parity verification"
 - Modify: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
 - Modify: `Tests/UI/test_workbench_visual_snapshots.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_rail_handle.py:94-101`
-- Modify: `backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md`
+- Modify: `backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md`
 
 - [ ] **Step 1: Change horizontal contract expectations to `Inspect`**
 
@@ -408,7 +408,7 @@ def _composited_rows(widget) -> list[str]:
     ]
 ```
 
-In the six-state TASK-15705 sweep, assert both the semantic label and the final
+In the six-state TASK-15783 sweep, assert both the semantic label and the final
 paint:
 
 ```python
@@ -443,7 +443,7 @@ Then run only the directly affected tests:
 
 ```bash
 .venv/bin/python -m pytest -q Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 ```
 
 Expected: failures are limited to horizontal collapsed right-handle copy still
@@ -480,7 +480,7 @@ Run:
 
 ```bash
 .venv/bin/python -m pytest -q Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_console_right_rail.py Tests/UI/test_console_inspector_compact_access.py Tests/UI/test_css_build_integrity.py Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames
-.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15705
+.venv/bin/python -m pytest -q Tests/UI/test_workbench_visual_snapshots.py -k task_15783
 .venv/bin/ruff check tldw_chatbook/Widgets/Console/console_rail_handle.py Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
 .venv/bin/ruff format --check tldw_chatbook/Widgets/Console/console_rail_handle.py Tests/UI/test_console_rail_handle.py Tests/UI/test_destination_rail.py Tests/UI/test_console_shell_regions.py Tests/UI/test_settings_console_rail_labels.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_workbench_visual_snapshots.py
 git diff --check
@@ -495,7 +495,7 @@ do not run the full repository suite for this follow-up.
 
 - [ ] **Step 7: Record evidence, close AC #7, and commit**
 
-Append the follow-up evidence manually to TASK-15705's existing Implementation
+Append the follow-up evidence manually to TASK-15783's existing Implementation
 Notes; do not pass `--notes`, because Backlog replaces the entire notes block
 instead of appending. Record the RED/GREEN counts, exact compositor evidence,
 preserved invariants, formatter baseline comparison, and user-scoped
@@ -506,10 +506,10 @@ prove the existing implementation history was preserved.
 ```bash
 git add tldw_chatbook/Widgets/Console/console_rail_handle.py
 git commit -m "fix(console): shorten collapsed rail label to Inspect"
-backlog task edit 15705 --check-ac 7 -s Done --plain
-backlog task 15705 --plain
-git diff -- 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
-git add 'backlog/tasks/task-15705 - Match-collapsed-Inspector-rail-to-Context-rail.md'
+backlog task edit 15783 --check-ac 7 -s Done --plain
+backlog task 15783 --plain
+git diff -- 'backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md'
+git add 'backlog/tasks/task-15783 - Match-collapsed-Inspector-rail-to-Context-rail.md'
 git commit -m "docs(console): record Inspect label verification"
 git push
 ```

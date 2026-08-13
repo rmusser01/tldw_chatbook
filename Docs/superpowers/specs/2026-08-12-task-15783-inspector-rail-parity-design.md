@@ -1,4 +1,4 @@
-# TASK-15705: Collapsed Inspector rail parity design
+# TASK-15783: Collapsed Inspector rail parity design
 
 ## Goal
 
@@ -115,7 +115,7 @@ is absent, wrapped, or wrong. Keep the tooltip and vertical-label assertions
 as focused component contracts so each invariant fails independently.
 
 The regression inventory includes every current horizontal collapsed-label
-expectation, not only the TASK-15705 sweep:
+expectation, not only the TASK-15783 sweep:
 
 - `Tests/UI/test_console_rail_handle.py`
 - `Tests/UI/test_destination_rail.py`
@@ -126,7 +126,7 @@ expectation, not only the TASK-15705 sweep:
 Update only expectations that observe the horizontal collapsed button. Do not
 change vertical `I\nn\ns\np\ne\nc\nt\no\nr` expectations, Inspector headings,
 settings copy, tooltips, or unrelated destination text. Run these modules with
-the existing TASK-15705 focused suite.
+the existing TASK-15783 focused suite.
 
 Update the existing Console decomposition assertion from a quiet/no-border
 Inspector handle to a solid/all-edge frame. Add a non-Console right-handle
