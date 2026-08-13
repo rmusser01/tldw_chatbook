@@ -70,6 +70,16 @@ def test_initial_chat_one_is_pristine_until_the_user_types():
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
+def test_reply_speech_preference_disqualifies_initial_session_reuse():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    store.set_auto_speak(session.id, True)
+
+    assert not store.is_pristine_session(session.id, expected_settings=defaults)
+
+
 def test_typed_then_cleared_session_keeps_durable_work_marker():
     defaults = _pristine_defaults()
     store = ConsoleChatStore()
@@ -1177,6 +1187,10 @@ class FakePersistence:
         self.updated_system_prompts = []
         self.updated_pinned_prefills = []
         self.roleplay_updates = []
+        self.speech_updates = []
+        self.conversation_version = 1
+        self.speech_update_result = True
+        self.restored_speech_preferences = None
         self.last_create_kwargs = None
 
     def create_conversation(self, **kwargs):
@@ -1209,6 +1223,24 @@ class FakePersistence:
             }
         )
         return True
+
+    def get_conversation_version(self, conversation_id):
+        return self.conversation_version
+
+    def update_conversation_speech_preferences(
+        self, *, conversation_id, preferences, expected_version
+    ):
+        self.speech_updates.append(
+            {
+                "conversation_id": conversation_id,
+                "preferences": preferences,
+                "expected_version": expected_version,
+            }
+        )
+        return self.speech_update_result
+
+    def get_conversation_speech_preferences(self, conversation_id):
+        return self.restored_speech_preferences
 
     def create_message(
         self,
@@ -1286,6 +1318,185 @@ class FakeChatSyncProducer:
 class FailingChatSyncProducer:
     def enqueue_chat_message(self, **kwargs):
         raise RuntimeError("sync unavailable")
+
+
+def test_new_session_defaults_reply_speech_off():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    session = ConsoleChatStore().ensure_session()
+
+    assert session.speech_preferences == ConsoleSpeechPreferences()
+
+
+def test_unsaved_session_stages_all_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    destination = "sha256:" + "a" * 64
+
+    assert store.set_auto_speak(session.id, True) == (session, True)
+    assert store.pause_auto_speak(session.id) == (session, True)
+    assert store.confirm_auto_speak_destination(session.id, destination) == (
+        session,
+        True,
+    )
+    assert session.speech_preferences == ConsoleSpeechPreferences(
+        auto_speak=True,
+        paused=True,
+        consent_destination=destination,
+    )
+    assert store.resume_auto_speak(session.id) == (session, True)
+    assert session.speech_preferences.paused is False
+
+
+def test_persisted_reply_speech_mutation_updates_memory_only_after_versioned_write():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    observed_before_write = []
+
+    def write(**kwargs):
+        observed_before_write.append(session.speech_preferences.auto_speak)
+        persistence.speech_updates.append(kwargs)
+        return True
+
+    persistence.update_conversation_speech_preferences = write
+
+    updated, persisted = store.set_auto_speak(session.id, True)
+
+    assert updated is session
+    assert persisted is True
+    assert observed_before_write == [False]
+    assert session.speech_preferences.auto_speak is True
+    assert persistence.speech_updates[0]["expected_version"] == 1
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("write failed")])
+def test_persisted_reply_speech_conflict_or_failure_is_nonmutating(failure):
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    before = session.speech_preferences
+
+    def write(**kwargs):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    persistence.update_conversation_speech_preferences = write
+
+    updated, persisted = store.set_auto_speak(session.id, True)
+
+    assert updated is session
+    assert persisted is False
+    assert session.speech_preferences is before
+
+
+def test_persisted_reply_speech_missing_version_is_nonmutating():
+    persistence = FakePersistence()
+    persistence.conversation_version = None
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-1"
+    before = session.speech_preferences
+
+    updated, persisted = store.pause_auto_speak(session.id)
+
+    assert updated is session
+    assert persisted is False
+    assert session.speech_preferences is before
+    assert persistence.speech_updates == []
+
+
+def test_first_persist_includes_staged_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.set_auto_speak(session.id, True)
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["speech_preferences"] == (
+        ConsoleSpeechPreferences(auto_speak=True)
+    )
+
+
+def test_restore_persisted_session_round_trips_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    persistence = FakePersistence()
+    persistence.restored_speech_preferences = ConsoleSpeechPreferences(
+        auto_speak=True,
+        paused=True,
+        consent_destination="sha256:" + "b" * 64,
+    )
+    store = ConsoleChatStore(persistence=persistence)
+
+    session = store.restore_persisted_session(
+        title="Saved",
+        workspace_id=None,
+        persisted_conversation_id="conv-1",
+        all_nodes=[],
+    )
+
+    assert session.speech_preferences == persistence.restored_speech_preferences
+
+
+def test_real_persistence_round_trips_roleplay_and_reply_speech_metadata(tmp_path):
+    from tldw_chatbook.Chat.console_roleplay_metadata import (
+        parse_console_roleplay_context,
+    )
+
+    db = CharactersRAGDB(tmp_path / "speech-preferences.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session()
+        session.user_display_name_override = "Rowan"
+        store.set_auto_speak(session.id, True)
+        store.confirm_auto_speak_destination(session.id, "sha256:" + "c" * 64)
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        record = db.get_conversation_by_id(conversation_id)
+        restored = ConsoleChatStore(persistence=service).restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=[],
+        )
+
+        assert restored.speech_preferences == session.speech_preferences
+        assert parse_console_roleplay_context(record["metadata"]).user_name_override == (
+            "Rowan"
+        )
+    finally:
+        db.close_connection()
+
+
+def test_initial_reply_speech_failure_leaves_no_conversation_row(tmp_path):
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    db = CharactersRAGDB(tmp_path / "speech-create-failure.db", "speech-test")
+    try:
+        service = ChatPersistenceService(db)
+        before = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        service.update_conversation_speech_preferences = lambda **_kwargs: False
+
+        with pytest.raises(RuntimeError, match="initial Console speech"):
+            service.create_conversation(
+                conversation_title="Failed speech setup",
+                speech_preferences=ConsoleSpeechPreferences(auto_speak=True),
+            )
+
+        after = db.execute_query("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        assert after == before
+    finally:
+        db.close_connection()
 
 
 def test_store_can_persist_user_and_assistant_messages_through_adapter():

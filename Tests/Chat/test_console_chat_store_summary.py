@@ -14,7 +14,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 
 
 def _store_with_session():
@@ -73,6 +73,24 @@ def test_close_session_purges_context_summary_state():
     store.set_session_context_summary(sid, "recap", u.id)
     store.close_session(sid)
     assert sid not in store._context_summary_by_session
+
+
+def test_restore_state_preserves_session_reply_speech_preferences():
+    from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+
+    preferences = ConsoleSpeechPreferences(
+        auto_speak=True,
+        paused=True,
+        consent_destination="sha256:" + "d" * 64,
+    )
+    original = ConsoleChatSession(speech_preferences=preferences)
+    store = ConsoleChatStore()
+
+    store.restore_state(sessions=[original], active_session_id=original.id)
+
+    restored = store.sessions()[0]
+    assert restored is not original
+    assert restored.speech_preferences == preferences
 
 
 # --- write-through ------------------------------------------------------------

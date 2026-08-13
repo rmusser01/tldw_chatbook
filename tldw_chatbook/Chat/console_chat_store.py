@@ -42,7 +42,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -51,11 +50,13 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.provider_continuation import (
@@ -316,6 +317,20 @@ class ConsoleChatPersistence(Protocol):
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive durable conversation row version."""
 
+    def get_conversation_speech_preferences(
+        self, conversation_id: str
+    ) -> ConsoleSpeechPreferences:
+        """Return fail-closed reply-speech preferences for one conversation."""
+
+    def update_conversation_speech_preferences(
+        self,
+        *,
+        conversation_id: str,
+        preferences: ConsoleSpeechPreferences,
+        expected_version: int,
+    ) -> bool:
+        """Optimistically merge reply-speech preferences into metadata."""
+
     def update_conversation_system_prompt(
         self,
         *,
@@ -494,6 +509,9 @@ class ConsoleChatSession:
     user_display_name_override: str | None = None
     #: Trusted character system source; materialized into ``settings.system_prompt``.
     character_system_template: str | None = None
+    speech_preferences: ConsoleSpeechPreferences = field(
+        default_factory=ConsoleSpeechPreferences
+    )
     #: Monotonic identity projection fence for labels and trusted templates.
     identity_revision: int = 0
     #: Temporary conversation (spec 2026-07-31): this session is never written
@@ -777,6 +795,7 @@ class ConsoleChatStore:
             or session.character_name is not None
             or session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.speech_preferences != ConsoleSpeechPreferences()
             or session.identity_revision != 0
             or session.ephemeral
             or session.todos
@@ -1007,6 +1026,7 @@ class ConsoleChatStore:
             character_name=character_name,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self._restore_speech_preferences(session)
         self._resolve_context_policy_on_resume(session.id)
         restored_nodes = self._hydrate_provider_continuations_from_persistence(
             persisted_conversation_id,
@@ -1150,6 +1170,28 @@ class ConsoleChatStore:
                             "Portable continuation reconciliation is pending."
                         )
                         break
+
+    def _restore_speech_preferences(self, session: ConsoleChatSession) -> None:
+        """Fail closed while hydrating conversation-owned speech preferences."""
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return
+        reader = getattr(
+            self.persistence,
+            "get_conversation_speech_preferences",
+            None,
+        )
+        if not callable(reader):
+            return
+        try:
+            restored = reader(session.persisted_conversation_id)
+        except Exception:
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to restore Console reply-speech preferences.")
+            return
+        if isinstance(restored, ConsoleSpeechPreferences):
+            session.speech_preferences = restored
 
     def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
         """Batch-fetch and apply generation-metadata sidecar rows on resume.
@@ -1409,6 +1451,89 @@ class ConsoleChatStore:
                 "keeps the applied value."
             )
             return session, False
+        return session, True
+
+    def set_auto_speak(
+        self, session_id: str, enabled: bool
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Enable or disable automatic reply speech for one conversation."""
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be an exact boolean.")
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, auto_speak=enabled),
+        )
+
+    def pause_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
+        """Persistently pause automatic reply speech for one conversation."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, paused=True),
+        )
+
+    def resume_auto_speak(self, session_id: str) -> tuple[ConsoleChatSession, bool]:
+        """Resume automatic reply speech for one conversation."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, paused=False),
+        )
+
+    def confirm_auto_speak_destination(
+        self, session_id: str, destination: str
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Record consent for one canonical TTS destination fingerprint."""
+        session = self._session_or_raise(session_id)
+        return self._set_speech_preferences(
+            session,
+            replace(session.speech_preferences, consent_destination=destination),
+        )
+
+    def _set_speech_preferences(
+        self,
+        session: ConsoleChatSession,
+        preferences: ConsoleSpeechPreferences,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Apply speech state after its versioned durable write succeeds."""
+        if preferences == session.speech_preferences:
+            return session, True
+        if session.persisted_conversation_id is None:
+            session.speech_preferences = preferences
+            session.updated_at = _utc_now_iso()
+            return session, True
+        if self.persistence is None:
+            return session, False
+        version_reader = getattr(self.persistence, "get_conversation_version", None)
+        writer = getattr(
+            self.persistence,
+            "update_conversation_speech_preferences",
+            None,
+        )
+        if not callable(version_reader) or not callable(writer):
+            return session, False
+        try:
+            expected_version = version_reader(session.persisted_conversation_id)
+            if type(expected_version) is not int or expected_version < 1:
+                return session, False
+            persisted = bool(
+                writer(
+                    conversation_id=session.persisted_conversation_id,
+                    preferences=preferences,
+                    expected_version=expected_version,
+                )
+            )
+        except Exception:
+            logger.bind(
+                session_id=session.id,
+                conversation_id=session.persisted_conversation_id,
+            ).exception("Failed to persist Console reply-speech preferences.")
+            return session, False
+        if not persisted:
+            return session, False
+        session.speech_preferences = preferences
+        session.updated_at = _utc_now_iso()
         return session, True
 
     def session_workspace_id(self, session_id: str) -> str:
@@ -4348,7 +4473,8 @@ class ConsoleChatStore:
                 session.character_name if local_character_id is not None else None
             ),
         }
-        session.persisted_conversation_id = self.persistence.create_conversation(
+        create_conversation = self.persistence.create_conversation
+        create_kwargs: dict[str, Any] = dict(
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
@@ -4357,6 +4483,16 @@ class ConsoleChatStore:
             else None,
             **identity_kwargs,
         )
+        if session.speech_preferences != ConsoleSpeechPreferences():
+            if not self._persistence_accepts_kwarg(
+                create_conversation,
+                "speech_preferences",
+            ):
+                raise RuntimeError(
+                    "Persistence adapter cannot store staged reply-speech preferences."
+                )
+            create_kwargs["speech_preferences"] = session.speech_preferences
+        session.persisted_conversation_id = create_conversation(**create_kwargs)
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
