@@ -84,7 +84,7 @@ latest-request-wins body contract. No dependencies, persistence, workers, legacy
 Media debounce, or geometry rules changed.
 
 The required focused product-path command passed all 16 selected tests. Its
-2,000-line/100-match evidence recorded `TASK-15458 latency median_ms=120.913`,
+2,000-line/101-match evidence recorded `TASK-15458 latency median_ms=120.913`,
 one stable screen ID (`2247968276448`), one stable viewer ID
 (`2247963750576` across all four observations), one stable Markdown ID
 (`2247965990096` across all four observations), and one `Markdown.update` call
