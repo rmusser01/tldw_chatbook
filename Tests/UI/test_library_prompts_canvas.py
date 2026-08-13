@@ -7973,7 +7973,12 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
     tmp_path,
     monkeypatch,
 ):
-    """A dirty compatibility editor can leave even when no save path exists."""
+    """A dirty compatibility editor can leave even when no save path exists.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory for the real Prompt DB.
+        monkeypatch: Pytest helper used to observe browse and snapshot calls.
+    """
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _message = db.add_prompt(
         name="Compatibility only",
@@ -8057,6 +8062,93 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
     after = db.fetch_prompt_details(prompt_id)
     assert after["author"] == before["author"] == "Original"
     assert after["version"] == before["version"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_discard_refuses_while_save_is_in_flight(tmp_path):
+    """Discard stays disabled and inert until an admitted save settles.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory for the real Prompt DB.
+    """
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Held save discard",
+        author="Original",
+        details="Before",
+    )
+    save_started = threading.Event()
+    save_release = threading.Event()
+    original_save = service.save_prompt
+
+    async def held_save(**kwargs: Any):
+        save_started.set()
+        await asyncio.to_thread(save_release.wait)
+        return await original_save(**kwargs)
+
+    service.save_prompt = held_save
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        author = screen.query_one("#library-prompt-author", Input)
+        author.value = "Saved after hold"
+        await pilot.pause()
+        discard = screen.query_one("#library-prompt-discard", Button)
+        assert screen._library_prompt_dirty is True
+        assert discard.disabled is False
+
+        screen.query_one("#library-prompt-save", Button).press()
+        for _ in range(100):
+            if save_started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert save_started.is_set()
+
+        try:
+            busy_disabled = discard.disabled
+            busy_tooltip = str(discard.tooltip)
+            screen.handle_library_prompt_discard(Button.Pressed(discard))
+            await pilot.pause()
+            refused_view = screen._library_prompts_view
+            refused_prompt_id = screen._selected_prompt_id
+            refused_author = author.value
+            refused_dirty = screen._library_prompt_dirty
+        finally:
+            save_release.set()
+
+        for _ in range(150):
+            active = [
+                worker
+                for worker in screen.workers
+                if worker.group == "library_prompt_save" and not worker.is_finished
+            ]
+            if not active:
+                break
+            await pilot.pause(0.02)
+
+        assert busy_disabled is True
+        assert busy_tooltip == (
+            "Prompt changes are still in progress. Try again when they finish."
+        )
+        assert refused_view == "editor"
+        assert refused_prompt_id == prompt_id
+        assert refused_author == "Saved after hold"
+        assert refused_dirty is True
+        persisted = db.fetch_prompt_details(prompt_id)
+        assert persisted is not None
+        assert persisted["author"] == "Saved after hold"
+        assert screen._library_prompt_dirty is False
+        settled_discard = screen.query_one("#library-prompt-discard", Button)
+        assert settled_discard is discard
+        assert settled_discard.disabled is True
+        assert str(settled_discard.tooltip) == ("No unsaved Prompt changes to discard.")
 
 
 # ---------------------------------------------------------------------------

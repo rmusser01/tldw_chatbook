@@ -76,7 +76,9 @@ Detailed execution plan:
   disabled with a literal explanation while clean, updates in place when fields
   become dirty or save successfully, and returns to the current Prompt list
   without persisting the working copy. Compatibility-only editors therefore
-  retain an explicit escape even when Update and Convert are unavailable.
+  retain an explicit escape even when Update and Convert are unavailable. PR
+  review hardening also keeps Discard disabled and handler-guarded until any
+  admitted Prompt save settles, so a save cannot persist after a claimed discard.
 - Mounted real-SQLite regressions cover clean/dirty/save transitions, the exact
   warning, compatibility discard without persistence, current-scope refresh,
   first-row focus, normal/conflict DOM order, and action containment across four
