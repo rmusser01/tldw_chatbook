@@ -9,6 +9,17 @@ from typing import Any
 
 
 INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS = 160
+"""Maximum message length retained in an emitted progress event."""
+
+INGEST_PARSE_PROGRESS_JOB_ID_MAX_CHARS = 64
+"""Maximum accepted job identity length; oversized IDs are rejected, never truncated."""
+
+INGEST_PARSE_PROGRESS_GENERATION_MIN = 0
+"""Smallest accepted ingest generation identifier."""
+
+INGEST_PARSE_PROGRESS_GENERATION_MAX = 2**63 - 1
+"""Largest accepted ingest generation identifier, safe for signed 64-bit IPC peers."""
+
 INGEST_PARSE_PROGRESS_FLUSH_SECONDS = 0.25
 INGEST_PARSE_PROGRESS_QUEUE_MAXSIZE = 64
 INGEST_PARSE_PROGRESS_PHASES = frozenset(
@@ -74,12 +85,22 @@ def make_parse_progress_event(
     percent: float | None = None,
 ) -> ParseProgressEvent | None:
     """Create an IPC-safe event or reject data outside the public contract."""
-    if isinstance(generation, bool) or not isinstance(generation, int):
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or not INGEST_PARSE_PROGRESS_GENERATION_MIN
+        <= generation
+        <= INGEST_PARSE_PROGRESS_GENERATION_MAX
+    ):
         return None
 
     normalized_job_id = _normalize_text(job_id)
     normalized_phase = _normalize_text(phase)
-    if not normalized_job_id or normalized_phase not in INGEST_PARSE_PROGRESS_PHASES:
+    if (
+        not normalized_job_id
+        or len(normalized_job_id) > INGEST_PARSE_PROGRESS_JOB_ID_MAX_CHARS
+        or normalized_phase not in INGEST_PARSE_PROGRESS_PHASES
+    ):
         return None
 
     return ParseProgressEvent(

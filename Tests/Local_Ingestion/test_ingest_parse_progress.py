@@ -36,6 +36,28 @@ def test_progress_event_is_bounded_plain_data_and_invalid_percent_is_omitted():
     ) is None
 
 
+def test_progress_event_rejects_oversized_ipc_identities():
+    """Keep job and generation identities within their IPC-safe bounds."""
+    assert make_parse_progress_event(
+        generation=-1,
+        job_id="ingest-job-7",
+        phase="extracting",
+        message="Extracting",
+    ) is None
+    assert make_parse_progress_event(
+        generation=2**63,
+        job_id="ingest-job-7",
+        phase="extracting",
+        message="Extracting",
+    ) is None
+    assert make_parse_progress_event(
+        generation=4,
+        job_id="a" * 65,
+        phase="extracting",
+        message="Extracting",
+    ) is None
+
+
 class _FullQueue:
     def put_nowait(self, _event):
         raise queue.Full
