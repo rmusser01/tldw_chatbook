@@ -169,31 +169,6 @@ class SpeechTTSStatusProjection:
         return tuple(rows)
 
 
-def build_speech_runtime_projection(
-    *,
-    provider_id: str,
-    local_dependencies: SpeechLocalDependencyAvailability,
-    runtime_status: SpeechTTSRuntimeStatus,
-) -> SpeechTTSStatusProjection:
-    """Build a runtime-only projection without applying local dependency gates."""
-
-    SpeechTTSNavigationTarget(provider_id)
-    if type(local_dependencies) is not SpeechLocalDependencyAvailability:
-        raise TypeError("Speech local dependency snapshot is invalid")
-    if type(runtime_status) is not SpeechTTSRuntimeStatus:
-        raise TypeError("Speech runtime status is invalid")
-    if runtime_status.provider_id != provider_id or runtime_status.model_scope is not None:
-        raise ValueError("Speech runtime status does not match the selected provider")
-    return SpeechTTSStatusProjection(
-        provider_id=provider_id,
-        configuration_state=SpeechTTSConfigurationState.SAVED,
-        runtime_status=runtime_status,
-        catalog_status=None,
-        catalog_state=SpeechTTSRuntimeState.NOT_CHECKED,
-        local_dependencies=local_dependencies,
-    )
-
-
 def speech_tts_status_is_newer(
     candidate: SpeechTTSRuntimeStatus,
     current: SpeechTTSRuntimeStatus,
@@ -780,7 +755,6 @@ __all__ = [
     "SpeechTTSStatusProjection",
     "SpeechTTSStatusRow",
     "SpeechTTSRuntimeStatusStore",
-    "build_speech_runtime_projection",
     "newest_speech_tts_status",
     "project_speech_tts_status",
     "speech_tts_navigation_context",

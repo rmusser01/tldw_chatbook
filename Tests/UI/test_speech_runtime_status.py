@@ -15,10 +15,10 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.UI.Speech import speech_runtime_status
 from tldw_chatbook.UI.Speech.speech_runtime_status import (
     SpeechLocalDependencyAvailability,
     SpeechTTSRuntimeStatusStore,
-    build_speech_runtime_projection,
     project_speech_tts_status,
     speech_tts_navigation_context,
     speech_tts_navigation_target_from_context,
@@ -201,8 +201,13 @@ def test_external_audio_cpp_readiness_is_independent_of_every_local_dependency()
 
 @pytest.mark.unit
 def test_remote_openai_compatible_remains_available_without_local_packages() -> None:
-    projection = build_speech_runtime_projection(
+    assert not hasattr(speech_runtime_status, "build_speech_runtime_projection")
+    projection = project_speech_tts_status(
         provider_id="openai",
+        configuration_state=SpeechTTSConfigurationState.SAVED,
+        current_configuration_revision=1,
+        model_id=None,
+        observation=None,
         local_dependencies=_all_missing(),
         runtime_status=_ready_openai_status(),
     )

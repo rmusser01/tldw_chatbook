@@ -1,9 +1,9 @@
 """Local speech dependency status, as displayable copy.
 
-Deliberately pure, mirroring :mod:`lab_server_status`: it reads the shared
-``DEPENDENCIES_AVAILABLE`` map and returns strings, so the Speech mode's
-status chip is testable without mounting ``STTSWindow`` -- which is a
-5,900-line widget that builds a TTS playground on compose.
+Deliberately pure, mirroring :mod:`lab_server_status`: it accepts or probes a
+dependency snapshot and returns strings, so the Speech mode's status chip is
+testable without mounting ``STTSWindow`` -- which is a 5,900-line widget that
+builds a TTS playground on compose.
 
 The logic lived as four private methods on ``STTSWindow`` and was rendered
 inside its sidebar. Speech's sidebar moved into the Lab frame's rail, so the
@@ -20,11 +20,7 @@ from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_s
 from tldw_chatbook.UI.Speech.speech_runtime_status import (
     SpeechLocalDependencyAvailability,
 )
-from tldw_chatbook.Utils.optional_deps import (
-    DEPENDENCIES_AVAILABLE,
-    check_stt_deps,
-    check_tts_deps,
-)
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 #: Stable selector the recovery state reports against, unchanged from when
 #: this rendered inside the sidebar.
@@ -38,13 +34,15 @@ _LOCAL_CAPABILITIES = (
 )
 
 
-def speech_dependencies_available() -> bool:
+def speech_dependencies_available(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+) -> bool:
     """Report whether every independently presented local capability is ready.
 
     Returns:
         True only when all four local capabilities are present.
     """
-    dependencies = speech_local_dependency_availability()
+    dependencies = dependencies or speech_local_dependency_availability(refresh=True)
     return all(
         getattr(dependencies, attribute)
         for _label, attribute, _extra in _LOCAL_CAPABILITIES
@@ -97,14 +95,16 @@ def _speech_dependency_installed(module_name: str) -> bool:
         return False
 
 
-def speech_dependency_recovery_state():
+def speech_dependency_recovery_state(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+):
     """Build the recovery state describing what is missing and how to fix it.
 
     Returns:
         The shared optional-dependency recovery state, naming only the
         dependency groups that are actually absent.
     """
-    dependencies = speech_local_dependency_availability()
+    dependencies = dependencies or speech_local_dependency_availability(refresh=True)
     missing_capabilities = [
         (label, extra)
         for label, attribute, extra in _LOCAL_CAPABILITIES
@@ -122,7 +122,9 @@ def speech_dependency_recovery_state():
     )
 
 
-def speech_capability_text() -> str:
+def speech_capability_text(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+) -> str:
     """Return the one-line capability status for the Speech status chip.
 
     Re-checks the dependency probes first, so a user who installs the extras
@@ -131,24 +133,20 @@ def speech_capability_text() -> str:
     Returns:
         ``"Local speech: ready"``, or the recovery state's visible copy.
     """
-    check_tts_deps()
-    check_stt_deps()
-
-    dependencies = speech_local_dependency_availability()
+    dependencies = dependencies or speech_local_dependency_availability(refresh=True)
     ready_count = sum(
         getattr(dependencies, attribute)
         for _label, attribute, _extra in _LOCAL_CAPABILITIES
     )
-    return (
-        "OpenAI-compatible speech: available when configured; "
-        f"local capabilities: {ready_count}/{len(_LOCAL_CAPABILITIES)} ready"
-    )
+    return f"Remote TTS | Local {ready_count}/{len(_LOCAL_CAPABILITIES)}"
 
 
-def _speech_capability_lines() -> tuple[str, ...]:
+def _speech_capability_lines(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+) -> tuple[str, ...]:
     """Return one exact status and recovery extra per local capability."""
 
-    dependencies = speech_local_dependency_availability()
+    dependencies = dependencies or speech_local_dependency_availability(refresh=True)
     lines = ["OpenAI-compatible speech: available when configured"]
     for label, attribute, extra in _LOCAL_CAPABILITIES:
         if getattr(dependencies, attribute):
@@ -160,7 +158,9 @@ def _speech_capability_lines() -> tuple[str, ...]:
     return tuple(lines)
 
 
-def speech_capability_detail() -> str:
+def speech_capability_detail(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+) -> str:
     """Return independent remote and local capability facts for the inspector.
 
     The inspector keeps all exact install commands visible without crowding
@@ -169,13 +169,15 @@ def speech_capability_detail() -> str:
     Returns:
         One remote availability line followed by all four local capabilities.
     """
-    return "\n".join(_speech_capability_lines())
+    return "\n".join(_speech_capability_lines(dependencies))
 
 
-def speech_capability_tooltip() -> str:
+def speech_capability_tooltip(
+    dependencies: SpeechLocalDependencyAvailability | None = None,
+) -> str:
     """Return install guidance for the capability chip's tooltip.
 
     Returns:
         The same capability-specific guidance in a compact single line.
     """
-    return " ".join(_speech_capability_lines())
+    return " ".join(_speech_capability_lines(dependencies))

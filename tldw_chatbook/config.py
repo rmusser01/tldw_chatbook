@@ -435,6 +435,23 @@ _BUILT_IN_OPENAI_TTS_MAPPINGS = {
 }
 
 
+def _validate_openai_tts_mappings(payload: object) -> Dict[str, Dict[str, str]]:
+    """Return the bounded mapping schema or raise without payload details."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("OpenAI TTS mapping schema is invalid")
+    validated: Dict[str, Dict[str, str]] = {}
+    for section_name in ("models", "voices"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict) or any(
+            type(key) is not str or type(value) is not str
+            for key, value in section.items()
+        ):
+            raise ValueError("OpenAI TTS mapping schema is invalid")
+        validated[section_name] = dict(section)
+    return validated
+
+
 def load_openai_mappings() -> Dict:
     """Load OpenAI TTS mappings from packaged resources.
 
@@ -448,7 +465,7 @@ def load_openai_mappings() -> Dict:
     try:
         mapping_path = importlib_resources.files(package).joinpath(resource_name)
         with mapping_path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            return _validate_openai_tts_mappings(json.load(f))
     except Exception:
         logger.info("OpenAI TTS mappings unavailable; using built-in defaults")
         return copy.deepcopy(_BUILT_IN_OPENAI_TTS_MAPPINGS)

@@ -5,6 +5,9 @@ from textual.widgets import Button, Static
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import speech_capability_detail
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from tldw_chatbook.UI.Speech.speech_runtime_status import (
+    SpeechLocalDependencyAvailability,
+)
 from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
@@ -12,8 +15,8 @@ from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 # frame's rail when Speech adopted the frame, so these mount the SCREEN now.
 # Its id and the recovery-taxonomy copy are unchanged -- that is the point of
 # asserting it here rather than deleting the coverage with the sidebar.
-# `check_*_deps` is patched on lab_speech_status, which is where the probes
-# are called from now.
+# Fresh module-presence probes are patched on lab_speech_status, which owns
+# the visible capability snapshot.
 
 
 class _SpeechHarness(App):
@@ -67,10 +70,8 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "chatterbox", False)
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "higgs_tts", False)
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_tts_deps", lambda: False
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_stt_deps", lambda: False
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.find_spec",
+        lambda _module_name: None,
     )
 
     app = _SpeechHarness(_build_test_app())
@@ -98,13 +99,10 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
         assert app.screen.lab_header_state().status == "ready"
 
 
-def test_speech_capability_detail_names_each_ready_local_capability(monkeypatch):
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", True)
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "kokoro_onnx", True)
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "chatterbox", True)
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "higgs_tts", True)
-
-    detail = speech_capability_detail()
+def test_speech_capability_detail_names_each_ready_local_capability():
+    detail = speech_capability_detail(
+        SpeechLocalDependencyAvailability.all_available()
+    )
 
     assert "Local transcription: ready" in detail
     assert "Local Kokoro: ready" in detail
@@ -112,29 +110,38 @@ def test_speech_capability_detail_names_each_ready_local_capability(monkeypatch)
     assert "Local Higgs: ready" in detail
 
 
+def test_visible_capability_refresh_ignores_stale_stt_cache(monkeypatch):
+    for dependency in (
+        "stt_processing",
+        "faster_whisper",
+        "kokoro_onnx",
+        "chatterbox",
+        "higgs_tts",
+    ):
+        monkeypatch.setitem(DEPENDENCIES_AVAILABLE, dependency, False)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.find_spec",
+        lambda module_name: object() if module_name == "faster_whisper" else None,
+    )
+
+    assert "Local transcription: ready" in speech_capability_detail()
+
+
 @pytest.mark.asyncio
 async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "tts_processing", False)
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", False)
 
-    def mark_tts_available() -> bool:
-        DEPENDENCIES_AVAILABLE["tts_processing"] = True
-        DEPENDENCIES_AVAILABLE["kokoro_onnx"] = True
-        DEPENDENCIES_AVAILABLE["chatterbox"] = True
-        DEPENDENCIES_AVAILABLE["higgs_tts"] = True
-        return True
-
-    def mark_stt_available() -> bool:
-        DEPENDENCIES_AVAILABLE["stt_processing"] = True
-        return True
-
+    installed_modules = {
+        "faster_whisper",
+        "kokoro_onnx",
+        "chatterbox",
+        "boson_multimodal",
+    }
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_tts_deps",
-        mark_tts_available,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_stt_deps",
-        mark_stt_available,
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.find_spec",
+        lambda module_name: object() if module_name in installed_modules else None,
     )
 
     app = _SpeechHarness(_build_test_app())
@@ -145,10 +152,7 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         # Two widgets now: the rail's one-line summary, and the inspector's
         # recovery detail carrying the stable selector. Both must flip.
         summary = app.screen.query_one("#speech-capability-summary", Static)
-        assert str(summary.render()) == (
-            "OpenAI-compatible speech: available when configured; "
-            "local capabilities: 4/4 ready"
-        )
+        assert str(summary.render()) == "Remote TTS | Local 4/4"
 
         detail = app.screen.query_one("#speech-capability-status", Static)
         rendered_detail = str(detail.render())
@@ -156,6 +160,27 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         assert "Local Kokoro: ready" in rendered_detail
         assert "Local Chatterbox: ready" in rendered_detail
         assert "Local Higgs: ready" in rendered_detail
+
+
+@pytest.mark.asyncio
+async def test_speech_capability_summary_stays_visible_at_minimum_terminal(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.find_spec",
+        lambda _module_name: None,
+    )
+    app = _SpeechHarness(_build_test_app())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: bool(app.screen.query("#speech-capability-summary")),
+        )
+        await pilot.pause()
+
+        rail = app.screen.query_one("#lab-rail")
+        summary = app.screen.query_one("#speech-capability-summary", Static)
+        assert summary.region.height == 1
+        assert summary.region.bottom <= rail.region.bottom
 
 
 @pytest.mark.asyncio
