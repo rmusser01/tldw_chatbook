@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31'
-updated_date: '2026-08-13 09:45'
+updated_date: '2026-08-13 10:07'
 labels: [library, bug, ux]
 dependencies: []
 ---
@@ -41,6 +41,7 @@ veto is asking for isn't visibly available either).
 - [x] #1 Attempting to navigate away with an unsaved prompt tells the user why the switch was refused and what to do (same shape as the skills dirty veto)
 - [x] #2 The message names the resolution (Save, or discard/leave the editor) and matches whatever affordances actually exist after task-2701
 - [x] #3 A test covers the notify-on-veto path so it cannot regress to silence
+- [x] #4 Prompt editor footer state remains initialized during both ordinary mounts and rapid history-driven recomposition
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,16 +84,21 @@ Detailed execution plan:
   state, and no-op discard; notifier, live-patch, and handler mutations each made
   their exact tests fail before restoration.
 - Focused behavior verification passed 6 tests and the final normal/conflict
-  geometry matrix passed 8 tests. The one full Prompt-canvas run produced 274
-  passes and 5 failures: two stale action-order expectations were corrected and
-  passed exactly; the other three PromptBlockEditor mount-race failures reproduced
-  unchanged at pre-implementation commit `9bc505b72` and were not weakened or
-  worked around.
+  geometry matrix passed 8 tests. The initial full Prompt-canvas run produced 274
+  passes and exposed two stale action-order expectations plus three pre-existing
+  PromptBlockEditor mount-race failures. After the user-directed integration
+  follow-up, `PromptBlockEditor` now synchronizes its footer immediately on an
+  ordinary mount and defers only when Textual has not mounted nested controls yet;
+  detached deferred callbacks are no-ops. Both sides failed under their opposite
+  mutation, the 24 direct widget tests passed, and the final full Prompt-canvas run
+  passed all 279 tests.
 - Ruff lint, changed-range Ruff formatting, production `py_compile`, cumulative
   diff checking, and the final Impeccable detector passed. The detector returned
   no findings. No dependency, CSS, diagnostic, persistence, or service-contract
   changes were introduced.
 - ADR required: no. This is a routine application of the existing Library dirty
-  veto/discard pattern and changes no architectural boundary. No new lesson was
-  added because the implementation surfaced no new generalizable incident.
+  veto/discard pattern and a lifecycle correction inside the existing widget; neither
+  changes an architectural boundary. The nested-mount incident was added to
+  `backlog/docs/lessons-testing-evidence.md` because it generalizes to other Textual
+  parent widgets that query descendants from `on_mount()`.
 <!-- SECTION:NOTES:END -->
