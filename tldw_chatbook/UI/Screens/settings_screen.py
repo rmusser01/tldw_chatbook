@@ -13,8 +13,10 @@ import logging
 import os
 from pathlib import Path
 import re
+import threading
 import tomllib
-from typing import Any
+from typing import Any, cast
+from uuid import uuid4
 
 from rich.cells import cell_len
 from rich.markup import escape as escape_markup
@@ -105,7 +107,6 @@ from ...Workspaces.registry_service import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -158,7 +159,6 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from ...UI.Workbench import WorkbenchHelpPanel, WorkbenchHelpState
 from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
@@ -205,8 +205,20 @@ from ...Widgets.settings_image_gen_panel import (
     _secret_placeholder as _image_gen_secret_placeholder,
 )
 from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSPanelDraftSnapshot,
     SpeechTTSSettingsPanel,
 )
+from ...Model_Artifacts.service import ArtifactRef
+from ...Model_Artifacts.store import managed_service
+from ...TTS.audio_cpp_guided_config import (
+    AudioCppAcceptedPackage,
+    AudioCppManagedArtifactIdentity,
+)
+from ...TTS.audio_cpp_package_scanner import (
+    AudioCppScanOutcome,
+    scan_audio_cpp_package_root,
+)
+from ...TTS.audio_cpp_recipes import AudioCppMatchState
 from ..Speech.speech_runtime_status import (
     speech_tts_navigation_target_from_context,
     speech_tts_runtime_status_store,
@@ -302,6 +314,16 @@ from .settings_speech_tts import (
     process_provider_test_evidence_store,
 )
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.audio_cpp_model_handoff import (
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    HandoffValueError,
+    PendingHandoffStore,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -2287,8 +2309,11 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_navigation_target: SpeechTTSNavigationTarget | None = None
         self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        self._speech_tts_model_library_navigation = False
+        self._audio_cpp_result_cancellation = threading.Event()
         #: (display_name, profile_id) choices for the "Default voice profile"
         #: picker. `None` means the profile store hasn't answered yet (the
         #: default) OR answered with failure -- `_speech_tts_profile_choices_
@@ -2453,6 +2478,22 @@ class SettingsScreen(BaseAppScreen):
             self.category_search_query
         )
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        if self.active_category == SettingsCategoryId.SPEECH_TTS.value:
+            try:
+                panel = self.query_one(SpeechTTSSettingsPanel)
+            except QueryError:
+                pass
+            else:
+                self._speech_tts_draft_snapshot = panel.draft_snapshot()
+        if self._speech_tts_draft_snapshot is not None:
+            state["speech_tts_panel_draft"] = SpeechTTSPanelDraftSnapshot(
+                state=self._speech_tts_draft_snapshot.state,
+                original_state=self._speech_tts_draft_snapshot.original_state,
+                realtime_draft=self._speech_tts_draft_snapshot.realtime_draft,
+                realtime_original=self._speech_tts_draft_snapshot.realtime_original,
+                configure_provider=(self._speech_tts_draft_snapshot.configure_provider),
+                draft_revision=self._speech_tts_draft_snapshot.draft_revision,
+            )
         return state
 
     def restore_state(self, state: dict[str, object]) -> None:
@@ -2493,6 +2534,20 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
+        snapshot = state.get("speech_tts_panel_draft")
+        if type(snapshot) is SpeechTTSPanelDraftSnapshot:
+            try:
+                self._speech_tts_draft_snapshot = SpeechTTSPanelDraftSnapshot(
+                    state=snapshot.state,
+                    original_state=snapshot.original_state,
+                    realtime_draft=snapshot.realtime_draft,
+                    realtime_original=snapshot.realtime_original,
+                    configure_provider=snapshot.configure_provider,
+                    draft_revision=snapshot.draft_revision,
+                )
+            except (TypeError, ValueError):
+                self._speech_tts_draft_snapshot = None
 
     def _register_footer_shortcuts(self) -> None:
         """Register Settings shortcuts via BaseAppScreen's persisting API.
@@ -2825,6 +2880,12 @@ class SettingsScreen(BaseAppScreen):
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
+        self.call_after_refresh(self._consume_audio_cpp_model_library_result)
+
+    def on_unmount(self) -> None:
+        """Fence any late Model Library review before this screen is replaced."""
+
+        self._audio_cpp_result_cancellation.set()
 
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -8028,9 +8089,7 @@ class SettingsScreen(BaseAppScreen):
             if key.startswith("provider_api_mode:") and key != excluded_key
         }
         originals = {
-            key: value
-            for key, value in draft.originals.items()
-            if key in values
+            key: value for key, value in draft.originals.items() if key in values
         }
         return originals, values
 
@@ -9473,9 +9532,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_context_window = True
         try:
             try:
-                context_input = self.query_one(
-                    "#settings-model-context-window", Input
-                )
+                context_input = self.query_one("#settings-model-context-window", Input)
             except QueryError:
                 pass
             else:
@@ -9715,8 +9772,7 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         api_mode_draft_key = self._provider_api_mode_draft_key(provider)
         if not (
-            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key}
-            & dirty
+            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key} & dirty
         ):
             return app_config
         provider_save_key, _config = self._provider_config_entry(provider)
@@ -12335,7 +12391,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="80",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Reduce conversation to (%)", classes="settings-input-label")
+                yield Static(
+                    "Reduce conversation to (%)", classes="settings-input-label"
+                )
                 yield Input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_target_ratio")
@@ -14347,6 +14405,7 @@ class SettingsScreen(BaseAppScreen):
                 state=self._speech_tts_draft_state or speech_tts_state,
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
+                draft_snapshot=self._speech_tts_draft_snapshot,
                 profiles=self._speech_tts_profile_choices,
                 profiles_unavailable=self._speech_tts_profile_choices_unavailable,
                 audio_cpp_observation=audio_cpp_observation,
@@ -15640,6 +15699,9 @@ class SettingsScreen(BaseAppScreen):
     async def flush_pending_work(self) -> bool:
         """Protect a mounted global Speech/TTS draft before dismissal."""
 
+        if self._speech_tts_model_library_navigation:
+            self._speech_tts_model_library_navigation = False
+            return True
         if self.active_category != SettingsCategoryId.SPEECH_TTS.value:
             return True
         try:
@@ -15654,12 +15716,279 @@ class SettingsScreen(BaseAppScreen):
             self._clear_speech_tts_draft_cache()
         return allowed
 
+    def _consume_audio_cpp_model_library_result(self) -> None:
+        """Claim one exact return only after the restored draft is mounted."""
+
+        if (
+            not self.is_mounted
+            or self.active_category != SettingsCategoryId.SPEECH_TTS.value
+            or self._speech_tts_draft_snapshot is None
+        ):
+            return
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+        ):
+            return
+        store = cast(PendingHandoffStore, store)
+        expected = cast(AudioCppModelLibraryRequest, expected)
+        try:
+            claim = store.claim(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT)
+        except (HandoffValueError, RuntimeError, TypeError, ValueError):
+            return
+        if claim is None:
+            return
+        result = claim.value
+        if type(result) is not AudioCppModelLibraryResult:
+            store.release(claim)
+            return
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+            current = panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            store.release(claim)
+            return
+        if (
+            result.token != expected.token
+            or result.draft_revision != expected.draft_revision
+            or current.draft_revision != expected.draft_revision
+        ):
+            if store.acknowledge(claim):
+                delattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                )
+                panel._set_result(  # noqa: SLF001 - same owned Settings boundary
+                    "Installed, not added to this changed draft",
+                    severity="warning",
+                )
+            return
+        self._review_audio_cpp_model_library_result(claim, result)
+
+    @work(
+        exclusive=True,
+        thread=True,
+        group="settings-audio-cpp-model-library-result",
+        exit_on_error=False,
+    )
+    def _review_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        result: AudioCppModelLibraryResult,
+    ) -> None:
+        """Lease, rescan, and merge one exact managed return off the UI loop."""
+
+        try:
+            reference = ArtifactRef(
+                result.artifact_id,
+                result.revision,
+                result.variant,
+            )
+            identity = AudioCppManagedArtifactIdentity(
+                artifact_id=result.artifact_id,
+                revision=result.revision,
+                variant=result.variant,
+            )
+            service = managed_service()
+            with service.acquire_installed_root(reference) as leased:
+                if (
+                    leased.handle.root != reference
+                    or leased.handle.closure != (reference,)
+                    or leased.handle.paths
+                    != ((reference, Path(result.canonical_root)),)
+                ):
+                    raise ValueError("managed root mismatch")
+                scan = scan_audio_cpp_package_root(
+                    result.canonical_root,
+                    cancellation_event=self._audio_cpp_result_cancellation,
+                    request_revision=result.draft_revision,
+                    expected_managed_artifact=identity,
+                    expected_canonical_root=result.canonical_root,
+                )
+                candidates = tuple(
+                    candidate
+                    for discovery in scan.discoveries
+                    if discovery.match.state is AudioCppMatchState.EXACT
+                    for candidate in discovery.match.candidates
+                )
+                if (
+                    self._audio_cpp_result_cancellation.is_set()
+                    or scan.outcome is not AudioCppScanOutcome.COMPLETE
+                    or scan.request_revision != result.draft_revision
+                    or len(scan.discoveries) != 1
+                    or len(candidates) != 1
+                ):
+                    raise ValueError("managed package review mismatch")
+                package = candidates[0].accept(managed_artifact=identity)
+                settled = self.app.call_from_thread(
+                    self._merge_and_ack_audio_cpp_model_library_result,
+                    claim,
+                    result,
+                    package,
+                )
+                if not settled:
+                    return
+        except Exception as error:
+            logger.warning(
+                "Model Library return review failed; error_type=%s",
+                type(error).__name__,
+            )
+            self.app.call_from_thread(
+                self._release_audio_cpp_model_library_result,
+                claim,
+            )
+
+    def _merge_and_ack_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+        result: AudioCppModelLibraryResult,
+        package: object,
+    ) -> bool:
+        """Merge on the owner thread while the worker still holds its lease."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        expected = getattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            None,
+        )
+        if (
+            type(store) is not PendingHandoffStore
+            or type(expected) is not AudioCppModelLibraryRequest
+            or type(package) is not AudioCppAcceptedPackage
+        ):
+            return False
+        store = cast(PendingHandoffStore, store)
+        expected = cast(AudioCppModelLibraryRequest, expected)
+        package = cast(AudioCppAcceptedPackage, package)
+        if not self.is_mounted:
+            store.release(claim)
+            return False
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+            current = panel.draft_snapshot()
+        except (QueryError, TypeError, ValueError):
+            store.release(claim)
+            return False
+        if (
+            result.token != expected.token
+            or result.draft_revision != expected.draft_revision
+            or current.draft_revision != result.draft_revision
+        ):
+            if store.acknowledge(claim):
+                if hasattr(
+                    self.app_instance,
+                    "_audio_cpp_settings_model_library_request",
+                ):
+                    delattr(
+                        self.app_instance,
+                        "_audio_cpp_settings_model_library_request",
+                    )
+                panel._set_result(  # noqa: SLF001 - same owned Settings boundary
+                    "Installed, not added to this changed draft",
+                    severity="warning",
+                )
+            return False
+        before = panel.merge_managed_audio_cpp_package(
+            package,
+            expected_revision=result.draft_revision,
+        )
+        if before is None:
+            store.release(claim)
+            panel._set_result(  # noqa: SLF001 - same owned Settings boundary
+                "The installed package conflicts with this draft and was not added.",
+                severity="warning",
+            )
+            return False
+        if not store.acknowledge(claim):
+            panel.restore_draft_snapshot(before)
+            return False
+        delattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+        )
+        self._speech_tts_draft_snapshot = panel.draft_snapshot()
+        self._speech_tts_draft_state = copy.deepcopy(
+            self._speech_tts_draft_snapshot.state
+        )
+        self._speech_tts_original_state = copy.deepcopy(
+            self._speech_tts_draft_snapshot.original_state
+        )
+        panel._announce_draft_state()  # noqa: SLF001 - same owned Settings boundary
+        return True
+
+    def _release_audio_cpp_model_library_result(
+        self,
+        claim: HandoffClaim[AudioCppModelLibraryResult],
+    ) -> None:
+        """Release one failed exact claim without exposing failure details."""
+
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is PendingHandoffStore:
+            store = cast(PendingHandoffStore, store)
+            try:
+                store.release(claim)
+            except (RuntimeError, TypeError, ValueError):
+                return
+        if not self.is_mounted:
+            return
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+        except QueryError:
+            return
+        panel._set_result(  # noqa: SLF001 - same owned Settings boundary
+            "The installed package could not be reviewed and was not added.",
+            severity="error",
+        )
+
+    def stage_audio_cpp_model_library_request(
+        self,
+        snapshot: SpeechTTSPanelDraftSnapshot,
+    ) -> bool:
+        """Stage one exact request and navigate without resolving the draft."""
+
+        if type(snapshot) is not SpeechTTSPanelDraftSnapshot:
+            return False
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        store = cast(PendingHandoffStore, store)
+        try:
+            request = AudioCppModelLibraryRequest(
+                token=uuid4().hex,
+                draft_revision=snapshot.draft_revision,
+            )
+            store.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
+        except (HandoffValueError, RuntimeError, TypeError, ValueError):
+            return False
+        setattr(
+            self.app_instance,
+            "_audio_cpp_settings_model_library_request",
+            request,
+        )
+        self._speech_tts_draft_snapshot = snapshot
+        self._speech_tts_draft_state = copy.deepcopy(snapshot.state)
+        self._speech_tts_original_state = copy.deepcopy(snapshot.original_state)
+        self._speech_tts_configure_provider = snapshot.configure_provider
+        self._speech_tts_model_library_navigation = True
+        self.post_message(
+            NavigateToScreen("llm", {"view": "curated", "consumer": "audio_cpp"})
+        )
+        return True
+
     def _clear_speech_tts_draft_cache(self) -> None:
         """Forget a logically resolved Speech draft before its pane is removed."""
 
         category = SettingsCategoryId.SPEECH_TTS
         self._speech_tts_draft_state = None
         self._speech_tts_original_state = None
+        self._speech_tts_draft_snapshot = None
         self._settings_drafts.pop(category, None)
         self._update_draft_status_widgets(category)
 
@@ -16094,6 +16423,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         category = SettingsCategoryId.SPEECH_TTS
         self._speech_tts_configure_provider = event.configure_provider
+        self._speech_tts_draft_snapshot = event.snapshot
         if event.is_modified:
             self._speech_tts_draft_state = event.state
             self._speech_tts_original_state = event.original_state
@@ -16217,9 +16547,7 @@ class SettingsScreen(BaseAppScreen):
         self._mark_appearance_settings_staged()
 
     @on(Select.Changed, "#settings-appearance-transcript-style")
-    def handle_appearance_transcript_style_changed(
-        self, event: Select.Changed
-    ) -> None:
+    def handle_appearance_transcript_style_changed(self, event: Select.Changed) -> None:
         event.stop()
         if self._syncing_appearance_defaults:
             return
@@ -18043,7 +18371,9 @@ class SettingsScreen(BaseAppScreen):
                 # test_settings_provider_switch_does_not_save_stale_endpoint
                 # pins against.
                 with endpoint_input.prevent(Input.Changed):
-                    endpoint_input.value = self._provider_endpoint_value(staged_provider)
+                    endpoint_input.value = self._provider_endpoint_value(
+                        staged_provider
+                    )
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(
                     staged_provider
                 )
@@ -18298,9 +18628,7 @@ class SettingsScreen(BaseAppScreen):
                     else QWENCLOUD_API_MODE_INVALID_COPY,
                 )
                 self._update_provider_dynamic_widgets()
-                self._update_draft_status_widgets(
-                    SettingsCategoryId.PROVIDERS_MODELS
-                )
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
             return
         display_value, current_value_is_valid = self._provider_api_mode_display_value(
             provider
@@ -18774,9 +19102,9 @@ class SettingsScreen(BaseAppScreen):
                         "#settings-provider-save-result", self._provider_save_result
                     )
                     try:
-                        self.query_one(
-                            "#settings-provider-api-mode", Select
-                        ).add_class("settings-invalid-input")
+                        self.query_one("#settings-provider-api-mode", Select).add_class(
+                            "settings-invalid-input"
+                        )
                     except QueryError:
                         pass
                     self.app.notify(self._provider_save_result, severity="error")
@@ -18837,8 +19165,7 @@ class SettingsScreen(BaseAppScreen):
                 provider_key == "qwencloud"
                 and draft is not None
                 and api_mode_draft_key in dirty_keys
-                and normalized_api_mode
-                != self._provider_saved_api_mode_value(provider)
+                and normalized_api_mode != self._provider_saved_api_mode_value(provider)
             )
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
@@ -18956,9 +19283,7 @@ class SettingsScreen(BaseAppScreen):
                 and not context_window_dirty
             ):
                 self._settings_drafts.pop(category, None)
-                self._restore_provider_api_mode_draft_snapshot(
-                    retained_api_mode_draft
-                )
+                self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
                 self._provider_save_result = "Provider settings: no changes to save."
@@ -19141,9 +19466,7 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
-                self._restore_provider_api_mode_draft_snapshot(
-                    retained_api_mode_draft
-                )
+                self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
@@ -19588,8 +19911,8 @@ class SettingsScreen(BaseAppScreen):
                     revert_select = self.query_one("#settings-provider-value", Select)
                     # task-15740: prevent the posted echo the flag misses.
                     with revert_select.prevent(Select.Changed):
-                        revert_select.value = (
-                            self._provider_select_value_for_provider(provider)
+                        revert_select.value = self._provider_select_value_for_provider(
+                            provider
                         )
                 finally:
                     self._syncing_provider_selection = False

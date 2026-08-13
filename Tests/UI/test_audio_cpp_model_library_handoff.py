@@ -1089,3 +1089,423 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
         assert view.query_one("#curated-models-refresh", Button)
         assert screen._audio_cpp_model_request_claim is not None
         assert screen._audio_cpp_model_request_claim.value == request
+
+
+@pytest.mark.asyncio
+async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real Settings save/restore retains global, provider, and Realtime drafts."""
+
+    from textual.widgets import Button, Input, Select, Switch
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    async def open_panel(host, pilot) -> tuple[object, SpeechTTSSettingsPanel]:
+        screen = _active_destination_screen(host)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-tts-panel",
+            timeout=8.0,
+        )
+        return screen, screen.query_one(
+            "#settings-speech-tts-panel", SpeechTTSSettingsPanel
+        )
+
+    app_instance = _build_test_app()
+    original_host = DestinationHarness(app_instance, "settings")
+    async with original_host.run_test(size=(190, 55)) as pilot:
+        screen, panel = await open_panel(original_host, pilot)
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-base-url", Input
+        ).value = "http://127.0.0.1:18081"
+        screen.query_one("#settings-speech-speed", Input).value = "1.25"
+        screen.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        screen.query_one(
+            "#settings-speech-realtime-model", Input
+        ).value = "gpt-realtime-draft"
+        screen.query_one("#settings-speech-realtime-voice", Input).value = "cedar"
+        await pilot.pause()
+
+        before = panel.draft_snapshot()
+        saved = screen.save_state()
+
+    assert saved["speech_tts_panel_draft"] == before
+    assert "18081" not in repr(saved["speech_tts_panel_draft"])
+
+    restored_host = DestinationHarness(
+        _build_test_app(),
+        "settings",
+        restored_state=saved,
+    )
+    async with restored_host.run_test(size=(190, 55)) as pilot:
+        restored_screen, restored_panel = await open_panel(restored_host, pilot)
+        assert restored_screen.active_category == SettingsCategoryId.SPEECH_TTS.value
+        assert restored_panel.draft_snapshot() == before
+        assert (
+            restored_screen.query_one(
+                "#settings-speech-audio_cpp-base-url", Input
+            ).value
+            == "http://127.0.0.1:18081"
+        )
+        assert restored_screen.query_one("#settings-speech-speed", Input).value == (
+            "1.25"
+        )
+        assert (
+            restored_screen.query_one("#settings-speech-realtime-enabled", Switch).value
+            is True
+        )
+        assert (
+            restored_screen.query_one("#settings-speech-realtime-model", Input).value
+            == "gpt-realtime-draft"
+        )
+        assert (
+            restored_screen.query_one("#settings-speech-realtime-voice", Input).value
+            == "cedar"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_settings_stages_exact_request_after_collecting_widgets() -> None:
+    """The explicit Library action captures the post-collection draft revision."""
+
+    from textual.widgets import Button, Input, Select
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    app_instance = _build_test_app()
+    seen_routes: list[str] = []
+    host = DestinationHarness(app_instance, "settings", seen_routes=seen_routes)
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        panel = screen.query_one(SpeechTTSSettingsPanel)
+        screen.query_one(
+            "#settings-speech-audio_cpp-base-url", Input
+        ).value = "http://127.0.0.1:18082"
+        screen.query_one(
+            "#settings-speech-audio-cpp-open-model-library", Button
+        ).press()
+        assert await _wait_for(lambda: seen_routes == ["llm"], pilot)
+
+        request_claim = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        assert request_claim is not None
+        assert (
+            request_claim.value.draft_revision == panel.draft_snapshot().draft_revision
+        )
+        assert request_claim.value.draft_revision > 0
+        assert await screen.flush_pending_work() is True
+
+
+@pytest.mark.asyncio
+async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A restored real Settings draft changes only by one reviewed package."""
+
+    import copy
+    import struct
+    from types import SimpleNamespace
+
+    from textual.screen import Screen
+    from textual.widgets import Button, Input, Select, Switch
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.Widgets.Settings_Widgets import (
+        speech_tts_settings_panel as panel_module,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    root = (tmp_path / "managed-supertonic").resolve()
+    root.mkdir()
+    (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    reference = ArtifactRef(
+        "audio-cpp-supertonic-3-orig",
+        AUDIO_CPP_ARTIFACT_COMMIT,
+        "orig",
+    )
+    lease_active = False
+    lease_released = False
+
+    class Lease:
+        handle = SimpleNamespace(
+            root=reference,
+            closure=(reference,),
+            paths=((reference, root),),
+        )
+
+        def __enter__(self):
+            nonlocal lease_active
+            lease_active = True
+            return self
+
+        def __exit__(self, *_args):
+            nonlocal lease_active, lease_released
+            lease_active = False
+            lease_released = True
+
+    service = SimpleNamespace(acquire_installed_root=lambda value: Lease())
+    monkeypatch.setattr(settings_module, "managed_service", lambda: service)
+    real_scan = settings_module.scan_audio_cpp_package_root
+    scan_calls: list[dict[str, object]] = []
+
+    def counted_scan(path, **kwargs):
+        assert lease_active
+        scan_calls.append({"path": path, **kwargs})
+        return real_scan(path, **kwargs)
+
+    monkeypatch.setattr(settings_module, "scan_audio_cpp_package_root", counted_scan)
+    real_merge = SpeechTTSSettingsPanel.merge_managed_audio_cpp_package
+
+    def leased_merge(self, package, *, expected_revision):
+        assert lease_active
+        return real_merge(self, package, expected_revision=expected_revision)
+
+    monkeypatch.setattr(
+        SpeechTTSSettingsPanel,
+        "merge_managed_audio_cpp_package",
+        leased_merge,
+    )
+    save_config = MagicMock()
+    monkeypatch.setattr(panel_module, "save_settings_to_cli_config", save_config)
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        screen.query_one(
+            "#settings-speech-audio_cpp-base-url", Input
+        ).value = "http://127.0.0.1:18083"
+        screen.query_one("#settings-speech-speed", Input).value = "1.33"
+        screen.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        screen.query_one("#settings-speech-realtime-model", Input).value = "draft-model"
+        screen.query_one("#settings-speech-realtime-voice", Input).value = "cedar"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio-cpp-open-model-library", Button
+        ).press()
+        await pilot.pause()
+        request_claim = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        assert request_claim is not None
+        request = request_claim.value
+        assert app_instance.pending_handoffs.acknowledge(request_claim)
+        before = screen.query_one(SpeechTTSSettingsPanel).draft_snapshot()
+        saved = screen.save_state()
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            AudioCppModelLibraryResult(
+                token=request.token,
+                draft_revision=request.draft_revision,
+                artifact_id=reference.artifact_id,
+                revision=reference.revision,
+                variant=reference.variant,
+                canonical_root=str(root),
+            ),
+        )
+
+        await host.switch_screen(Screen())
+        replacement = SettingsScreen(app_instance)
+        replacement.restore_state(saved)
+        await host.switch_screen(replacement)
+        await _wait_for_selector(
+            replacement, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+
+        def merged() -> bool:
+            panel = replacement.query_one(SpeechTTSSettingsPanel)
+            packages = panel._audio_cpp_guided_packages()
+            return len(packages) == 1
+
+        assert await _wait_for(merged, pilot)
+        after = replacement.query_one(SpeechTTSSettingsPanel).draft_snapshot()
+
+    expected_state = copy.deepcopy(before.state)
+    expected_state.providers["audio_cpp"]["guided_packages"] = after.state.providers[
+        "audio_cpp"
+    ]["guided_packages"]
+    expected_state.providers["audio_cpp"]["guided_default_model_id"] = (
+        after.state.providers["audio_cpp"]["guided_default_model_id"]
+    )
+    assert after.state == expected_state
+    assert after.original_state == before.original_state
+    assert after.realtime_draft == before.realtime_draft
+    assert after.realtime_original == before.realtime_original
+    assert after.configure_provider == before.configure_provider
+    assert after.draft_revision == before.draft_revision + 1
+    assert len(scan_calls) == 1
+    assert scan_calls[0]["expected_canonical_root"] == str(root)
+    assert lease_released and not lease_active
+    assert save_config.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-Library edits make the exact result terminal without scanning."""
+
+    from textual.screen import Screen
+    from textual.widgets import Button, Input, Select, Switch
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    scanner = MagicMock(side_effect=AssertionError("stale return must not scan"))
+    monkeypatch.setattr(settings_module, "scan_audio_cpp_package_root", scanner)
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-speech-tts", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio-cpp-open-model-library", Button
+        ).press()
+        await pilot.pause()
+        request_claim = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
+        )
+        assert request_claim is not None
+        request = request_claim.value
+        assert app_instance.pending_handoffs.acknowledge(request_claim)
+        saved = screen.save_state()
+
+        await host.switch_screen(Screen())
+        replacement = SettingsScreen(app_instance)
+        replacement.restore_state(saved)
+        await host.switch_screen(replacement)
+        await _wait_for_selector(
+            replacement, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        panel = replacement.query_one(SpeechTTSSettingsPanel)
+        replacement.query_one(
+            "#settings-speech-audio_cpp-base-url", Input
+        ).value = "http://127.0.0.1:18084"
+        replacement.query_one("#settings-speech-speed", Input).value = "1.41"
+        replacement.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        replacement.query_one(
+            "#settings-speech-realtime-model", Input
+        ).value = "edited-after-library"
+        await pilot.pause()
+        changed = panel.draft_snapshot()
+        assert changed.draft_revision > request.draft_revision
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT,
+            AudioCppModelLibraryResult(
+                token=request.token,
+                draft_revision=request.draft_revision,
+                artifact_id="audio-cpp-supertonic-3-orig",
+                revision="a" * 40,
+                variant="orig",
+                canonical_root=str(tmp_path.resolve()),
+            ),
+        )
+        replacement._consume_audio_cpp_model_library_result()
+        await pilot.pause()
+
+        assert panel.draft_snapshot() == changed
+        assert panel.result_text == "Installed, not added to this changed draft"
+        assert (
+            app_instance.pending_handoffs.claim(
+                HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+            )
+            is None
+        )
+        assert scanner.call_count == 0

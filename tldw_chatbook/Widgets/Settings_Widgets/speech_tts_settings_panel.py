@@ -122,6 +122,10 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     validate_audio_cpp_managed_settings,
 )
 
+
+_MAX_DRAFT_REVISION = 2**63 - 1
+_MAX_DRAFT_TEXT_CHARACTERS = 4096
+
 _PROVIDER_OPTIONS = [
     (TTS_PROVIDER_LABELS[provider_id], provider_id)
     for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
@@ -254,6 +258,114 @@ class _RealtimeSettingsDraft:
             self.turn_detection,
             self.vad_threshold,
             self.vad_silence_ms,
+        )
+
+
+def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
+    """Return one detached, structurally bounded Realtime draft."""
+
+    if type(value) is not _RealtimeSettingsDraft:
+        raise TypeError("Realtime Settings draft is invalid")
+    if type(value.enabled) is not bool:
+        raise TypeError("Realtime Settings draft is invalid")
+    for field_name in (
+        "provider",
+        "model",
+        "voice",
+        "idle_timeout_minutes",
+        "handsfree_engine",
+        "turn_detection",
+        "vad_threshold",
+        "vad_silence_ms",
+    ):
+        text = getattr(value, field_name)
+        if type(text) is not str or len(text) > _MAX_DRAFT_TEXT_CHARACTERS:
+            raise ValueError("Realtime Settings draft is invalid")
+    return replace(value)
+
+
+def _validated_global_speech_tts_state_copy(value: object) -> GlobalSpeechTTSState:
+    """Return one detached complete state after existing pure field validation."""
+
+    if type(value) is not GlobalSpeechTTSState:
+        raise TypeError("Global Speech & TTS draft is invalid")
+    copied: GlobalSpeechTTSState = deepcopy(value)
+    if type(copied.providers) is not dict or set(copied.providers) != set(
+        BUILT_IN_TTS_PROVIDER_ORDER
+    ):
+        raise ValueError("Global Speech & TTS draft is invalid")
+    if any(type(values) is not dict for values in copied.providers.values()):
+        raise ValueError("Global Speech & TTS draft is invalid")
+    if type(copied.credentials) is not dict:
+        raise ValueError("Global Speech & TTS draft is invalid")
+    if type(copied.provider_sources) is not dict:
+        raise ValueError("Global Speech & TTS draft is invalid")
+    if type(copied.provider_field_sources) is not dict:
+        raise ValueError("Global Speech & TTS draft is invalid")
+    # These existing pure validators cover every provider field plus the
+    # defaults axes without performing provider, filesystem, or config I/O.
+    # A draft snapshot must also preserve an intentionally invalid field so
+    # the mounted Save action can focus it and explain the validation error.
+    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+        try:
+            build_global_speech_tts_save_proposal(
+                copied,
+                copied,
+                configure_provider=provider_id,
+            )
+        except GlobalSpeechTTSValidationError:
+            pass
+    return copied
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class SpeechTTSPanelDraftSnapshot:
+    """Complete process-local non-secret Speech/TTS panel draft."""
+
+    state: GlobalSpeechTTSState
+    original_state: GlobalSpeechTTSState
+    realtime_draft: _RealtimeSettingsDraft
+    realtime_original: _RealtimeSettingsDraft
+    configure_provider: str
+    draft_revision: int
+
+    def __post_init__(self) -> None:
+        if self.configure_provider not in BUILT_IN_TTS_PROVIDER_ORDER:
+            raise ValueError("Speech/TTS draft provider is invalid")
+        if (
+            type(self.draft_revision) is not int
+            or self.draft_revision < 0
+            or self.draft_revision > _MAX_DRAFT_REVISION
+        ):
+            raise ValueError("Speech/TTS draft revision is invalid")
+        object.__setattr__(
+            self,
+            "state",
+            _validated_global_speech_tts_state_copy(self.state),
+        )
+        object.__setattr__(
+            self,
+            "original_state",
+            _validated_global_speech_tts_state_copy(self.original_state),
+        )
+        object.__setattr__(
+            self,
+            "realtime_draft",
+            _validated_realtime_draft_copy(self.realtime_draft),
+        )
+        object.__setattr__(
+            self,
+            "realtime_original",
+            _validated_realtime_draft_copy(self.realtime_original),
+        )
+
+    def __repr__(self) -> str:
+        """Expose only bounded navigation metadata, never draft values."""
+
+        return (
+            "SpeechTTSPanelDraftSnapshot("
+            f"configure_provider={self.configure_provider!r}, "
+            f"draft_revision={self.draft_revision})"
         )
 
 
@@ -541,11 +653,13 @@ class SpeechTTSSettingsPanel(Vertical):
             state: GlobalSpeechTTSState,
             original_state: GlobalSpeechTTSState,
             configure_provider: str,
+            snapshot: SpeechTTSPanelDraftSnapshot,
         ) -> None:
             self.is_modified = is_modified
             self.state = deepcopy(state)
             self.original_state = deepcopy(original_state)
             self.configure_provider = configure_provider
+            self.snapshot = snapshot
             super().__init__()
 
     def __init__(
@@ -565,11 +679,27 @@ class SpeechTTSSettingsPanel(Vertical):
         provider_applied_configuration_revisions: dict[str, int] | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
         provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
+        draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.original_state = deepcopy(original_state or state)
-        self.state = deepcopy(state)
+        if draft_snapshot is not None:
+            if type(draft_snapshot) is not SpeechTTSPanelDraftSnapshot:
+                raise TypeError("Speech/TTS panel draft snapshot is invalid")
+            restored = SpeechTTSPanelDraftSnapshot(
+                state=draft_snapshot.state,
+                original_state=draft_snapshot.original_state,
+                realtime_draft=draft_snapshot.realtime_draft,
+                realtime_original=draft_snapshot.realtime_original,
+                configure_provider=draft_snapshot.configure_provider,
+                draft_revision=draft_snapshot.draft_revision,
+            )
+            self.original_state = deepcopy(restored.original_state)
+            self.state = deepcopy(restored.state)
+        else:
+            restored = None
+            self.original_state = deepcopy(original_state or state)
+            self.state = deepcopy(state)
         self._local_dependencies = speech_local_dependency_availability(refresh=True)
         self._audio_cpp_observation = audio_cpp_observation
         self._runtime_status_store = (
@@ -609,9 +739,13 @@ class SpeechTTSSettingsPanel(Vertical):
         self._runtime_statuses: dict[str, SpeechTTSRuntimeStatus] = {}
         self._provider_runtime_request_ids: dict[str, int] = {}
         self._provider_runtime_request_observed_at: dict[tuple[str, int], datetime] = {}
-        self.configure_provider = (
-            configure_provider
-            if configure_provider in BUILT_IN_TTS_PROVIDER_ORDER
+        restored_provider = (
+            restored.configure_provider if restored is not None else configure_provider
+        )
+        self.configure_provider: str = (
+            restored_provider
+            if isinstance(restored_provider, str)
+            and restored_provider in BUILT_IN_TTS_PROVIDER_ORDER
             else state.defaults.provider_id
             if state.defaults.provider_id in BUILT_IN_TTS_PROVIDER_ORDER
             else "audio_cpp"
@@ -659,8 +793,122 @@ class SpeechTTSSettingsPanel(Vertical):
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._last_focused_control_id: str | None = None
         self._audio_cpp_scan_revision = 0
-        self._realtime_original = _read_realtime_settings_draft()
-        self._realtime_draft = replace(self._realtime_original)
+        if restored is None:
+            self._realtime_original = _read_realtime_settings_draft()
+            self._realtime_draft = replace(self._realtime_original)
+            self._draft_revision = 0
+        else:
+            self._realtime_original = replace(restored.realtime_original)
+            self._realtime_draft = replace(restored.realtime_draft)
+            self._draft_revision = restored.draft_revision
+        self._draft_revision_basis = self._draft_revision_values()
+
+    def _draft_revision_values(self) -> tuple[object, ...]:
+        """Return detached values whose actual changes advance the revision."""
+
+        return (
+            deepcopy(self.state),
+            deepcopy(self.original_state),
+            replace(self._realtime_draft),
+            replace(self._realtime_original),
+            self.configure_provider,
+        )
+
+    def _synchronize_draft_revision(self) -> None:
+        """Advance once when any complete panel draft value actually changed."""
+
+        current = self._draft_revision_values()
+        if current == self._draft_revision_basis:
+            return
+        if self._draft_revision >= _MAX_DRAFT_REVISION:
+            raise ValueError("Speech/TTS draft revision is exhausted")
+        self._draft_revision += 1
+        self._draft_revision_basis = current
+
+    def draft_snapshot(self) -> SpeechTTSPanelDraftSnapshot:
+        """Collect mounted values and return one detached complete snapshot."""
+
+        self._collect_visible_state()
+        return SpeechTTSPanelDraftSnapshot(
+            state=self.state,
+            original_state=self.original_state,
+            realtime_draft=self._realtime_draft,
+            realtime_original=self._realtime_original,
+            configure_provider=self.configure_provider,
+            draft_revision=self._draft_revision,
+        )
+
+    def restore_draft_snapshot(
+        self,
+        snapshot: SpeechTTSPanelDraftSnapshot,
+        *,
+        result_text: str | None = None,
+    ) -> None:
+        """Restore one validated process-local snapshot without advancing it."""
+
+        if type(snapshot) is not SpeechTTSPanelDraftSnapshot:
+            raise TypeError("Speech/TTS panel draft snapshot is invalid")
+        restored = SpeechTTSPanelDraftSnapshot(
+            state=snapshot.state,
+            original_state=snapshot.original_state,
+            realtime_draft=snapshot.realtime_draft,
+            realtime_original=snapshot.realtime_original,
+            configure_provider=snapshot.configure_provider,
+            draft_revision=snapshot.draft_revision,
+        )
+        focus_id = self._focused_id() if self.is_mounted else None
+        self.state = deepcopy(restored.state)
+        self.original_state = deepcopy(restored.original_state)
+        self._realtime_draft = replace(restored.realtime_draft)
+        self._realtime_original = replace(restored.realtime_original)
+        self.configure_provider = restored.configure_provider
+        self._draft_revision = restored.draft_revision
+        self._draft_revision_basis = self._draft_revision_values()
+        if result_text is not None:
+            self.result_text = result_text
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._restore_focus, focus_id)
+
+    def merge_managed_audio_cpp_package(
+        self,
+        package: AudioCppAcceptedPackage,
+        *,
+        expected_revision: int,
+    ) -> SpeechTTSPanelDraftSnapshot | None:
+        """Merge exactly one reviewed managed package into the current draft."""
+
+        if type(package) is not AudioCppAcceptedPackage:
+            return None
+        current = self.draft_snapshot()
+        if (
+            type(expected_revision) is not int
+            or current.draft_revision != expected_revision
+        ):
+            return None
+        values = self.state.providers["audio_cpp"]
+        if (
+            values.get("mode") != "managed"
+            or values.get("managed_setup_source") != "guided"
+        ):
+            return None
+        existing = list(self._audio_cpp_guided_packages())
+        if any(item.public_model_id == package.public_model_id for item in existing):
+            return None
+
+        focus_id = self._focused_id() if self.is_mounted else None
+        values["guided_packages"] = [
+            item.model_dump(mode="json") for item in (*existing, package)
+        ]
+        if not values.get("guided_default_model_id"):
+            values["guided_default_model_id"] = package.public_model_id
+        self._synchronize_draft_revision()
+        self.result_text = (
+            "Added one installed Model Library package to the unsaved draft. "
+            "Review it and choose Save when ready."
+        )
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._restore_focus, focus_id)
+        return current
 
     def on_mount(self) -> None:
         """Apply responsive layout without performing provider work."""
@@ -2434,6 +2682,15 @@ class SpeechTTSSettingsPanel(Vertical):
                                 "reviewed audio.cpp recipes."
                             ),
                         )
+                        yield Button(
+                            "Open Model Library…",
+                            id="settings-speech-audio-cpp-open-model-library",
+                            compact=True,
+                            tooltip=(
+                                "Browse reviewed audio.cpp model packages without "
+                                "saving this Settings draft."
+                            ),
+                        )
                         with Vertical(
                             id=self._field_dom_id(provider_id, "guided_packages"),
                             classes="settings-speech-audio-cpp-packages",
@@ -2961,6 +3218,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 values[field_id] = widget.value
 
         self._collect_realtime_visible_state()
+        self._synchronize_draft_revision()
 
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
@@ -3057,6 +3315,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state,
                 self.original_state,
                 self.configure_provider,
+                self.draft_snapshot(),
             )
         )
 
@@ -4195,6 +4454,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     self.state,
                     self.original_state,
                     self.configure_provider,
+                    self.draft_snapshot(),
                 )
             )
             return True
@@ -4442,6 +4702,29 @@ class SpeechTTSSettingsPanel(Vertical):
             SelectDirectory(title="Choose an audio.cpp model package directory"),
             self._audio_cpp_package_picker_result,
         )
+
+    @on(Button.Pressed, "#settings-speech-audio-cpp-open-model-library")
+    def handle_audio_cpp_open_model_library(self, event: Button.Pressed) -> None:
+        """Delegate exact request staging to the Settings navigation owner."""
+
+        event.stop()
+        snapshot = self.draft_snapshot()
+        values = snapshot.state.providers["audio_cpp"]
+        if (
+            values.get("mode") != "managed"
+            or values.get("managed_setup_source") != "guided"
+        ):
+            self._set_result(
+                "Choose Managed and Guided setup before opening Model Library.",
+                severity="warning",
+            )
+            return
+        stage = getattr(self.screen, "stage_audio_cpp_model_library_request", None)
+        if not callable(stage) or not stage(snapshot):
+            self._set_result(
+                "Model Library could not be opened. Your draft is unchanged.",
+                severity="error",
+            )
 
     def _audio_cpp_package_picker_result(self, path: Path | None) -> None:
         """Start one latest-wins bounded scan for an explicitly selected root."""
