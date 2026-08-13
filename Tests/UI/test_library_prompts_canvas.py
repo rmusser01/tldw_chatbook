@@ -7446,12 +7446,17 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
+    notifications: list[tuple[str, dict[str, object]]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert await screen.flush_pending_work() is True
+        assert notifications == []
 
         screen.query_one("#library-prompt-author", Input).value = "Changed mid switch"
         await pilot.pause()
@@ -7460,7 +7465,16 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
         allowed = await screen.flush_pending_work()
 
         assert allowed is False
+        assert screen.query_one("#library-prompt-author", Input).value == (
+            "Changed mid switch"
+        )
         assert screen._library_prompt_dirty is True
+        assert notifications == [
+            (
+                "Unsaved Prompt changes — Save or Discard changes first.",
+                {"severity": "warning"},
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -7918,6 +7932,10 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
 
         meta_before = screen.query_one("#library-prompt-meta", Static)
         assert "Unsaved" not in str(meta_before.renderable)
+        discard = screen.query_one("#library-prompt-discard", Button)
+        assert str(discard.label) == "Discard changes"
+        assert discard.disabled is True
+        assert str(discard.tooltip) == "No unsaved Prompt changes to discard."
 
         screen.query_one("#library-prompt-author", Input).value = "Changed"
         await pilot.pause()
@@ -7926,6 +7944,12 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
         meta_after_edit = screen.query_one("#library-prompt-meta", Static)
         assert meta_after_edit is meta_before  # no recompose -- same widget instance
         assert "• Unsaved changes" in str(meta_after_edit.renderable)
+        discard_after_edit = screen.query_one("#library-prompt-discard", Button)
+        assert discard_after_edit is discard
+        assert discard_after_edit.disabled is False
+        assert str(discard_after_edit.tooltip) == (
+            "Return to the Prompt list without saving these changes."
+        )
 
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
@@ -7936,6 +7960,103 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
         meta_after_save = screen.query_one("#library-prompt-meta", Static)
         assert meta_after_save is meta_before
         assert "Unsaved" not in str(meta_after_save.renderable)
+        discard_after_save = screen.query_one("#library-prompt-discard", Button)
+        assert discard_after_save is discard
+        assert discard_after_save.disabled is True
+        assert str(discard_after_save.tooltip) == (
+            "No unsaved Prompt changes to discard."
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_compatibility_editor_discard_returns_to_current_list(
+    tmp_path,
+    monkeypatch,
+):
+    """A dirty compatibility editor can leave even when no save path exists."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Compatibility only",
+        author="Original",
+        details="No convertible lanes",
+        system_prompt="",
+        user_prompt="",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {"id": "user", "blocks": []},
+            ],
+        },
+        artifact_type="prompt",
+    )
+    before = db.fetch_prompt_details(prompt_id)
+    save_prompt = AsyncMock(wraps=service.save_prompt)
+    service.save_prompt = save_prompt
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert screen._library_prompt_block_state is None
+        assert screen.query_one("#library-prompt-save", Button).disabled is True
+        assert screen.query_one("#library-prompt-convert", Button).disabled is True
+
+        screen.query_one("#library-prompt-author", Input).value = "Discard me"
+        await pilot.pause()
+        discard = screen.query_one("#library-prompt-discard", Button)
+        assert screen._library_prompt_dirty is True
+        assert discard.disabled is False
+
+        scope_before = screen._library_prompt_browse_controller.scope
+        browse_calls: list[tuple[object, str | None]] = []
+        refresh_calls = 0
+        original_browse = screen._request_library_prompts_browse
+        original_refresh = screen._refresh_local_source_snapshot
+
+        def recording_browse(scope, *, focus_identity=None):
+            browse_calls.append((scope, focus_identity))
+            return original_browse(scope, focus_identity=focus_identity)
+
+        def recording_refresh():
+            nonlocal refresh_calls
+            refresh_calls += 1
+            return original_refresh()
+
+        monkeypatch.setattr(screen, "_request_library_prompts_browse", recording_browse)
+        monkeypatch.setattr(screen, "_refresh_local_source_snapshot", recording_refresh)
+
+        discard.press()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if (
+                screen._library_prompts_view == "list"
+                and len(screen.query(f"#library-prompt-row-{prompt_id}")) == 1
+            ):
+                break
+
+        assert screen._library_prompts_view == "list"
+        assert browse_calls == [(scope_before, None)]
+        assert refresh_calls == 1
+        row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
+        for _ in range(100):
+            if screen.focused is row:
+                break
+            await pilot.pause(0.02)
+        assert screen.focused is row
+
+    save_prompt.assert_not_awaited()
+    after = db.fetch_prompt_details(prompt_id)
+    assert after["author"] == before["author"] == "Original"
+    assert after["version"] == before["version"]
 
 
 # ---------------------------------------------------------------------------
@@ -8854,6 +8975,7 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
             "library-prompt-actions-primary",
             "library-prompt-actions-content",
             "library-prompt-actions-lifecycle",
+            "library-prompt-discard",
         ]
         assert [button.id for button in primary.query(Button)] == [
             "library-prompt-save"
@@ -8874,6 +8996,7 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
             "library-prompt-copy",
             "library-prompt-duplicate",
             "library-prompt-delete",
+            "library-prompt-discard",
         ]
         assert str(pilot.app.query_one("#library-prompt-copy", Button).label) == (
             "Copy Markdown"
@@ -8895,10 +9018,12 @@ async def test_library_prompt_action_groups_preserve_conflict_action_order():
         assert [button.id for button in actions.query(Button)] == [
             "library-prompt-conflict-save-new",
             "library-prompt-conflict-reload",
+            "library-prompt-discard",
         ]
         assert [str(button.label) for button in actions.query(Button)] == [
             "Save as new",
             "Reload",
+            "Discard changes",
         ]
 
 

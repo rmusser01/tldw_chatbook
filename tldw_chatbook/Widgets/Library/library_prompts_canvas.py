@@ -68,6 +68,8 @@ _PAGE_UNAVAILABLE_REASON = (
     "Current page is unavailable; selected items remain available for Export or Delete."
 )
 _MUTATION_PROGRESS = "Updating selected items…"
+PROMPT_DISCARD_TOOLTIP_CLEAN = "No unsaved Prompt changes to discard."
+PROMPT_DISCARD_TOOLTIP_DIRTY = "Return to the Prompt list without saving these changes."
 
 
 def _compact_receipt_name(value: str, limit: int = 42) -> str:
@@ -1035,6 +1037,18 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             compact=True,
                             disabled=self.mutation_in_flight,
                         )
+                yield Button(
+                    "Discard changes",
+                    id="library-prompt-discard",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight or not self.dirty,
+                    tooltip=(
+                        PROMPT_DISCARD_TOOLTIP_DIRTY
+                        if self.dirty
+                        else PROMPT_DISCARD_TOOLTIP_CLEAN
+                    ),
+                )
 
     @staticmethod
     def _membership_ids_summary(
