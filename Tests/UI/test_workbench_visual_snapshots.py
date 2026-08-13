@@ -219,6 +219,14 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
             inspector_button = screen.query_one("#console-inspector-rail-open", Button)
             transcript = screen.query_one("#console-transcript-region")
 
+            assert inspector_handle.display is True
+            assert workspace.content_region.contains_region(
+                inspector_handle.region
+            ), (
+                f"Inspector handle escapes workspace at {size}: "
+                f"handle={inspector_handle.region}, "
+                f"workspace={workspace.content_region}"
+            )
             assert inspector_handle.region.height == workspace.content_region.height
             assert inspector_handle.region.width == 11
             assert inspector_handle.content_region.width == 9
@@ -277,6 +285,10 @@ async def test_task_15705_console_collapsed_inspector_rail_visual_parity_sweep(
                 simplify=True,
             )
             _assert_svg_healthy(svg)
+            rendered_text = unescape(
+                "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+            ).replace("\xa0", " ")
+            assert "Inspector" in rendered_text
 
 
 @pytest.mark.asyncio
