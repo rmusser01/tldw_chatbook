@@ -22,11 +22,14 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
+from ...UI.character_display_text import sanitize_character_display_text
+
 CharacterPlacement = Literal["swap", "new"]
 
 #: Bounds the result list so a large card library cannot mount hundreds of
 #: rows into a modal (the switcher modal caps its own list the same way).
 CHARACTER_PICKER_MAX_RESULTS = 40
+CHARACTER_PICKER_NAME_MAX_CHARACTERS = 180
 
 #: Debounce for the search `Input` -- mirrors the console picker family's
 #: 0.2 s shape (`console_prompt_picker_modal.py`). A full result refresh
@@ -226,9 +229,13 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
+            display_name = sanitize_character_display_text(
+                option.name,
+                max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+            )
             rows.append(
                 Static(
-                    f"{marker}{option.name}{current}",
+                    f"{marker}{display_name}{current}",
                     id=f"console-character-picker-row-{option.character_id}",
                     classes="console-character-picker-result",
                     markup=False,
@@ -241,8 +248,12 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
         self._pending = option
         placement = self.query_one("#console-character-picker-placement", Horizontal)
         placement.display = True
+        display_name = sanitize_character_display_text(
+            option.name,
+            max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+        )
         self.query_one("#console-character-picker-hint", Static).update(
-            f"{option.name}: swap into this chat, or start a new one?"
+            f"{display_name}: swap into this chat, or start a new one?"
         )
         self.query_one("#console-character-placement-swap", Button).focus()
 
@@ -312,13 +323,17 @@ class ConsoleCharacterPickerModal(ModalScreen["ConsoleCharacterChoice | None"]):
             current = "  (current)" if option.character_id == (
                 self._current_character_id
             ) else ""
+            display_name = sanitize_character_display_text(
+                option.name,
+                max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
+            )
             try:
                 row = self.query_one(
                     f"#console-character-picker-row-{option.character_id}", Static
                 )
             except Exception:
                 continue
-            row.update(f"{marker}{option.name}{current}")
+            row.update(f"{marker}{display_name}{current}")
 
     def action_dismiss_picker(self) -> None:
         self._cancel_query_debounce()

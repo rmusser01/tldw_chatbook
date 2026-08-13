@@ -16,8 +16,14 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from .personas_pane_messages import EditCharacterRequested
+from ...UI.character_display_text import sanitize_character_display_text
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
+from .personas_pane_messages import EditCharacterRequested
+
+_CARD_NAME_MAX_CHARACTERS = 200
+_CARD_LONG_FIELD_MAX_CHARACTERS = 20_000
+_CARD_METADATA_MAX_CHARACTERS = 1_000
+_CARD_GREETING_PREVIEW_MAX_CHARACTERS = 5_000
 
 
 class PersonasCharacterCardWidget(Container):
@@ -135,43 +141,82 @@ class PersonasCharacterCardWidget(Container):
 
         labels = {suffix: label for label, suffix in self._FIELD_ROWS}
 
-        def _set(suffix: str, value: str) -> None:
+        def _set(
+            suffix: str,
+            value: object,
+            *,
+            max_characters: int = _CARD_LONG_FIELD_MAX_CHARACTERS,
+        ) -> None:
             widget = self.query_one(f"#personas-character-card-{suffix}", Static)
             label = labels.get(suffix)
+            display_value = sanitize_character_display_text(
+                value,
+                max_characters=max_characters,
+            )
             if label is not None:
                 # Label inline with the value: "Name: Detective Sam". Rows
                 # with no value are hidden outright - a bare "Label:" line is
                 # noise, not information (display toggling keeps this
                 # sync-safe and reversible on the next load).
-                widget.display = bool(value)
-                value = f"{label}: {value}" if value else f"{label}:"
-            widget.update(value)
+                widget.display = bool(display_value)
+                display_value = (
+                    f"{label}: {display_value}" if display_value else f"{label}:"
+                )
+            widget.update(display_value)
 
-        _set("name", str(record.get("name") or "Unnamed Character"))
-        _set("description", str(record.get("description") or ""))
-        _set("personality", str(record.get("personality") or ""))
-        _set("scenario", str(record.get("scenario") or ""))
+        _set(
+            "name",
+            record.get("name") or "Unnamed Character",
+            max_characters=_CARD_NAME_MAX_CHARACTERS,
+        )
+        _set("description", record.get("description") or "")
+        _set("personality", record.get("personality") or "")
+        _set("scenario", record.get("scenario") or "")
         _set(
             "first-message",
-            str(record.get("first_mes", record.get("first_message", "")) or ""),
+            record.get("first_mes", record.get("first_message", "")) or "",
         )
         _set(
             "system-prompt",
-            str(record.get("system_prompt", record.get("system", "")) or ""),
+            record.get("system_prompt", record.get("system", "")) or "",
         )
-        _set("post-history", str(record.get("post_history_instructions") or ""))
-        _set("creator", str(record.get("creator") or ""))
+        _set("post-history", record.get("post_history_instructions") or "")
+        _set(
+            "creator",
+            record.get("creator") or "",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
+        )
         _set(
             "version",
-            str(record.get("character_version", record.get("version", "1.0")) or ""),
+            record.get("character_version", record.get("version", "1.0")) or "",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
         )
-        tags = [str(tag) for tag in (record.get("tags") or [])]
-        _set("tags", f"Tags: {', '.join(tags)}" if tags else "Tags: none")
+        tags = record.get("tags") or []
+        tags_text = ", ".join(
+            sanitize_character_display_text(
+                tag,
+                max_characters=_CARD_METADATA_MAX_CHARACTERS,
+            )
+            for tag in tags
+        )
+        _set(
+            "tags",
+            f"Tags: {tags_text}" if tags else "Tags: none",
+            max_characters=_CARD_LONG_FIELD_MAX_CHARACTERS,
+        )
         greetings = [
-            str(greeting) for greeting in (record.get("alternate_greetings") or [])
+            greeting for greeting in (record.get("alternate_greetings") or [])
         ]
-        _set("alt-greetings", f"Alternate greetings: {len(greetings)}")
-        _set("greeting-preview", greetings[0] if greetings else "")
+        _set(
+            "alt-greetings",
+            f"Alternate greetings: {len(greetings)}",
+            max_characters=_CARD_METADATA_MAX_CHARACTERS,
+        )
+        _set(
+            "greeting-preview",
+            greetings[0] if greetings else "",
+            max_characters=_CARD_GREETING_PREVIEW_MAX_CHARACTERS,
+        )
         # The preview row is unlabeled, so the labeled-row hiding above does
         # not cover it; an empty preview must not leave a blank line.
         # ("Tags: none", "Alternate greetings: 0", and "Avatar: none" stay

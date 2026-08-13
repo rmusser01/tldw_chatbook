@@ -1,11 +1,13 @@
 """Handler for character-related operations in the Personas screen."""
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from loguru import logger
-from textual.widgets import Select, Input, TextArea, Static
+from rich.text import Text
+from textual.widgets import Input, Select, Static, TextArea
 
+from ..character_display_text import sanitize_character_display_text
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
@@ -13,6 +15,10 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
+
+_OPTION_LABEL_MAX_CHARACTERS = 200
+_STATIC_FIELD_MAX_CHARACTERS = 1_000
+_READ_ONLY_TEXT_MAX_CHARACTERS = 20_000
 
 
 def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
@@ -384,7 +390,13 @@ class CCPCharacterHandler:
             # stalling the loop for the same read.
             self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
-                (char.get("name", "Unnamed"), str(char.get("id")))
+                (
+                    sanitize_character_display_text(
+                        char.get("name", "Unnamed"),
+                        max_characters=_OPTION_LABEL_MAX_CHARACTERS,
+                    ),
+                    str(char.get("id")),
+                )
                 for char in self.character_list
             ]
 
@@ -563,19 +575,26 @@ class CCPCharacterHandler:
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")
 
-    def _update_field(self, selector: str, value: str) -> None:
+    def _update_field(self, selector: str, value: object) -> None:
         """Update a Static field."""
         try:
             widget = self.window.query_one(selector, Static)
-            widget.update(value)
+            display_text = sanitize_character_display_text(
+                value,
+                max_characters=_STATIC_FIELD_MAX_CHARACTERS,
+            )
+            widget.update(Text(display_text))
         except Exception as e:
             logger.warning(f"Could not update field {selector}: {e}")
 
-    def _update_textarea(self, selector: str, value: str) -> None:
+    def _update_textarea(self, selector: str, value: object) -> None:
         """Update a TextArea field."""
         try:
             widget = self.window.query_one(selector, TextArea)
-            widget.text = value
+            widget.text = sanitize_character_display_text(
+                value,
+                max_characters=_READ_ONLY_TEXT_MAX_CHARACTERS,
+            )
         except Exception as e:
             logger.warning(f"Could not update textarea {selector}: {e}")
 
@@ -590,12 +609,15 @@ class CCPCharacterHandler:
             if data.get("image"):
                 # In a real implementation, we'd render the image
                 # For now, just indicate an image is present
-                image_placeholder.update("📷 Character Image")
+                image_placeholder.update(Text("📷 Character Image"))
             elif data.get("avatar"):
                 # URL to avatar
-                image_placeholder.update(f"🔗 Avatar: {data['avatar'][:50]}...")
+                avatar = sanitize_character_display_text(
+                    data["avatar"], max_characters=50
+                )
+                image_placeholder.update(Text(f"🔗 Avatar: {avatar}..."))
             else:
-                image_placeholder.update("No image")
+                image_placeholder.update(Text("No image"))
 
         except Exception as e:
             logger.warning(f"Could not display character image: {e}")
