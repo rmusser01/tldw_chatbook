@@ -471,6 +471,20 @@ class ProviderTestEvidenceStore:
             self._advance_operation()
             return True
 
+    def cancel_probe(self, token: object) -> bool:
+        """Cancel only the active probe owned by ``token``."""
+
+        with self._lock:
+            if (
+                type(token) is not _ProviderTestToken
+                or token is not self._current_token
+                or self._current_token_epoch != self._operation_epoch
+            ):
+                return False
+            self._clear_all_test_state()
+            self._advance_operation()
+            return True
+
     def begin_save(self, identity: ProviderDraftIdentity) -> object | None:
         """Capture a value-free lease for the store's current operation revision."""
 

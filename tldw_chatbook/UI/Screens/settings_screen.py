@@ -10221,6 +10221,15 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         try:
             outcome = await probe_settings_endpoint(base_url, provider=provider)
+        except asyncio.CancelledError:
+            cancelled_current = bool(
+                token is not None
+                and self._provider_evidence_store().cancel_probe(token)
+            )
+            if cancelled_current:
+                self._provider_test_result = "Provider test cancelled; run again."
+                self._update_provider_test_result()
+            raise
         except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
             outcome = self._provider_probe_connection_error_outcome()
         try:

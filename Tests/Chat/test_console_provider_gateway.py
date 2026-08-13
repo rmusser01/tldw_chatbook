@@ -3943,8 +3943,35 @@ def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
     assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
 
 
-def test_chat_api_kwargs_omits_api_base_url_for_non_anthropic() -> None:
-    """Confirm the api_base_url forwarding fix is scoped to Anthropic only."""
+@pytest.mark.parametrize("provider", ["mistral", "mistralai"])
+def test_all_primary_mistral_kwargs_paths_forward_resolved_base(provider) -> None:
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=f"https://{provider}.example.test/v1",
+        model="mistral-model",
+        ready=True,
+        execution_key=provider,
+        api_key="mistral-test-key",
+        streaming=False,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    gateway = ConsoleProviderGateway()
+    prepared = gateway.prepare_chat_request(resolution, messages)
+
+    assert gateway._chat_api_kwargs(resolution, messages)["api_base_url"] == (
+        resolution.base_url
+    )
+    assert (
+        gateway._chat_api_kwargs_from_prepared(
+            resolution,
+            prepared,
+        )["api_base_url"]
+        == resolution.base_url
+    )
+
+
+def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
+    """Providers without an established pin keep their existing kwargs."""
     resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://proxy.example.test/v1",
@@ -4144,6 +4171,102 @@ class _FakeAnthropicPostResponse:
 
     def json(self) -> dict:
         return _fake_anthropic_message_response()
+
+
+class _CapturedMistralSession:
+    def __init__(self, calls: list[tuple[str, str]]) -> None:
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._calls.append((url, (headers or {}).get("Authorization", "")))
+        return _FakeMistralPostResponse()
+
+
+class _FakeMistralPostResponse:
+    status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {},
+        }
+
+
+@pytest.mark.asyncio
+async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    class RuntimeConfigSnapshotStub:
+        def __init__(self, values) -> None:
+            self.values = values
+
+    config = {
+        "api_settings": {
+            "mistral": {
+                "api_key": "legacy-mistral-test-key",
+                "api_base_url": "https://legacy-mistral.example.test/v1",
+                "model": "legacy-model",
+            },
+            "mistralai": {
+                "api_key": "catalog-mistral-test-key",
+                "api_base_url": "https://catalog-mistral.example.test/v1",
+                "model": "catalog-model",
+            },
+        }
+    }
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        LLM_API_Calls.requests,
+        "Session",
+        lambda: _CapturedMistralSession(calls),
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshotStub(config),
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+    )
+
+    for provider in ("mistral", "mistralai"):
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(provider=provider, streaming=False)
+        )
+        assert resolution.ready is True
+        assert [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hello"}],
+            )
+        ] == ["ok"]
+
+    assert calls == [
+        (
+            "https://legacy-mistral.example.test/v1/chat/completions",
+            "Bearer legacy-mistral-test-key",
+        ),
+        (
+            "https://catalog-mistral.example.test/v1/chat/completions",
+            "Bearer catalog-mistral-test-key",
+        ),
+    ]
 
 
 @pytest.mark.asyncio

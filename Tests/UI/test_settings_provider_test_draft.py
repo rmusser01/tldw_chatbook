@@ -902,6 +902,90 @@ def test_model_edit_cancels_active_probe_token_but_not_settled_evidence():
     assert "re-run" not in screen._provider_test_result.lower()
 
 
+@pytest.mark.asyncio
+async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch):
+    identity = _semantic_identity("https://example.test/v1/models")
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_test_result = "Provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    token = store.begin(identity)
+
+    async def cancelled_probe(*_args, **_kwargs):
+        raise asyncio.CancelledError("secret-cancel-detail")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        cancelled_probe,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+            screen,
+            "https://example.test/v1",
+            "custom",
+            "Provider test",
+            "Provider test",
+            identity,
+            token,
+        )
+
+    assert store.evidence_for(identity) is None
+    assert "checking" not in screen._provider_test_result.lower()
+    assert "cancel" in screen._provider_test_result.lower()
+    assert "secret-cancel-detail" not in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_stale_probe_cancellation_does_not_clear_newer_testing_token(monkeypatch):
+    older = _semantic_identity(
+        "https://example.test/v1/models",
+        draft_generation=1,
+    )
+    newer = _semantic_identity(
+        "https://example.test/v1/models",
+        draft_generation=2,
+    )
+    screen = _bare_settings_screen({})
+    store = ProviderTestEvidenceStore()
+    screen._provider_test_evidence_store = store
+    screen._provider_test_result = "New provider test | endpoint probe: checking"
+    screen._update_provider_test_result = lambda: None
+    stale_token = store.begin(older)
+    current_token = store.begin(newer)
+
+    async def cancelled_probe(*_args, **_kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
+        cancelled_probe,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await SettingsScreen._provider_endpoint_probe_worker.__wrapped__(
+            screen,
+            "https://example.test/v1",
+            "custom",
+            "Old provider test",
+            "Old provider test",
+            older,
+            stale_token,
+        )
+
+    evidence = store.evidence_for(newer)
+    assert evidence is not None
+    assert evidence.endpoint == "testing"
+    assert screen._provider_test_result == (
+        "New provider test | endpoint probe: checking"
+    )
+    assert store.settle(
+        current_token,
+        ProviderProbeResult(endpoint="reachable", model_ids=("model-a",)),
+    )
+
+
 def test_discovery_status_distinguishes_malformed_from_unsupported():
     """TASK-367: the model-discovery status surfaces DISTINCT copy for a
     malformed URL vs a valid-but-unsupported path, instead of collapsing both

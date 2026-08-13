@@ -2483,7 +2483,7 @@ class ConsoleProviderGateway:
                 kwargs["provider_continuations"] = [
                     group.checkpoint for group in request.continuation_groups
                 ]
-        elif resolution.execution_key == "anthropic":
+        elif resolution.execution_key in {"anthropic", "mistral", "mistralai"}:
             kwargs["api_base_url"] = resolution.base_url or None
         elif (
             resolution.execution_key == "openai" and request.response_format is not None
@@ -2555,21 +2555,11 @@ class ConsoleProviderGateway:
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
-        elif resolution.execution_key == "anthropic":
-            # task-2114: `resolve_for_send` already resolves the effective
-            # endpoint (configured `[api_settings.anthropic].api_base_url`,
-            # or the built-in default when unset -- see
-            # `effective_provider_endpoint`) into `resolution.base_url`, but
-            # this dict never forwarded it, so a configured proxy/relay was
-            # silently a no-op on the main Console send: only the
-            # auxiliary/one-shot path's `_auxiliary_chat_api_kwargs` passed
-            # `api_base_url` through. Scoped to Anthropic only, matching
-            # this task's fix -- other adapters sharing the same gap are
-            # tracked separately (see the task's Implementation Notes).
-            # When unset, `resolution.base_url` is already the SAME
-            # built-in default `chat_with_anthropic` would fall back to on
-            # its own, so this is a byte-identical no-op for the common
-            # case, never a behavior change.
+        elif resolution.execution_key in {"anthropic", "mistral", "mistralai"}:
+            # These adapters otherwise consult process-global config after
+            # Console has resolved a provider-scoped endpoint and credential.
+            # Pinning the resolved base keeps that pair intact, including the
+            # distinct mistral and mistralai config owners.
             kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 

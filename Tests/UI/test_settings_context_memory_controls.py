@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,8 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
 )
+from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_context_memory import (
     load_context_memory_values,
@@ -41,6 +44,21 @@ def _context_values(**updates: object) -> dict[str, object]:
 def _static_text(widget: Static) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
+
+
+def _capture_provider_atomic_writes(monkeypatch):
+    calls: list[tuple[dict[str, object], dict[str, tuple[str, ...]]]] = []
+
+    def writer(section_values, *, delete_keys=None):
+        calls.append((deepcopy(section_values), deepcopy(delete_keys or {})))
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        provider_persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+    return calls
 
 
 def test_context_memory_defaults_and_saved_overrides_share_policy_contract() -> None:
@@ -304,55 +322,73 @@ async def test_summary_prompt_route_focuses_existing_internal_prompt_editor() ->
 
 
 @pytest.mark.asyncio
-async def test_provider_context_window_repair_saves_to_model_capability_authority() -> (
-    None
-):
+async def test_provider_context_window_repair_saves_to_model_capability_authority(
+    monkeypatch,
+) -> None:
     app = _build_test_app()
     app.app_config = {
-        "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {
+            "openai": {
+                "api_base_url": "https://proxy.example.test/v1",
+                "api_key_env_var": "OPENAI_TEST_KEY",
+                "model": "gpt-4o",
+            }
+        },
+        "provider_setup": {"confirmed": {"openai": True, "custom": True}},
         "model_capabilities": {},
     }
-    saved_calls: list[tuple[str, dict[str, object]]] = []
-
-    def _save_values(_adapter, section: str, values) -> bool:
-        saved_calls.append((section, dict(values)))
-        return True
+    connection_before = deepcopy(
+        {
+            key: app.app_config[key]
+            for key in ("chat_defaults", "api_settings", "provider_setup")
+        }
+    )
+    atomic_calls = _capture_provider_atomic_writes(monkeypatch)
 
     host = DestinationHarness(app, "settings")
-    with patch(
-        "tldw_chatbook.UI.Screens.settings_screen.SettingsConfigAdapter.save_values",
-        new=_save_values,
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen: SettingsScreen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
-            await pilot.pause()
+    async with host.run_test(size=(110, 40)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        screen: SettingsScreen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await pilot.pause()
 
-            context_input = screen.query_one("#settings-model-context-window", Input)
-            assert context_input.value == "128000"
-            context_input.value = "256000"
-            await pilot.pause()
-            screen.action_settings_save_category(allow_text_entry_focus=True)
-            await pilot.pause()
+        context_input = screen.query_one("#settings-model-context-window", Input)
+        assert context_input.value == "128000"
+        context_input.value = "256000"
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
 
-    capability_calls = [
-        values
-        for section, values in saved_calls
-        if section == "model_capabilities.models"
-    ]
-    assert len(capability_calls) == 1
-    saved_entry = capability_calls[0]["gpt-4o"]
+    assert len(atomic_calls) == 1
+    sections, deletes = atomic_calls[0]
+    assert set(sections) == {"model_capabilities.models"}
+    assert deletes == {}
+    saved_entry = sections["model_capabilities.models"]["gpt-4o"]
     assert saved_entry["context_window"] == 256000
     assert saved_entry["vision"] is True
     assert app.app_config["model_capabilities"]["models"]["gpt-4o"] == saved_entry
+    assert {
+        key: app.app_config[key]
+        for key in ("chat_defaults", "api_settings", "provider_setup")
+    } == connection_before
 
 
 @pytest.mark.asyncio
-async def test_provider_context_window_reset_preserves_other_capabilities() -> None:
+async def test_provider_context_window_reset_preserves_other_capabilities(
+    monkeypatch,
+) -> None:
     app = _build_test_app()
     app.app_config = {
-        "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {
+            "openai": {
+                "api_base_url": "https://proxy.example.test/v1",
+                "api_key_env_var": "OPENAI_TEST_KEY",
+                "model": "gpt-4o",
+            }
+        },
+        "provider_setup": {"confirmed": {"openai": True, "custom": True}},
         "model_capabilities": {
             "models": {
                 "gpt-4o": {
@@ -363,43 +399,49 @@ async def test_provider_context_window_reset_preserves_other_capabilities() -> N
             }
         },
     }
-    saved_calls: list[tuple[str, dict[str, object]]] = []
-
-    def _save_values(_adapter, section: str, values) -> bool:
-        saved_calls.append((section, dict(values)))
-        return True
+    connection_before = deepcopy(
+        {
+            key: app.app_config[key]
+            for key in ("chat_defaults", "api_settings", "provider_setup")
+        }
+    )
+    atomic_calls = _capture_provider_atomic_writes(monkeypatch)
 
     host = DestinationHarness(app, "settings")
-    with patch(
-        "tldw_chatbook.UI.Screens.settings_screen.SettingsConfigAdapter.save_values",
-        new=_save_values,
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen: SettingsScreen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
-            await pilot.pause()
+    async with host.run_test(size=(110, 40)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        screen: SettingsScreen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await pilot.pause()
 
-            context_input = screen.query_one("#settings-model-context-window", Input)
-            status = screen.query_one("#settings-model-context-window-status", Static)
-            reset = screen.query_one("#settings-model-context-window-reset", Button)
-            assert context_input.value == "256000"
-            assert "Configured override: 256,000" in _static_text(status)
-            assert reset.disabled is False
+        context_input = screen.query_one("#settings-model-context-window", Input)
+        status = screen.query_one("#settings-model-context-window-status", Static)
+        reset = screen.query_one("#settings-model-context-window-reset", Button)
+        assert context_input.value == "256000"
+        assert "Configured override: 256,000" in _static_text(status)
+        assert reset.disabled is False
 
-            reset.press()
-            await pilot.pause()
-            assert context_input.value == "128000"
-            screen.action_settings_save_category(allow_text_entry_focus=True)
-            await pilot.pause()
+        reset.press()
+        await pilot.pause()
+        assert context_input.value == "128000"
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
 
-    capability_calls = [
-        values
-        for section, values in saved_calls
-        if section == "model_capabilities.models"
+    assert atomic_calls == [
+        (
+            {
+                "model_capabilities.models": {
+                    "gpt-4o": {"vision": True, "max_images": 10}
+                }
+            },
+            {},
+        )
     ]
-    assert capability_calls == [{"gpt-4o": {"vision": True, "max_images": 10}}]
     assert app.app_config["model_capabilities"]["models"]["gpt-4o"] == {
         "vision": True,
         "max_images": 10,
     }
+    assert {
+        key: app.app_config[key]
+        for key in ("chat_defaults", "api_settings", "provider_setup")
+    } == connection_before
