@@ -9108,6 +9108,25 @@ class LibraryScreen(BaseAppScreen):
         self, page: int, query: str, *, refocus_filter: bool = False
     ) -> None:
         """Start one generation-guarded conversation page request."""
+        normalized_query, generation = self._prepare_library_conversation_page_request(
+            query,
+            refocus_filter=refocus_filter,
+        )
+        self.run_worker(
+            self._load_library_conversation_page(
+                page,
+                normalized_query,
+                generation,
+                refocus_filter=refocus_filter,
+            ),
+            exclusive=True,
+            group="library_conversation_page",
+        )
+
+    def _prepare_library_conversation_page_request(
+        self, query: str, *, refocus_filter: bool = False
+    ) -> tuple[str, int]:
+        """Invalidate older requests and publish a coherent loading state."""
         self._library_conversation_request_generation += 1
         generation = self._library_conversation_request_generation
         normalized_query = self._safe_text(query, max_length=200)
@@ -9119,15 +9138,17 @@ class LibraryScreen(BaseAppScreen):
         _sync_library_canvas(self, "conversations")
         if refocus_filter:
             self._refocus_library_conversations_filter_after_sync()
-        self.run_worker(
-            self._load_library_conversation_page(
-                page,
-                normalized_query,
-                generation,
-                refocus_filter=refocus_filter,
-            ),
-            exclusive=True,
-            group="library_conversation_page",
+        return normalized_query, generation
+
+    def _conversation_page_needs_unfiltered_reset(self) -> bool:
+        """Return whether fresh entry would expose filtered/stale page metadata."""
+        if self._library_conversation_loading and not self._library_conversation_query:
+            return False
+        return bool(
+            self._library_conversation_query
+            or self._library_conversation_page != 1
+            or self._library_conversation_error
+            or not self._library_conversation_page_loaded
         )
 
     async def _load_library_conversation_page(
@@ -13272,9 +13293,13 @@ class LibraryScreen(BaseAppScreen):
                 self.post_message(NavigateToScreen(target_id))
             return
         if target_kind == "canvas":
-            if target_id == "conversations":
-                self._library_conversation_query = ""
+            reset_conversations = (
+                target_id == "conversations"
+                and self._conversation_page_needs_unfiltered_reset()
+            )
             await self._select_library_rail_row(row_id)
+            if reset_conversations:
+                self._start_library_conversation_page_request(1, "")
             return
         if target_kind == "handoff":
             # Study/Flashcards/Quizzes rows (L3b Task 8): resolves to the
@@ -28002,22 +28027,61 @@ class LibraryScreen(BaseAppScreen):
         # it by id when it isn't already in the loaded snapshot. Closes the
         # known deep-link caveat where an out-of-snapshot id silently fell
         # back to the first row (_ensure_selected_conversation_id).
+        target_record = next(
+            (
+                record
+                for index, record in enumerate(self._conversation_records())
+                if self._conversation_record_id(record, index) == record_id
+            ),
+            None,
+        )
+        if target_record is None:
+            target_record = await self._fetch_library_conversation_by_id(record_id)
+            if target_record is None:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Conversation is unavailable.", severity="warning")
+                return
+
+        if (
+            self._library_conversation_loading
+            or self._conversation_page_needs_unfiltered_reset()
+        ):
+            normalized_query, generation = (
+                self._prepare_library_conversation_page_request("")
+            )
+            await self._load_library_conversation_page(
+                1,
+                normalized_query,
+                generation,
+            )
+
         record_ids = {
             self._conversation_record_id(record, index)
             for index, record in enumerate(self._conversation_records())
         }
         if record_id not in record_ids:
-            fetched = await self._fetch_library_conversation_by_id(record_id)
-            if fetched is None:
-                notify = getattr(self.app_instance, "notify", None)
-                if callable(notify):
-                    notify("Conversation is unavailable.", severity="warning")
-                return
             self._library_conversation_page_records = (
-                fetched,
+                target_record,
                 *self._conversation_records(),
             )[:LIBRARY_CONVERSATION_PAGE_SIZE]
             self._library_conversation_page_loaded = True
+            self._library_conversation_page = 1
+            if (
+                not self._library_conversation_error
+                and self._library_conversation_total_known
+            ):
+                self._library_conversation_total = max(
+                    self._library_conversation_total,
+                    len(self._library_conversation_page_records),
+                )
+        if self._library_conversation_error:
+            self._library_conversation_page = 1
+            self._library_conversation_total_known = False
+            self._library_conversation_has_more = False
+            self._library_conversation_total = len(
+                self._library_conversation_page_records
+            )
         self._selected_conversation_id = record_id
         # Opening a specific conversation must show it even if an in-canvas
         # filter would otherwise hide it -- handle_library_rail_row's own

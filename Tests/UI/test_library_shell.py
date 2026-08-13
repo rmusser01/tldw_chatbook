@@ -5699,6 +5699,57 @@ async def test_library_conversations_filter_searches_beyond_first_page_and_reset
 
 
 @pytest.mark.asyncio
+async def test_library_conversations_reentry_restores_unfiltered_first_page():
+    app = _build_test_app()
+    records = _conversation_records(45)
+    records[-1] = {**records[-1], "title": "Needle outside first page"}
+    _seed_conversations(app, records)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        field = screen.query_one("#library-conversations-filter", Input)
+        field.value = "needle"
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-conversation-row")) == 1,
+            message="Filtered conversation result never landed.",
+        )
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_conversation_page == 1
+                and screen._library_conversation_query == ""
+                and len(screen.query(".library-conversation-row")) == 20
+                and str(
+                    screen.query_one("#library-conversations-page-status").renderable
+                )
+                == "1-20 of 45 · Page 1 of 3"
+            ),
+            message="Conversation re-entry did not restore unfiltered page 1.",
+        )
+
+        assert app.chat_conversation_scope_service.calls[-1] == {
+            "mode": "local",
+            "scope_type": "all",
+            "query": None,
+            "limit": 20,
+            "offset": 0,
+        }
+        assert screen.query_one("#library-conversations-next", Button).disabled is False
+
+
+@pytest.mark.asyncio
 async def test_library_conversation_initial_failure_keeps_filter_for_retry():
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(2))
@@ -16079,6 +16130,20 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
                 screen._conversation_record_id(record, index)
                 for index, record in enumerate(screen._conversation_records())
             }
+            screen.query_one("#library-row-browse-conversations").press()
+            await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+            conversation_filter = screen.query_one(
+                "#library-conversations-filter", Input
+            )
+            conversation_filter.value = "quarterly"
+            conversation_filter.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_conversation_total == 1
+                and len(screen.query(".library-conversation-row")) == 1,
+                message="Conversation filter did not establish filtered pager state.",
+            )
             await _run_library_search_and_wait_for_open_result(
                 screen, pilot, "snapshot"
             )
@@ -16096,6 +16161,14 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
             await pilot.pause()
 
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            assert screen._library_conversation_query == ""
+            assert screen._library_conversation_page == 1
+            assert screen._library_conversation_total == 3
+            assert screen._library_conversation_total_known is True
+            assert screen._library_conversation_has_more is False
+            assert str(
+                screen.query_one("#library-conversations-page-status").renderable
+            ) == "1-3 of 3 · Page 1 of 1"
             preview = str(
                 screen.query_one("#library-conversation-preview-lines").renderable
             )
