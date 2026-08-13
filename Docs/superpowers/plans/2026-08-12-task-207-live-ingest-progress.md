@@ -19,7 +19,7 @@
 - Never join or wait for a pool, queue, or progress thread on the Textual event-loop thread.
 - Preserve the current Windows real-stderr/resource-tracker workaround, worker-sentinel recovery, generation fencing, payload-ready protection, local-STT cancellation actions, and import-weight guard.
 - Add no runtime dependency. Keep `ingest_parse_worker` and its new progress-contract import free of heavy ingestion modules at module scope.
-- Follow ADR-059 and ADR-014. Source-of-truth design: `Docs/superpowers/specs/2026-08-12-task-207-live-ingest-progress-design.md`.
+- Follow ADR-061 and ADR-014. Source-of-truth design: `Docs/superpowers/specs/2026-08-12-task-207-live-ingest-progress-design.md`.
 
 ---
 
@@ -714,7 +714,7 @@ Inspect the complete branch diff for: any blocking queue put, UI-thread join, un
 
 - [ ] **Step 5: Update TASK-207 closeout**
 
-Check each acceptance criterion only after its evidence passes. Add `## Implementation Notes` summarizing the process contract, truthful-stage limits, transient persistence decision, UI identity behavior, Windows spawn evidence, tests/static checks, ADR-059, and any documented unrelated Windows harness failures. Set status to Done only when every Definition-of-Done item is satisfied.
+Check each acceptance criterion only after its evidence passes. Add `## Implementation Notes` summarizing the process contract, truthful-stage limits, transient persistence decision, UI identity behavior, Windows spawn evidence, tests/static checks, ADR-061, and any documented unrelated Windows harness failures. Set status to Done only when every Definition-of-Done item is satisfied.
 
 - [ ] **Step 6: Commit closeout**
 
