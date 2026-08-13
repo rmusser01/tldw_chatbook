@@ -578,8 +578,8 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
         assert transcript.region.height >= expanded_transcript_height + 4
         assert "Draft retained" in str(status.renderable)
         assert "Attachment retained" in str(status.renderable)
-        assert status.region.right <= expand.region.x
-        assert expand.region.right <= composer.region.right
+        assert expand.region.right <= status.region.x
+        assert status.region.right <= composer.region.right
 
         composer.sync_action_state(
             has_draft=True,
@@ -590,9 +590,9 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
 
         assert composer.region.height == 1
         assert stop.display is True
+        assert expand.region.right <= status.region.x
         assert status.region.right <= stop.region.x
-        assert stop.region.right <= expand.region.x
-        assert expand.region.right <= composer.region.right
+        assert stop.region.right <= composer.region.right
         assert stop.region.width == 8
         assert expand.region.width == 12
 
