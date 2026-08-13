@@ -90,21 +90,60 @@ common row classes by the existing rail-only branch; the general canvases were n
 - New tests added: `test_library_shell_repeat_visit_composes_exactly_once_when_data_is_
   unchanged`, `test_library_shell_init_seeds_local_source_snapshot_from_cache`,
   `test_library_shell_restore_state_seeds_local_source_snapshot_from_cache`.
-- Regression coverage run (targeted, not the full suite -- see notes below): the existing
-  "166" app-scoped cache suite, the task-252/task-15457 recompose-count spies
-  (`test_library_selection_updates.py`, `test_library_canvas_sync_defects.py`), every
-  notes-editor "Back"/focus-handoff test (the `unchanged`-skip's one carve-out), the
-  out-of-page conversation carry-forward test, and the real app.py navigation round-trip
-  tests in `test_screen_navigation.py` (save_state -> restore_state -> mount) all pass
-  unmodified.
-- One pre-existing failure, unrelated: `test_screen_navigation.py::
-  test_action_library_notes_files_back_returns_to_database` fails at HEAD
-  (`ebf56a763`, before any of this task's edits) with `AttributeError:
-  'WorkspaceProbe' object has no attribute 'cancel_reload_confirmation'` --
-  a test-double/production drift introduced by the 15457 merge itself (`git log -S` on
-  that method name resolves to the merge commit), nowhere near this diff (`action_library_
-  notes_files_back`, line ~12630, vs. this diff's `__init__`/`restore_state`/`on_mount`/
-  `_apply_local_source_snapshot`). Not fixed here -- out of this task's scope.
+- Regression coverage run (targeted, not the full suite -- see below for why the full
+  suite was ALSO run and reconciled): the existing "166" app-scoped cache suite, the
+  task-252/task-15457 recompose-count spies (`test_library_selection_updates.py`,
+  `test_library_canvas_sync_defects.py`), every notes-editor "Back"/focus-handoff test
+  (the `unchanged`-skip's one carve-out), the out-of-page conversation carry-forward
+  test, and the real app.py navigation round-trip tests in `test_screen_navigation.py`
+  (save_state -> restore_state -> mount) all pass unmodified.
+
+**Full-suite follow-up (after the targeted gate above passed and this was first marked
+Done):** two full-file background runs were kicked off for extra confirmation
+(`test_library_shell.py` alone: 557 passed / 9 failed / 1346.74s; the other 6
+Library-adjacent files: 329 passed / 5 failed / 760.76s, under heavy contention from
+other concurrent sessions on the shared dev machine). Every failure was individually
+bisected by MUTATION-TESTING the production diff (temporarily reverting BOTH the
+pre-mount seed calls and the `unchanged` skip to their pre-task-15459 equivalents,
+confirming the SAME failure still reproduces, then restoring) -- not merely
+re-run-and-hope:
+
+- **9 of 14 are pre-existing, unrelated to this diff** (reproduce byte-for-byte with the
+  production change neutralized): `test_action_library_notes_files_back_returns_to_
+  database` (already documented above -- `WorkspaceProbe` drift from the 15457 merge),
+  `test_library_note_sync_routes_cancel_pending_navigator_focus` (focus lands on
+  `console-rail-section-toggle-library-details` instead of `library-notes-filter` --
+  same symptom class the 15457 reconciliation notes describe as a residual focus-escape
+  risk), `test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes`,
+  `test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy`,
+  `test_library_shell_note_undo_blocks_concurrent_create_and_delete`,
+  `test_library_ingest_canvas_metadata_placeholders_are_optional_labeled`,
+  `test_reset_to_defaults_resets_text_inputs_and_persistence`,
+  `test_conflict_resolution_discard_keeps_cancel_first_confirmation`,
+  `test_file_notes_production_shell_preserves_canvas_across_breakpoints`. None of these
+  touch `__init__`/`restore_state`/`on_mount`/`_apply_local_source_snapshot`; several
+  reproduce the exact `console-rail-section-toggle-library-details` focus-escape
+  signature the 15457 reconciliation notes already flagged as a residual risk. Not fixed
+  here -- out of this task's scope.
+- **4 of 14 are load/order flakiness, not real failures**: `test_library_shell_blank_
+  note_untouched_is_gc_from_real_db_on_back`, `test_library_shell_ingest_canvas_happy_
+  path_open_in_library`, `test_library_screen_membership_load_retry_and_apply_retry_are_
+  distinct`, `test_library_screen_manager_create_search_rename_and_explicit_all` -- each
+  passed reliably (3+ runs) in isolation with this diff fully active; they only failed
+  inside the heavily-contended full-file batch runs.
+- **1 of 14 needed a genuine test update, now applied**:
+  `test_library_note_recompose_and_fifty_route_cycles_return_to_baseline`'s stress loop
+  called `_apply_local_source_snapshot` with data byte-identical to what was already
+  rendered, using the OLD unconditional-recompose behavior as its stimulus to churn the
+  Notes workbench 5 times while a dirty session was open. That is now correctly a no-op
+  under the `unchanged` skip -- exactly the fix's intent -- so the loop was updated to
+  vary the notes count each iteration (a stand-in for a real background count change),
+  restoring its original intent (recompose-churn resilience) under the new contract. Only
+  after that fix does the test reach its OWN unrelated, pre-existing failure further down
+  (`exercised_groups` missing `library_note_create`/`library_note_delete` -- confirmed via
+  the same mutation-bisection to reproduce identically with production code reverted, so
+  a Notes create/delete worker-group routing drift, most likely also from 15457). Test
+  fix committed; the pre-existing failure is not fixed here -- out of scope.
 
 **Files changed:** `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_shell.py`.
