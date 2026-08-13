@@ -5,10 +5,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Checkbox,
     Input,
     OptionList,
     RadioButton,
@@ -19,14 +21,20 @@ from textual.widgets import (
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSSettingsSaveEvent,
+    STTSSettingsSaveResult,
+)
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
     WizardStepConfig,
 )
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    SETUP_DRAFT_VERSION,
     STEP_APPEARANCE,
     STEP_MODEL,
+    STEP_VOICE,
     STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
@@ -38,6 +46,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_FULL,
     TRACK_QUICK,
     FirstRunModelDiscoveryKey,
+    SetupDraft,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     CLOUD_PROBE_TIMEOUT_SECONDS,
@@ -54,6 +63,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SetupWizardContainer,
     SummaryStep,
     ToolsStep,
+    VoiceSetupStep,
     _provider_group_option_id,
     _provider_options,
 )
@@ -75,6 +85,25 @@ class _HostApp(App):
     def _capture(self, result) -> None:
         self.wizard_result = result
         self.wizard_results.append(result)
+
+    @on(STTSSettingsSaveEvent)
+    def _complete_voice_settings_save(self, event: STTSSettingsSaveEvent) -> None:
+        assert event.request_id is not None
+        event.reply_to.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=event.request_id,
+                persisted=True,
+                provider_statuses={"openai": "applied"},
+                provider_configuration_revisions={"openai": 1},
+                provider_runtime_revisions={"openai": 1},
+                defaults_activated=(
+                    True if event.commit_defaults_after_handoff else None
+                ),
+                defaults_activation_status=(
+                    "committed" if event.commit_defaults_after_handoff else None
+                ),
+            )
+        )
 
 
 class _StyledHostApp(_HostApp):
@@ -106,7 +135,338 @@ async def test_welcome_track_choice_activates_quick_steps():
         container.select_track(TRACK_QUICK)
         assert STEP_PROVIDER in container.active_ids
         assert STEP_RAG not in container.active_ids
+        assert container.active_ids.index(STEP_VOICE) == (
+            container.active_ids.index(STEP_MODEL) + 1
+        )
         assert container.active_ids[-1] == STEP_SUMMARY
+
+
+@pytest.mark.asyncio
+async def test_voice_step_compact_controls_are_ordered_and_default_is_opt_in():
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={})
+    step = VoiceSetupStep(
+        wizard=wizard,
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        ordered_ids = [
+            widget.id
+            for widget in step.walk_children()
+            if widget.id
+            in {
+                "setup-voice-preset",
+                "setup-voice-endpoint",
+                "setup-voice-auth",
+                "setup-voice-model",
+                "setup-voice-voice",
+                "setup-voice-sample",
+                "setup-voice-test",
+                "setup-voice-status",
+                "setup-voice-default",
+            }
+        ]
+
+        assert ordered_ids == [
+            "setup-voice-preset",
+            "setup-voice-endpoint",
+            "setup-voice-auth",
+            "setup-voice-model",
+            "setup-voice-voice",
+            "setup-voice-sample",
+            "setup-voice-test",
+            "setup-voice-status",
+            "setup-voice-default",
+        ]
+        assert step.query_one("#setup-voice-default", Checkbox).value is False
+        assert step.query_one("#setup-voice-test", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_voice_sample_disables_only_test_and_preserves_configuration():
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={})
+    step = VoiceSetupStep(
+        wizard=wizard,
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        endpoint = step.query_one("#setup-voice-endpoint", Input)
+        model = step.query_one("#setup-voice-model", Input)
+        voice = step.query_one("#setup-voice-voice", Input)
+        sample = step.query_one("#setup-voice-sample", Input)
+        endpoint.value = "http://127.0.0.1:8765/v1/audio/speech"
+        model.value = "pocket-tts"
+        voice.value = "alba"
+        sample.value = " "
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-test", Button).disabled is True
+        assert endpoint.value == "http://127.0.0.1:8765/v1/audio/speech"
+        assert model.value == "pocket-tts"
+        assert voice.value == "alba"
+        assert "0 / 500" in str(
+            step.query_one("#setup-voice-sample-count", Static).renderable
+        )
+        ok, error = await step.commit()
+        assert ok is False
+        assert "sample" in error.casefold()
+
+
+@pytest.mark.asyncio
+async def test_invalid_voice_speed_returns_inline_validation_instead_of_raising():
+    from types import SimpleNamespace
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-speed", Input).value = "not-a-number"
+
+        ok, error = await step.commit()
+
+        assert ok is False
+        assert "speed" in error.casefold()
+
+
+@pytest.mark.asyncio
+async def test_default_choice_does_not_invalidate_verified_sample() -> None:
+    from types import SimpleNamespace
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        verified = step._draft_from_controls()
+        step._verified_draft = verified
+        step.query_one("#setup-voice-status", Static).update("Verified.")
+
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        await pilot.pause()
+
+        assert step._verified_draft == verified
+        assert "Verified" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_voice_save_result_uses_submitted_default_choice() -> None:
+    from types import SimpleNamespace
+
+    class DelayedSaveHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = DelayedSaveHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        await pilot.pause()
+        commit = __import__("asyncio").create_task(step.commit())
+        await pilot.pause()
+        assert app.saved_event is not None
+
+        step.query_one("#setup-voice-default", Checkbox).value = False
+        step.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.saved_event.request_id,
+                persisted=True,
+                provider_statuses={"openai": "applied"},
+                provider_configuration_revisions={"openai": 1},
+                provider_runtime_revisions={"openai": 1},
+                defaults_activated=False,
+                defaults_activation_status="activation_not_ready",
+            )
+        )
+
+        ok, error = await commit
+        assert ok is False
+        assert "default" in error.casefold()
+
+
+@pytest.mark.asyncio
+async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() -> None:
+    from types import SimpleNamespace
+
+    class DelayedSaveHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = DelayedSaveHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        commit = __import__("asyncio").create_task(step.commit())
+        await pilot.pause()
+        assert app.saved_event is not None
+
+        step.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.saved_event.request_id,
+                persisted=True,
+                provider_statuses={"openai": "pending"},
+                provider_configuration_revisions={"openai": 7},
+                staged_provider_ids=frozenset({"openai"}),
+            )
+        )
+        await pilot.pause()
+        assert commit.done() is False
+
+        step.receive_stts_settings_runtime_result(
+            STTSSettingsSaveResult(
+                request_id=app.saved_event.request_id,
+                persisted=True,
+                provider_statuses={"openai": "applied"},
+                provider_configuration_revisions={"openai": 7},
+                provider_runtime_revisions={"openai": 41},
+            )
+        )
+
+        assert await commit == (True, "")
+
+
+@pytest.mark.asyncio
+async def test_voice_resume_restores_all_non_secret_controls():
+    resume = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_VOICE,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_VOICE: {
+                "endpoint": "http://127.0.0.1:9876/v1/audio/speech",
+                "authentication_mode": "none",
+                "model_id": "resume-model",
+                "voice_id": "resume-voice",
+                "response_format": "wav",
+                "speed": 1.25,
+                "sample_text": "Resume my voice sample.",
+                "use_as_default": True,
+            },
+        },
+    )
+    wizard = _make_wizard(resume_draft=resume)
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        step = container.steps[container._step_index_for_id(STEP_VOICE)]
+        assert isinstance(step, VoiceSetupStep)
+        assert step.query_one("#setup-voice-endpoint", Input).value.endswith(
+            ":9876/v1/audio/speech"
+        )
+        assert step.query_one("#setup-voice-model", Input).value == "resume-model"
+        assert step.query_one("#setup-voice-voice", Input).value == "resume-voice"
+        assert step.query_one("#setup-voice-speed", Input).value == "1.25"
+        assert step.query_one("#setup-voice-default", Checkbox).value is True
+
+
+@pytest.mark.asyncio
+async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    async def fail_sample(*_args, **_kwargs):
+        raise ValueError("server-owned detail")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step_state.run_voice_sample",
+        fail_sample,
+    )
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause(0.1)
+
+        status = str(step.query_one("#setup-voice-status", Static).renderable)
+        assert "Needs test" in status
+        assert "server-owned" not in status
+        assert step.query_one("#setup-voice-test", Button).disabled is False
+        assert voice_state.validate_voice_setup_draft(
+            step._draft_from_controls()
+        ).configuration_valid
+
+
+@pytest.mark.asyncio
+async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_sample(draft, **_kwargs):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", delayed_sample)
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        step.query_one("#setup-voice-endpoint", Input).value = (
+            "http://127.0.0.1:9999/v1/audio/speech"
+        )
+        await pilot.pause()
+        release.set()
+        await pilot.pause(0.1)
+
+        assert "Needs test" in str(
+            step.query_one("#setup-voice-status", Static).renderable
+        )
+        assert step._verified_draft is None
 
 
 @pytest.mark.asyncio
@@ -316,11 +676,18 @@ async def test_next_button_click_drives_quick_track_to_completion():
 
         assert app.wizard_result == {"completed": True, "exit_route": None}
         # Exactly the quick-track subset, each step visited once, in order.
-        assert seen_step_ids == ["provider", "model", "summary", "summary"]
+        assert seen_step_ids == [
+            "provider",
+            "model",
+            "voice",
+            "summary",
+            "summary",
+        ]
         assert set(container.wizard_data.keys()) == {
             "welcome",
             "provider",
             "model",
+            "voice",
             "summary",
         }
 
@@ -385,8 +752,8 @@ async def test_mounted_provider_and_model_advance_checkpoint_then_commit_atomica
         assert len(atomic_mutations) == 1
         assert container.provider_setup_committed is True
         assert container.committed_provider_model == "mounted-model"
-        assert container.steps[container.current_step].config.id == STEP_PROTECT
-        assert checkpoints[-1]["active_step_id"] == STEP_PROTECT
+        assert container.steps[container.current_step].config.id == STEP_VOICE
+        assert checkpoints[-1]["active_step_id"] == STEP_VOICE
         assert checkpoints[-1]["draft_values"][STEP_MODEL] == {
             "model_id": "mounted-model"
         }
@@ -3859,7 +4226,7 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
 @pytest.mark.asyncio
 async def test_progress_defaults_to_quick_track_and_titles_fit():
-    """TASK-1499: Welcome anchors at the recommended 4-step count, and no
+    """TASK-1499: Welcome anchors at the recommended 5-step count, and no
     step title exceeds the ~8-char budget the progress row can render."""
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
     from tldw_chatbook.UI.Wizards.first_run_setup_state import TRACK_QUICK
@@ -3870,7 +4237,7 @@ async def test_progress_defaults_to_quick_track_and_titles_fit():
         await pilot.pause(0.2)
         container = wizard.query_one(SetupWizardContainer)
         assert container.track == TRACK_QUICK
-        assert len(container.active_ids) == 4  # welcome, provider, model, summary
+        assert len(container.active_ids) == 5
         for step in container.steps:
             title = step.config.title
             assert len(title) <= 8, f"step title too long for progress row: {title!r}"
@@ -3887,7 +4254,7 @@ async def test_setup_progress_renders_projection_state_classes_and_dynamic_total
         container = wizard.query_one(SetupWizardContainer)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == len(container.active_ids) == 4
+        assert len(rows) == len(container.active_ids) == 5
         assert [row.id for row in rows] == [
             f"setup-progress-{step_id}" for step_id in container.active_ids
         ]
@@ -3904,9 +4271,9 @@ async def test_setup_progress_renders_projection_state_classes_and_dynamic_total
         container.note_key_entered()
         await pilot.pause(0.1)
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == len(container.active_ids) == 5
+        assert len(rows) == len(container.active_ids) == 6
         progress_text = str(wizard.query_one("#wizard-progress", Static).render())
-        assert "Step 2 of 5" in progress_text
+        assert "Step 2 of 6" in progress_text
 
 
 @pytest.mark.parametrize("theme", ("textual-dark", "textual-light"))
@@ -3931,7 +4298,7 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
         await pilot.pause(0.1)
 
         rows = list(wizard.query(".setup-progress-item"))
-        assert len(rows) == (10 if include_protect else 9)
+        assert len(rows) == (11 if include_protect else 10)
         assert sum(row.has_class("-active") for row in rows) == 1
         assert all(
             row.has_class("-active")
@@ -3983,7 +4350,7 @@ async def test_quick_track_progress_recovers_titles_after_live_resize(theme: str
         await pilot.pause(0.2)
         assert not progress.has_class("-compact")
         rows = list(progress.query(".setup-progress-item"))
-        assert len(rows) == 4
+        assert len(rows) == 5
         for row in rows:
             title = row.query_one(".step-title")
             assert title.display
@@ -4192,7 +4559,7 @@ async def test_key_hints_footer_and_test_button_probe():
         from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
         progress = wizard.query_one(WizardProgress)
-        assert progress.total_steps == 4
+        assert progress.total_steps == 5
 
     # Test button: fires the probe with the typed key.
     probe = AsyncMock()
@@ -4278,6 +4645,7 @@ class TestComposeCrashPolicy:
             (STEP_WELCOME, "diagnostics"),
             (STEP_PROVIDER, "providers-models"),
             (STEP_MODEL, "providers-models"),
+            (STEP_VOICE, "speech-tts"),
             (STEP_SPEECH, "speech-tts"),
             (STEP_TOOLS, "advanced-config"),
             (STEP_NOTES, "advanced-config"),
@@ -5054,20 +5422,20 @@ async def test_welcome_exit_paths_state_their_consequences():
 async def test_quick_track_label_names_the_steps_the_tracker_shows():
     """TASK-2154.9 (FR-02): picking "provider & model" and then seeing four
     tracker entries was the surprise -- the quick-track label now names
-    provider, model & summary (Welcome being the step the choice is made
-    on), matching the progress row and the "Step 1 of 4" count."""
+    provider, model, voice & summary (Welcome being the step the choice is made
+    on), matching the progress row and the "Step 1 of 5" count."""
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         quick = wizard.query_one("#setup-track-quick", RadioButton)
         label = str(quick.label)
-        assert "provider, model & summary" in label
+        assert "provider, model, voice & summary" in label
         assert "recommended" in label
         container = wizard.query_one(SetupWizardContainer)
-        assert len(container.active_ids) == 4
+        assert len(container.active_ids) == 5
         nav = wizard.query_one(WizardNavigation)
-        assert nav.total_steps == 4
+        assert nav.total_steps == 5
 
 
 @pytest.mark.asyncio
@@ -5083,12 +5451,12 @@ async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
         container = wizard.query_one(SetupWizardContainer)
         nav = wizard.query_one(WizardNavigation)
         assert STEP_PROTECT not in container.active_ids
-        assert nav.total_steps == 4
+        assert nav.total_steps == 5
 
         container.note_key_entered()
         await pilot.pause(0.1)
 
         assert STEP_PROTECT in container.active_ids
-        assert nav.total_steps == 5
+        assert nav.total_steps == 6
         progress_text = str(wizard.query_one("#wizard-progress", Static).render())
-        assert "Step 1 of 5" in progress_text
+        assert "Step 1 of 6" in progress_text

@@ -603,6 +603,7 @@ TRACK_FULL = "full"
 STEP_WELCOME = "welcome"
 STEP_PROVIDER = "provider"
 STEP_MODEL = "model"
+STEP_VOICE = "voice"
 STEP_RAG = "rag"
 STEP_SPEECH = "speech"
 STEP_TOOLS = "tools"
@@ -615,6 +616,7 @@ STEP_TITLES: Mapping[str, str] = {
     STEP_WELCOME: "Welcome",
     STEP_PROVIDER: "Provider",
     STEP_MODEL: "Model",
+    STEP_VOICE: "Voice",
     STEP_RAG: "RAG",
     STEP_SPEECH: "Speech",
     STEP_TOOLS: "Tools",
@@ -641,6 +643,7 @@ _FULL_TRACK = (
     STEP_WELCOME,
     STEP_PROVIDER,
     STEP_MODEL,
+    STEP_VOICE,
     STEP_RAG,
     STEP_SPEECH,
     STEP_TOOLS,
@@ -649,12 +652,29 @@ _FULL_TRACK = (
     STEP_PROTECT,
     STEP_SUMMARY,
 )
-_QUICK_TRACK = (STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY)
+_QUICK_TRACK = (
+    STEP_WELCOME,
+    STEP_PROVIDER,
+    STEP_MODEL,
+    STEP_VOICE,
+    STEP_PROTECT,
+    STEP_SUMMARY,
+)
 
 _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
     STEP_WELCOME: {"track": str},
     STEP_PROVIDER: {"provider_key": str, "provider_value": str},
     STEP_MODEL: {"model_id": str},
+    STEP_VOICE: {
+        "endpoint": str,
+        "authentication_mode": str,
+        "model_id": str,
+        "voice_id": str,
+        "response_format": str,
+        "speed": float,
+        "sample_text": str,
+        "use_as_default": bool,
+    },
     STEP_RAG: {"embedding_model": str},
     STEP_SPEECH: {},
     STEP_TOOLS: {},

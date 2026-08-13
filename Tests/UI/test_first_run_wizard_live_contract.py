@@ -44,7 +44,15 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Input, OptionList, RadioButton, Static, Switch
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    OptionList,
+    RadioButton,
+    Static,
+    Switch,
+)
 
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -61,6 +69,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SpeechSetupStep,
     SetupWizardContainer,
     ToolsStep,
+    VoiceSetupStep,
     _SettlingGuardedConfirmationDialog,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -75,6 +84,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_PROVIDER,
     STEP_SUMMARY,
     STEP_TOOLS,
+    STEP_VOICE,
     STEP_WELCOME,
     TRACK_FULL,
     TRACK_QUICK,
@@ -1478,11 +1488,12 @@ async def test_full_track_skip_everything_leaves_app_usable(
             else:
                 raise AssertionError("never reached the summary step")
 
-            # TASK-1301: Speech transcription joins the FULL track right
-            # after RAG; every step here is skip-safe with nothing selected.
+            # Voice follows Model in both tracks; Speech transcription joins
+            # the FULL track right after RAG. Every step remains skip-safe.
             assert seen_step_ids == [
                 "provider",
                 "model",
+                "voice",
                 "rag",
                 "speech",
                 "tools",
@@ -1541,8 +1552,8 @@ async def _open_rerun_wizard_from_settings(pilot):
 
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
-    # summary without picking anything (every step is skip-safe).
-    for _ in range(3):
+    # voice -> summary without picking anything (every step is skip-safe).
+    for _ in range(4):
         _press(wizard_screen, "#wizard-next")
         await pilot.pause(0.2)
     container = wizard_screen.query_one(SetupWizardContainer)
@@ -1714,6 +1725,67 @@ async def test_wizard_navigation_visible_at_80x24(
                 assert expected in rendered_text, (
                     f"{expected!r} button text missing from the rendered frame"
                 )
+
+
+@pytest.mark.parametrize("track", [TRACK_QUICK, TRACK_FULL])
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.parametrize("size", [(80, 24), (120, 40), (177, 45)])
+@pytest.mark.asyncio
+async def test_voice_step_controls_are_stable_and_scroll_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    track: str,
+    theme: str,
+    size: tuple[int, int],
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app.theme = theme
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=size) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            container.select_track(track)
+            await pilot.pause(0.1)
+            voice_index = container._step_index_for_id(STEP_VOICE)
+            assert voice_index is not None
+            container.show_step(voice_index)
+            await pilot.pause(0.2)
+
+            step = container.steps[voice_index]
+            assert isinstance(step, VoiceSetupStep)
+            assert step.virtual_size.height > step.container_size.height
+
+            controls = (
+                step.query_one("#setup-voice-endpoint", Input),
+                step.query_one("#setup-voice-auth"),
+                step.query_one("#setup-voice-model", Input),
+                step.query_one("#setup-voice-voice", Input),
+                step.query_one("#setup-voice-sample", Input),
+                step.query_one("#setup-voice-test", Button),
+                step.query_one("#setup-voice-default", Checkbox),
+            )
+            assert all(control.region.width > 0 for control in controls)
+            assert all(control.region.right <= size[0] for control in controls)
+
+            for control in controls:
+                control.focus()
+                await pilot.pause(0.2)
+                assert control.region.y >= 0
+                assert control.region.bottom <= size[1]
+                assert control in app.screen._compositor.visible_widgets, (
+                    f"{control.id} was not painted after focus: "
+                    f"control={control.region}, step={step.region}, "
+                    f"viewport={step.container_size}, virtual={step.virtual_size}, "
+                    f"offset={step.scroll_offset}"
+                )
+
+            for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
+                button = app.screen.query_one(selector, Button)
+                assert button.region.right <= size[0]
+                assert button.region.bottom <= size[1]
 
 
 # ---------------------------------------------------------------------------
@@ -1898,7 +1970,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
             await pilot.pause(0.2)
 
-            for _ in range(4):
+            for _ in range(5):
                 step = app.screen.query_one(SetupWizardContainer).steps[
                     app.screen.query_one(SetupWizardContainer).current_step
                 ]
@@ -2173,10 +2245,9 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 ) -> None:
     """TASK-1496 AC #1: "focusing any wizard widget scrolls it into view."
 
-    100x30 keeps the wizard's fixed chrome overhead (see this section's
-    docstring) from swallowing the ENTIRE step viewport the way it does at
-    80x24, while staying small enough that Provider's own content (even
-    capped per TASK-1495) still overflows the step's ~5-row box -- exactly
+    100x24 keeps enough horizontal room to avoid excessive wrapping while
+    staying small enough that Provider's own content (even capped per
+    TASK-1495) genuinely overflows the step viewport -- exactly
     the condition this fix's ".setup-step { overflow-y: auto }" targets.
     Textual's own Screen.set_focus (invoked by Widget.focus(), the default
     for both a real Tab press and this test's explicit call) already
@@ -2187,7 +2258,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(100, 30)) as pilot:
+        async with app.run_test(size=(100, 24)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -2204,11 +2275,11 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
-                and region_before.bottom <= 30
+                and region_before.bottom <= 24
                 and region_before.right <= 100
             )
             assert not fits_before, (
-                "test assumption broken: key Input already fits at 100x30 "
+                "test assumption broken: key Input already fits at 100x24 "
                 f"without any scroll ({region_before}) -- this test needs "
                 "genuine overflow to prove the scroll-into-view fix"
             )
@@ -2218,7 +2289,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
             region_after = key_input.region
             assert region_after.width > 0 and region_after.height > 0
-            assert region_after.y >= 0 and region_after.bottom <= 30, (
+            assert region_after.y >= 0 and region_after.bottom <= 24, (
                 f"key Input still clipped after focusing it: {region_after}"
             )
             assert region_after.right <= 100
@@ -2231,7 +2302,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
                 button = app.screen.query_one(widget_id, Button)
                 region = button.region
                 assert region.width > 0 and region.height > 0
-                assert region.right <= 100 and region.bottom <= 30
+                assert region.right <= 100 and region.bottom <= 24
 
 
 # ---------------------------------------------------------------------------

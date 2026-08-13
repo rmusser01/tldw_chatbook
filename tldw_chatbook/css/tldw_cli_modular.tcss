@@ -17985,6 +17985,7 @@ SmartContentTree Tree > .selected-node {
 .setup-welcome,
 .setup-provider,
 .setup-model,
+.setup-voice,
 .setup-rag,
 .setup-speech,
 .setup-tools,
@@ -17996,6 +17997,57 @@ SmartContentTree Tree > .selected-node {
      * content taller than the step's 100%-height viewport actually
      * registers as "overflow" for ".setup-step" above to scroll. */
     height: auto;
+}
+
+/* Task 2.7: Voice keeps a stable compact control rhythm while the shared
+ * setup-step viewport owns scrolling at narrow and short terminal sizes. */
+.setup-voice {
+    padding: 0 2 1 2;
+}
+
+.setup-voice-segmented {
+    layout: horizontal;
+    height: 3;
+    min-height: 3;
+    border: solid $primary;
+    overflow: hidden hidden;
+}
+
+.setup-voice-segmented SetupRadioButton {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+}
+
+.setup-voice-segmented SetupRadioButton.-on {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.setup-voice-output-row {
+    height: 5;
+}
+
+.setup-voice-output-row > Vertical {
+    width: 1fr;
+    height: 5;
+}
+
+#setup-voice-sample-count {
+    height: 1;
+    text-align: right;
+    color: $text-muted;
+}
+
+#setup-voice-test {
+    margin-top: 1;
+}
+
+#setup-voice-status {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
 }
 
 /* Design intent #2/#3: a step's internal choice list (Provider's ~27-row

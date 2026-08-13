@@ -8,7 +8,9 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from functools import partial
@@ -27,6 +29,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Checkbox,
     Input,
     Label,
     OptionList,
@@ -74,6 +77,7 @@ from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardContainer,
     WizardNavigation,
@@ -229,6 +233,7 @@ REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
     wizard_state.STEP_WELCOME: "diagnostics",
     wizard_state.STEP_PROVIDER: "providers-models",
     wizard_state.STEP_MODEL: "providers-models",
+    wizard_state.STEP_VOICE: "speech-tts",
     wizard_state.STEP_SPEECH: "speech-tts",
     wizard_state.STEP_TOOLS: "advanced-config",
     wizard_state.STEP_NOTES: "advanced-config",
@@ -1859,6 +1864,444 @@ class ModelStep(SetupStep):
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"model_id": self._effective_model_id()}
+
+
+class VoiceSetupStep(SetupStep):
+    """Compact OpenAI-compatible TTS setup shared by Quick and Full tracks."""
+
+    _SAVE_TIMEOUT_SECONDS = 30.0
+
+    def __init__(self, wizard=None, config=None, **kwargs: Any) -> None:
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._preset = voice_state.VOICE_PRESET_POCKET_TTS
+        self._custom_draft: voice_state.VoiceSetupDraft | None = None
+        self._verified_draft: voice_state.VoiceSetupDraft | None = None
+        self._next_save_request_id = 1
+        self._save_request_id: int | None = None
+        self._save_draft: voice_state.VoiceSetupDraft | None = None
+        self._save_future: asyncio.Future[tuple[bool, str]] | None = None
+        self._test_generation = 0
+        self._sample_audio_path: Path | None = None
+
+    @staticmethod
+    def _initial_draft() -> voice_state.VoiceSetupDraft:
+        return voice_state.VoiceSetupDraft(
+            endpoint=voice_state.POCKET_TTS_ENDPOINT,
+            authentication_mode="none",
+            model_id="pocket-tts",
+            voice_id="alba",
+            response_format="wav",
+            speed=1.0,
+            sample_text="Hello from Chatbook.",
+            use_as_default=False,
+        )
+
+    def compose_step(self) -> ComposeResult:
+        draft = self._initial_draft()
+        with Vertical(classes="setup-voice"):
+            yield Static("Set up a voice", classes="setup-title")
+            yield Label("Service", classes="setup-field-label")
+            with RadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
+                yield SetupRadioButton(
+                    "PocketTTS",
+                    id="setup-voice-preset-pocket",
+                    value=True,
+                )
+                yield SetupRadioButton(
+                    "Official OpenAI",
+                    id="setup-voice-preset-official",
+                )
+                yield SetupRadioButton(
+                    "Custom compatible",
+                    id="setup-voice-preset-custom",
+                )
+            yield Label("Endpoint", classes="setup-field-label")
+            yield Input(
+                value=draft.endpoint,
+                id="setup-voice-endpoint",
+                placeholder="http://127.0.0.1:8765/v1/audio/speech",
+            )
+            yield Label("Authentication", classes="setup-field-label")
+            with RadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
+                yield SetupRadioButton(
+                    "None",
+                    id="setup-voice-auth-none",
+                    value=True,
+                )
+                yield SetupRadioButton("API key", id="setup-voice-auth-key")
+            yield Label("Model", classes="setup-field-label")
+            yield Input(value=draft.model_id, id="setup-voice-model")
+            yield Label("Voice", classes="setup-field-label")
+            yield Input(value=draft.voice_id, id="setup-voice-voice")
+            with Horizontal(classes="setup-voice-output-row"):
+                with Vertical():
+                    yield Label("Format", classes="setup-field-label")
+                    yield Input(value=draft.response_format, id="setup-voice-format")
+                with Vertical():
+                    yield Label("Speed", classes="setup-field-label")
+                    yield Input(value=str(draft.speed), id="setup-voice-speed")
+            yield Label("Sample text", classes="setup-field-label")
+            yield Input(
+                value=draft.sample_text,
+                id="setup-voice-sample",
+                max_length=500,
+            )
+            yield Static(
+                f"{len(draft.sample_text)} / 500",
+                id="setup-voice-sample-count",
+                classes="setup-field-help",
+            )
+            yield Button(
+                "Test and Hear",
+                id="setup-voice-test",
+                variant="primary",
+            )
+            yield Static(
+                "Needs test. You can save this configuration while offline.",
+                id="setup-voice-status",
+                classes="setup-subtitle",
+            )
+            yield Checkbox(
+                "Use as default",
+                id="setup-voice-default",
+                value=False,
+            )
+            yield Static("", classes="setup-step-error")
+
+    def _selected_authentication(self) -> str:
+        pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
+        return "api_key" if pressed is not None and pressed.id == "setup-voice-auth-key" else "none"
+
+    def _draft_from_controls(self) -> voice_state.VoiceSetupDraft:
+        try:
+            speed = float(self.query_one("#setup-voice-speed", Input).value)
+        except ValueError as error:
+            raise ValueError("Speed must be a number between 0.25 and 4.0.") from error
+        return voice_state.VoiceSetupDraft(
+            endpoint=self.query_one("#setup-voice-endpoint", Input).value,
+            authentication_mode=self._selected_authentication(),
+            model_id=self.query_one("#setup-voice-model", Input).value,
+            voice_id=self.query_one("#setup-voice-voice", Input).value,
+            response_format=self.query_one("#setup-voice-format", Input).value.strip().lower(),
+            speed=speed,
+            sample_text=self.query_one("#setup-voice-sample", Input).value,
+            use_as_default=self.query_one("#setup-voice-default", Checkbox).value,
+        )
+
+    def _apply_draft_to_controls(self, draft: voice_state.VoiceSetupDraft) -> None:
+        self.query_one("#setup-voice-endpoint", Input).value = draft.endpoint
+        self.query_one("#setup-voice-model", Input).value = draft.model_id
+        self.query_one("#setup-voice-voice", Input).value = draft.voice_id
+        self.query_one("#setup-voice-format", Input).value = draft.response_format
+        self.query_one("#setup-voice-speed", Input).value = str(draft.speed)
+        self.query_one("#setup-voice-sample", Input).value = draft.sample_text
+        self.query_one("#setup-voice-default", Checkbox).value = draft.use_as_default
+        auth_id = (
+            "setup-voice-auth-none"
+            if draft.authentication_mode == "none"
+            else "setup-voice-auth-key"
+        )
+        restore_selection = getattr(self.wizard, "_restore_radio_selection", None)
+        if callable(restore_selection):
+            restore_selection(
+                self.query_one("#setup-voice-auth", RadioSet),
+                lambda button: button.id == auth_id,
+            )
+        else:
+            self._set_radio(auth_id)
+        self._refresh_sample_state()
+
+    def _set_radio(self, button_id: str) -> None:
+        radio_set = self.query_one(f"#{button_id}", RadioButton).parent
+        if not isinstance(radio_set, RadioSet):
+            return
+        buttons = list(radio_set.query(RadioButton))
+        selected = next((button for button in buttons if button.id == button_id), None)
+        with radio_set.prevent(RadioButton.Changed):
+            for button in buttons:
+                button.value = button is selected
+        radio_set._pressed_button = selected
+        radio_set._selected = buttons.index(selected) if selected is not None else None
+
+    @on(RadioSet.Changed, "#setup-voice-preset")
+    def _on_preset(self, event: RadioSet.Changed) -> None:
+        if event.pressed is None:
+            return
+        try:
+            current = self._draft_from_controls()
+        except (TypeError, ValueError):
+            self.query_one(".setup-step-error", Static).update(
+                "Enter a valid speed before changing the service preset."
+            )
+            return
+        if self._preset == voice_state.VOICE_PRESET_CUSTOM:
+            self._custom_draft = current
+        preset = {
+            "setup-voice-preset-pocket": voice_state.VOICE_PRESET_POCKET_TTS,
+            "setup-voice-preset-official": voice_state.VOICE_PRESET_OFFICIAL_OPENAI,
+            "setup-voice-preset-custom": voice_state.VOICE_PRESET_CUSTOM,
+        }.get(event.pressed.id)
+        if preset is None:
+            return
+        self._preset = preset
+        base = self._custom_draft if preset == voice_state.VOICE_PRESET_CUSTOM and self._custom_draft is not None else current
+        self._apply_draft_to_controls(voice_state.apply_voice_preset(base, preset))
+
+    @on(Input.Changed, "#setup-voice-sample")
+    def _on_sample_changed(self) -> None:
+        self._invalidate_sample_evidence()
+        self._refresh_sample_state()
+
+    @on(Input.Changed)
+    def _on_voice_input_changed(self, event: Input.Changed) -> None:
+        if (
+            event.input.id
+            and event.input.id.startswith("setup-voice-")
+            and event.input.id != "setup-voice-sample"
+        ):
+            self._invalidate_sample_evidence()
+
+    @on(RadioSet.Changed, "#setup-voice-auth")
+    def _on_authentication_changed(self) -> None:
+        self._invalidate_sample_evidence()
+
+    def _invalidate_sample_evidence(self) -> None:
+        self._test_generation += 1
+        self._verified_draft = None
+        try:
+            self.query_one("#setup-voice-status", Static).update(
+                "Needs test. You can save this configuration while offline."
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _sample_identity(draft: voice_state.VoiceSetupDraft) -> tuple[object, ...]:
+        """Return only fields that affect the sample request."""
+
+        return (
+            draft.endpoint,
+            draft.authentication_mode,
+            draft.model_id,
+            draft.voice_id,
+            draft.response_format,
+            draft.speed,
+            draft.sample_text,
+        )
+
+    def _refresh_sample_state(self) -> None:
+        try:
+            sample = self.query_one("#setup-voice-sample", Input).value
+            trimmed_count = len(sample.strip())
+            self.query_one("#setup-voice-sample-count", Static).update(
+                f"{trimmed_count} / 500"
+            )
+            try:
+                voice_state.validate_voice_sample_text(sample)
+                valid = True
+            except ValueError:
+                valid = False
+            self.query_one("#setup-voice-test", Button).disabled = not valid
+        except Exception:
+            return
+
+    @on(Button.Pressed, "#setup-voice-test")
+    def _on_test_and_hear(self) -> None:
+        try:
+            draft = self._draft_from_controls()
+        except (TypeError, ValueError):
+            return
+        if not voice_state.validate_voice_setup_draft(draft).configuration_valid:
+            return
+        self._test_generation += 1
+        generation = self._test_generation
+        self.query_one("#setup-voice-status", Static).update("Testing voice…")
+        self.query_one("#setup-voice-test", Button).disabled = True
+        self.run_worker(
+            self._run_voice_sample(generation, draft),
+            exclusive=True,
+            group="setup-voice-sample",
+            exit_on_error=False,
+        )
+
+    def _existing_openai_credential(self) -> str | None:
+        if self._selected_authentication() != "api_key":
+            return None
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        if isinstance(app_config, Mapping):
+            api_settings = app_config.get("api_settings")
+            if isinstance(api_settings, Mapping):
+                openai = api_settings.get("openai")
+                if isinstance(openai, Mapping):
+                    value = openai.get("api_key")
+                    if isinstance(value, str) and value:
+                        return value
+        value = os.environ.get("OPENAI_API_KEY")
+        return value if value else None
+
+    async def _run_voice_sample(
+        self,
+        generation: int,
+        draft: voice_state.VoiceSetupDraft,
+    ) -> None:
+        try:
+            result = await voice_state.run_voice_sample(
+                draft,
+                credential=self._existing_openai_credential(),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if generation == self._test_generation:
+                self.query_one("#setup-voice-status", Static).update(
+                    "Needs test. The sample failed; review the service and retry."
+                )
+                self._refresh_sample_state()
+            return
+        if generation != self._test_generation:
+            return
+        try:
+            current = self._draft_from_controls()
+        except (TypeError, ValueError):
+            return
+        if self._sample_identity(current) != self._sample_identity(draft):
+            return
+        self._verified_draft = draft
+        self.query_one("#setup-voice-status", Static).update(
+            "Verified. The sample is ready to hear."
+        )
+        self._refresh_sample_state()
+        await self._play_sample(result)
+
+    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> None:
+        audio_player = getattr(self.app, "audio_player", None)
+        play = getattr(audio_player, "play", None)
+        if not callable(play):
+            return
+        suffix = "." + result.response_format
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix="chatbook-voice-sample-",
+                suffix=suffix,
+                delete=False,
+            ) as handle:
+                handle.write(result.body)
+                sample_path = Path(handle.name)
+            prior_path = self._sample_audio_path
+            self._sample_audio_path = sample_path
+            played = play(sample_path)
+            if asyncio.iscoroutine(played):
+                await played
+            if prior_path is not None:
+                prior_path.unlink(missing_ok=True)
+        except Exception:
+            logger.debug("Voice sample playback failed (category=playback)")
+
+    async def commit(self) -> tuple[bool, str]:
+        try:
+            draft = self._draft_from_controls()
+        except (TypeError, ValueError) as error:
+            return False, str(error) or "Review the Voice setup fields."
+        validation = voice_state.validate_voice_setup_draft(draft)
+        if not validation.configuration_valid:
+            return False, validation.errors[0] if validation.errors else "Review the Voice setup fields."
+        request_id = self._next_save_request_id
+        self._next_save_request_id += 1
+        self._save_request_id = request_id
+        self._save_draft = draft
+        self._save_future = asyncio.get_running_loop().create_future()
+        self.app.post_message(
+            voice_state.build_voice_setup_save_event(
+                draft,
+                request_id=request_id,
+                reply_to=self,
+            )
+        )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self._save_future),
+                timeout=self._SAVE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return False, "Voice settings are still applying. Retry to continue."
+        finally:
+            self._save_request_id = None
+            self._save_draft = None
+            self._save_future = None
+
+    def _receive_save_result(self, result: object) -> None:
+        from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+            STTSSettingsSaveResult,
+        )
+
+        future = self._save_future
+        if (
+            type(result) is not STTSSettingsSaveResult
+            or result.request_id != self._save_request_id
+            or future is None
+            or future.done()
+        ):
+            return
+        if not result.persisted:
+            future.set_result((False, "Saving the Voice settings failed. Retry."))
+            return
+        provider_status = result.provider_statuses.get("openai")
+        if provider_status == "pending":
+            return
+        runtime_ready = (
+            provider_status in {"applied", "unchanged"}
+            and "openai" in result.provider_configuration_revisions
+            and "openai" in result.provider_runtime_revisions
+        )
+        if not runtime_ready:
+            future.set_result(
+                (False, "The Voice settings were saved, but are not active. Retry.")
+            )
+            return
+        draft = self._save_draft
+        if draft is None:
+            return
+        if not draft.use_as_default:
+            future.set_result((True, ""))
+            return
+        if result.defaults_activated is True:
+            future.set_result((True, ""))
+            return
+        future.set_result(
+            (
+                False,
+                "The Voice settings were saved, but the default was not activated. Retry.",
+            )
+        )
+
+    def receive_stts_settings_save_result(self, result: object) -> None:
+        self._receive_save_result(result)
+
+    def receive_stts_settings_runtime_result(self, result: object) -> None:
+        self._receive_save_result(result)
+
+    def get_step_data(self) -> Dict[str, Any]:
+        values: Dict[str, Any] = {
+            "endpoint": self.query_one("#setup-voice-endpoint", Input).value,
+            "authentication_mode": self._selected_authentication(),
+            "model_id": self.query_one("#setup-voice-model", Input).value,
+            "voice_id": self.query_one("#setup-voice-voice", Input).value,
+            "response_format": self.query_one(
+                "#setup-voice-format", Input
+            ).value.strip().lower(),
+            "sample_text": self.query_one("#setup-voice-sample", Input).value,
+            "use_as_default": self.query_one(
+                "#setup-voice-default", Checkbox
+            ).value,
+        }
+        try:
+            speed = float(self.query_one("#setup-voice-speed", Input).value)
+            if not math.isfinite(speed):
+                raise ValueError
+        except ValueError:
+            return values
+        values["speed"] = speed
+        return values
 
 
 class RagStep(SetupStep):
@@ -3979,7 +4422,7 @@ class WelcomeStep(SetupStep):
                 # so the "Step 1 of 4" count is not a surprise after picking
                 # what read as a two-item "provider & model" track.
                 yield SetupRadioButton(
-                    "Quick setup — provider, model & summary (recommended)",
+                    "Quick setup — provider, model, voice & summary (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
@@ -4706,6 +5149,41 @@ class SetupWizardContainer(WizardContainer):
                 model_step._model_id_from_custom_input = bool(model_id)
                 model_step.query_one("#setup-model-custom", Input).value = model_id
 
+            voice_values = draft.values.get(wizard_state.STEP_VOICE, {})
+            voice_step = self.steps[
+                self._step_index_for_id(wizard_state.STEP_VOICE)
+            ]
+            if isinstance(voice_step, VoiceSetupStep) and voice_values:
+                initial = voice_step._initial_draft()
+                restored_voice = voice_state.VoiceSetupDraft(
+                    endpoint=str(voice_values.get("endpoint", initial.endpoint)),
+                    authentication_mode=str(
+                        voice_values.get(
+                            "authentication_mode",
+                            initial.authentication_mode,
+                        )
+                    ),
+                    model_id=str(voice_values.get("model_id", initial.model_id)),
+                    voice_id=str(voice_values.get("voice_id", initial.voice_id)),
+                    response_format=str(
+                        voice_values.get("response_format", initial.response_format)
+                    ),
+                    speed=float(voice_values.get("speed", initial.speed)),
+                    sample_text=str(
+                        voice_values.get("sample_text", initial.sample_text)
+                    ),
+                    use_as_default=bool(
+                        voice_values.get("use_as_default", initial.use_as_default)
+                    ),
+                )
+                voice_step._custom_draft = restored_voice
+                voice_step._preset = voice_state.VOICE_PRESET_CUSTOM
+                voice_step._apply_draft_to_controls(restored_voice)
+                self._restore_radio_selection(
+                    voice_step.query_one("#setup-voice-preset", RadioSet),
+                    lambda button: button.id == "setup-voice-preset-custom",
+                )
+
             rag_values = draft.values.get(wizard_state.STEP_RAG, {})
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
             if isinstance(rag_step, RagStep) and "embedding_model" in rag_values:
@@ -4794,6 +5272,7 @@ class SetupWizardContainer(WizardContainer):
             wizard_state.STEP_WELCOME: WelcomeStep,
             wizard_state.STEP_PROVIDER: ProviderStep,
             wizard_state.STEP_MODEL: ModelStep,
+            wizard_state.STEP_VOICE: VoiceSetupStep,
             wizard_state.STEP_RAG: RagStep,
             wizard_state.STEP_SPEECH: SpeechSetupStep,
             wizard_state.STEP_TOOLS: ToolsStep,
@@ -4829,22 +5308,23 @@ class SetupWizardContainer(WizardContainer):
             cfg(wizard_state.STEP_WELCOME, titles[wizard_state.STEP_WELCOME], 1),
             cfg(wizard_state.STEP_PROVIDER, titles[wizard_state.STEP_PROVIDER], 2),
             cfg(wizard_state.STEP_MODEL, titles[wizard_state.STEP_MODEL], 3),
+            cfg(wizard_state.STEP_VOICE, titles[wizard_state.STEP_VOICE], 4),
             cfg(
                 wizard_state.STEP_RAG,
                 titles[wizard_state.STEP_RAG],
-                4,
+                5,
                 required=False,
             ),
-            cfg(wizard_state.STEP_SPEECH, titles[wizard_state.STEP_SPEECH], 5),
-            cfg(wizard_state.STEP_TOOLS, titles[wizard_state.STEP_TOOLS], 6),
-            cfg(wizard_state.STEP_NOTES, titles[wizard_state.STEP_NOTES], 7),
+            cfg(wizard_state.STEP_SPEECH, titles[wizard_state.STEP_SPEECH], 6),
+            cfg(wizard_state.STEP_TOOLS, titles[wizard_state.STEP_TOOLS], 7),
+            cfg(wizard_state.STEP_NOTES, titles[wizard_state.STEP_NOTES], 8),
             cfg(
                 wizard_state.STEP_APPEARANCE,
                 titles[wizard_state.STEP_APPEARANCE],
-                8,
+                9,
             ),
-            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 9),
-            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 10),
+            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 10),
+            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 11),
         )
         return [self._build_step(config) for config in configs]
 
