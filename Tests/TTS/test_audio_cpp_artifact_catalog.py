@@ -17,6 +17,9 @@ import pytest
 
 REPOSITORY = "audio-cpp/audio.cpp-gguf"
 COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
+EXPECTED_MANIFEST_SHA256 = (
+    "3692e9174f0cb132115a78e03357bbd10783e3b6c81b0a285c8c51cf193c5d4f"
+)
 TREE_URL = (
     f"https://huggingface.co/api/models/{REPOSITORY}/tree/{COMMIT}"
     "?recursive=true&expand=true"
@@ -80,7 +83,13 @@ def test_checked_in_manifest_is_exact_pinned_reviewed_catalog_and_network_free(
         / "TTS"
         / "audio_cpp_artifact_manifest.json"
     )
-    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_bytes = manifest_path.read_bytes()
+    assert hashlib.sha256(manifest_bytes).hexdigest() == EXPECTED_MANIFEST_SHA256
+    assert (
+        hashlib.sha256(manifest_bytes.replace(b"DramaBox", b"DramaB0x", 1)).hexdigest()
+        != EXPECTED_MANIFEST_SHA256
+    )
+    raw = json.loads(manifest_bytes)
     assert raw["repository"] == catalog.repository
     assert raw["commit"] == catalog.commit
     assert len(raw["packages"]) == len(catalog.packages)
@@ -92,6 +101,49 @@ def test_checked_in_manifest_is_exact_pinned_reviewed_catalog_and_network_free(
             package["package_variant"],
         ),
     )
+    reviewed = {package["package_variant"]: package for package in raw["packages"]}
+    assert reviewed["dramabox_q8_0"] == {
+        "artifact_id": "audio-cpp-dramabox-q8-0",
+        "files": [
+            {
+                "managed_path": "dramabox-q8_0.gguf",
+                "sha256": (
+                    "75e7e80fc748defb188cb902c34c62bc12539a7bba477215dccf59a7218a451e"
+                ),
+                "size_bytes": 18_942_803_808,
+                "source_path": "DramaBox-GGUF/dramabox-q8_0.gguf",
+            }
+        ],
+        "license_id": "LTX-2 Community License",
+        "license_url": (f"https://huggingface.co/{REPOSITORY}/blob/{COMMIT}/README.md"),
+        "package_variant": "dramabox_q8_0",
+        "recipe_id": "audio-cpp-0.5.1.dramabox.dramabox_q8_0",
+        "recipe_revision": 1,
+        "usage_notice": (
+            "Converted weights are provided as-is; review the original model license "
+            "and validate the exact file, backend, and route before use."
+        ),
+    }
+    assert reviewed["pocket_tts_english_q8_0"]["files"] == [
+        {
+            "managed_path": "pocket-tts-english-q8_0.gguf",
+            "sha256": (
+                "0315406421d515d9ffbde49ed998832ff2962562ef8abde440c85fa0a27d8b2a"
+            ),
+            "size_bytes": 127_856_704,
+            "source_path": "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
+        }
+    ]
+    assert reviewed["supertonic_3_orig"]["files"] == [
+        {
+            "managed_path": "supertonic-3-orig.gguf",
+            "sha256": (
+                "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662"
+            ),
+            "size_bytes": 454_072_836,
+            "source_path": "Supertonic-3-GGUF/supertonic-3-orig.gguf",
+        }
+    ]
 
 
 def _reviewed_entries():
@@ -155,12 +207,22 @@ def test_audio_cpp_curated_entries_are_exact_recipe_joins() -> None:
         assert descriptor.runtime_version_constraint == (
             f"{recipe.audio_cpp_release}@{recipe.audio_cpp_commit}"
         )
-        assert descriptor.supported_os == tuple(
-            dict.fromkeys(item.system for item in recipe.backend_evidence)
+        exposed_platforms = (
+            set()
+            if descriptor.supported_os
+            == descriptor.supported_architectures
+            == ("unassigned",)
+            else {
+                (system, architecture)
+                for system in descriptor.supported_os
+                for architecture in descriptor.supported_architectures
+            }
         )
-        assert descriptor.supported_architectures == tuple(
-            dict.fromkeys(item.architecture for item in recipe.backend_evidence)
-        )
+        assert exposed_platforms <= {
+            (item.system, item.architecture) for item in recipe.backend_evidence
+        }
+        assert descriptor.supported_os == ("unassigned",)
+        assert descriptor.supported_architectures == ("unassigned",)
         assert tuple(
             (
                 item.system,
@@ -745,6 +807,9 @@ def test_refresh_is_immutable_bounded_and_byte_deterministic(tmp_path: Path) -> 
     second = refresh_manifest_bytes(manifest_path, COMMIT, urlopen=recorded_urlopen)
 
     assert first == second
+    assert hashlib.sha256(first).hexdigest() == (
+        "635055396c87170fa84395215db956b1e23e210e74b0ad461e54c4501bf12aa2"
+    )
     assert b'"sha256": "' + hashlib.sha256(git_content).hexdigest().encode() in first
     assert b'"sha256": "' + b"d" * 64 in first
     assert json.loads(first)["packages"][0]["license_id"] == "Apache-2.0"

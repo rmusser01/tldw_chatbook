@@ -464,12 +464,8 @@ def _curated_entry(
             runtime_version_constraint=(
                 f"{recipe.audio_cpp_release}@{recipe.audio_cpp_commit}"
             ),
-            supported_os=tuple(
-                dict.fromkeys(item.system for item in recipe.backend_evidence)
-            ),
-            supported_architectures=tuple(
-                dict.fromkeys(item.architecture for item in recipe.backend_evidence)
-            ),
+            supported_os=("unassigned",),
+            supported_architectures=("unassigned",),
             provenance=(
                 ProvenanceClass.CHATBOOK_CURATED,
                 ProvenanceClass.INTEGRITY_VERIFIED,
