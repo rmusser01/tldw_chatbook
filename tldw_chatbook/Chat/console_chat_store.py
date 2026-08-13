@@ -833,6 +833,7 @@ class ConsoleChatStore:
         character_id: int | None = None,
         character_name: str | None = None,
         ephemeral: bool = False,
+        activate: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
@@ -843,6 +844,7 @@ class ConsoleChatStore:
             ephemeral: When True the session is temporary -- never written to
                 local storage until ``promote_ephemeral_session`` clears the
                 flag.
+            activate: Whether to make the new session active immediately.
         """
         if session_id is not None:
             if (
@@ -886,7 +888,8 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session.id] = None
         self._context_summary_by_session[session.id] = (None, None)
         self._conversation_context_epochs[session.id] = 0
-        self._activate_session(session.id)
+        if activate:
+            self._activate_session(session.id)
         return session
 
     def _activate_session(self, session_id: str | None) -> None:
@@ -1064,6 +1067,71 @@ class ConsoleChatStore:
         session.canonical_settings_baseline = current_canonical_settings
         session.updated_at = proposed_updated_at
         return session
+
+    def rollback_pristine_session_refresh(
+        self,
+        session_id: str,
+        *,
+        expected_current_settings: ConsoleSessionSettings,
+        prior_settings: ConsoleSessionSettings,
+        prior_canonical_settings: ConsoleSessionSettings,
+        prior_updated_at: str,
+    ) -> bool:
+        """Restore an exact first-chat refresh only while it remains pristine."""
+
+        session = self._sessions.get(session_id)
+        if (
+            session is None
+            or session.settings != expected_current_settings
+            or session.canonical_settings_baseline != expected_current_settings
+            or not self.is_pristine_session(
+                session_id,
+                expected_settings=expected_current_settings,
+            )
+        ):
+            return False
+        session.settings = prior_settings
+        session.canonical_settings_baseline = prior_canonical_settings
+        session.updated_at = prior_updated_at
+        return True
+
+    def rollback_created_pristine_session(
+        self,
+        session_id: str,
+        *,
+        expected_session: ConsoleChatSession,
+        expected_settings: ConsoleSessionSettings,
+        prior_active_session_id: str | None,
+    ) -> bool:
+        """Remove an exact newly-created target without touching claimed work."""
+
+        session = self._sessions.get(session_id)
+        if (
+            session is not expected_session
+            or not self.is_pristine_session(
+                session_id,
+                expected_settings=expected_settings,
+            )
+        ):
+            return False
+        self._messages_by_session.pop(session_id, None)
+        self._tool_markers_by_session.pop(session_id, None)
+        self._nodes_by_session.pop(session_id, None)
+        self._children_by_parent.pop(session_id, None)
+        self._active_leaf_by_session.pop(session_id, None)
+        self._context_summary_by_session.pop(session_id, None)
+        self._roleplay_system_projection_candidates.pop(session_id, None)
+        self._conversation_context_epochs.pop(session_id, None)
+        self._speech_preference_epochs.pop(session_id, None)
+        self._payload_revisions.pop(session_id, None)
+        self._sessions.pop(session_id, None)
+        if self.active_session_id == session_id:
+            self._activate_session(
+                prior_active_session_id
+                if prior_active_session_id in self._sessions
+                else None
+            )
+        return True
 
     def restore_persisted_session(
         self,
@@ -1431,6 +1499,9 @@ class ConsoleChatStore:
         if not normalized_title:
             raise ValueError("Console chat session title cannot be blank.")
         session = self._session_or_raise(session_id)
+        if session.title != normalized_title:
+            session.has_user_work = True
+            session.canonical_settings_baseline = None
         session.title = normalized_title
         persisted = True
         if (

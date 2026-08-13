@@ -3325,7 +3325,7 @@ class ChatScreen(BaseAppScreen):
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
-        self._first_chat_handoff_notified_revisions: set[int] = set()
+        self._first_chat_handoff_notified_revision: int | None = None
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
@@ -4325,29 +4325,82 @@ class ChatScreen(BaseAppScreen):
             )
             if (
                 baseline is not None
+                and active.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
                 and store.is_pristine_session(
                     active_id,
                     expected_settings=baseline,
                 )
             ):
                 if baseline != defaults:
+                    prior_updated_at = active.updated_at
                     store.refresh_pristine_session_settings(
                         active_id,
                         prior_canonical_settings=baseline,
                         current_canonical_settings=defaults,
                     )
+                    current = self._current_first_chat_defaults(
+                        provider=provider,
+                        model=model,
+                        config_revision=config_revision,
+                    )
+                    if current != defaults or store.active_session_id != active_id:
+                        store.rollback_pristine_session_refresh(
+                            active_id,
+                            expected_current_settings=defaults,
+                            prior_settings=baseline,
+                            prior_canonical_settings=baseline,
+                            prior_updated_at=prior_updated_at,
+                        )
+                        return None
                 return active_id
-        return store.create_session(
+        prior_active_id = store.active_session_id
+        created = store.create_session(
+            workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=defaults,
             canonical_settings_baseline=defaults,
-        ).id
+            activate=False,
+        )
+        current = self._current_first_chat_defaults(
+            provider=provider,
+            model=model,
+            config_revision=config_revision,
+        )
+        if current != defaults or store.active_session_id != prior_active_id:
+            store.rollback_created_pristine_session(
+                created.id,
+                expected_session=created,
+                expected_settings=defaults,
+                prior_active_session_id=prior_active_id,
+            )
+            return None
+        store.switch_session(created.id)
+        current = self._current_first_chat_defaults(
+            provider=provider,
+            model=model,
+            config_revision=config_revision,
+        )
+        if current != defaults or store.active_session_id != created.id:
+            store.rollback_created_pristine_session(
+                created.id,
+                expected_session=created,
+                expected_settings=defaults,
+                prior_active_session_id=prior_active_id,
+            )
+            return None
+        return created.id
 
     def _release_first_chat_claim(self, claim, message: str) -> bool:
         """Release a retryable claim and show at most one warning per revision."""
 
-        self.app_instance.pending_handoffs.release(claim)
-        if claim.revision not in self._first_chat_handoff_notified_revisions:
-            self._first_chat_handoff_notified_revisions.add(claim.revision)
+        handoffs = self.app_instance.pending_handoffs
+        claim_is_current = handoffs.is_current_claim(claim)
+        handoffs.release(claim)
+        if not claim_is_current:
+            if self._first_chat_handoff_notified_revision == claim.revision:
+                self._first_chat_handoff_notified_revision = None
+            return False
+        if claim.revision != self._first_chat_handoff_notified_revision:
+            self._first_chat_handoff_notified_revision = claim.revision
             self.app_instance.notify(message, severity="warning")
         return False
 
@@ -4377,6 +4430,44 @@ class ChatScreen(BaseAppScreen):
             )
 
         store = self._ensure_console_chat_store()
+        prior_active_id = store.active_session_id
+        created_target = None
+        refreshed_prior: tuple[
+            ConsoleSessionSettings,
+            ConsoleSessionSettings,
+            str,
+        ] | None = None
+
+        def rollback_mutation() -> None:
+            if created_target is not None:
+                store.rollback_created_pristine_session(
+                    created_target.id,
+                    expected_session=created_target,
+                    expected_settings=defaults,
+                    prior_active_session_id=prior_active_id,
+                )
+            elif refreshed_prior is not None:
+                prior_settings, prior_baseline, prior_updated_at = refreshed_prior
+                store.rollback_pristine_session_refresh(
+                    intent.session_id,
+                    expected_current_settings=defaults,
+                    prior_settings=prior_settings,
+                    prior_canonical_settings=prior_baseline,
+                    prior_updated_at=prior_updated_at,
+                )
+
+        def fence_matches(*, expected_active_id: str) -> bool:
+            current = self._current_first_chat_defaults(
+                provider=intent.provider,
+                model=intent.model,
+                config_revision=intent.config_revision,
+            )
+            return (
+                current == defaults
+                and store.active_session_id == expected_active_id
+                and self.app_instance.pending_handoffs.is_current_claim(claim)
+            )
+
         reserves_new_target = (
             self.app_instance.pending_handoffs.claim_reserves_new_console_session(
                 claim
@@ -4395,13 +4486,29 @@ class ChatScreen(BaseAppScreen):
             try:
                 target = store.create_session(
                     session_id=intent.session_id,
+                    workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
                     settings=defaults,
                     canonical_settings_baseline=defaults,
+                    activate=False,
                 )
             except ValueError:
                 return self._release_first_chat_claim(
                     claim,
                     "The intended Console session was claimed before setup finished. It was left unchanged.",
+                )
+            created_target = target
+            if not fence_matches(expected_active_id=prior_active_id):
+                rollback_mutation()
+                return self._release_first_chat_claim(
+                    claim,
+                    "Provider settings changed while Console prepared the first chat. It will retry.",
+                )
+            store.switch_session(intent.session_id)
+            if not fence_matches(expected_active_id=intent.session_id):
+                rollback_mutation()
+                return self._release_first_chat_claim(
+                    claim,
+                    "Console changed while the first chat was opening. Your sessions were left unchanged.",
                 )
         else:
             if reserves_new_target:
@@ -4417,6 +4524,7 @@ class ChatScreen(BaseAppScreen):
             baseline = target.canonical_settings_baseline
             if (
                 baseline is None
+                or target.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
                 or not store.is_pristine_session(
                     intent.session_id,
                     expected_settings=baseline,
@@ -4427,6 +4535,7 @@ class ChatScreen(BaseAppScreen):
                     "The intended Console session now contains work. It was left unchanged.",
                 )
             if baseline != defaults:
+                refreshed_prior = (target.settings, baseline, target.updated_at)
                 store.refresh_pristine_session_settings(
                     intent.session_id,
                     prior_canonical_settings=baseline,
@@ -4437,26 +4546,49 @@ class ChatScreen(BaseAppScreen):
                     for session in store.sessions()
                     if session.id == intent.session_id
                 )
+                if not fence_matches(expected_active_id=intent.session_id):
+                    rollback_mutation()
+                    return self._release_first_chat_claim(
+                        claim,
+                        "Provider settings changed while Console prepared the first chat. It will retry.",
+                    )
 
         if (
             target.settings is None
             or not self._first_chat_defaults_match(intent, target.settings)
-            or store.active_session_id != intent.session_id
+            or not fence_matches(expected_active_id=intent.session_id)
         ):
+            rollback_mutation()
             return self._release_first_chat_claim(
                 claim,
                 "The first chat target no longer matches provider setup. It was left unchanged.",
             )
 
+        prior_control_provider = self._console_control_provider
+        prior_control_model = self._console_control_model
         self._console_control_provider = target.settings.provider
         self._console_control_model = target.settings.model
         if self.is_mounted:
             self._sync_console_chat_core_state()
             self._sync_console_settings_summary()
             self._sync_console_control_bar()
+        if not fence_matches(expected_active_id=intent.session_id):
+            self._console_control_provider = prior_control_provider
+            self._console_control_model = prior_control_model
+            rollback_mutation()
+            return self._release_first_chat_claim(
+                claim,
+                "Console changed before the first chat finished opening. It will retry.",
+            )
         if not self.app_instance.pending_handoffs.acknowledge(claim):
-            return False
-        self._first_chat_handoff_notified_revisions.discard(claim.revision)
+            self._console_control_provider = prior_control_provider
+            self._console_control_model = prior_control_model
+            rollback_mutation()
+            return self._release_first_chat_claim(
+                claim,
+                "The first chat could not be acknowledged yet. It will retry.",
+            )
+        self._first_chat_handoff_notified_revision = None
         return True
 
     def current_console_provider_for_command(self) -> str | None:

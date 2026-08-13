@@ -1045,3 +1045,22 @@ def test_reserved_first_chat_claim_release_retains_reservation_for_retry() -> No
     assert retry is not None
     assert retry.revision == first_claim.revision
     assert store.claim_reserves_new_console_session(retry) is True
+
+
+def test_first_chat_claim_is_current_only_until_replaced() -> None:
+    store = PendingHandoffStore()
+    first = ConsoleFirstChatIntent("session-1", "openai", "model-a", 17)
+    replacement = ConsoleFirstChatIntent("session-2", "openai", "model-b", 18)
+    store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, first)
+    claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+
+    assert claim is not None
+    assert store.is_current_claim(claim) is True
+
+    store.stage(HandoffChannel.CONSOLE_FIRST_CHAT, replacement)
+
+    assert store.is_current_claim(claim) is False
+    assert store.release(claim) is True
+    next_claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert next_claim is not None
+    assert next_claim.value == replacement

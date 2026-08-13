@@ -229,6 +229,18 @@ class PendingHandoffStore:
         self._assert_owner_thread()
         return self._slot_for(channel).pending is not None
 
+    def is_current_claim(self, claim: HandoffClaim[Any]) -> bool:
+        """Return whether a claim still owns the channel's latest revision."""
+
+        self._assert_owner_thread()
+        slot = self._slot_for_claim(claim)
+        current = slot.in_flight
+        return (
+            current is not None
+            and current.claim is claim
+            and slot.revision == claim.revision
+        )
+
     def acknowledge(self, claim: HandoffClaim[Any]) -> bool:
         """Settle only the exact claim currently in flight."""
         self._assert_owner_thread()

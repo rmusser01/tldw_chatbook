@@ -161,6 +161,22 @@ def test_untouched_default_session_requires_no_user_owned_state() -> None:
     assert is_untouched_default_session(session, (), "", ()) is False
 
 
+def test_untouched_default_session_rejects_custom_workspace_provenance() -> None:
+    defaults = ConsoleSessionSettings(
+        provider="openai",
+        model="model-a",
+        source="derived",
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(
+        workspace_id="workspace-user",
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+
+    assert is_untouched_default_session(session, (), "", ()) is False
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [

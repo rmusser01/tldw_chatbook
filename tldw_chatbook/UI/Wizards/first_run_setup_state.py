@@ -74,12 +74,16 @@ def is_untouched_default_session(
 ) -> bool:
     """Delegate first-run eligibility to Console's canonical pure predicate."""
 
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
     from tldw_chatbook.Chat.console_chat_store import (
         is_untouched_default_session as console_session_is_untouched,
     )
 
-    if not isinstance(session, ConsoleChatSession):
+    if (
+        not isinstance(session, ConsoleChatSession)
+        or session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+    ):
         return False
     try:
         return console_session_is_untouched(
