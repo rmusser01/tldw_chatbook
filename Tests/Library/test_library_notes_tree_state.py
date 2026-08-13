@@ -1,0 +1,265 @@
+"""Pure behavior tests for the Database Notes folder-tree projection."""
+
+from __future__ import annotations
+
+from tldw_chatbook.Library.library_notes_tree_state import (
+    UNFILED_PLACEMENT_ID,
+    LibraryNotesTreeIdentity,
+    build_library_notes_tree,
+    reconcile_library_notes_tree_identity,
+)
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
+    NoteFolder,
+    NoteFolderMembership,
+    NoteFolderPage,
+)
+
+
+def _folder(folder_id: str, parent_id: str | None, path: str) -> NoteFolder:
+    return NoteFolder(
+        folder_id=folder_id,
+        parent_id=parent_id,
+        name=path.rsplit("/", 1)[-1],
+        path=path,
+        normalized_path=path.casefold(),
+        version=1,
+        deleted=False,
+    )
+
+
+def _membership(
+    membership_id: str,
+    folder_id: str,
+    note_id: str,
+    *,
+    ownership: str = "manual",
+    owner_id: str = "",
+    owner_active: bool = True,
+) -> NoteFolderMembership:
+    return NoteFolderMembership(
+        membership_id=membership_id,
+        folder_id=folder_id,
+        note_id=note_id,
+        ownership=ownership,
+        owner_id=owner_id,
+        owner_active=owner_active,
+        version=1,
+    )
+
+
+def _page(
+    *,
+    folders=(),
+    memberships=(),
+    notes=(),
+    next_folder_offset=None,
+    next_note_offset=None,
+    next_membership_offset=None,
+) -> NoteFolderPage:
+    return NoteFolderPage(
+        folders=tuple(folders),
+        memberships=tuple(memberships),
+        notes=tuple(notes),
+        total_folders=len(folders) + (1 if next_folder_offset is not None else 0),
+        total_notes=len(notes) + (1 if next_note_offset is not None else 0),
+        next_offset=next_note_offset,
+        next_folder_offset=next_folder_offset,
+        total_memberships=len(memberships)
+        + (1 if next_membership_offset is not None else 0),
+        next_membership_offset=next_membership_offset,
+    )
+
+
+def test_projects_nested_folders_and_unfiled_notes_with_breadcrumbs():
+    personal = _folder("personal", None, "/Personal")
+    ideas = _folder("ideas", "personal", "/Personal/Ideas")
+    root = _page(
+        folders=(personal,),
+        notes=({"id": "loose", "title": "Loose thought"},),
+    )
+    expanded = _page(
+        folders=(ideas,),
+        memberships=(_membership("m-garden", "ideas", "garden"),),
+        notes=({"id": "garden", "title": "Garden redesign"},),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=root,
+        expanded_page=expanded,
+        expanded_folder_ids={"personal", "ideas"},
+    )
+
+    assert [(row.kind, row.label, row.depth) for row in projection.rows] == [
+        ("folder", "Personal", 0),
+        ("folder", "Ideas", 1),
+        ("note", "Garden redesign", 2),
+        ("unfiled", "Unfiled", 0),
+        ("note", "Loose thought", 1),
+    ]
+    garden = projection.row(FolderPlacementId.note("ideas", "garden"))
+    loose = projection.row(FolderPlacementId.unfiled("loose"))
+    assert garden is not None and garden.breadcrumb == "Personal / Ideas / Garden redesign"
+    assert loose is not None and loose.breadcrumb == "Unfiled / Loose thought"
+
+
+def test_same_note_has_distinct_placement_rows_but_one_note_identity():
+    folders = (
+        _folder("ideas", None, "/Ideas"),
+        _folder("reading", None, "/Reading"),
+    )
+    expanded = _page(
+        memberships=(
+            _membership("m1", "ideas", "n1"),
+            _membership("m2", "reading", "n1"),
+        ),
+        notes=({"id": "n1", "title": "Shared note"},),
+    )
+
+    projection = build_library_notes_tree(
+        root_page=_page(folders=folders),
+        expanded_page=expanded,
+        expanded_folder_ids={"ideas", "reading"},
+    )
+    rows = [row for row in projection.rows if row.note_id == "n1"]
+
+    assert [row.placement_id for row in rows] == [
+        FolderPlacementId.note("ideas", "n1"),
+        FolderPlacementId.note("reading", "n1"),
+    ]
+    assert {row.note_id for row in rows} == {"n1"}
+    assert [row.breadcrumb for row in rows] == [
+        "Ideas / Shared note",
+        "Reading / Shared note",
+    ]
+
+
+def test_generated_managed_ancestor_collapses_but_manual_duplicate_remains():
+    parent = _folder("parent", None, "/Work")
+    child = _folder("child", "parent", "/Work/Project")
+    memberships = (
+        _membership(
+            "generated-parent",
+            "parent",
+            "n1",
+            ownership="managed",
+            owner_id="root-a",
+        ),
+        _membership(
+            "generated-child",
+            "child",
+            "n1",
+            ownership="managed",
+            owner_id="root-a",
+        ),
+        _membership("explicit-parent", "parent", "n1"),
+    )
+    projection = build_library_notes_tree(
+        root_page=_page(folders=(parent,)),
+        expanded_page=_page(
+            folders=(child,),
+            memberships=memberships,
+            notes=({"id": "n1", "title": "Plan"},),
+        ),
+        expanded_folder_ids={"parent", "child"},
+    )
+
+    rows = [row for row in projection.rows if row.note_id == "n1"]
+    assert {row.membership_id for row in rows} == {
+        "explicit-parent",
+        "generated-child",
+    }
+
+
+def test_managed_and_restored_without_owner_are_textually_distinct_and_protected():
+    folder = _folder("work", None, "/Work")
+    projection = build_library_notes_tree(
+        root_page=_page(folders=(folder,)),
+        expanded_page=_page(
+            memberships=(
+                _membership(
+                    "active", "work", "n1", ownership="managed", owner_id="root"
+                ),
+                _membership(
+                    "inactive",
+                    "work",
+                    "n2",
+                    ownership="managed",
+                    owner_id="missing-root",
+                    owner_active=False,
+                ),
+            ),
+            notes=(
+                {"id": "n1", "title": "Weekly"},
+                {"id": "n2", "title": "Recovered"},
+            ),
+        ),
+        expanded_folder_ids={"work"},
+    )
+
+    active = next(row for row in projection.rows if row.note_id == "n1")
+    inactive = next(row for row in projection.rows if row.note_id == "n2")
+    assert active.status_text == "⇄ Synced placement"
+    assert inactive.status_text == "! Needs owner review"
+    assert active.protected and inactive.protected
+    assert active.semantic_status == "connected"
+    assert inactive.semantic_status == "needs_attention"
+
+
+def test_projection_exposes_bounded_more_rows_for_each_cursor():
+    projection = build_library_notes_tree(
+        root_page=_page(
+            notes=({"id": "n1", "title": "One"},),
+            next_folder_offset=500,
+            next_note_offset=1000,
+        ),
+        expanded_page=_page(next_membership_offset=1000),
+        expanded_folder_ids=set(),
+    )
+    assert projection.next_folder_offset == 500
+    assert projection.next_note_offset == 1000
+    assert projection.next_membership_offset == 1000
+    assert projection.has_more
+
+
+def test_identity_reconciliation_preserves_placement_then_note_then_visible_row():
+    folder = _folder("ideas", None, "/Ideas")
+    first = build_library_notes_tree(
+        root_page=_page(
+            folders=(folder,), notes=({"id": "loose", "title": "Loose"},)
+        ),
+        expanded_page=_page(
+            memberships=(_membership("m", "ideas", "n1"),),
+            notes=({"id": "n1", "title": "Note"},),
+        ),
+        expanded_folder_ids={"ideas"},
+    )
+    identity = LibraryNotesTreeIdentity(
+        placement_id=FolderPlacementId.note("ideas", "n1"), note_id="n1"
+    )
+    assert reconcile_library_notes_tree_identity(first, identity) == identity
+
+    moved = build_library_notes_tree(
+        root_page=_page(notes=({"id": "n1", "title": "Note"},)),
+        expanded_page=_page(),
+        expanded_folder_ids=set(),
+    )
+    assert reconcile_library_notes_tree_identity(moved, identity) == (
+        LibraryNotesTreeIdentity(
+            placement_id=FolderPlacementId.unfiled("n1"), note_id="n1"
+        )
+    )
+
+    empty = build_library_notes_tree(
+        root_page=_page(), expanded_page=_page(), expanded_folder_ids=set()
+    )
+    assert reconcile_library_notes_tree_identity(empty, identity) is None
+
+
+def test_unfiled_identity_is_stable_constant():
+    projection = build_library_notes_tree(
+        root_page=_page(notes=({"id": "n1", "title": "One"},)),
+        expanded_page=_page(),
+        expanded_folder_ids=set(),
+    )
+    assert projection.rows[0].placement_id == UNFILED_PLACEMENT_ID
