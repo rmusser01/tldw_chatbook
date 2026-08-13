@@ -6,7 +6,8 @@ Regression coverage for UX-review findings LY-03 and TX-06
 * LY-03 -- the strip clipped chips with no wrap/scroll/more affordance:
   the cost chip jammed at the right edge at 160, ``Sources: 0 stage`` cut
   mid-label at 140, and ``Approvals`` was gone entirely at 110. The strip
-  is now a ``HorizontalScroll`` (hidden single-row scrollbar, the
+  is now a ``Horizontal`` host whose inner ``#console-status-chip-scroll``
+  viewport is a ``HorizontalScroll`` (hidden single-row scrollbar, the
   ``#console-native-tab-strip`` contract): keyboard users reach every chip
   through focus auto-scroll (``Screen.set_focus``'s ``scroll_visible``),
   mouse users through Shift+wheel / trackpad swipe.

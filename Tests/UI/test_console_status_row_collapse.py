@@ -118,6 +118,7 @@ async def test_widget_preserves_conditional_chip_updates_while_collapsed() -> No
     async with app.run_test(size=(200, 8)) as pilot:
         await pilot.pause()
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
+        model_chip = app.query_one("#console-model-chip")
         strip.set_collapsed(True)
         strip.sync_state(
             replace(
@@ -151,6 +152,7 @@ async def test_widget_preserves_conditional_chip_updates_while_collapsed() -> No
         strip.set_collapsed(False)
         await pilot.pause()
 
+        assert app.query_one("#console-model-chip") is model_chip
         expected_copy = {
             "#console-model-chip": "Model: updated",
             "#console-tools-chip": "Tools: 4 ready",
