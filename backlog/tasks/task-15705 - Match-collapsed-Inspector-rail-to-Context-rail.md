@@ -1,11 +1,11 @@
 ---
 id: TASK-15705
 title: Match collapsed Inspector rail to Context rail
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-13 06:07'
-updated_date: '2026-08-13 17:26'
+updated_date: '2026-08-13 19:08'
 labels: []
 dependencies: []
 ---
@@ -24,7 +24,7 @@ Make the collapsed Console Inspector rail visually match the established Context
 - [x] #4 Existing Inspector width, tooltip, badge abbreviation, open behavior, and compact-width access remain unchanged.
 - [x] #5 Component TCSS and the generated stylesheet remain in sync.
 - [x] #6 Focused Console rail and stylesheet integrity tests pass.
-- [ ] #7 The collapsed right-rail button displays “Inspect” on one line while retaining “Open Inspector rail” as its tooltip and preserving the vertical-label mode.
+- [x] #7 The collapsed right-rail button displays “Inspect” on one line while retaining “Open Inspector rail” as its tooltip and preserving the vertical-label mode.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +59,10 @@ Review and scope: implementation, specification, and quality reviews were approv
 Verification scope was explicitly narrowed by user override to directly modified/related functionality. A repository-wide pytest run that had already begun was terminated on request at approximately 42% and has no final count; repository-wide Ruff/format results are not completion gates for this closeout. Focused gates and changed-line/base-differential evidence are green.
 
 ADR required: no. Existing backlog/decisions/017-console-left-rail-usability.md governs the text-only bordered rail language; backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md governs the compact-width access preserved here. Design: Docs/superpowers/specs/2026-08-12-task-15705-inspector-rail-parity-design.md. Plan: Docs/superpowers/plans/2026-08-12-task-15705-inspector-rail-parity.md. No generalizable new lesson was produced; existing testing-evidence and backlog-hygiene lessons were followed.
+
+Follow-up: after reviewing the live 160x45 render, the user approved shortening only the horizontal collapsed right-handle button from `Inspector` to `Inspect`. The canonical rail state, `Open Inspector rail` tooltip, vertically stacked `Inspector` presentation, open rail, ids/classes, badge vocabulary, geometry, CSS, interaction, settings copy, and responsive behavior remain unchanged. Production changed one return literal in `ConsoleRailHandle._display_label()`.
+
+Follow-up TDD evidence: before the production edit, five focused semantic expectations failed on the old copy and all six live visual states failed with exact compositor rows `["Inspect", "or"]` instead of `["Inspect"]`. After the one-literal edit, fresh root verification passed 65 directly related component, saved-label, settings, product-loop, interaction, compact-access, CSS, and live-frame tests; the six-state TASK-15705 visual sweep passed 6 / deselected 5 and requires exactly one cell-cropped compositor row `["Inspect"]` plus the unchanged tooltip. The broader shell-regions command retained four independently reproduced pre-existing 120x30 off-screen geometry failures; its exact affected saved-label test passed, and no unrelated layout fix was added.
+
+Follow-up static evidence: focused Ruff check and `git diff --check` passed. Focused Ruff format retained the exact pre-edit baseline: the same five files would reformat and the same two were already formatted, so the copy-only change added no formatting regression. Specification-compliance, code-quality, and final whole-change reviews all approved. Per the user's explicit instruction, verification remained limited to directly modified and related functionality; no full repository suite was run.
 <!-- SECTION:NOTES:END -->
