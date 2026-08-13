@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import json
 import re
+import statistics
 import threading
 import time
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
@@ -92,6 +93,11 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+    LibraryMediaContentSearchControls,
+)
+from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.Widgets.Library.library_rail import (
     LIBRARY_RAIL_ROW_PREFIX,
@@ -4467,6 +4473,18 @@ def _media_item_with_two_hits_on_one_line():
     return items
 
 
+def _large_markdown_media_item():
+    """A deterministic 2,000-line Markdown item with exactly 101 match lines."""
+    items = _markdown_media_item()
+    lines = ["# Large budget document"]
+    lines.extend(
+        f"Line {index}: {'budget checkpoint' if index % 20 == 0 else 'ordinary text'}"
+        for index in range(1_999)
+    )
+    items[0]["content"] = "\n".join(lines)
+    return items
+
+
 async def _open_media_viewer(screen, pilot):
     """Navigate to the media list and open the first row's viewer."""
     screen.query_one("#library-row-browse-media").press()
@@ -4689,6 +4707,320 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_search_preserves_identity_focus_and_parse_count(
+    monkeypatch,
+):
+    """Catch submit/navigation rebuilding the viewer or reparsing Markdown."""
+    markdown_updates: list[tuple[int, str]] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append((id(markdown_widget), source))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        screen_before = screen
+        viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        markdown_before = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+        await _submit_content_search_query(screen, pilot, "setup")
+        parse_count_before_navigation = len(markdown_updates)
+        next_button = screen.query_one("#library-media-content-search-next", Button)
+        previous_button = screen.query_one("#library-media-content-search-prev", Button)
+        next_button.focus()
+        next_button.press()
+        await pilot.pause()
+
+        assert screen is screen_before
+        assert screen.query_one("#library-media-viewer") is viewer_before
+        assert (
+            screen.query_one("#library-media-viewer-content-markdown")
+            is markdown_before
+        )
+        assert screen.query_one("#library-media-content-search-next") is next_button
+        assert screen.query_one("#library-media-content-search-prev") is previous_button
+        assert screen.focused is next_button
+        assert len(markdown_updates) == parse_count_before_navigation
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter():
+    """Catch Input.Changed applying the Library query before Enter is submitted."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        search_input = screen.query_one("#library-media-content-search", Input)
+
+        search_input.value = "setup"
+        await pilot.pause()
+
+        assert screen._library_media_content_query == ""
+        assert screen.query_one("#library-media-content-search", Input) is search_input
+        assert not screen.query("#library-media-content-search-status")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_errors():
+    """Catch mounted-viewer coordinators leaking child teardown query failures."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        search_input = screen.query_one("#library-media-content-search", Input)
+        controls = viewer.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+
+        await controls.remove()
+        assert screen.query_one("#library-media-viewer") is viewer
+
+        screen.handle_library_media_content_search_submitted(
+            Input.Submitted(search_input, "setup")
+        )
+        screen._advance_library_media_content_match(1)
+
+        body = viewer.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        await body.remove()
+        assert screen.query_one("#library-media-viewer") is viewer
+
+        await screen._set_library_media_content_mode("raw")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_boundary(
+    monkeypatch,
+):
+    """Catch match navigation scrolling synchronously before refreshed layout settles."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        body = screen.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        scroll_calls: list[tuple[int | None, bool]] = []
+        original_scroll_to = VerticalScroll.scroll_to
+
+        def recording_scroll_to(
+            scroll: VerticalScroll,
+            *,
+            y: int | None = None,
+            animate: bool = True,
+            **kwargs,
+        ):
+            if scroll is body:
+                scroll_calls.append((y, animate))
+            return original_scroll_to(scroll, y=y, animate=animate, **kwargs)
+
+        monkeypatch.setattr(VerticalScroll, "scroll_to", recording_scroll_to)
+
+        screen.query_one("#library-media-content-search-next", Button).press()
+        assert scroll_calls == []
+        await pilot.pause()
+
+        assert scroll_calls == [(3, False)]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy(
+    monkeypatch,
+):
+    """Record deterministic submit/Next/Prev latency and Markdown construction proxy."""
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        markdown_before = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+        observed_viewer_ids = [id(viewer_before)]
+        observed_markdown_ids = [id(markdown_before)]
+        durations_ms: list[float] = []
+
+        started = time.perf_counter()
+        await _submit_content_search_query(screen, pilot, "budget")
+        durations_ms.append((time.perf_counter() - started) * 1_000)
+        observed_markdown_ids.append(
+            id(screen.query_one("#library-media-viewer-content-markdown", Markdown))
+        )
+        observed_viewer_ids.append(
+            id(screen.query_one("#library-media-viewer", LibraryMediaViewer))
+        )
+
+        for selector in (
+            "#library-media-content-search-next",
+            "#library-media-content-search-prev",
+        ):
+            started = time.perf_counter()
+            screen.query_one(selector, Button).press()
+            await pilot.pause()
+            await pilot.pause()
+            durations_ms.append((time.perf_counter() - started) * 1_000)
+            observed_markdown_ids.append(
+                id(screen.query_one("#library-media-viewer-content-markdown", Markdown))
+            )
+            observed_viewer_ids.append(
+                id(screen.query_one("#library-media-viewer", LibraryMediaViewer))
+            )
+
+        median_ms = statistics.median(durations_ms)
+        unique_markdown_ids = set(observed_markdown_ids)
+        print(f"TASK-15458 latency median_ms={median_ms:.3f}")
+        print(
+            "TASK-15458 evidence "
+            f"screen_id={id(screen)} "
+            f"viewer_ids={observed_viewer_ids} "
+            f"markdown_ids={observed_markdown_ids} "
+            f"unique_markdown_ids={len(unique_markdown_ids)} "
+            f"markdown_update_count={len(markdown_updates)}"
+        )
+
+        assert screen.query_one("#library-media-viewer") is viewer_before
+        assert set(observed_viewer_ids) == {id(viewer_before)}
+        assert unique_markdown_ids == {id(markdown_before)}
+        assert markdown_updates == [id(markdown_before)]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_content(
+    monkeypatch,
+):
+    """Catch content painting over search status and navigation at 170x48."""
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    items = _large_markdown_media_item()
+    assert len(items[0]["content"]) == 49_288
+    _seed_conversations(app, _two_conversations(), media=items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        markdown = screen.query_one(
+            "#library-media-viewer-content-markdown", Markdown
+        )
+
+        await _submit_content_search_query(screen, pilot, "budget")
+        controls = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+        status = screen.query_one("#library-media-content-search-status", Static)
+        previous = screen.query_one("#library-media-content-search-prev", Button)
+        next_button = screen.query_one("#library-media-content-search-next", Button)
+        body = screen.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+        await pilot.pause()
+
+        strips = screen._compositor.render_strips()
+        rows = ["".join(segment.text for segment in strip) for strip in strips]
+        painted = "\n".join(rows)
+        heading_row = next(
+            (index for index, row in enumerate(rows) if "Large budget document" in row),
+            None,
+        )
+        visible_strings = tuple(
+            text
+            for text in (
+                "Match 1 of 101 matches",
+                "◀ Prev",
+                "Next ▶",
+                "Large budget document",
+            )
+            if text in painted
+        )
+        print(
+            "TASK-15458 rendered UAT "
+            f"controls={controls.region} status={status.region} "
+            f"previous={previous.region} next={next_button.region} "
+            f"content={body.region} heading_row={heading_row} "
+            f"visible_strings={ascii(visible_strings)}"
+        )
+
+        assert controls.region.bottom <= body.region.y
+        assert status.region.bottom <= body.region.y
+        assert previous.region.bottom <= body.region.y
+        assert next_button.region.bottom <= body.region.y
+        assert "Match 1 of 101 matches" in painted
+        assert "◀ Prev" in painted
+        assert "Next ▶" in painted
+        assert heading_row is not None
+        assert heading_row >= body.region.y
+        assert body.styles.min_height is not None
+        assert body.styles.min_height.value == 3
+        assert body.styles.max_height is not None
+        assert body.styles.max_height.value == 18
+
+        parse_count_before_navigation = len(markdown_updates)
+        next_button.focus()
+        next_button.press()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-viewer") is viewer
+        assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+        assert screen.query_one("#library-media-content-search-prev") is previous
+        assert screen.query_one("#library-media-content-search-next") is next_button
+        assert screen.focused is next_button
+        assert len(markdown_updates) == parse_count_before_navigation
+        assert body.max_scroll_y > 0
+        body.scroll_to(y=10, animate=False, immediate=True)
+        await pilot.pause()
+        assert body.scroll_y > 0
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_content_search_resets_on_back():
     """Returning to the media list clears the in-content search state."""
     app = _build_test_app()
@@ -4816,25 +5148,60 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
+        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
+
         screen.query_one("#library-media-content-mode-raw", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert screen._library_media_content_mode == "raw"
-        raw_text = _markdown_text_widget_plain(
-            screen.query_one("#library-media-viewer-content-text")
-        )
+        raw = screen.query_one("#library-media-viewer-content-text", Static)
+        raw_text = _markdown_text_widget_plain(raw)
         assert "# Setup Guide" in raw_text
         assert "| --- | --- |" in raw_text
-        assert not screen.query("#library-media-viewer-content-markdown")
+        assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+        assert raw.display
+        assert not markdown.display
 
         screen.query_one("#library-media-content-mode-rendered", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert screen._library_media_content_mode == "rendered"
-        assert screen.query_one("#library-media-viewer-content-markdown")
-        assert not screen.query("#library-media-viewer-content-text")
+        assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+        assert screen.query_one("#library-media-viewer-content-text") is raw
+        assert markdown.display
+        assert not raw.display
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_inplace_rendered_search_primes_raw_highlight():
+    """Catch Rendered search state being lost when Raw mounts lazily afterward."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        await _submit_content_search_query(screen, pilot, "setup")
+        screen.query_one("#library-media-content-mode-raw", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        raw = screen.query_one("#library-media-viewer-content-text", Static)
+        assert raw.display
+        assert raw.renderable.plain.rstrip() == _markdown_media_item()[0][
+            "content"
+        ].rstrip()
+        selected = [
+            raw.renderable.plain[span.start : span.end]
+            for span in raw.renderable.spans
+            if str(span.style) == "reverse bold"
+        ]
+        assert selected == ["Setup"]
 
 
 @pytest.mark.asyncio

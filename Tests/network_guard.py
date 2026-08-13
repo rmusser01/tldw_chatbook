@@ -43,6 +43,7 @@ A test that genuinely needs a socket marks itself
 from __future__ import annotations
 
 import socket
+import threading
 from typing import Any
 
 __all__ = [
@@ -78,6 +79,9 @@ _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
 _real_create_connection = socket.create_connection
 _real_sendto = socket.socket.sendto
+_real_socketpair = socket.socketpair
+
+_socketpair_state = threading.local()
 
 _INET_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
 
@@ -138,7 +142,22 @@ def _deny(call: str, address: Any) -> BlockedNetworkAccess:
 
 def _should_block(family: Any) -> bool:
     """Return whether egress on this address family is guarded."""
-    return not _allowed and family in _INET_FAMILIES
+    return not (_allowed or _inside_socketpair()) and family in _INET_FAMILIES
+
+
+def _inside_socketpair() -> bool:
+    """Return whether this thread is executing the real socketpair call."""
+    return getattr(_socketpair_state, "depth", 0) > 0
+
+
+def _guarded_socketpair(*args: Any, **kwargs: Any):  # noqa: ANN401
+    """Call socketpair while allowing only its current-thread bootstrap connect."""
+    prior_depth = getattr(_socketpair_state, "depth", 0)
+    _socketpair_state.depth = prior_depth + 1
+    try:
+        return _real_socketpair(*args, **kwargs)
+    finally:
+        _socketpair_state.depth = prior_depth
 
 
 def _guarded_connect(self: socket.socket, address: Any):  # noqa: ANN401
@@ -161,7 +180,7 @@ def _guarded_sendto(self: socket.socket, *args: Any, **kwargs: Any):  # noqa: AN
 
 
 def _guarded_create_connection(address: Any, *args: Any, **kwargs: Any):  # noqa: ANN401
-    if not _allowed:
+    if not _allowed and not _inside_socketpair():
         raise _deny("socket.create_connection", address)
     return _real_create_connection(address, *args, **kwargs)
 
@@ -175,4 +194,5 @@ def install() -> None:
     socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
     socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign]
     socket.create_connection = _guarded_create_connection  # type: ignore[assignment]
+    socket.socketpair = _guarded_socketpair  # type: ignore[assignment]
     _installed = True

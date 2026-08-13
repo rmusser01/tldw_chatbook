@@ -2775,8 +2775,15 @@ test using SQLite or injected fakes.
 loopback self-pipe from application egress *before* async fixtures are created (or use a
 guarding layer that does not intercept the runtime's wakeup channel). Do not paper over
 the issue by marking broad UI suites `allow_network`: that restores the exact application
-escape the guard exists to detect. Until the shared harness is corrected, record the
-scoped guard workaround with focused-test evidence and keep live/external clients stubbed.
+escape the guard exists to detect. TASK-15458 replaced the temporary family-set workaround
+with ADR-058's thread-local, dynamic `socketpair()` exemption: only the calling thread is
+permitted while the captured real socketpair call is active, and `finally` restores nested
+depth on success or error. Literal Windows commands
+`python -m pytest Tests/test_network_guard.py -q`,
+`python -m pytest Tests/Library/test_library_media_content.py -q`, and their combined form
+passed without changing `_INET_FAMILIES`; focused tests also proved same-thread direct
+egress stays blocked and recorded after an exception, while concurrent-thread egress stays
+blocked and recorded during socketpair. Keep live/external clients stubbed.
 
 ---
 

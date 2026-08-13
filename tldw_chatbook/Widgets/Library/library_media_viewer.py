@@ -7,15 +7,18 @@ from typing import Any, Sequence
 from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
 )
-from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+    LibraryMediaContentSearchControls,
+)
 
 
 class LibraryMediaViewer(Vertical):
@@ -136,26 +139,22 @@ class LibraryMediaViewer(Vertical):
             classes="destination-section",
         )
         yield from self._compose_content_mode_toggle()
-        yield from self._compose_content_search()
-        with VerticalScroll(id="library-media-viewer-content"):
-            if self.viewer.is_markdown and self.content_mode == "rendered":
-                # LIB-13: the SAME render path Notes Preview uses
-                # (``library_notes_canvas.py``'s ``_compose_editor``) --
-                # reused verbatim, not a second markdown pipeline.
-                # ``Markdown`` parses and escapes internally (never Rich
-                # markup), so this stays the same terminal-escaping path
-                # the raw ``Static`` branch below uses for its own content.
-                yield Markdown(
-                    self.viewer.content or "No stored content.",
-                    id="library-media-viewer-content-markdown",
-                    parser_factory=front_matter_parser_factory(),
-                )
-            else:
-                yield Static(
-                    self._content_renderable(),
-                    id="library-media-viewer-content-text",
-                    markup=False,
-                )
+        matches = find_content_matches(self.viewer.content, self.content_query)
+        yield LibraryMediaContentSearchControls(
+            is_markdown=self.viewer.is_markdown,
+            query=self.content_query,
+            matches=matches,
+            match_index=self.content_match_index,
+            id="library-media-content-search-controls",
+        )
+        yield LibraryMediaContentBody(
+            content=self.viewer.content,
+            is_markdown=self.viewer.is_markdown,
+            mode=self.content_mode,
+            query=self.content_query,
+            match_index=self.content_match_index,
+            id="library-media-viewer-content",
+        )
         yield from self._compose_analysis()
 
         yield from self._compose_highlights()
@@ -281,125 +280,84 @@ class LibraryMediaViewer(Vertical):
             raw_button.set_class(raw_selected, "-selected")
             yield raw_button
 
-    def _compose_content_search(self) -> ComposeResult:
-        """Render the in-content search box, and its status/prev-next only while active.
-
-        The search ``Input`` always renders, full-width above the content
-        ``VerticalScroll``. The match-count status ``Static`` and the
-        prev/next ``ds-toolbar`` only render while ``self.content_query``
-        is non-empty -- with no active search there is nothing to page
-        through, so the status line and toolbar are omitted entirely
-        rather than left showing as empty/orphaned chrome. When present,
-        Input and Static are each their own row and prev/next live in a
-        plain ``ds-toolbar`` of buttons only, matching the render-safety
-        rule on ``compose`` above (never mix a ``1fr`` sibling with a
-        fixed-width widget in one ``Horizontal``).
-
-        The search always matches against the RAW stored text (never the
-        rendered Markdown's visual output) regardless of which content
-        view is showing -- LIB-13's decision. When a Rendered|Raw toggle
-        is offered, the placeholder says so explicitly so a search made
-        while viewing Rendered is never mistaken for searching the
-        on-screen (rendered) text.
-
-        Returns:
-            ComposeResult for the content search row and, when a query is
-            active, the status line and prev/next action toolbar.
-        """
-        placeholder = (
-            "Search content (raw text)…"
-            if self.viewer.is_markdown
-            else "Search content…"
-        )
-        yield Input(
-            value=self.content_query,
-            placeholder=placeholder,
-            id="library-media-content-search",
-        )
-        if not self.content_query:
-            return
-        matches = find_content_matches(self.viewer.content, self.content_query)
-        yield Static(
-            self._content_search_status_text(matches),
-            id="library-media-content-search-status",
-            markup=False,
-        )
-        search_toolbar = Horizontal(classes="ds-toolbar")
-        search_toolbar.styles.height = "auto"
-        with search_toolbar:
-            yield Button(
-                "◀ Prev",
-                id="library-media-content-search-prev",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Next ▶",
-                id="library-media-content-search-next",
-                classes="library-canvas-action",
-                compact=True,
-            )
-
-    def _content_search_status_text(self, matches: tuple[int, ...]) -> str:
-        """Build the in-content search status line text.
+    def sync_query_state(
+        self, *, query: str, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize a submitted query without rebuilding the viewer.
 
         Args:
-            matches: Ordered line indices matching ``self.content_query``,
-                as returned by ``find_content_matches``.
+            query: Submitted content-search query.
+            matches: Source-line indexes matching ``query``.
+            match_index: Zero-based index of the active match.
 
         Returns:
-            "" when the query is blank (no search active), "No matches"
-            when a non-blank query has no hits, otherwise
-            "Match {i} of {n} matches" for the current (wrapped) index.
+            None.
         """
-        if not self.content_query:
-            return ""
-        if not matches:
-            return "No matches"
-        index = self.content_match_index % len(matches)
-        return f"Match {index + 1} of {len(matches)} matches"
+        self.content_query = query
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_query_state(
+            is_markdown=self.viewer.is_markdown,
+            query=query,
+            matches=matches,
+            match_index=match_index,
+        )
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(query, match_index)
 
-    def _content_renderable(self) -> Text | str:
-        """Return the content body, marking the matched lines while searching.
+    def sync_match_index(
+        self, *, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize match navigation without rebuilding viewer children.
 
-        With no active search this is the plain content string. While a
-        search is active, the first occurrence of the query on each matching
-        line is marked (case-insensitive), so the number of visible marks
-        equals the line-based "Match N of M" count from
-        ``find_content_matches`` -- otherwise the count and the highlighting
-        would disagree on any line that contains the query twice. The
-        currently-focused match (``content_match_index``) is marked
-        ``reverse bold`` while the others are ``reverse``, so prev/next has a
-        visible target. Built as a Rich ``Text`` from raw slices (never
-        markup) so arbitrary content cannot inject styles.
+        Args:
+            matches: Source-line indexes matching the active query.
+            match_index: Zero-based index of the active match.
 
         Returns:
-            The plain content ``str`` when idle, or a Rich ``Text`` with the
-            matched lines marked while searching.
+            None.
         """
-        content = self.viewer.content or "No stored content."
-        query = (self.content_query or "").strip()
-        if not query or not self.viewer.content:
-            return content
-        matches = find_content_matches(self.viewer.content, query)
-        if not matches:
-            return content
-        current_line = matches[self.content_match_index % len(matches)]
-        needle = query.lower()
-        span = len(needle)
-        text = Text()
-        for index, line in enumerate(content.split("\n")):
-            if index:
-                text.append("\n")
-            hit = line.lower().find(needle)
-            if hit == -1:
-                text.append(line)
-                continue
-            style = "reverse bold" if index == current_line else "reverse"
-            text.append(line[:hit])
-            text.append(line[hit : hit + span], style=style)
-            text.append(line[hit + span :])
-        return text
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_match_index(matches=matches, match_index=match_index)
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(self.content_query, match_index)
+
+    async def sync_mode(self, mode: str) -> None:
+        """Synchronize toggle state and reuse the persistent content views.
+
+        Args:
+            mode: Requested content mode, either ``"raw"`` or ``"rendered"``.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If ``mode`` is not a supported content mode.
+        """
+        self.content_mode = mode
+        rendered_selected = mode == "rendered"
+        rendered_button = self.query_one(
+            "#library-media-content-mode-rendered", Button
+        )
+        raw_button = self.query_one("#library-media-content-mode-raw", Button)
+        rendered_button.label = (
+            "Rendered (selected)" if rendered_selected else "Rendered"
+        )
+        raw_button.label = "Raw" if rendered_selected else "Raw (selected)"
+        rendered_button.set_class(rendered_selected, "-selected")
+        raw_button.set_class(not rendered_selected, "-selected")
+        rendered_button.refresh(layout=True)
+        raw_button.refresh(layout=True)
+        await self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_mode(mode)
 
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
