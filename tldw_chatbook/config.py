@@ -2750,7 +2750,7 @@ anthropic_enabled = true
 # Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
 # authoritative defaults live in `Agents/agent_service.py`
 # (DEFAULT_MAX_LIVE_SUBAGENTS / DEFAULT_CHILD_MAX_WALL_SECONDS /
-# DEFAULT_SUBAGENTS_OUTLIVE_TURN), and shipping a live copy here would give
+# DEFAULT_SUBAGENTS_OUTLIVE_TURN / DEFAULT_AUTOWAKE_ENABLED), and shipping a live copy here would give
 # the same value two homes that can silently drift apart. Uncomment a line
 # to override. See Docs/User_Guide/console/agent-runs-and-tools.md.
 #
@@ -2768,6 +2768,13 @@ anthropic_enabled = true
 # between the child's own steps, so it does not interrupt a provider call
 # already in flight.
 # child_max_wall_seconds = 1800.0
+#
+# Whether a background sub-agent finishing after its turn WAKES its
+# supervisor so it can act on the result (an injected, clearly machine-
+# marked notice -- never user input, never approval). false still records
+# every completion (toast, badge, durable mark); the wake turn just never
+# fires.
+# autowake_enabled = true
 
 [splash_screen]
 # Splash screen configuration for startup animations

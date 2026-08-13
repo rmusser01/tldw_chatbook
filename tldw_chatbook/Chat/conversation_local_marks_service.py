@@ -185,6 +185,49 @@ class ConversationLocalMarksService:
             ).fetchone()
         return row is not None
 
+    def get_mark(
+        self, conversation_id: str, mark_type: str | None = None
+    ) -> ConversationLocalMark | None:
+        """Fetch one mark row with its timestamps, or ``None`` if absent.
+
+        PR3a-2 Task 5: the auto-wake mount-claim uses ``created_at`` as
+        the since-when boundary for "which terminal sub-agent runs are
+        still undelivered" -- ``set_mark`` refreshes only ``updated_at``
+        on conflict, so ``created_at`` is stable at "the first undelivered
+        completion since the mark was last cleared".
+
+        Args:
+            conversation_id: Conversation identifier to look up.
+            mark_type: Supported mark type. Defaults to ``"starred"``.
+
+        Returns:
+            The mark row, or ``None`` when no such mark exists.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank or ``mark_type``
+                is unsupported.
+        """
+        conversation_id = self._conversation_id(conversation_id)
+        mark_type = self._mark_type(mark_type)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT conversation_id, mark_type, created_at, updated_at
+                  FROM conversation_local_marks
+                 WHERE conversation_id = ? AND mark_type = ?
+                 LIMIT 1
+                """,
+                (conversation_id, mark_type),
+            ).fetchone()
+        if row is None:
+            return None
+        return ConversationLocalMark(
+            conversation_id=str(row["conversation_id"]),
+            mark_type=str(row["mark_type"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
     def list_marked_conversation_ids(
         self,
         mark_type: str | None = None,

@@ -3377,3 +3377,32 @@ def test_agent_definitions_are_loaded_once_per_turn(db):
     assert db.count_subagent_runs("c") == 2
     assert len(calls) == 1, f"roster re-read {len(calls)} times in one turn"
     assert calls[0][1] == {"enabled_only": True}
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("FALSE", False),
+        ("on", True),
+        ("off", False),
+        ("1", True),
+        ("0", False),
+        # Unparseable -> the documented default, never a raise, never its
+        # opposite: same posture as its sibling switches above.
+        ("maybe", agent_service.DEFAULT_AUTOWAKE_ENABLED),
+        (None, agent_service.DEFAULT_AUTOWAKE_ENABLED),
+        ("", agent_service.DEFAULT_AUTOWAKE_ENABLED),
+    ],
+)
+def test_coerce_autowake_enabled(configured, expected):
+    assert agent_service._coerce_autowake_enabled(configured) is expected
+
+
+def test_autowake_ships_on_by_default():
+    """Spec Sec 3 invariant 5 (corrected 2026-08-11): the shipped default
+    is auto-wake ON -- asserted, not assumed."""
+    assert agent_service.DEFAULT_AUTOWAKE_ENABLED is True
+    assert agent_service.AUTOWAKE_ENABLED_KEY == "autowake_enabled"

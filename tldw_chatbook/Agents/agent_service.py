@@ -202,6 +202,23 @@ DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: the per-turn bound it always had.
 CHILD_MAX_WALL_SECONDS_KEY = "child_max_wall_seconds"
 DEFAULT_CHILD_MAX_WALL_SECONDS = 1800.0
+#: ``[agents]`` key deciding whether a finished background sub-agent WAKES
+#: its supervisor (PR3a-2 Task 5; spec Sec 3 invariant 5, corrected
+#: 2026-08-11). Default **true**: a supervisor that cannot act on a
+#: result until the user happens to revisit the conversation makes
+#: background work pointless -- delegation exists precisely for the
+#: conversation the user is NOT currently looking at.
+#:
+#: ``false`` is the supported kill switch and is honoured at BOTH fire
+#: points (the immediate on-drain wake and the Console-mount claim of a
+#: staged one). OFF loses nothing: the durable ``fleet_unseen`` mark, the
+#: toast, and the sidebar badge still record every completion -- the wake
+#: turn simply never fires, and flipping the key back on lets the next
+#: trigger (a drain, a run finishing, a Console mount) deliver what is
+#: still marked undelivered. Following ``subagents_outlive_turn``'s
+#: recorded reasoning: this bounds BEHAVIOUR, not record-keeping.
+AUTOWAKE_ENABLED_KEY = "autowake_enabled"
+DEFAULT_AUTOWAKE_ENABLED = True
 #: How long a poll loop sleeps between coordinator checks. Small enough
 #: that a cancelled run is not held up perceptibly, large enough not to
 #: spin a core while several children work.
@@ -318,6 +335,36 @@ def _coerce_subagents_outlive_turn(value) -> bool:
         f"using {DEFAULT_SUBAGENTS_OUTLIVE_TURN}"
     )
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
+
+
+def _coerce_autowake_enabled(value) -> bool:
+    """Read the auto-wake switch from config, tolerating any junk.
+
+    Identical posture to ``_coerce_subagents_outlive_turn`` (its sibling
+    kill switch): ``_setting`` already boolean-parses an ENV override;
+    this covers a TOML value of any type and a hand-edited string, and an
+    unrecognised value falls back to the default rather than raising --
+    a malformed config key must never break a settle, and must never
+    silently mean its opposite.
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured switch, or ``DEFAULT_AUTOWAKE_ENABLED`` for junk.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    logger.warning(
+        f"[agents] {AUTOWAKE_ENABLED_KEY}={value!r} is not a boolean; "
+        f"using {DEFAULT_AUTOWAKE_ENABLED}"
+    )
+    return DEFAULT_AUTOWAKE_ENABLED
 
 
 # Task 7: appended to config.system_prompt only when THIS run wired the
