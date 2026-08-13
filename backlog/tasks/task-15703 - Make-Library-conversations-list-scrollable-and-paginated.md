@@ -59,22 +59,26 @@ Detailed plan: `Docs/superpowers/plans/2026-08-12-library-conversations-paginati
   loading or recoverable errors, a native vertically scrolling row viewport, and
   fixed Previous/Next controls with range and page status.
 - Updated state, Library screen/canvas presentation, CSS source/generated bundle,
-  focused state and Textual Pilot coverage, and
-  `Docs/User_Guide/library/media-and-conversations.md`. No ADR was required because
-  the existing conversation-service pagination contract and module boundaries were
-  retained.
+  focused state and Textual Pilot coverage, plus the feature design, plan, and task
+  documentation. The clean `dev` integration intentionally preserves deletion of
+  the retired `Docs/User_Guide` tree rather than resurrecting its old Library page.
+  No ADR was required because the existing conversation-service pagination contract
+  and module boundaries were retained.
 - Focused verification passed: Ruff; CSS regeneration with no semantic bundle diff;
   30 state/visibility tests; and 21 focused Library conversation UI tests. Isolated
   live TUI verification passed with 45 scratch-only conversations at 100x30 and
   170x48, covering row 20 scrolling, first/middle/final pages, oldest-row filtering,
   and clearing back to page 1. Evidence:
   `/tmp/tldw-task15703-live.ZWehQn/evidence/live-verification.txt`.
-- Closed two pre-existing deterministic Library guards by reserving the registered
-  `generate-video` and `stream-video` commands and aligning the landing footer test
-  with the protected global-hints contract. Hardened six existing async UI assertions
-  to wait for their rendered widgets instead of racing Textual recomposition.
-- Broader verification passed: all 1,119 `Tests/Library` tests and all 377
-  `Tests/UI/test_library_shell.py` tests. Final review found no Critical, Important,
-  or Minor code issues. No generalized lesson entry was added because the only test
-  trap encountered is already documented in `lessons-testing-evidence.md`.
+- Replayed the feature onto current `dev` without the old-base command/footer guard
+  maintenance, which is not present on this branch. Removed five existing lint
+  artifacts exposed by the clean-base check and hardened seven async UI
+  assertions/polls to wait for mounted widgets instead of racing Textual
+  recomposition.
+- Fresh clean-base verification passed: 28 focused state/visibility tests, 20
+  focused conversation UI tests, all 557 `Tests/Library` tests, all 268
+  `Tests/UI/test_library_shell.py` tests, Ruff, and `git diff --check`. Final review
+  found no Critical, Important, or Minor feature issues. No generalized lesson entry
+  was added because the only test trap encountered is already documented in
+  `lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
