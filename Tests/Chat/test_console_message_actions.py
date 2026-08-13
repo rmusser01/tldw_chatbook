@@ -1,5 +1,6 @@
 import pytest
 
+from tldw_chatbook.Chat import console_message_actions as message_actions
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -560,6 +561,83 @@ def test_speak_action_present_for_completed_assistant_text():
     action_ids = [action.action_id for action in service.available_actions(message)]
 
     assert "speak" in action_ids
+
+
+@pytest.mark.parametrize(
+    ("speech_state", "action_id", "enabled", "status_label"),
+    [
+        ("idle", "speak", True, ""),
+        ("generating", "speak-stop", False, "Generating"),
+        ("playing", "speak-stop", True, "Playing"),
+        ("stopped", "speak", True, "Stopped"),
+        ("failed", "speak", True, "Failed"),
+    ],
+)
+def test_completed_assistant_header_has_canonical_speech_presentation(
+    speech_state, action_id, enabled, status_label
+):
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello there",
+        status="complete",
+        id="m1",
+    )
+
+    presentation = message_actions.resolve_console_header_speech(
+        message, speech_state
+    )
+
+    assert presentation.action is not None
+    assert presentation.action.action_id == action_id
+    assert presentation.action.enabled is enabled
+    assert presentation.status_label == status_label
+
+
+def test_selected_action_row_excludes_header_owned_speech_action():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello there",
+        status="complete",
+        id="m1",
+    )
+
+    actions = service.selected_row_actions(message, speaking_message_id="m1")
+
+    assert [action.action_id for action in actions] == [
+        "copy",
+        "edit",
+        "save-as",
+        "regenerate",
+        "continue",
+        "feedback",
+        "delete",
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello", id="u1"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="partial",
+            status="streaming",
+            id="a1",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="   ",
+            status="complete",
+            id="a2",
+        ),
+    ],
+)
+def test_ineligible_message_header_has_no_speech_presentation(message):
+    presentation = message_actions.resolve_console_header_speech(message, "idle")
+
+    assert presentation.action is None
+    assert presentation.status_label == ""
 
 
 @pytest.mark.parametrize(

@@ -558,6 +558,16 @@ async def test_manual_generation_preserves_legacy_service_call_shape(tmp_path) -
 
 
 class _SpeechRequestControllerStub:
+    _begin_console_speech_presentation = (
+        ConsoleMessageController._begin_console_speech_presentation
+    )
+    _settle_console_speech_presentation = (
+        ConsoleMessageController._settle_console_speech_presentation
+    )
+    _schedule_console_speech_state_sync = (
+        ConsoleMessageController._schedule_console_speech_state_sync
+    )
+
     def __init__(self, store: ConsoleChatStore, post_result) -> None:
         self._store = store
         self._screen = MagicMock()
@@ -568,6 +578,8 @@ class _SpeechRequestControllerStub:
         else:
             self.app_instance.post_message.return_value = post_result
         self._console_speaking_message_id = None
+        self._console_speech_states: dict[str, str] = {}
+        self._console_speech_epochs: dict[str, int] = {}
         self.syncs = 0
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
@@ -618,6 +630,57 @@ async def test_console_speech_unexpected_snapshot_issue_failure_settles_once() -
     assert issued is False
     assert outcomes == [False]
     controller.app_instance.post_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_console_speech_request_reports_generating_then_playing() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+
+    issued = await ConsoleMessageController.request_console_message_speech(
+        controller,
+        message.id,
+    )
+
+    assert issued is True
+    assert controller._console_speech_states == {message.id: "generating"}
+    event = controller.app_instance.post_message.call_args.args[0]
+    event.report_outcome(True)
+    await asyncio.sleep(0)
+
+    assert controller._console_speech_states == {message.id: "playing"}
+    assert controller._console_speaking_message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_stale_speech_outcome_cannot_replace_newer_request_state() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Ready.",
+    )
+    controller = _SpeechRequestControllerStub(store, True)
+
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    first = controller.app_instance.post_message.call_args.args[0]
+    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    second = controller.app_instance.post_message.call_args.args[0]
+
+    first.report_outcome(False)
+    await asyncio.sleep(0)
+    assert controller._console_speech_states[message.id] == "generating"
+
+    second.report_outcome(True)
+    await asyncio.sleep(0)
+    assert controller._console_speech_states[message.id] == "playing"
 
 
 @pytest.mark.asyncio

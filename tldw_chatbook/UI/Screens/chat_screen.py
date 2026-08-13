@@ -5649,6 +5649,14 @@ class ChatScreen(BaseAppScreen):
         self._message._console_speaking_message_id = value
 
     @property
+    def _console_speech_states(self) -> dict[str, str]:
+        return self._message._console_speech_states
+
+    @_console_speech_states.setter
+    def _console_speech_states(self, value: dict[str, str]) -> None:
+        self._message._console_speech_states = value
+
+    @property
     def _pending_console_swipe_selection(self) -> str | None:
         return self._message._pending_console_swipe_selection
 
@@ -16158,6 +16166,7 @@ class ChatScreen(BaseAppScreen):
                 summary_boundary_id,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                tuple(sorted(self._console_speech_states.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
