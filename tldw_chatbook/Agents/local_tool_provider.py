@@ -478,8 +478,8 @@ class LocalToolProvider:
         """
         try:
             state = self._resolve_state(hub)
-        except Exception as exc:  # noqa: BLE001 — fail closed to "let invoke handle it"
-            logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
+        except Exception:  # noqa: BLE001 — fail closed to "let invoke handle it"
+            logger.warning("Local tool approval-state resolution failed")
             return None, True
         if state.state != "ask":
             return None, False
@@ -607,8 +607,8 @@ class LocalToolProvider:
         hub = self.hub_tool_for(name)
         try:
             state = self._resolve_state(hub)
-        except Exception as exc:  # noqa: BLE001 — fail closed on a resolution failure
-            logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
+        except Exception:  # noqa: BLE001 — fail closed on a resolution failure
+            logger.warning("Local tool state resolution failed")
             # Fix Round H, Item 1: a distinct verdict from "deny" -- the
             # resolver crashed, so the tool's actual state was never
             # determined; it is not necessarily Off at all. invoke() renders
@@ -658,10 +658,8 @@ class LocalToolProvider:
                 return "timeout"
             try:
                 decisions = self._approval_callback([gate])
-            except Exception as exc:  # noqa: BLE001 — fail closed on a callback failure
-                logger.warning(
-                    f"LocalToolProvider: approval_callback failed for {name}: {exc}"
-                )
+            except Exception:  # noqa: BLE001 — fail closed on a callback failure
+                logger.warning("Local tool approval callback failed")
                 return "timeout"
             decision = (decisions or {}).get(name, "timeout")
             if decision in ("approve_session", "always_allow"):

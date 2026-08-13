@@ -1148,12 +1148,8 @@ class ConsoleProviderGateway:
                 resolution.provider,
                 resolution.model or "",
             )
-        except Exception as exc:
-            logger.bind(
-                provider=resolution.provider,
-                model=resolution.model or "",
-                error=repr(exc),
-            ).debug("console_request_capability_lookup_failed")
+        except Exception:
+            logger.debug("console_request_capability_lookup_failed")
 
         def positive_cap(*names: str) -> int | None:
             for name in names:

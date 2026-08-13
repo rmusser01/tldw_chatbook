@@ -778,8 +778,9 @@ async def test_compaction_diagnostics_are_structured_and_content_free() -> None:
     assert transcript_canary not in diagnostic_text
     assert prompt_canary not in diagnostic_text
     assert summary_canary not in diagnostic_text
-    assert events[-1]["extra"]["usage_total_tokens"] == 12
-    assert events[-1]["extra"]["status"] == "succeeded"
+    # TASK-15103: compaction diagnostics are event-only — no bound metadata
+    # survives the ADR-029 repair, so nothing private can ride along either.
+    assert all(record["extra"] == {} for record in events)
 
 
 @pytest.mark.asyncio
@@ -1265,9 +1266,7 @@ async def test_controller_preflight_routes_off_ask_and_automatic_once(
 
 
 @pytest.mark.asyncio
-async def test_controller_decision_diagnostic_reports_counts_and_provenance_only() -> (
-    None
-):
+async def test_controller_decision_diagnostic_is_event_only() -> None:
     controller, _store, session, assistant, _gateway, provider_messages = (
         _controller_preflight_fixture(ContextCompactionMode.OFF)
     )
@@ -1287,13 +1286,10 @@ async def test_controller_decision_diagnostic_reports_counts_and_provenance_only
     record = next(
         item for item in records if item["message"] == "console_context_policy_decision"
     )
-    extra = record["extra"]
-    assert extra["decision"] == "off"
-    assert extra["model_limit_source"] == "detected"
-    assert extra["total_input_tokens"] > 0
-    assert extra["conversation_tokens"] > 0
-    assert extra["compactable_unit_count"] == 2
-    assert "compaction_mode" in extra["conversation_override_fields"]
+    # TASK-15103: the decision diagnostic is event-only — the ADR-029 repair
+    # removed every bound field (conversation id, provider/model, token
+    # accounting), so nothing private can ride along.
+    assert record["extra"] == {}
     diagnostic_text = repr(record)
     assert "question-0" not in diagnostic_text
     assert "answer-0" not in diagnostic_text

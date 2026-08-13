@@ -53,7 +53,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
-from .config import RAGConfig, SearchConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
+from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import (
     reciprocal_rank_fusion,
@@ -242,11 +242,7 @@ def _resolve_keyword_source_types(
     requested = frozenset(str(source_type) for source_type in selection)
     unknown = requested - KEYWORD_LEG_SOURCE_TYPES
     if unknown:
-        logger.debug(
-            "Ignoring unknown keyword-leg source type(s) {}; the leg serves {}",
-            sorted(unknown),
-            sorted(KEYWORD_LEG_SOURCE_TYPES),
-        )
+        logger.debug("Ignoring unknown keyword-leg source types.")
     return requested & KEYWORD_LEG_SOURCE_TYPES
 
 
@@ -559,10 +555,7 @@ def _resolve_hybrid_pool_multiplier(value: Any) -> int:
         # hand-edited config (Qodo PR-1487, same defect as
         # ``fusion.resolve_rrf_k``). Must fall back like every other
         # invalid value, not raise before either hybrid leg launches.
-        logger.warning(
-            f"Invalid hybrid_pool_multiplier {value!r}; falling back to "
-            f"{DEFAULT_HYBRID_POOL_MULTIPLIER}"
-        )
+        logger.warning("Invalid hybrid_pool_multiplier; using shipped default")
         return DEFAULT_HYBRID_POOL_MULTIPLIER
     if multiplier < 1:
         logger.warning(f"hybrid_pool_multiplier {multiplier} < 1; flooring to 1")
@@ -1583,12 +1576,12 @@ class RAGService:
             # the same disclosed path an empty FTS result already takes.
             logger.debug(
                 "Keyword search has no runnable sub-legs (selection={}, "
-                "scoped types={}); returning no results without a database "
+                "scoped id count={}); returning no results without a database "
                 "lookup.",
                 "all" if keyword_source_types is None else sorted(
                     str(value) for value in keyword_source_types
                 ),
-                None if allowlist_ids is None else sorted(allowlist_ids),
+                None if allowlist_ids is None else len(allowlist_ids),
             )
             return []
 
@@ -3434,13 +3427,7 @@ class RAGService:
         if dedup_key not in self._warned_fts_constructions:
             self._warned_fts_constructions.add(dedup_key)
             logger.warning(
-                "Unknown fts_match_construction {!r}; the keyword leg is "
-                "falling back to the {!r} construction (the conservative "
-                "full AND, NOT the shipped default {!r}). Valid values: {}.",
-                construction,
-                FTS_MATCH_CONSTRUCTION_AND,
-                SearchConfig.fts_match_construction,
-                ", ".join(FTS_MATCH_CONSTRUCTIONS),
+                "Unknown fts_match_construction; using conservative fallback"
             )
         return FTS_MATCH_CONSTRUCTION_AND
 

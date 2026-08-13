@@ -1001,8 +1001,7 @@ class MCPClient:
         server["prompts"] = prompts_response.prompts
 
         logger.info(
-            "Discovered capabilities for {}: {} tools, {} resources, {} prompts",
-            server_id,
+            "Discovered MCP capabilities: {} tools, {} resources, {} prompts",
             len(server["tools"]),
             len(server["resources"]),
             len(server["prompts"]),

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
+from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import events, on, work
@@ -8991,10 +8992,9 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await update()
             except Exception:
-                logger.debug(
+                loguru_logger.debug(
                     "Details-open DB size recompute failed; the disclosure "
-                    "keeps its cached reading.",
-                    exc_info=True,
+                    "keeps its cached reading."
                 )
         sizes_line = self._library_db_sizes_line()
         if sizes_line is None:
@@ -9017,10 +9017,9 @@ class LibraryScreen(BaseAppScreen):
                 after=anchors[0],
             )
         except Exception:
-            logger.debug(
+            loguru_logger.debug(
                 "Mounting the freshly computed DB-sizes line failed; the "
-                "next rail recompose renders it from the updated cache.",
-                exc_info=True,
+                "next rail recompose renders it from the updated cache."
             )
 
     def _build_library_conversations_state(self):
@@ -14149,9 +14148,9 @@ class LibraryScreen(BaseAppScreen):
             else:
                 error = "Trash is unavailable."
         except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to load the Library media trash page."
-            )
+            # TASK-15103: raw logger — the ledgered contract for these events
+            # carries no bound fields, including the file-level module bind.
+            loguru_logger.warning("Failed to load the Library media trash page.")
             error = "Could not load Trash."
 
         self._library_media_trash_records = records
@@ -21553,7 +21552,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("notes", key, value)
         except Exception:
-            logger.error(f"Failed to persist notes.{key}")
+            logger.error("Failed to persist a Library notes setting")
 
     @on(Button.Pressed, "#library-notes-sync-browse")
     async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
@@ -22075,7 +22074,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("library.ingest", "backend", target)
         except Exception:
-            logger.error(f"Failed to persist library.ingest.backend={target}")
+            logger.error("Failed to persist the Library ingest backend")
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -23780,9 +23779,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_settings_to_cli_config(option_settings)
         except Exception:
-            logger.error(
-                f"Failed to persist library ingest options for {list(option_settings)}"
-            )
+            logger.error("Failed to persist Library ingest options")
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.
@@ -25164,9 +25161,7 @@ class LibraryScreen(BaseAppScreen):
                         "This deleted note changed elsewhere — refresh and try again."
                     )
                 except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to restore Library note {receipt.note_id!r}."
-                    )
+                    logger.warning("Failed to restore a Library note")
                     failure_message = "Could not restore this note."
 
             if restored_record is not None:
@@ -26015,9 +26010,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                     deleted = True
                 except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to delete Library media item {media_id!r}."
-                    )
+                    logger.warning("Failed to delete a Library media item.")
                     self._notify_library_media_delete_warning(
                         "Could not delete this media item."
                     )
@@ -27571,9 +27564,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_selected_id = receipt.collection_id
             restored = True
         except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to restore Library Collection {receipt.collection_id!r}."
-            )
+            logger.warning("Failed to restore a Library Collection")
             self._notify_library_collections_warning(
                 "Could not restore this Collection; the receipt is still available."
             )

@@ -799,7 +799,8 @@ class LLMScreen(LabScreen):
             message, is_error = format_external_parakeet_recovery(exc.code)
             if is_error:
                 logger.warning(
-                    "External Parakeet verification failed; error_type={}",
+                    "External Parakeet verification rejected the selected source; "
+                    "error_type={}",
                     type(exc).__name__,
                 )
             self.app.call_from_thread(
@@ -813,7 +814,7 @@ class LLMScreen(LabScreen):
             return
         except Exception as exc:
             logger.warning(
-                "External Parakeet verification failed; error_type={}",
+                "External Parakeet verification failed unexpectedly; error_type={}",
                 type(exc).__name__,
             )
             self.app.call_from_thread(
@@ -1491,11 +1492,9 @@ class LLMScreen(LabScreen):
             )
         except Exception as exc:
             artifact_id = getattr(reference, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model preflight failed for {}@{}/{}",
-                artifact_id,
-                getattr(reference, "revision", "unknown"),
-                getattr(reference, "variant", "unknown"),
+            logger.error(
+                "Curated model preflight failed; error_type={}",
+                type(exc).__name__,
             )
             self.app.call_from_thread(
                 self._apply_curated_preflight_result,
@@ -1593,11 +1592,9 @@ class LLMScreen(LabScreen):
         except Exception as exc:
             root = getattr(report, "root", None)
             artifact_id = getattr(root, "artifact_id", "unknown")
-            logger.opt(exception=True).error(
-                "Curated model installation failed for {}@{}/{}",
-                artifact_id,
-                getattr(root, "revision", "unknown"),
-                getattr(root, "variant", "unknown"),
+            logger.error(
+                "Curated model installation failed; error_type={}",
+                type(exc).__name__,
             )
             app.call_from_thread(
                 self._apply_curated_provision_result,
@@ -1703,7 +1700,9 @@ class LLMScreen(LabScreen):
         if view is not None:
             view.cancel_pending_install()
 
-    def _deliver_curated(self, message: InstallProgressed | InstallStatusChanged) -> None:
+    def _deliver_curated(
+        self, message: InstallProgressed | InstallStatusChanged
+    ) -> None:
         """Post one install-lifecycle message so it bubbles through ``LLMManagementWindow``.
 
         Despite the name (kept for the existing call sites and tests that
@@ -1873,13 +1872,9 @@ class LLMScreen(LabScreen):
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            reference = getattr(artifact, "reference", None)
-            artifact_id = getattr(reference, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model preflight failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model preflight failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -2012,18 +2007,16 @@ class LLMScreen(LabScreen):
             )
             return
         try:
-            asyncio.run(self._provision_remote(report, catalog))  # policy-exception: worker-thread loop
+            asyncio.run(
+                self._provision_remote(report, catalog)
+            )  # policy-exception: worker-thread loop
         except Exception as exc:
             from tldw_chatbook.Model_Artifacts.acquisition import TransferError
 
             artifact = getattr(catalog, "artifact", None)
-            root = getattr(report, "root", None)
-            artifact_id = getattr(root, "artifact_id", "unknown")
             model_label = getattr(artifact, "model_id", "unknown")
             logger.error(
-                "Remote model installation failed for managed artifact {}; "
-                "error_type={}, retryable={}",
-                artifact_id,
+                "Remote model installation failed; error_type={}, retryable={}",
                 type(exc).__name__,
                 isinstance(exc, TransferError) and getattr(exc, "retryable", False),
             )
@@ -2249,7 +2242,9 @@ class LLMScreen(LabScreen):
             active_view: The window's current view key.
         """
         for row in self.query(f".{LAB_RAIL_ROW_CLASS}").results(Button):
-            row.set_class(getattr(row, "lab_view_key", None) == active_view, "is-active")
+            row.set_class(
+                getattr(row, "lab_view_key", None) == active_view, "is-active"
+            )
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

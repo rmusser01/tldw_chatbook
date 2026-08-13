@@ -1106,10 +1106,7 @@ class InstalledView(Widget):
                 recycled = self._recycle_idle(reference)
             except Exception as recycle_exc:
                 logger.error(
-                    "Managed model idle recycle failed for {}@{}/{}; error_type={}",
-                    reference.artifact_id,
-                    reference.revision,
-                    reference.variant,
+                    "Managed model idle recycle failed; error_type={}",
                     type(recycle_exc).__name__,
                 )
                 self.app.call_from_thread(
@@ -1140,12 +1137,7 @@ class InstalledView(Widget):
     ) -> None:
         """Report one final delete failure without exposing lease details."""
         if isinstance(exc, ArtifactInUseError):
-            logger.warning(
-                "Managed model deletion blocked by a lease for {}@{}/{}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
-            )
+            logger.warning("Managed model deletion blocked by a lease")
         else:
             logger.opt(exception=True).error(
                 "Managed model deletion failed for {}@{}/{}",

@@ -1290,7 +1290,7 @@ def test_run_log_eviction_fails_closed_without_logging_private_counter_failures(
 
     diagnostic = "".join(map(str, logged))
     assert "category=ValueError" in diagnostic
-    assert "trace=" in diagnostic
+    assert "trace=" not in diagnostic
     assert "PRIVATE-COUNTER-FAILURE-CANARY" not in diagnostic
 
 

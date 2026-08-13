@@ -2500,7 +2500,7 @@ class LibraryIngestQueueMixin:
                         try:
                             method()
                         except Exception:
-                            logger.opt(exception=True).error(
+                            logger.error(
                                 "Error cleaning up a partially constructed "
                                 "Library ingest progress queue "
                                 "(operation={}, queue_type={}).",
@@ -4186,16 +4186,12 @@ class LibraryIngestQueueMixin:
                 try:
                     source_service.close()
                 except Exception:
-                    logger.opt(exception=True).error(
-                        "Error closing the Parakeet source service."
-                    )
+                    logger.error("Error closing the Parakeet source service.")
             if coordinator is not None:
                 try:
                     coordinator.close()
                 except Exception:
-                    logger.opt(exception=True).error(
-                        "Error closing the local STT dispatch coordinator."
-                    )
+                    logger.error("Error closing the local STT dispatch coordinator.")
             if executor is not None:
                 try:
                     executor.close()
@@ -4217,7 +4213,7 @@ class LibraryIngestQueueMixin:
                     try:
                         close()
                     except Exception:
-                        logger.opt(exception=True).error(
+                        logger.error(
                             "Error cleaning up the Library ingest progress queue "
                             "(operation={}, queue_type={}).",
                             "close",
@@ -4228,7 +4224,7 @@ class LibraryIngestQueueMixin:
                     try:
                         cancel_join()
                     except Exception:
-                        logger.opt(exception=True).error(
+                        logger.error(
                             "Error cleaning up the Library ingest progress queue "
                             "(operation={}, queue_type={}).",
                             "cancel_join_thread",
@@ -4238,7 +4234,7 @@ class LibraryIngestQueueMixin:
                 try:
                     progress_thread.join(timeout=1.0)
                 except Exception:
-                    logger.opt(exception=True).error(
+                    logger.error(
                         "Error joining the Library ingest progress drain thread."
                     )
 
@@ -5270,9 +5266,8 @@ class TldwCli(
             )
         except Exception as _instance_lock_exc:
             logger.debug(
-                "Instance lock acquisition failed unexpectedly (%s): %s",
+                "Instance lock acquisition failed unexpectedly (%s)",
                 type(_instance_lock_exc).__name__,
-                _instance_lock_exc,
             )
             self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
@@ -10131,9 +10126,9 @@ class TldwCli(
                 route.load_screen_class()
             except Exception as exc:
                 self.loguru_logger.debug(
-                    "Screen pre-import failed for "
-                    f"{route.screen_name!r} (non-fatal, nav-time behavior "
-                    f"unaffected): {type(exc).__name__}: {exc}"
+                    "Screen pre-import failed (route={}, error_type={})",
+                    route.screen_name,
+                    type(exc).__name__,
                 )
 
     def _preimport_heavy_screens(self) -> None:
@@ -11114,7 +11109,7 @@ class TldwCli(
         except Exception:
             quit_flow.close()
             self._quit_in_progress = False
-            loguru_logger.opt(exception=True).warning(
+            loguru_logger.warning(
                 "Application quit worker could not start; staying in the app"
             )
 
@@ -11133,9 +11128,7 @@ class TldwCli(
                     self._quit_in_progress = False
                     return
         except Exception:
-            loguru_logger.opt(exception=True).warning(
-                "Pre-quit confirmation failed; staying in the app"
-            )
+            loguru_logger.warning("Pre-quit confirmation failed; staying in the app")
             self._quit_in_progress = False
             try:
                 self.notify(
@@ -11153,9 +11146,7 @@ class TldwCli(
                 if inspect.isawaitable(preparation):
                     await preparation
         except Exception:
-            loguru_logger.opt(exception=True).warning(
-                "Pre-quit shutdown guard failed; staying in the app"
-            )
+            loguru_logger.warning("Pre-quit shutdown guard failed; staying in the app")
             self._quit_in_progress = False
             try:
                 self.notify(
@@ -11179,15 +11170,13 @@ class TldwCli(
                 try:
                     media_timer.stop()
                 except Exception:
-                    loguru_logger.opt(exception=True).warning(
+                    loguru_logger.warning(
                         "Media cleanup timer could not stop during quit"
                     )
             try:
                 await asyncio.to_thread(self._run_blocking_quit_persistence)
             except Exception:
-                loguru_logger.opt(exception=True).warning(
-                    "Blocking quit persistence failed"
-                )
+                loguru_logger.warning("Blocking quit persistence failed")
         finally:
             self.exit()
 
@@ -11202,15 +11191,13 @@ class TldwCli(
         except asyncio.TimeoutError:
             loguru_logger.warning("Audio stop timed out")
         except Exception:
-            loguru_logger.opt(exception=True).warning("Audio stop failed during quit")
+            loguru_logger.warning("Audio stop failed during quit")
         try:
             await asyncio.wait_for(audio_player.cleanup(), timeout=0.5)
         except asyncio.TimeoutError:
             loguru_logger.warning("Audio cleanup timed out")
         except Exception:
-            loguru_logger.opt(exception=True).warning(
-                "Audio cleanup failed during quit"
-            )
+            loguru_logger.warning("Audio cleanup failed during quit")
 
     @staticmethod
     def _save_shutdown_caches_with_timeout() -> None:
@@ -11232,12 +11219,12 @@ class TldwCli(
             if save_thread.is_alive():
                 loguru_logger.warning("Cache save timed out - proceeding with quit")
         except Exception:
-            loguru_logger.opt(exception=True).warning("Error in quit cache handler")
+            loguru_logger.warning("Error in quit cache handler")
 
         try:
             persisted = persist_cli_config_for_shutdown()
         except Exception:
-            loguru_logger.opt(exception=True).warning(
+            loguru_logger.warning(
                 "Configuration shutdown persistence raised an error"
             )
         else:

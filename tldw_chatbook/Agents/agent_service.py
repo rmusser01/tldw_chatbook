@@ -256,10 +256,7 @@ def _coerce_max_live_subagents(value) -> int:
             parsed = int(float(text))
         except (TypeError, ValueError, OverflowError):
             # OverflowError: float("inf") parses but does not convert.
-            logger.warning(
-                f"[agents] {MAX_LIVE_SUBAGENTS_KEY}={value!r} is not a "
-                f"number; using {DEFAULT_MAX_LIVE_SUBAGENTS}"
-            )
+            logger.warning("invalid max_live_subagents setting; using default")
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
 
@@ -289,16 +286,10 @@ def _coerce_child_max_wall_seconds(value) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not a "
-            f"number; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not numeric; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     if not math.isfinite(parsed):
-        logger.warning(
-            f"[agents] {CHILD_MAX_WALL_SECONDS_KEY}={value!r} is not "
-            f"finite; using {DEFAULT_CHILD_MAX_WALL_SECONDS}"
-        )
+        logger.warning("child_max_wall_seconds is not finite; using default")
         return DEFAULT_CHILD_MAX_WALL_SECONDS
     return parsed
 
@@ -326,10 +317,7 @@ def _coerce_subagents_outlive_turn(value) -> bool:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    logger.warning(
-        f"[agents] {SUBAGENTS_OUTLIVE_TURN_KEY}={value!r} is not a boolean; "
-        f"using {DEFAULT_SUBAGENTS_OUTLIVE_TURN}"
-    )
+    logger.warning("subagents_outlive_turn is not boolean; using default")
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
 
 
@@ -1008,9 +996,7 @@ class AgentService:
         except Exception:  # noqa: BLE001 — a UI-side failure must not take
             # down the cancellation path; the card's own approval timeout
             # remains the backstop.
-            logger.opt(exception=True).warning(
-                f"could not revoke pending approvals for run {run_id}"
-            )
+            logger.warning("could not revoke pending approvals")
 
     def _drain_fleet_handles(
         self, fleet: FleetCoordinator, handle_ids: list[str]
@@ -1194,8 +1180,7 @@ class AgentService:
         survivors = self._surviving_handles(fleet, mine, should_cancel)
         if survivors:
             logger.info(
-                f"{len(survivors)} sub-agent(s) outliving their turn: "
-                f"{', '.join(sorted(survivors))}"
+                "{} sub-agents are outliving their turn", len(survivors)
             )
         # Everything else settles exactly as it always has. With no
         # survivors this holds `mine` itself, in the same order, and every
@@ -1239,10 +1224,7 @@ class AgentService:
             handle = fleet.get(handle_id)
             if handle is None:  # pragma: no cover — never forgotten
                 continue
-            logger.warning(
-                f"abandoning wedged sub-agent {handle.handle_id} "
-                f"(run {handle.run_id}) at end of turn"
-            )
+            logger.warning("abandoning wedged sub-agent at end of turn")
             fleet.finish(
                 handle.handle_id,
                 RUN_CANCELLED,
@@ -1262,10 +1244,7 @@ class AgentService:
                 self.db.set_status(handle.run_id, RUN_CANCELLED)
             except Exception:  # noqa: BLE001 — a DB failure here must not
                 # take down a turn that has already produced its answer.
-                logger.opt(exception=True).warning(
-                    f"could not mark abandoned sub-agent run "
-                    f"{handle.run_id} cancelled"
-                )
+                logger.warning("could not mark abandoned sub-agent run cancelled")
 
     def _persist(self, run_id: str, outcome: RunOutcome) -> None:
         stamp = _now_iso()
@@ -1358,9 +1337,7 @@ class AgentService:
             try:
                 on_run_id(run_id)
             except Exception:  # noqa: BLE001 — bookkeeping is not load-bearing
-                logger.opt(exception=True).warning(
-                    f"on_run_id hook raised for run {run_id}; continuing"
-                )
+                logger.warning("on_run_id hook raised; continuing")
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
         if agent_kind == AGENT_KIND_PRIMARY:
@@ -1894,9 +1871,7 @@ class AgentService:
                     # be a trivial bug. Same containment rule as
                     # `_call_with_timeout._runner`.
                     error_text = f"sub-agent failed: {exc}"
-                    logger.opt(exception=True).warning(
-                        f"sub-agent thread for handle {handle.handle_id} raised"
-                    )
+                    logger.warning("sub-agent thread raised")
                 finally:
                     fleet.finish(
                         handle.handle_id,
@@ -1935,9 +1910,8 @@ class AgentService:
                         try:
                             self.db.set_status(child_run_id, status)
                         except Exception:  # noqa: BLE001
-                            logger.opt(exception=True).warning(
-                                "could not persist terminal status for "
-                                f"sub-agent run {child_run_id}"
+                            logger.warning(
+                                "could not persist terminal status for sub-agent run"
                             )
 
             thread = threading.Thread(
@@ -1971,10 +1945,7 @@ class AgentService:
                 # No child was created, so this spawn costs no slot --
                 # same rule as the cap refusal above.
                 sub_agent_spawns -= 1
-                logger.opt(exception=True).warning(
-                    f"could not start sub-agent thread for handle "
-                    f"{handle.handle_id}"
-                )
+                logger.warning("could not start sub-agent thread")
                 return ToolResult(
                     ok=False,
                     error=f"could not start sub-agent: {exc}",
@@ -3087,9 +3058,8 @@ class AgentService:
             # settling children, it must not cost this turn its manifest or
             # leak the run-log writer's file descriptor. The two calls
             # below are the run tree's only cleanup.
-            logger.opt(exception=True).error(
-                "settling sub-agents at end of turn failed; finalizing the "
-                "run anyway"
+            logger.error(
+                "settling sub-agents at end of turn failed; finalizing the run anyway"
             )
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run

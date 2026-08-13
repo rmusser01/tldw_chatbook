@@ -440,18 +440,7 @@ class ConsoleCompactionService:
                     started_at=started.isoformat(),
                 )
             )
-            logger.bind(
-                operation_id=operation_id,
-                conversation_id=admission.conversation_id,
-                purpose="conversation_compaction",
-                provider=admission.provider,
-                model=admission.model,
-                requested_output_cap=plan.requested_output_cap,
-                estimated_input_tokens=plan.estimated_input_tokens,
-                before_input_tokens=plan.before_input_tokens,
-                target_conversation_tokens=plan.target_conversation_tokens,
-                selected_unit_count=len(plan.selected_units),
-            ).info("console_compaction_auxiliary_started")
+            logger.info("console_compaction_auxiliary_started")
             started_tick = self._monotonic()
             try:
                 completion = await self._gateway.complete_auxiliary(
@@ -625,23 +614,7 @@ class ConsoleCompactionService:
             usage=usage,
             pricing=pricing,
         )
-        logger.bind(
-            operation_id=operation_id,
-            purpose="conversation_compaction",
-            status=status.value,
-            elapsed_ms=elapsed_ms,
-            usage_total_tokens=(usage.total_tokens if usage is not None else None),
-            usage_input_tokens=(
-                usage.uncached_input + usage.cache_read + usage.cache_write
-                if usage is not None
-                else None
-            ),
-            usage_output_tokens=(usage.output if usage is not None else None),
-            pricing_source=(pricing.source if pricing is not None else None),
-            pricing_revision=(
-                pricing.catalog_revision if pricing is not None else None
-            ),
-        ).info("console_compaction_auxiliary_finished")
+        logger.info("console_compaction_auxiliary_finished")
 
     @staticmethod
     def _pricing_provenance(

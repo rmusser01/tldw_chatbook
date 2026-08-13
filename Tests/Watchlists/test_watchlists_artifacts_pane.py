@@ -5535,6 +5535,10 @@ async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
+# task-15111 network guard: this test starts a REAL local server and
+# round-trips through a genuine socket — exactly the case the guard's
+# escape hatch exists for.
+@pytest.mark.allow_network
 async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
     monkeypatch, tmp_path
 ):

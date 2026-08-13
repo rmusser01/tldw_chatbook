@@ -345,7 +345,7 @@ class RAGIndexingDB:
                     "error_type": type(e).__name__,
                 },
             )
-            logger.error(f"Error marking item indexed: {e}")
+            logger.error(f"Error marking item indexed (error_type={type(e).__name__})")
             raise
 
     def mark_items_indexed(
@@ -406,7 +406,10 @@ class RAGIndexingDB:
                     "error_type": type(e).__name__,
                 },
             )
-            logger.error(f"Error marking {len(rows)} item(s) indexed: {e}")
+            logger.error(
+                f"Error marking {len(rows)} item(s) indexed "
+                f"(error_type={type(e).__name__})"
+            )
             raise
 
         log_histogram(

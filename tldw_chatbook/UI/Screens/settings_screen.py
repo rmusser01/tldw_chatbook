@@ -2688,9 +2688,7 @@ class SettingsScreen(BaseAppScreen):
             try:
                 callback(*args)
             except Exception:
-                logger.debug(
-                    "Settings post-pane-swap callback failed.", exc_info=True
-                )
+                logger.debug("Settings post-pane-swap callback failed.")
 
     def action_show_workbench_help(self) -> None:
         """F1 help: list the ACTIVE category's working shortcuts (task-1340).
@@ -3964,9 +3962,7 @@ class SettingsScreen(BaseAppScreen):
                 {"chat.images": {"render_remote_images": next_value}}
             )
         except Exception:
-            logger.warning(
-                "Failed to persist render_remote_images.", exc_info=True
-            )
+            logger.warning("Failed to persist render_remote_images.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -9793,9 +9789,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             save_settings_to_cli_config(section_values)
         except Exception:
-            logger.warning(
-                "Failed to persist model_catalog settings.", exc_info=True
-            )
+            logger.warning("Failed to persist model_catalog settings.")
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.

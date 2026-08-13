@@ -1189,7 +1189,10 @@ class EnhancedFileDialog(BaseFileDialog):
                 )
             save_settings_to_cli_config(section_values)
         except Exception as e:
-            logger.error(f"Failed to persist file-picker recent/last-dir state: {e}")
+            logger.error(
+                "Failed to persist file-picker recent/last-dir state: {}",
+                type(e).__name__,
+            )
 
     def compose(self) -> ComposeResult:
         """Compose the enhanced file picker UI.

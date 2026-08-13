@@ -2256,7 +2256,7 @@ class ConsoleChatController:
             try:
                 handles = snapshot(self._agent_conversation_id(session.id))
             except Exception:  # noqa: BLE001 -- never block a navigation
-                logger.opt(exception=True).debug(
+                logger.debug(
                     "fleet survivor count failed for a session; treated as idle"
                 )
                 continue
@@ -4585,9 +4585,7 @@ class ConsoleChatController:
                 self._clear_pending_approval_if_round_is_current(round_id, session_id)
             except Exception:  # noqa: BLE001 -- a UI clear must never
                 # break the cancellation path that called us.
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during revocation"
-                )
+                logger.debug("Failed to marshal approval clear during revocation")
         for request_id, session_id in script_revoked:
             if session_id is not None:
                 self.discard_pending_round(session_id, request_id)
@@ -4596,14 +4594,10 @@ class ConsoleChatController:
                     request_id, session_id
                 )
             except Exception:  # noqa: BLE001 -- as above.
-                logger.opt(exception=True).debug(
-                    "Failed to clear skill-script confirm during revocation"
-                )
+                logger.debug("Failed to clear skill-script confirm during revocation")
         total = len(revoked) + len(script_revoked)
         if total:
-            logger.info(
-                f"revoked {total} pending approval round(s) for cancelled run {run_id}"
-            )
+            logger.info("Revoked pending approval rounds for cancelled run")
         return total
 
     def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
@@ -8386,39 +8380,7 @@ class ConsoleChatController:
         )
         if force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
-        logger.bind(
-            conversation_id=conversation_id,
-            provider=resolution.provider,
-            model=resolution.model or "",
-            decision=decision.value,
-            forced=force_compaction,
-            model_limit_source=capacity.limit_source,
-            model_context_window_tokens=capacity.context_window_tokens,
-            effective_input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
-            effective_conversation_budget_tokens=(
-                resolved.effective_conversation_budget_tokens
-            ),
-            total_input_tokens=prepared_before.accounting.total_input_tokens,
-            conversation_tokens=(
-                prepared_before.accounting.memory_tokens
-                + prepared_before.accounting.compactable_tokens
-            ),
-            mandatory_tokens=mandatory_tokens,
-            compactable_unit_count=len(units),
-            active_memory_revision=(memory.revision if memory is not None else None),
-            memory_source=(memory.source_kind if memory is not None else None),
-            conversation_override_fields=tuple(
-                sorted(owner.context_policy_overrides.to_dict())
-            ),
-            global_override_fields=tuple(
-                sorted(global_overrides.to_dict())
-                if global_overrides is not None
-                else ()
-            ),
-            validation_error_codes=tuple(
-                "context_policy_validation_error" for _ in resolved.validation_errors
-            ),
-        ).info("console_context_policy_decision")
+        logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
@@ -8514,13 +8476,7 @@ class ConsoleChatController:
                 except Exception:
                     visual_fallback_reason = "local_visual_render_failed"
             if visual_plan is not None and visual_plan.plan is not None:
-                logger.bind(
-                    conversation_id=conversation_id,
-                    requested_representation=requested_representation.value,
-                    effective_representation=effective_representation.value,
-                    page_count=visual_plan.plan.artifact.page_count,
-                    renderer_version=visual_plan.plan.artifact.renderer_version,
-                ).info("console_visual_compaction_prepared")
+                logger.info("console_visual_compaction_prepared")
                 return _flatten_preflight_messages(visual_plan.plan.semantic), None
             effective_representation = ContextCompactionRepresentation.TEXT_SUMMARY
             if visual_fallback_reason is None:
@@ -8531,12 +8487,7 @@ class ConsoleChatController:
                 )
 
         if visual_fallback_reason is not None:
-            logger.bind(
-                conversation_id=conversation_id,
-                requested_representation=requested_representation.value,
-                effective_representation=effective_representation.value,
-                fallback_reason=visual_fallback_reason,
-            ).info("console_visual_compaction_fell_back_to_text")
+            logger.info("console_visual_compaction_fell_back_to_text")
 
         prompt = CompactionPromptSnapshot(
             get_internal_prompt("console.rewind_summarize")
@@ -8610,7 +8561,6 @@ class ConsoleChatController:
             )
             if effective_representation is ContextCompactionRepresentation.HYBRID:
                 hybrid_visual_added = False
-                hybrid_fallback_reason = "hybrid_visual_does_not_fit"
                 try:
                     image_limit = max_history_images(
                         resolution.provider, resolution.model or ""
@@ -8655,16 +8605,9 @@ class ConsoleChatController:
                             memory_rows_after += (visual_row,)
                             hybrid_visual_added = True
                 except Exception:
-                    hybrid_fallback_reason = "hybrid_visual_render_failed"
+                    pass
                 if not hybrid_visual_added:
-                    logger.bind(
-                        conversation_id=conversation_id,
-                        requested_representation=requested_representation.value,
-                        effective_representation=(
-                            ContextCompactionRepresentation.TEXT_SUMMARY.value
-                        ),
-                        fallback_reason=hybrid_fallback_reason,
-                    ).info("console_visual_compaction_fell_back_to_text")
+                    logger.info("console_visual_compaction_fell_back_to_text")
             after = PreparedConsoleRequest(
                 system=planned.plan.remaining_semantic.system,
                 memory=memory_rows_after,

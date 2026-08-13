@@ -829,7 +829,7 @@ class AudioBookGenerationWidget(Widget):
 
             chapters = ChapterDetector.detect_chapters(content)
         except Exception as e:
-            logger.error(f"Failed to detect chapters: {e}")
+            logger.error("Failed to detect chapters in worker")
             self.app.call_from_thread(
                 self.app.notify,
                 f"Failed to detect chapters: {e}",
@@ -851,11 +851,7 @@ class AudioBookGenerationWidget(Widget):
         rather than overwriting a newer, already-applied one.
         """
         if generation != self._chapter_detect_generation:
-            logger.debug(
-                "Dropping stale chapter-detection result "
-                f"(generation {generation}, current "
-                f"{self._chapter_detect_generation})"
-            )
+            logger.debug("Dropping a stale chapter-detection result")
             return
 
         self.detected_chapters = chapters
@@ -889,7 +885,7 @@ class AudioBookGenerationWidget(Widget):
                     chapter_list.update("No chapters detected")
 
         except Exception as e:
-            logger.error(f"Failed to detect chapters: {e}")
+            logger.error("Failed to apply detected chapters")
             self.app.notify(f"Failed to detect chapters: {e}", severity="error")
 
     def _notify_chapter_count(self, count: int) -> None:
