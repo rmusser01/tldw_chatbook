@@ -132,6 +132,27 @@ def test_resolve_zai_request_uses_canonical_precedence_and_current_defaults() ->
     assert defaults.base_url == "https://api.z.ai/api/paas/v4"
 
 
+def test_resolve_zai_request_rejects_normalized_table_alias_conflict() -> None:
+    with pytest.raises(ChatConfigurationError, match="unambiguous"):
+        resolve_zai_request(
+            app_config={
+                "api_settings": {
+                    "ZAI": {"api_key": "alias-secret-canary"},
+                    "zai": {"api_key": "canonical-secret-canary"},
+                }
+            },
+            environ={},
+        )
+
+
+def test_resolve_zai_request_rejects_null_canonical_table() -> None:
+    with pytest.raises(ChatConfigurationError, match="configuration table"):
+        resolve_zai_request(
+            app_config={"api_settings": {"zai": None}},
+            environ={"ZAI_API_KEY": "must-not-enable-null-settings"},
+        )
+
+
 @pytest.mark.parametrize(
     "app_config",
     [

@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
+from .Chat_Deps import ChatConfigurationError
+
 # "Valid provider API key" has exactly ONE definition in this codebase --
 # PR-T2 Task 7 -- shared with `config.py`'s `_normalize_legacy_provider_
 # api_key` (the credential bridge that keeps this module's readiness check
@@ -97,6 +99,7 @@ _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     "mistralai": "MISTRAL_API_KEY",
     "qwencloud": "DASHSCOPE_API_KEY",
 }
+_STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 
 
 @dataclass(frozen=True)
@@ -162,6 +165,49 @@ def default_api_key_env_var(provider_key: str) -> Optional[str]:
     )
 
 
+def _resolved_hosted_api_key(
+    provider_key: str,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str],
+) -> str | None:
+    """Validate hosted readiness through the provider's send resolver."""
+    if provider_key == "moonshot":
+        from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
+
+        return resolve_moonshot_request(
+            app_config=app_config,
+            environ=environ,
+        ).api_key
+    if provider_key == "zai":
+        from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
+
+        return resolve_zai_request(
+            app_config=app_config,
+            environ=environ,
+        ).api_key
+    return None
+
+
+def _invalid_settings_readiness(
+    provider_name: str,
+    provider_key: str,
+) -> ProviderReadiness:
+    return ProviderReadiness(
+        provider=provider_name,
+        provider_key=provider_key,
+        requires_api_key=_requires_api_key(provider_key),
+        ready=False,
+        api_key=None,
+        api_key_source=None,
+        env_var=None,
+        reason="Invalid provider settings",
+        recovery=(
+            f"Replace api_settings.{provider_key} with one valid configuration "
+            "table in Advanced Config or config.toml."
+        ),
+    )
+
+
 def get_provider_readiness(
     provider: Optional[str],
     app_config: Mapping[str, object],
@@ -200,36 +246,10 @@ def get_provider_readiness(
     try:
         provider_settings = provider_settings_for_key(api_settings, provider_key)
     except ProviderSettingsError:
-        return ProviderReadiness(
-            provider=provider_name,
-            provider_key=provider_key,
-            requires_api_key=_requires_api_key(provider_key),
-            ready=False,
-            api_key=None,
-            api_key_source=None,
-            env_var=None,
-            reason="Invalid provider settings",
-            recovery=(
-                "Replace api_settings.qwencloud with a configuration table "
-                "in Advanced Config or config.toml."
-            ),
-        )
+        return _invalid_settings_readiness(provider_name, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))
-    if configured_key:
-        return ProviderReadiness(
-            provider=provider_name,
-            provider_key=provider_key,
-            requires_api_key=requires_api_key,
-            ready=True,
-            api_key=configured_key,
-            api_key_source=f"config:api_settings.{provider_key}.api_key",
-            env_var=None,
-            reason="Ready",
-            recovery=None,
-        )
-
     env_var_value = provider_settings.get("api_key_env_var")
     env_var = (
         env_var_value.strip()
@@ -237,15 +257,26 @@ def get_provider_readiness(
         else default_api_key_env_var(provider_key)
     )
     env_key = _valid_api_key(env.get(env_var, "")) if env_var else None
-    if env_key:
+    resolved_key = configured_key or env_key
+    if resolved_key and provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
+        try:
+            resolved_key = _resolved_hosted_api_key(provider_key, app_config, env)
+        except ChatConfigurationError:
+            return _invalid_settings_readiness(provider_name, provider_key)
+    if resolved_key:
+        from_config = configured_key is not None
         return ProviderReadiness(
             provider=provider_name,
             provider_key=provider_key,
             requires_api_key=requires_api_key,
             ready=True,
-            api_key=env_key,
-            api_key_source=f"env:{env_var}",
-            env_var=env_var,
+            api_key=resolved_key,
+            api_key_source=(
+                f"config:api_settings.{provider_key}.api_key"
+                if from_config
+                else f"env:{env_var}"
+            ),
+            env_var=None if from_config else env_var,
             reason="Ready",
             recovery=None,
         )

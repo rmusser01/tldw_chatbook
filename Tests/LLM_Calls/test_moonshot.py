@@ -138,6 +138,27 @@ def test_resolve_moonshot_request_uses_exact_precedence_and_defaults() -> None:
     assert defaults.streaming is True
 
 
+def test_resolve_moonshot_request_rejects_normalized_table_alias_conflict() -> None:
+    with pytest.raises(ChatConfigurationError, match="unambiguous"):
+        resolve_moonshot_request(
+            app_config={
+                "api_settings": {
+                    " MOONSHOT ": {"api_key": "alias-secret-canary"},
+                    "moonshot": {"api_key": "canonical-secret-canary"},
+                }
+            },
+            environ={},
+        )
+
+
+def test_resolve_moonshot_request_rejects_null_canonical_table() -> None:
+    with pytest.raises(ChatConfigurationError, match="configuration table"):
+        resolve_moonshot_request(
+            app_config={"api_settings": {"moonshot": None}},
+            environ={"MOONSHOT_API_KEY": "must-not-enable-null-settings"},
+        )
+
+
 def test_resolve_moonshot_request_configured_env_and_region_fallback() -> None:
     resolution = resolve_moonshot_request(
         app_config={

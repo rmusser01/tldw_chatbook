@@ -34,7 +34,12 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     normalize_hosted_chat_response,
     owned_json_post,
 )
-from tldw_chatbook.config import get_runtime_config_snapshot, resolve_provider_api_key
+from tldw_chatbook.config import (
+    ProviderSettingsError,
+    get_runtime_config_snapshot,
+    provider_settings_for_key,
+    resolve_provider_api_key,
+)
 
 
 _DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
@@ -190,11 +195,12 @@ def resolve_zai_request(
     api_settings = config.get("api_settings", {})
     if not isinstance(api_settings, Mapping):
         raise _configuration_error("Z.ai api_settings must be a configuration table.")
-    if "zai" in api_settings and not isinstance(api_settings.get("zai"), Mapping):
+    try:
+        settings = provider_settings_for_key(api_settings, "zai")
+    except ProviderSettingsError:
         raise _configuration_error(
-            "Z.ai api_settings.zai must be a configuration table."
-        )
-    settings = cast(Mapping[str, object], api_settings.get("zai", {}))
+            "Z.ai api_settings.zai must be one unambiguous configuration table."
+        ) from None
     transport_settings = dict(settings)
     if explicit_timeout is not None:
         transport_settings["timeout"] = explicit_timeout

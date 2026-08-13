@@ -34,7 +34,9 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     normalize_hosted_chat_base_url,
 )
 from tldw_chatbook.config import (
+    ProviderSettingsError,
     get_runtime_config_snapshot,
+    provider_settings_for_key,
     resolve_provider_api_key,
 )
 
@@ -410,13 +412,12 @@ def resolve_moonshot_request(
         raise _configuration_error(
             "Moonshot api_settings must be a configuration table."
         )
-    if "moonshot" in api_settings and not isinstance(
-        api_settings.get("moonshot"), Mapping
-    ):
+    try:
+        settings = provider_settings_for_key(api_settings, "moonshot")
+    except ProviderSettingsError:
         raise _configuration_error(
-            "Moonshot api_settings.moonshot must be a configuration table."
-        )
-    settings = cast(Mapping[str, object], api_settings.get("moonshot", {}))
+            "Moonshot api_settings.moonshot must be one unambiguous configuration table."
+        ) from None
     transport_settings = dict(settings)
     if explicit_timeout is not None:
         transport_settings["timeout"] = explicit_timeout
