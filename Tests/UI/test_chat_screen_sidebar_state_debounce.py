@@ -14,6 +14,9 @@ pending write so a toggle immediately followed by quit is not lost.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import toml
 
 from Tests.UI.app_factory import _build_test_app
@@ -149,3 +152,79 @@ async def test_reset_settings_schedules_a_write_even_from_an_empty_state():
         await pilot.pause()
 
         assert screen._sidebar_state_dirty is True
+
+
+async def test_toggle_during_in_flight_write_survives_a_quit():
+    """Review round (task-15470): a toggle landing WHILE a debounced write
+    is still in flight must survive a quit -- not just a toggle landing
+    before the debounce timer ever fires (the case
+    `test_quit_immediately_after_toggle_flushes_the_pending_write` covers).
+
+    Reproduced without the fix: `_persist_sidebar_state_off_loop` cleared
+    `_sidebar_state_dirty` only AFTER its write completed, so toggle 2's
+    `dirty=True` (set while toggle 1's write was still inside `to_thread`)
+    was silently clobbered back to False the instant toggle 1's write
+    finished. Separately, `_flush_sidebar_state_now` `return`ed immediately
+    after awaiting an in-flight worker, never re-checking
+    `_sidebar_state_dirty` at all -- so even a dirty flag that legitimately
+    survived to that point would have been dropped. Both fixes are
+    required; this test forces the exact race by blocking toggle 1's write
+    on a `threading.Event` and calling `_flush_sidebar_state_now` directly
+    while it is still blocked.
+    """
+    app = _build_test_app()
+    harness = ConsoleHarness(app)
+    async with harness.run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+
+        write_started = threading.Event()
+        proceed = threading.Event()
+        real_write = screen._write_sidebar_state_snapshot
+
+        def slow_write(snapshot):
+            write_started.set()
+            assert proceed.wait(timeout=5), "test stalled waiting to proceed"
+            real_write(snapshot)
+
+        screen._write_sidebar_state_snapshot = slow_write
+
+        # Toggle 1: goes through the real debounce + worker dispatch.
+        screen.ui_state.set_collapsible_state("task-15470-inflight-1", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+        await pilot.pause(0.7)  # past SIDEBAR_STATE_SAVE_DEBOUNCE_SECONDS
+
+        assert write_started.wait(timeout=2), "worker never started its write"
+        worker = screen._sidebar_state_persist_worker
+        assert worker is not None and not worker.is_finished, (
+            "toggle 1's worker must still be in flight for this test to "
+            "mean anything"
+        )
+
+        # Toggle 2 lands while toggle 1's write is still blocked in flight.
+        screen.ui_state.set_collapsible_state("task-15470-inflight-2", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+        assert screen._sidebar_state_dirty is True
+
+        # Call the real flush path directly, while toggle 1's worker is
+        # still blocked -- it must wait for that worker, THEN notice
+        # toggle 2's dirty flag and flush it too.
+        flush_task = asyncio.create_task(screen._flush_sidebar_state_now())
+        await pilot.pause()
+        await pilot.pause()
+        assert not flush_task.done(), (
+            "_flush_sidebar_state_now returned without waiting for the "
+            "in-flight worker -- this test is not exercising the race it "
+            "claims to"
+        )
+
+        proceed.set()
+        await flush_task
+
+    on_disk = toml.load(_ui_state_path())
+    collapsible_states = on_disk["sidebar"]["collapsible_states"]
+    assert collapsible_states.get("task-15470-inflight-1") is True, (
+        "toggle 1 should have landed"
+    )
+    assert collapsible_states.get("task-15470-inflight-2") is True, (
+        "toggle 2 LOST"
+    )

@@ -20464,7 +20464,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("notes", key, value)
         except Exception:
-            pass
+            logger.error(f"Failed to persist notes.{key}")
 
     @on(Button.Pressed, "#library-notes-sync-browse")
     async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
@@ -20986,7 +20986,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_setting_to_cli_config("library.ingest", "backend", target)
         except Exception:
-            pass
+            logger.error(f"Failed to persist library.ingest.backend={target}")
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -22691,7 +22691,9 @@ class LibraryScreen(BaseAppScreen):
         try:
             save_settings_to_cli_config(option_settings)
         except Exception:
-            pass
+            logger.error(
+                f"Failed to persist library ingest options for {list(option_settings)}"
+            )
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.

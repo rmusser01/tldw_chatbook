@@ -529,10 +529,22 @@ class ImprovedDictationWindow(Widget):
         the write to `to_thread` -- a further keystroke/switch can still
         arrive and mutate `self.settings` while this write is in flight, and
         it must not race the worker thread's read of that same dict.
+
+        Clears `_settings_dirty` immediately after taking the snapshot, NOT
+        after the write completes (review round, task-15470): the awaited
+        `to_thread` call below yields to the event loop, and a further edit
+        can land while this write is still in flight. Clearing dirty only
+        after the write finished would blindly stamp it False again on
+        completion -- clobbering the True a mid-flight edit had just set --
+        so a quit landing before that edit's own new debounce timer fires
+        would see `dirty=False` and lose it (reproduced: "edit 2 LOST").
+        Clearing right here instead means the dirty flag always answers
+        "is there an edit newer than the snapshot this worker is holding",
+        which a mid-flight edit correctly flips back to True.
         """
         snapshot = self._settings_snapshot()
-        await asyncio.to_thread(self._write_settings_snapshot, snapshot)
         self._settings_dirty = False
+        await asyncio.to_thread(self._write_settings_snapshot, snapshot)
 
     async def on_unmount(self) -> None:
         """Flush a pending debounced settings write.
@@ -553,7 +565,11 @@ class ImprovedDictationWindow(Widget):
                 await worker.wait()
             except Exception as error:
                 logger.error(f"Pending dictation settings write failed: {error}")
-            return
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: an edit can land
+            # while THIS await was in flight, re-dirtying settings after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
         if self._settings_dirty:
             snapshot = self._settings_snapshot()
             await asyncio.to_thread(self._write_settings_snapshot, snapshot)

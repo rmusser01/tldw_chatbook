@@ -21997,10 +21997,23 @@ class ChatScreen(BaseAppScreen):
         the write to `to_thread` -- a further toggle can still arrive and
         mutate `collapsible_states` while this write is in flight, and it
         must not race the worker thread's read of that same dict.
+
+        Clears `_sidebar_state_dirty` immediately after taking the
+        snapshot, NOT after the write completes (review round,
+        task-15470): the awaited `to_thread` call below yields to the
+        event loop, and a further toggle can land while this write is
+        still in flight. Clearing dirty only after the write finished
+        would blindly stamp it False again on completion -- clobbering
+        the True a mid-flight toggle had just set -- so a quit landing
+        before that toggle's own new debounce timer fires would see
+        `dirty=False` and lose it. Clearing right here instead means the
+        dirty flag always answers "is there a toggle newer than the
+        snapshot this worker is holding", which a mid-flight toggle
+        correctly flips back to True.
         """
         snapshot = self._sidebar_state_snapshot()
-        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
         self._sidebar_state_dirty = False
+        await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)
 
     async def _flush_sidebar_state_now(self) -> None:
         """Force-flush a pending sidebar-state write (unmount/quit path).
@@ -22023,7 +22036,11 @@ class ChatScreen(BaseAppScreen):
                 await worker.wait()
             except Exception as error:
                 logger.error(f"Pending sidebar-state write failed: {error}")
-            return
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: a toggle can land
+            # while THIS await was in flight, re-dirtying the state after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
         if self._sidebar_state_dirty:
             snapshot = self._sidebar_state_snapshot()
             await asyncio.to_thread(self._write_sidebar_state_snapshot, snapshot)

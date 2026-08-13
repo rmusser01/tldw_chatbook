@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+import toml
 from textual.widgets import Button
 from unittest.mock import MagicMock
 
+from tldw_chatbook.config import _get_effective_config_path, get_cli_setting
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -731,6 +733,34 @@ def test_backend_switch_returns_to_local(monkeypatch) -> None:
     screen.handle_library_ingest_backend_switch(MagicMock())
 
     assert saved == [("library.ingest", "backend", "local")]
+
+
+def test_save_library_ingest_backend_writes_the_real_dotted_section() -> None:
+    """task-15470 review round: the sibling tests above patch
+    `_save_library_ingest_backend` itself (unavoidable -- it is
+    `@work(thread=True)`, which needs a running app to dispatch through
+    `run_worker`, and none of these screens are mounted), so none of them
+    exercise the REAL method body -- specifically its literal
+    ``"library.ingest"``/``"backend"`` section/key strings, which a typo
+    there (e.g. ``"library.Ingest"``) would let every mocked test above
+    stay green through.
+
+    `@work` wraps with `functools.wraps`, so `.__wrapped__` is the
+    undecorated body -- calling it directly bypasses `run_worker` (and the
+    app it needs) entirely while still running the exact production code,
+    against the real (test-sandboxed, per the root conftest's autouse
+    profile isolation) `save_setting_to_cli_config`. This is the one
+    representative site the review round asked for; the same
+    `.__wrapped__` pattern already used for `_prepare_library_external_
+    submission` elsewhere in this test suite.
+    """
+    screen = _minimal_ingest_screen()
+
+    LibraryScreen._save_library_ingest_backend.__wrapped__(screen, "server")
+
+    assert get_cli_setting("library.ingest", "backend", None) == "server"
+    on_disk = toml.load(_get_effective_config_path())
+    assert on_disk["library"]["ingest"]["backend"] == "server"
 
 
 def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:

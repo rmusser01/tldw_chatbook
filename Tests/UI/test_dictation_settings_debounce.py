@@ -18,6 +18,9 @@ mounted) force-flushes any pending write.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import toml
 from textual.app import App, ComposeResult
 from textual.widgets import Input
@@ -156,3 +159,70 @@ async def test_quit_immediately_after_edit_flushes_the_pending_write():
 
     on_disk = toml.load(_config_path())
     assert on_disk["dictation"]["punctuation"] is False
+
+
+async def test_edit_during_in_flight_write_survives_a_quit():
+    """Review round (task-15470): an edit landing WHILE a debounced write
+    is still in flight must survive a quit -- not just an edit landing
+    before the debounce timer ever fires (the case the other flush tests
+    cover).
+
+    Reproduced without the fix: `_persist_settings_off_loop` cleared
+    `_settings_dirty` only AFTER its write completed, so edit 2's
+    `dirty=True` (set while edit 1's write was still inside `to_thread`)
+    was silently clobbered back to False the instant edit 1's write
+    finished. Separately, `on_unmount`'s flush `return`ed immediately
+    after awaiting an in-flight worker, never re-checking `_settings_dirty`
+    at all -- so even a dirty flag that legitimately survived to that point
+    would have been dropped. Both fixes are required; this test forces the
+    exact race by blocking edit 1's write on a `threading.Event` and
+    calling `on_unmount` directly while it is still blocked.
+    """
+    async with _DictationHarness().run_test() as pilot:
+        window = await _mounted_window(pilot)
+
+        write_started = threading.Event()
+        proceed = threading.Event()
+        real_write = window._write_settings_snapshot
+
+        def slow_write(snapshot):
+            write_started.set()
+            assert proceed.wait(timeout=5), "test stalled waiting to proceed"
+            real_write(snapshot)
+
+        window._write_settings_snapshot = slow_write
+
+        # Edit 1: goes through the real debounce + worker dispatch.
+        window.settings["punctuation"] = False
+        window._persist_settings()
+        await pilot.pause(DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS + 0.2)
+
+        assert write_started.wait(timeout=2), "worker never started its write"
+        worker = window._settings_persist_worker
+        assert worker is not None and not worker.is_finished, (
+            "edit 1's worker must still be in flight for this test to mean "
+            "anything"
+        )
+
+        # Edit 2 lands while edit 1's write is still blocked in flight.
+        window.settings["commands"] = False
+        window._persist_settings()
+        assert window._settings_dirty is True
+
+        # Call the real flush path directly, while edit 1's worker is
+        # still blocked -- it must wait for that worker, THEN notice edit
+        # 2's dirty flag and flush it too.
+        unmount_task = asyncio.create_task(window.on_unmount())
+        await pilot.pause()
+        await pilot.pause()
+        assert not unmount_task.done(), (
+            "on_unmount returned without waiting for the in-flight worker "
+            "-- this test is not exercising the race it claims to"
+        )
+
+        proceed.set()
+        await unmount_task
+
+    on_disk = toml.load(_config_path())
+    assert on_disk["dictation"]["punctuation"] is False, "edit 1 should have landed"
+    assert on_disk["dictation"]["commands"] is False, "edit 2 LOST"
