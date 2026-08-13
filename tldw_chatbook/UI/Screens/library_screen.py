@@ -14412,7 +14412,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self.run_worker(
-            self._library_prompt_collections_controller.apply_memberships(),
+            self._await_library_prompt_durable_call(
+                self._library_prompt_collections_controller.apply_memberships()
+            ),
             exclusive=True,
             group="library_prompt_memberships_apply",
         )
@@ -17368,7 +17370,9 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return worker
         return self.app_instance.run_worker(
-            self._run_library_prompts_import(raw_path),
+            self._await_library_prompt_durable_call(
+                self._run_library_prompts_import(raw_path)
+            ),
             group=_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
         )
 
@@ -18087,7 +18091,9 @@ class LibraryScreen(BaseAppScreen):
         if request is None:
             return
         self.run_worker(
-            self._restore_library_prompt_history(request),
+            self._await_library_prompt_durable_call(
+                self._restore_library_prompt_history(request)
+            ),
             exclusive=True,
             group="library_prompt_history_restore",
             name="library_prompt_history_restore",
@@ -18341,7 +18347,11 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._save_library_prompt(target_artifact_type="prompt", save_as_new=True),
+            self._await_library_prompt_durable_call(
+                self._save_library_prompt(
+                    target_artifact_type="prompt", save_as_new=True
+                )
+            ),
             exclusive=True,
             group="library_prompt_save",
         )
@@ -18355,7 +18365,11 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._save_library_prompt(target_artifact_type="recipe", save_as_new=True),
+            self._await_library_prompt_durable_call(
+                self._save_library_prompt(
+                    target_artifact_type="recipe", save_as_new=True
+                )
+            ),
             exclusive=True,
             group="library_prompt_save",
         )
@@ -18369,9 +18383,11 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_block_state = event.state
         self.run_worker(
-            self._save_library_prompt(
-                target_artifact_type=event.state.artifact_type,
-                save_as_new=False,
+            self._await_library_prompt_durable_call(
+                self._save_library_prompt(
+                    target_artifact_type=event.state.artifact_type,
+                    save_as_new=False,
+                )
             ),
             exclusive=True,
             group="library_prompt_save",
@@ -18589,7 +18605,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self.run_worker(
-            self._save_library_prompt(),
+            self._await_library_prompt_durable_call(self._save_library_prompt()),
             exclusive=True,
             group="library_prompt_save",
         )
@@ -19966,7 +19982,6 @@ class LibraryScreen(BaseAppScreen):
         return any(
             worker.group in _LIBRARY_PROMPT_WRITE_WORKER_GROUPS
             and not worker.is_finished
-            and not worker.is_cancelled
             for manager in (self.workers, self.app_instance.workers)
             for worker in manager
         )
@@ -20073,7 +20088,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                 return
             try:
-                result = await self._await_library_prompt_mutation_call(
+                result = await self._await_library_prompt_durable_call(
                     self._run_library_service_call(
                         delete_prompts,
                         mode="local",
@@ -20161,8 +20176,8 @@ class LibraryScreen(BaseAppScreen):
                 else:
                     self._library_prompt_mutation_disabled_states.clear()
 
-    async def _await_library_prompt_mutation_call(self, awaitable: Any) -> Any:
-        """Drain an admitted service task even if its Textual worker is cancelled."""
+    async def _await_library_prompt_durable_call(self, awaitable: Any) -> Any:
+        """Drain an admitted Prompt write even if its worker is cancelled."""
         task = asyncio.create_task(awaitable)
         while True:
             try:
@@ -20369,7 +20384,7 @@ class LibraryScreen(BaseAppScreen):
             restore_prompts = getattr(service, "restore_deleted_prompts", None)
             if not callable(restore_prompts):
                 raise TypeError("missing batch restore capability")
-            result = await self._await_library_prompt_mutation_call(
+            result = await self._await_library_prompt_durable_call(
                 self._run_library_service_call(
                     restore_prompts,
                     mode="local",
@@ -20915,9 +20930,11 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         self.call_after_refresh(
             lambda: self.run_worker(
-                self._save_library_prompt(
-                    target_artifact_type=artifact_type,
-                    save_as_new=True,
+                self._await_library_prompt_durable_call(
+                    self._save_library_prompt(
+                        target_artifact_type=artifact_type,
+                        save_as_new=True,
+                    )
                 ),
                 exclusive=True,
                 group="library_prompt_save",
@@ -20936,7 +20953,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         self.run_worker(
-            self._resolve_library_prompt_conflict(overwrite=False),
+            self._await_library_prompt_durable_call(
+                self._resolve_library_prompt_conflict(overwrite=False)
+            ),
             exclusive=True,
             group="library_prompt_save",
         )
