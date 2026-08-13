@@ -1790,7 +1790,6 @@ def chat_with_ollama(
 def chat_with_custom_openai(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
-    api_key_resolved: bool | None = None,
     custom_prompt_arg: Optional[str] = None,  # Mapped from 'prompt'
     temp: Optional[float] = None,  # Mapped from generic 'temp'
     system_message: Optional[str] = None,
@@ -1814,6 +1813,8 @@ def chat_with_custom_openai(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     api_base_url: Optional[str] = None,
+    *,
+    api_key_resolved: bool | None = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1935,7 +1936,6 @@ def chat_with_custom_openai(
 def chat_with_custom_openai_2(
     input_data: List[Dict[str, Any]],
     api_key: Optional[str] = None,
-    api_key_resolved: bool | None = None,
     custom_prompt_arg: Optional[str] = None,  # Mapped from 'prompt'
     temp: Optional[float] = None,  # Mapped from generic 'temp'
     system_message: Optional[str] = None,
@@ -1957,6 +1957,8 @@ def chat_with_custom_openai_2(
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
     api_base_url: Optional[str] = None,
+    *,
+    api_key_resolved: bool | None = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None

@@ -792,7 +792,6 @@ def chat_api_call(
     api_endpoint: str,
     messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
     api_key: Optional[str] = None,
-    api_key_resolved: bool | None = None,
     temp: Optional[float] = None,
     system_message: Optional[
         str
@@ -833,6 +832,8 @@ def chat_api_call(
     request_timeout: Optional[float] = None,
     request_retries: Optional[int] = None,
     request_retry_delay: Optional[float] = None,
+    *,
+    api_key_resolved: bool | None = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
