@@ -485,6 +485,18 @@ def test_relocated_shared_component_rules_are_present() -> None:
     assert re.search(r"(?m)^VerticalScroll\s*\{", core_base)
 
 
+def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() -> None:
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for css in (source, bundle):
+        inspector_handle = _rule_body(css, ".console-inspector-rail-handle")
+        assert "height: 100%;" in inspector_handle
+        assert "min-height: 20;" in inspector_handle
+        assert "max-height: 100%;" in inspector_handle
+        assert "background: $ds-surface-panel;" in inspector_handle
+
+
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
