@@ -6015,40 +6015,103 @@ class LibraryScreen(BaseAppScreen):
         """
         if not isinstance(context, Mapping):
             return
-        if self.is_mounted and (self._library_note_dirty or self._file_notes_active()):
-            # Defense in depth for direct callers: navigation always
-            # composes a fresh (unmounted) screen, but a future palette
-            # shortcut could invoke this on a live, mounted editor mid-edit. Applying it synchronously would
-            # recompose the canvas out from under the pending debounced
-            # autosave, destroying the #library-note-body it reads and dropping
-            # the last edits. Flush first (awaited, off this sync nav path),
-            # mirroring _select_library_rail_row; unsaved edits abort it.
+        target_row_id = self._library_navigation_context_target_row(context)
+        if target_row_id is None:
+            return
+        if (
+            self.is_mounted
+            and target_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        ):
+            return
+        if self.is_mounted:
+            # A cached mounted screen must admit the route through the same
+            # awaited save/leave guards as a rail switch. Applying it
+            # synchronously could discard a dirty editor or an active Prompt
+            # selection before the transition is actually admitted.
             self.run_worker(
-                self._apply_navigation_context_after_flush(context),
+                self._apply_navigation_context_after_flush(
+                    dict(context),
+                    target_row_id,
+                ),
                 exclusive=True,
                 group="library_nav_context",
             )
             return
         self._apply_navigation_context_state(context)
 
-    async def _apply_navigation_context_after_flush(
-        self, context: Mapping[str, Any]
-    ) -> None:
-        """Flush a dirty note editor, then apply nav context on the UI loop.
+    def _library_navigation_context_target_row(
+        self,
+        context: Mapping[str, Any],
+    ) -> str | None:
+        """Return the validated destination row, or ``None`` for no route."""
+        requested_mode = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_MODE),
+            max_length=64,
+        )
+        target_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(requested_mode)
+        conversation_id = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
+            max_length=200,
+        )
+        note_id = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_NOTE_ID),
+            max_length=200,
+        )
+        if conversation_id:
+            target_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        if requested_mode == "notes" and not note_id:
+            target_row_id = LIBRARY_ROW_BROWSE_NOTES
+        if bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE)):
+            target_row_id = LIBRARY_ROW_CREATE_NOTE
+        if bool(context.get(LIBRARY_NAV_CONTEXT_INGEST)):
+            target_row_id = LIBRARY_ROW_INGEST_MEDIA
+        if note_id:
+            target_row_id = LIBRARY_ROW_BROWSE_NOTES
 
-        The mounted dirty-editor branch of ``apply_navigation_context`` routes
-        here so the pending save is awaited before the recompose that tears the
-        editor down. If unsaved edits survive the flush, the switch aborts and
-        leaves the editor in place -- the same guard
-        ``_select_library_rail_row`` applies.
+        raw_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
+        raw_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
+        if type(raw_source_type) is str and type(raw_source_id) is str:
+            source_type = self._safe_text(raw_source_type, max_length=64)
+            source_id = self._safe_text(raw_source_id, max_length=500)
+            if (
+                source_type == raw_source_type
+                and source_id == raw_source_id
+                and source_type in {"media", "notes", "conversations"}
+                and source_id
+            ):
+                target_row_id = {
+                    "media": LIBRARY_ROW_BROWSE_MEDIA,
+                    "notes": LIBRARY_ROW_BROWSE_NOTES,
+                    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                }[source_type]
+        return target_row_id
+
+    async def _apply_navigation_context_after_flush(
+        self,
+        context: Mapping[str, Any],
+        target_row_id: str | None = None,
+    ) -> None:
+        """Admit every mounted editor/source, then apply navigation context.
+
+        Pending saves are awaited before the recompose that tears an editor
+        down. If unsaved edits survive any guard, the switch aborts and leaves
+        the current route in place -- the same contract as a rail-row switch.
         """
+        if target_row_id is None:
+            target_row_id = self._library_navigation_context_target_row(context)
+        if target_row_id is None:
+            return
         if not await self._flush_active_file_notes():
             return
         release_source = self._acquire_file_notes_transition("source")
         if release_source is False:
             return
         try:
-            await self._apply_navigation_context_after_source_admission(context)
+            await self._apply_navigation_context_after_source_admission(
+                context,
+                target_row_id,
+            )
         finally:
             if callable(release_source):
                 release_source()
@@ -6056,11 +6119,19 @@ class LibraryScreen(BaseAppScreen):
     async def _apply_navigation_context_after_source_admission(
         self,
         context: Mapping[str, Any],
+        target_row_id: str,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        if not await self._flush_library_prompt_save():
+            return
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return
+        if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
+            self._clear_library_prompt_selection(announce=True)
         self._apply_navigation_context_state(context, recompose=False)
         if self.is_mounted:
             await self.recompose()
@@ -6073,8 +6144,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Apply validated navigation context to canvas state and recompose.
 
-        Split from ``apply_navigation_context`` so its mounted dirty-editor
-        path can flush the pending save first (see
+        Split from ``apply_navigation_context`` so its mounted path can admit
+        every pending save first (see
         ``_apply_navigation_context_after_flush``) while the pre-mount and
         clean-editor paths apply directly.
         """
@@ -9110,18 +9181,25 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Project controller state and restore stable Prompt-list focus."""
         if self.is_mounted:
+            live_focus_identity = self._library_prompts_focus_identity()
+            live_focused = getattr(self, "focused", None)
             cursor_context = self._library_prompts_filter_cursor_context
             filter_cursor = (
-                cursor_context[1]
-                if cursor_context is not None
+                live_focused.cursor_position
+                if live_focus_identity == "library-prompts-filter"
+                and isinstance(live_focused, Input)
+                else cursor_context[1]
+                if live_focus_identity is None
+                and cursor_context is not None
                 and cursor_context[0] == result.request_token
                 else None
             )
+            restore_focus_identity = live_focus_identity or focus_identity
             self.refresh(recompose=True)
-            if result.status == "loading" or focus_identity is not None:
+            if result.status == "loading" or restore_focus_identity is not None:
                 self.call_after_refresh(
                     self._restore_library_prompts_focus,
-                    focus_identity,
+                    restore_focus_identity,
                     filter_cursor,
                 )
             elif not self._library_pending_list_entry_focus:

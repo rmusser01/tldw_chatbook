@@ -2184,6 +2184,22 @@ class _FakePromptScopeServiceWithList:
         }
 
 
+class _HeldQueryPromptService(_FakePromptScopeServiceWithList):
+    """Hold one exact browse query so mounted focus races stay observable."""
+
+    def __init__(self, prompts, *, held_query: str):
+        super().__init__(prompts)
+        self.held_query = held_query
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("query") == self.held_query:
+            self.started.set()
+            await asyncio.to_thread(self.release.wait)
+        return await super().browse_prompts(**kwargs)
+
+
 async def _wait_for_prompt_browse_scope(
     screen: LibraryScreen,
     pilot,
@@ -2524,6 +2540,55 @@ async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp
 
 
 @pytest.mark.asyncio
+async def test_prompt_selection_navigation_context_clears_only_after_admission():
+    """Mounted deep links preserve on invalid/veto/same and clear on admitted leave."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [{"id": 17, "name": "Selected", "version": 6}]
+    )
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await pilot.pause()
+        captured = screen._library_prompt_selection
+
+        screen.apply_navigation_context({"mode": "not-a-library-mode"})
+        await pilot.pause()
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        app.notify.assert_not_called()
+
+        screen.apply_navigation_context({"mode": "prompts"})
+        await pilot.pause()
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        app.notify.assert_not_called()
+
+        screen._library_prompt_dirty = True
+        screen.apply_navigation_context({"mode": "media"})
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        assert screen._library_prompt_selection == captured
+        assert screen._library_prompt_select_mode is True
+        app.notify.assert_not_called()
+
+        screen._library_prompt_dirty = False
+        screen.apply_navigation_context({"mode": "media"})
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        assert screen._library_prompt_selection.entries == ()
+        assert screen._library_prompt_select_mode is False
+        app.notify.assert_called_once_with("Selection discarded · 1 prompts")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_prompts_row_press_renders_list_canvas():
     """Prompt rows come only from exact browse, whose local work is off-loop."""
     ui_thread = threading.get_ident()
@@ -2827,6 +2892,150 @@ async def test_library_prompts_search_preserves_filter_caret_while_loading_and_r
             assert settled_filter.cursor_position == 5
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_debounced_search_uses_live_caret_at_dispatch():
+    """A caret moved after debounce capture wins for loading and settlement."""
+    service = _HeldQueryPromptService(
+        [{"id": 5, "name": "Alpha prompt", "version": 1}],
+        held_query="alpha prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            with prompt_filter.prevent(Input.Changed):
+                prompt_filter.value = "alpha prompt"
+            prompt_filter.cursor_position = 3
+            screen._queue_library_prompts_search("alpha prompt")
+            prompt_filter.cursor_position = 7
+
+            for _ in range(100):
+                if service.started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert service.started.is_set()
+            await pilot.pause()
+            loading_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is loading_filter
+            assert loading_filter.cursor_position == 7
+
+            service.release.set()
+            await _wait_for_prompt_browse_scope(
+                screen,
+                pilot,
+                PromptBrowseScope(query="alpha prompt"),
+            )
+            settled_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is settled_filter
+            assert settled_filter.cursor_position == 7
+    finally:
+        service.release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_settlement_keeps_newer_surviving_focus():
+    """A user focus move during service work outranks request-time focus."""
+    service = _HeldQueryPromptService(
+        [{"id": 5, "name": "Alpha prompt", "version": 1}],
+        held_query="alpha prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            with prompt_filter.prevent(Input.Changed):
+                prompt_filter.value = "alpha prompt"
+            prompt_filter.cursor_position = 4
+            scope = PromptBrowseScope(query="alpha prompt")
+            screen._request_library_prompts_browse(scope)
+            for _ in range(100):
+                if service.started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert service.started.is_set()
+
+            sort = screen.query_one("#library-prompts-sort", Button)
+            sort.focus()
+            await pilot.pause()
+            service.release.set()
+            await _wait_for_prompt_browse_scope(screen, pilot, scope)
+
+            assert screen.focused is screen.query_one("#library-prompts-sort", Button)
+    finally:
+        service.release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback():
+    """A live row removed by loading falls back instead of replaying a stale filter."""
+    service = _HeldQueryPromptService(
+        [
+            {"id": 5, "name": "Old prompt", "version": 1},
+            {"id": 6, "name": "New prompt", "version": 1},
+        ],
+        held_query="new prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+            prompt_filter = screen.query_one("#library-prompts-filter", Input)
+            prompt_filter.focus()
+            await pilot.pause()
+            with prompt_filter.prevent(Input.Changed):
+                prompt_filter.value = "new prompt"
+            screen._queue_library_prompts_search("new prompt")
+            screen.query_one("#library-prompt-row-5", Button).focus()
+
+            for _ in range(100):
+                if service.started.is_set():
+                    break
+                await pilot.pause(0.02)
+            assert service.started.is_set()
+            await pilot.pause()
+            assert screen.focused is screen.query_one("#library-prompts-sort", Button)
+
+            service.release.set()
+            await _wait_for_prompt_browse_scope(
+                screen,
+                pilot,
+                PromptBrowseScope(query="new prompt"),
+            )
+            assert screen.focused is screen.query_one("#library-prompts-sort", Button)
+    finally:
+        service.release.set()
 
 
 @pytest.mark.asyncio
