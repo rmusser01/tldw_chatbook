@@ -162,3 +162,18 @@ ends" and "match paths exactly, never by substring" entries already cover
 (the `Research_Interop` test-file-name-shadow and the `search_history.db`
 substring match were both instances of those existing lessons, not new
 ones).
+
+**2026-08-13 review follow-up.** Open task-472 (Onboard prompt_selector UI
+analysis-prompt templates to the Internal Prompts registry) explicitly
+depends on the ~30 templates that lived in the deleted
+`Widgets/prompt_selector.py`. Cross-referenced provenance in both
+directions: task-472's Description now points back at commit `0ddd7286c`
+and the recovery command
+(`git show fdffc031a:tldw_chatbook/Widgets/prompt_selector.py`, verified
+to still print the 547-line pre-deletion file), and two stale docs that
+still described the deleted modules as live tooling were annotated with
+the same retirement/recovery pointers:
+`Docs/Parity/2026-04-21-capability-matrix.md:67` (cited
+`prompt_selector.py` as existing prompt tooling) and
+`tldw_chatbook/DB/DATABASE_PATH_STANDARDIZATION.md:50` (listed
+`search_history_db.py` as a completed path-standardization migration).
