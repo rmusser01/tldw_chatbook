@@ -2870,6 +2870,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_notice: str = ""
         self._selected_media_trash_id: str = ""
         self._library_media_detail: Mapping[str, Any] | None = None
+        # task-15458: the exact detail object the last viewer compose rendered,
+        # compared by IDENTITY. ``_refresh_library_media_detail``'s arrival
+        # recompose is skipped when it matches, which is what keeps a long
+        # document from being parsed twice per open (see
+        # ``_recompose_library_media_detail_if_unrendered``). Reset to None
+        # wherever ``_library_media_detail`` is cleared, so a service that
+        # hands back a cached Mapping cannot make a fresh open look "already
+        # rendered" and strand the viewer on its loading line.
+        self._library_media_composed_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
@@ -8219,6 +8228,15 @@ class LibraryScreen(BaseAppScreen):
                             markup=False,
                         )
                     else:
+                        # task-15458: record what this compose renders BEFORE
+                        # yielding it. Textual's ``recompose()`` awaits its
+                        # child teardown before it runs this generator, so a
+                        # detail worker can land mid-teardown and be picked up
+                        # right here; the arrival guard reads this to know its
+                        # own recompose would only re-parse the same document.
+                        self._library_media_composed_detail = (
+                            self._library_media_detail
+                        )
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(
                                 self._library_media_detail,
@@ -9434,6 +9452,7 @@ class LibraryScreen(BaseAppScreen):
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
             self._library_media_detail = None
+            self._library_media_composed_detail = None
             self._library_media_highlights = []
             if self.is_mounted:
                 self.refresh(recompose=True)
@@ -9495,7 +9514,37 @@ class LibraryScreen(BaseAppScreen):
                 notify("Media item is unavailable.", severity="warning")
             self._library_media_view = "list"
         if self.is_mounted:
-            self.refresh(recompose=True)
+            # task-15458: deliberately NOT an immediate ``refresh(recompose=
+            # True)``. The open-time "Loading media…" recompose may still be
+            # awaiting its own child teardown right now -- Textual removes
+            # children BEFORE it calls ``compose()`` -- in which case that
+            # compose is about to render this very detail, and recomposing
+            # again would parse the whole document a second time (measured:
+            # 2 parses of a 49 KB / 2,000-line item per open, deterministic
+            # on macOS). The screen's message pump runs this callback after
+            # that in-flight compose finishes, which is the earliest point
+            # where the question can be answered instead of guessed.
+            self.call_next(self._recompose_library_media_detail_if_unrendered)
+
+    def _recompose_library_media_detail_if_unrendered(self) -> None:
+        """Recompose unless a compose already rendered the current media detail.
+
+        Deferred follow-up for ``_refresh_library_media_detail`` (task-15458).
+        Identity, not equality: the guard must only skip a recompose for the
+        exact Mapping a compose has already put on screen.
+
+        Returns:
+            None.
+        """
+        if not self.is_mounted:
+            return
+        if (
+            self._library_media_view == "viewer"
+            and self._library_media_detail is not None
+            and self._library_media_composed_detail is self._library_media_detail
+        ):
+            return
+        self.refresh(recompose=True)
 
     async def _fetch_library_media_highlights(
         self, media_id: str
@@ -12995,6 +13044,7 @@ class LibraryScreen(BaseAppScreen):
         # Media again must show the list, not the stale viewer).
         self._library_media_view = "list"
         self._library_media_detail = None
+        self._library_media_composed_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
@@ -14111,6 +14161,7 @@ class LibraryScreen(BaseAppScreen):
         # the viewer and reappear (stale) on the way back.
         self._library_media_type_choices_visible = False
         self._library_media_detail = None
+        self._library_media_composed_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
@@ -25617,6 +25668,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_delete_receipt_ids = (media_id,)
                 self._library_media_view = "list"
                 self._library_media_detail = None
+                self._library_media_composed_detail = None
                 self._library_media_highlights = []
                 self._library_media_editing_analysis = False
                 self._library_media_content_query = ""
@@ -27342,6 +27394,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._library_media_view = "viewer"
             self._library_media_detail = None
+            self._library_media_composed_detail = None
             self._library_media_editing = False
             self._library_media_confirming_delete = False
             self._library_media_highlights = []
