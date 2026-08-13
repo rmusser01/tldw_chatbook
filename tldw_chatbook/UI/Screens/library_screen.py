@@ -89,7 +89,11 @@ from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
-from ...Library.ingest_capabilities import get_capabilities, list_type_groups
+from ...Library.ingest_capabilities import (
+    capabilities_for_backend,
+    get_capabilities,
+    list_type_groups,
+)
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
@@ -20737,7 +20741,7 @@ class LibraryScreen(BaseAppScreen):
         current = resolve_backend() if callable(resolve_backend) else "local"
         target = "local" if current == "server" else "server"
         save_setting_to_cli_config("library.ingest", "backend", target)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "ingest")
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -22992,6 +22996,9 @@ class LibraryScreen(BaseAppScreen):
     def _update_library_ingest_group_receipt(self, group: str) -> None:
         """Recompute one panel's title receipt from the ACTUAL option values."""
         cap = get_capabilities(group)
+        resolve_backend = getattr(self.app_instance, "_resolve_ingest_backend", None)
+        backend = resolve_backend() if callable(resolve_backend) else "local"
+        visible_cap = capabilities_for_backend(cap, backend)
         values = dict(self._library_ingest_form.type_options.get(group, {}))
         if group == "generic":
             form = self._library_ingest_form
@@ -23005,7 +23012,7 @@ class LibraryScreen(BaseAppScreen):
             return
         # (task-3305, MI-16) One title builder for compose-time and this
         # in-place path: capped, empty-skipping, changed-values-first.
-        panel.title = build_type_group_title(cap, values)
+        panel.title = build_type_group_title(visible_cap, values)
 
     # ----- Export canvas: section entry points --------------------------
 

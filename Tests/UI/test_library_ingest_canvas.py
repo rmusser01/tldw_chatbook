@@ -1511,6 +1511,53 @@ async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus
 
 @pytest.mark.asyncio
 @pytest.mark.allow_network
+async def test_local_prompt_receipt_hides_retained_server_only_keep_original_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Local textarea edit cannot disclose a Server-only retained option."""
+    backend = {"value": "server"}
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda _section, _key, value: backend.__setitem__("value", value) or True,
+    )
+    app = _build_test_app()
+    app._resolve_ingest_backend = lambda: backend["value"]
+    _seed_conversations(app, ())
+    screen = LibraryScreen(app)
+    screen._build_library_ingest_state = lambda: build_library_ingest_state(
+        (), form=screen._library_ingest_form, ingest_backend=backend["value"],
+        runtime_source="server", server_ingest_available=True,
+    )
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+    screen._library_ingest_form.analyze = True
+    screen._library_ingest_form.expanded_type_groups.add("generic")
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#opt-generic-keep_original_file")
+
+        screen.query_one("#opt-generic-keep_original_file", Checkbox).value = True
+        await pilot.pause()
+        screen.query_one("#library-ingest-backend-switch", Button).press()
+        await _wait_for_selector(screen, pilot, "#opt-generic-custom_prompt")
+
+        prompt = screen.query_one("#opt-generic-custom_prompt", TextArea)
+        prompt.text = "Summarize this import."
+        await pilot.pause()
+
+        title = str(screen.query_one("#type-group-generic", Collapsible).title)
+        assert backend["value"] == "local"
+        assert "Keep original file" not in title
+
+
+@pytest.mark.asyncio
+@pytest.mark.allow_network
 @pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (120, 48)])
 async def test_library_screen_ingest_layout_contains_metadata_and_start_for_local_prompt(
     monkeypatch: pytest.MonkeyPatch,

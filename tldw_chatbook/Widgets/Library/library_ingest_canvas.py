@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
@@ -27,7 +26,7 @@ from textual.widgets import (
 from tldw_chatbook.Library.ingest_capabilities import (
     TypeGroupCapabilities,
     _is_installed,
-    field_available_for_backend,
+    capabilities_for_backend,
     field_disabled_state,
     get_capabilities,
     select_option_label,
@@ -1100,14 +1099,7 @@ class LibraryIngestCanvas(VerticalScroll):
         # A control that does not apply to the effective backend must not
         # render: this schema filter is the mode-visibility source of truth,
         # ahead of both the field body and the collapsed summary title.
-        visible_cap = replace(
-            cap,
-            fields=tuple(
-                field
-                for field in cap.fields
-                if field_available_for_backend(field, self.state.ingest_backend)
-            ),
-        )
+        visible_cap = capabilities_for_backend(cap, self.state.ingest_backend)
         # (task-2016) The generic panel is always rendered so global options
         # stay reachable -- but claiming "Applies to all X in this import."
         # with zero such files staged was a false statement.

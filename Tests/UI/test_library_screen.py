@@ -116,8 +116,15 @@ def test_build_ingest_options_snapshot_includes_generic_toggles() -> None:
 
     assert snapshot["generic"] == {
         "analyze": True,
+        "overwrite_existing": False,
+        "custom_prompt": "",
+        "system_prompt": "",
+        "generate_embeddings": True,
+        "keep_original_file": False,
         "chunk": True,
         "chunk_size": 2048,
+        "chunk_overlap": 100,
+        "encoding": "auto",
     }
 
 
@@ -137,8 +144,14 @@ def test_build_ingest_options_snapshot_merges_generic_without_clobbering() -> No
     assert snapshot["generic"] == {
         "encoding": "utf-8",
         "analyze": False,
+        "overwrite_existing": False,
+        "custom_prompt": "",
+        "system_prompt": "",
+        "generate_embeddings": True,
+        "keep_original_file": False,
         "chunk": False,
         "chunk_size": 1024,
+        "chunk_overlap": 100,
     }
     assert snapshot["pdf"] == {"pdf_engine": "pymupdf"}
 

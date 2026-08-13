@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
@@ -140,6 +140,33 @@ def field_available_for_backend(field: OptionField, backend: str) -> bool:
         True when the field is declared for ``backend``.
     """
     return backend in field.backends
+
+
+def capabilities_for_backend(
+    capabilities: TypeGroupCapabilities, backend: str
+) -> TypeGroupCapabilities:
+    """Return the capability view that can affect ``backend``.
+
+    Both canvas composition and the collapsed-title receipt must project the
+    same backend-visible fields. Keeping the projection at the capability
+    boundary prevents a retained value from an unavailable backend leaking
+    into an in-place receipt.
+
+    Args:
+        capabilities: Complete declared capability group.
+        backend: Effective ingestion backend (``local`` or ``server``).
+
+    Returns:
+        A capabilities instance containing only fields available to ``backend``.
+    """
+    return replace(
+        capabilities,
+        fields=tuple(
+            field
+            for field in capabilities.fields
+            if field_available_for_backend(field, backend)
+        ),
+    )
 
 
 def select_option_label(field: OptionField, value: Any) -> str:
